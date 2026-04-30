@@ -499,3 +499,51 @@ def test_validate_numerical_bounds_valid_model_passes():
                        "entries must all be > 0", "image shape entries")
     bounds_errors = [e for e in errors if any(k in e for k in bounds_keywords)]
     assert bounds_errors == []
+
+
+# ---------------------------------------------------------------------------
+# NN.validate() module name identifier checks
+# ---------------------------------------------------------------------------
+
+def test_validate_module_names_leading_digit_rejected():
+    """A module name that starts with a digit is not a valid Python identifier."""
+    nn = NN(name="OkNet")
+    nn.add_layer(LinearLayer(name="123layer", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'123layer' is not a valid Python identifier" in e for e in errors)
+
+
+def test_validate_module_names_special_char_rejected():
+    """A module name containing a dot is not a valid Python identifier."""
+    nn = NN(name="OkNet")
+    nn.add_layer(LinearLayer(name="my.dotted", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'my.dotted' is not a valid Python identifier" in e for e in errors)
+
+
+def test_validate_module_names_python_keyword_rejected():
+    """A module name that is a Python reserved keyword is rejected at validate time."""
+    nn = NN(name="OkNet")
+    nn.add_layer(LinearLayer(name="class", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'class' is a Python reserved keyword" in e for e in errors)
+
+
+def test_validate_module_names_nn_name_leading_digit_rejected():
+    """The NN's own name must also be a valid Python identifier."""
+    nn = NN(name="123Net")
+    nn.add_layer(LinearLayer(name="l1", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'123Net' is not a valid Python identifier" in e for e in errors)
+
+
+def test_validate_module_names_valid_identifiers_accepted():
+    """A model with only valid identifier names produces no module-name errors."""
+    nn = NN(name="GoodNet")
+    nn.add_layer(LinearLayer(name="layer_1", out_features=4))
+    nn.add_layer(LinearLayer(name="_layer", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    name_errors = [e for e in errors
+                   if "is not a valid Python identifier" in e
+                   or "is a Python reserved keyword" in e]
+    assert name_errors == []

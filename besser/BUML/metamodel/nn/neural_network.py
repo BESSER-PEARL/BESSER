@@ -3,8 +3,13 @@ This module defines the neural network metamodel.
 """
 
 from __future__ import annotations
+import keyword
+import re
 from typing import List, Self, Union
 from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
+
+
+_PY_IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
 
@@ -2593,6 +2598,7 @@ class NN(BehaviorImplementation):
         self._validate_tensor_op_references(errors)
         self._validate_first_module_entry_point(errors)
         self._validate_numerical_bounds(errors)
+        self._validate_module_names(errors)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
         if not cycle_detected:
             self._validate_sub_nns_recursive(errors, warnings, _visited)
@@ -2685,6 +2691,24 @@ class NN(BehaviorImplementation):
             warnings.append(
                 f"NN '{self.name}' has training data but no configuration."
             )
+
+    def _validate_module_names(self, errors: list):
+        """Reject names that aren't valid Python identifiers or are reserved keywords."""
+        def _check(name, label):
+            if not name:
+                return
+            if not _PY_IDENT_RE.match(name):
+                errors.append(
+                    f"{label} name '{name}' is not a valid Python identifier."
+                )
+            elif keyword.iskeyword(name):
+                errors.append(
+                    f"{label} name '{name}' is a Python reserved keyword."
+                )
+
+        _check(self.name, "NN")
+        for module in self.modules:
+            _check(getattr(module, "name", None), type(module).__name__)
 
     def _validate_numerical_bounds(self, errors: list):
         """Reject non-positive sizes/rates that would crash the trainer at runtime."""

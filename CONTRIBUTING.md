@@ -122,8 +122,8 @@ that opens room for the best design.
 
 - **Python 3.10, 3.11, or 3.12** (CI tests against all three).
 - **Git**, including submodule support.
-- **Node.js 18+** *(only if you plan to run the web modeling editor frontend
-  locally)*.
+- **Node.js 20+** *(only if you plan to run the web modeling editor frontend
+  locally — matches the frontend repo's CI)*.
 
 ### Fork, clone, and initialize
 
@@ -187,7 +187,7 @@ If both run cleanly, you are ready to go.
 ### (Optional) Run the full local stack
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 This brings up the backend API and the web modeling editor for end-to-end
@@ -556,7 +556,7 @@ later. Linking a follow-up issue is even better.
 ## 🔗 Cross-Repo Changes (Frontend Submodule)
 
 The web modeling editor frontend lives in
-[BESSER-WEB-MODELING-EDITOR](https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR)
+[BESSER-Web-Modeling-Editor](https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor)
 and is included here as a submodule under
 `besser/utilities/web_modeling_editor/frontend`.
 

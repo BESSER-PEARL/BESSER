@@ -2603,6 +2603,7 @@ class NN(BehaviorImplementation):
         if not cycle_detected:
             self._validate_sub_nns_recursive(errors, warnings, _visited)
         self._collect_nn_warnings(warnings)
+        self._validate_dataset_consistency(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception and is_root:
@@ -2691,6 +2692,29 @@ class NN(BehaviorImplementation):
             warnings.append(
                 f"NN '{self.name}' has training data but no configuration."
             )
+
+    def _validate_dataset_consistency(self, warnings: list):
+        """Surface mismatches between training and test datasets that usually indicate user error."""
+        train, test = self.train_data, self.test_data
+        if test is not None and train is None:
+            warnings.append(
+                f"NN '{self.name}' has a test dataset but no training dataset."
+            )
+        if train is None or test is None:
+            return
+        train_fmt = getattr(train, "input_format", None)
+        test_fmt = getattr(test, "input_format", None)
+        if train_fmt and test_fmt and train_fmt != test_fmt:
+            warnings.append(
+                f"NN '{self.name}': train input_format '{train_fmt}' differs "
+                f"from test input_format '{test_fmt}'."
+            )
+        if train.image is not None and test.image is not None:
+            if train.image.shape != test.image.shape:
+                warnings.append(
+                    f"NN '{self.name}': train image shape {train.image.shape} "
+                    f"differs from test image shape {test.image.shape}."
+                )
 
     def _validate_module_names(self, errors: list):
         """Reject names that aren't valid Python identifiers or are reserved keywords."""

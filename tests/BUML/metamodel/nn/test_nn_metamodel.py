@@ -547,3 +547,65 @@ def test_validate_module_names_valid_identifiers_accepted():
                    if "is not a valid Python identifier" in e
                    or "is a Python reserved keyword" in e]
     assert name_errors == []
+
+
+# ---------------------------------------------------------------------------
+# NN.validate() dataset consistency warnings
+# ---------------------------------------------------------------------------
+
+def _build_nn_with_datasets(train, test):
+    """Build a minimal NN with the given train/test datasets attached."""
+    nn = NN(name="Net")
+    nn.add_layer(LinearLayer(name="l1", out_features=10))
+    if train is not None:
+        nn.add_train_data(train)
+    if test is not None:
+        nn.add_test_data(test)
+    return nn
+
+
+def test_warning_test_without_train():
+    """A test dataset without a training dataset emits a warning."""
+    nn = _build_nn_with_datasets(
+        train=None,
+        test=Dataset(name="test", path_data="/d"),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    assert any("test dataset but no training dataset" in w for w in warnings)
+
+
+def test_warning_input_format_mismatch():
+    """train and test with different input_format emits a warning."""
+    nn = _build_nn_with_datasets(
+        train=Dataset(name="train", path_data="/d", input_format="images",
+                      image=Image(shape=[32, 32, 3])),
+        test=Dataset(name="test", path_data="/d", input_format="csv"),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    assert any("input_format 'images' differs from test input_format 'csv'" in w for w in warnings)
+
+
+def test_warning_image_shape_mismatch():
+    """train and test with different image shapes emits a warning."""
+    nn = _build_nn_with_datasets(
+        train=Dataset(name="train", path_data="/d", input_format="images",
+                      image=Image(shape=[32, 32, 3])),
+        test=Dataset(name="test", path_data="/d", input_format="images",
+                     image=Image(shape=[64, 64, 3])),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    assert any("image shape [32, 32, 3] differs from test image shape [64, 64, 3]" in w for w in warnings)
+
+
+def test_no_dataset_warning_when_consistent():
+    """Matched train/test datasets produce no consistency warnings."""
+    nn = _build_nn_with_datasets(
+        train=Dataset(name="train", path_data="/d", input_format="images",
+                      image=Image(shape=[32, 32, 3])),
+        test=Dataset(name="test", path_data="/d", input_format="images",
+                     image=Image(shape=[32, 32, 3])),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    consistency_keywords = ("input_format", "image shape", "test dataset but no training")
+    consistency_warnings = [w for w in warnings if any(k in w for k in consistency_keywords)]
+    assert consistency_warnings == []

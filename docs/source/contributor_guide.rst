@@ -102,9 +102,29 @@ http://localhost:9000/besser_api in development mode.
 Development Workflow
 --------------------
 
-* Create a feature branch from ``master`` for each logical change.
-* Keep commits focused and descriptive. Favor incremental commits over monolithic
-  ones so reviewers can follow the reasoning.
+* Create a topic branch from ``development`` (the integration branch) for each
+  logical change. **Do not branch from or target** ``master`` **directly** —
+  ``master`` tracks released versions, while ``development`` is where features
+  are integrated before a release.
+* Name branches with a prefix that matches the type of change, mirroring our
+  Conventional Commits style:
+
+  * ``feature/<short-description>`` — new features (e.g.,
+    ``feature/add-django-generator``)
+  * ``fix/<short-description>`` — bug fixes (e.g.,
+    ``fix/ocl-parser-null-handling``)
+  * ``docs/<short-description>`` — documentation-only changes (e.g.,
+    ``docs/update-contributor-guide``)
+  * ``refactor/<short-description>`` — restructuring without behavior changes
+  * ``test/<short-description>`` — test additions or improvements
+  * ``chore/<short-description>`` — tooling, CI, or dependency maintenance
+
+  Use lowercase, hyphen-separated descriptive names. Avoid personal prefixes
+  (``armen/...``) and avoid umbrella branches that bundle unrelated changes.
+* Keep commits focused and descriptive. Use Conventional Commit prefixes
+  (``feat:``, ``fix:``, ``docs:``, ``refactor:``, ``test:``, ``chore:``) in
+  short, imperative subjects. Favor incremental commits over monolithic ones so
+  reviewers can follow the reasoning.
 * Update or add tests alongside code changes.
 * Update the documentation whenever you introduce new behaviors, options, or
   workflows.
@@ -153,8 +173,11 @@ Documentation Workflow
 Submitting Your Change
 ----------------------
 
-* Ensure your branch is rebased on the latest ``master`` before opening a pull
-  request.
+* **Open pull requests against** ``development``, **not** ``master``.
+  Maintainers merge ``development`` into ``master`` as part of the release
+  process; contributors should not target ``master`` directly.
+* Ensure your branch is rebased on the latest ``development`` before opening a
+  pull request.
 * Fill in the pull request template, describing the change, tests executed, and
   any additional context reviewers should know.
 * Respond promptly to review feedback. Discussions in pull requests are a

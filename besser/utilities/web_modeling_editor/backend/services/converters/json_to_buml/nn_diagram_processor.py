@@ -762,6 +762,10 @@ def process_nn_diagram(json_data):
     if test_datasets:
         main_nn.add_test_data(create_dataset(test_datasets[0], elements))
 
+    # Run model-level validation here so any caller (validation endpoint,
+    # code generation, BUML export) surfaces errors before producing output.
+    main_nn.validate(raise_exception=True)
+
     return main_nn
 
 

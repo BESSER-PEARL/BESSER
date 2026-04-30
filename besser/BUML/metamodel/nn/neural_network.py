@@ -2592,6 +2592,7 @@ class NN(BehaviorImplementation):
         self._validate_module_input_references(errors)
         self._validate_tensor_op_references(errors)
         self._validate_first_module_entry_point(errors)
+        self._validate_numerical_bounds(errors)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
         if not cycle_detected:
             self._validate_sub_nns_recursive(errors, warnings, _visited)
@@ -2684,3 +2685,91 @@ class NN(BehaviorImplementation):
             warnings.append(
                 f"NN '{self.name}' has training data but no configuration."
             )
+
+    def _validate_numerical_bounds(self, errors: list):
+        """Reject non-positive sizes/rates that would crash the trainer at runtime."""
+        cfg = self.configuration
+        if cfg is not None:
+            if cfg.batch_size <= 0:
+                errors.append(
+                    f"NN '{self.name}': configuration batch_size must be > 0, "
+                    f"got {cfg.batch_size}."
+                )
+            if cfg.epochs <= 0:
+                errors.append(
+                    f"NN '{self.name}': configuration epochs must be > 0, "
+                    f"got {cfg.epochs}."
+                )
+            if cfg.learning_rate <= 0:
+                errors.append(
+                    f"NN '{self.name}': configuration learning_rate must be > 0, "
+                    f"got {cfg.learning_rate}."
+                )
+            weight_decay = getattr(cfg, "weight_decay", None)
+            if weight_decay is not None and weight_decay < 0:
+                errors.append(
+                    f"NN '{self.name}': configuration weight_decay must be >= 0, "
+                    f"got {weight_decay}."
+                )
+
+        for layer in self.layers:
+            cls_name = type(layer).__name__
+            label = f"NN '{self.name}': {cls_name} '{layer.name}'"
+
+            if isinstance(layer, DropoutLayer):
+                if not 0 <= layer.rate < 1:
+                    errors.append(f"{label} rate must be in [0, 1), got {layer.rate}.")
+
+            if isinstance(layer, RNN):
+                if layer.hidden_size <= 0:
+                    errors.append(f"{label} hidden_size must be > 0, got {layer.hidden_size}.")
+                dropout = getattr(layer, "dropout", None)
+                if dropout is not None and not 0 <= dropout < 1:
+                    errors.append(f"{label} dropout must be in [0, 1), got {dropout}.")
+
+            if isinstance(layer, LinearLayer):
+                if layer.out_features <= 0:
+                    errors.append(f"{label} out_features must be > 0, got {layer.out_features}.")
+                if layer.in_features is not None and layer.in_features <= 0:
+                    errors.append(f"{label} in_features must be > 0, got {layer.in_features}.")
+
+            if isinstance(layer, ConvolutionalLayer):
+                if layer.out_channels <= 0:
+                    errors.append(f"{label} out_channels must be > 0, got {layer.out_channels}.")
+                if layer.in_channels is not None and layer.in_channels <= 0:
+                    errors.append(f"{label} in_channels must be > 0, got {layer.in_channels}.")
+                if any(d <= 0 for d in (layer.kernel_dim or [])):
+                    errors.append(f"{label} kernel_dim entries must all be > 0, got {layer.kernel_dim}.")
+                if layer.stride_dim is not None and any(d <= 0 for d in layer.stride_dim):
+                    errors.append(f"{label} stride_dim entries must all be > 0, got {layer.stride_dim}.")
+
+            if isinstance(layer, PoolingLayer):
+                if layer.kernel_dim is not None and any(d <= 0 for d in layer.kernel_dim):
+                    errors.append(f"{label} kernel_dim entries must all be > 0, got {layer.kernel_dim}.")
+                if layer.stride_dim is not None and any(d <= 0 for d in layer.stride_dim):
+                    errors.append(f"{label} stride_dim entries must all be > 0, got {layer.stride_dim}.")
+
+            if isinstance(layer, BatchNormLayer):
+                if layer.num_features <= 0:
+                    errors.append(f"{label} num_features must be > 0, got {layer.num_features}.")
+
+            if isinstance(layer, LayerNormLayer):
+                if layer.normalized_shape is not None and any(d <= 0 for d in layer.normalized_shape):
+                    errors.append(
+                        f"{label} normalized_shape entries must all be > 0, "
+                        f"got {layer.normalized_shape}."
+                    )
+
+            if isinstance(layer, EmbeddingLayer):
+                if layer.num_embeddings <= 0:
+                    errors.append(f"{label} num_embeddings must be > 0, got {layer.num_embeddings}.")
+                if layer.embedding_dim <= 0:
+                    errors.append(f"{label} embedding_dim must be > 0, got {layer.embedding_dim}.")
+
+        for ds_label, ds in (("train_data", self.train_data), ("test_data", self.test_data)):
+            if ds is not None and ds.image is not None:
+                if any(d <= 0 for d in ds.image.shape):
+                    errors.append(
+                        f"NN '{self.name}': {ds_label} image shape entries must all be > 0, "
+                        f"got {ds.image.shape}."
+                    )

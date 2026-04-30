@@ -21,7 +21,8 @@ method as follows:
 
 
 
-The configuration parameters for the `TFGenerator` are as follows:
+Parameters
+----------
 
 - **model**: The neural network model.
 - **output_dir**: The name of the output directory where the generated file will be placed.
@@ -31,11 +32,33 @@ The filename embeds the generation type, so a ``TFGenerator`` invoked with
 ``generation_type="subclassing"`` produces ``tf_nn_subclassing.py``, and
 ``generation_type="sequential"`` produces ``tf_nn_sequential.py``.
 
-The generated file will be placed inside ``output_folder`` and it will look as follows:
+Web Modeling Editor Support
+---------------------------
 
+Neural networks can also be designed visually in the
+:doc:`BESSER Web Modeling Editor <../web_editor>` using the ``NNDiagram`` type.
+The backend converts the diagram into an ``NN`` metamodel instance and passes
+it to the TensorFlow generator. From the editor's **Generate** menu you can
+choose between the **Subclassing** and **Sequential** variants; the diagram
+is validated through ``NN.validate()`` before code is produced.
 
+Output
+------
 
-.. note::
-   The generated file ``tf_nn_<generation_type>.py`` will contain a TensorFlow/Keras model
-   with the layers defined by your B-UML neural network model.
-   Run the generated script to train and evaluate the model.
+The generated file ``tf_nn_<generation_type>.py`` contains:
+
+- **Imports**: TensorFlow and supporting modules required by the generated code.
+- **Network architecture**: in ``subclassing`` mode, a
+  ``NeuralNetwork(tf.keras.Model)`` class with an ``__init__`` that
+  instantiates the layers and a ``call`` method that chains them. In
+  ``sequential`` mode, a ``tf.keras.Sequential`` definition.
+- **Training and evaluation block** (emitted only when a Training Dataset is
+  attached to the NN): dataset loading, loss function and optimizer setup,
+  the training loop, evaluation against the test dataset, and saving the
+  trained model.
+
+The generated output for the tutorial example is shown below.
+
+.. literalinclude:: ../../../tests/BUML/metamodel/nn/output/tutorial_example/tf_nn_subclassing.py
+   :language: python
+   :linenos:

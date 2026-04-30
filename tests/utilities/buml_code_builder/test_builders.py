@@ -1472,6 +1472,14 @@ class TestNNModelBuilder:
         assert "add_test_data(test_data)" in code
         assert "image=image" not in code
 
+    @staticmethod
+    def _nn_imports_block(code: str) -> str:
+        """Return the body of the first `from besser.BUML.metamodel.nn import (...)` block."""
+        marker = "from besser.BUML.metamodel.nn import ("
+        start = code.index(marker) + len(marker)
+        end = code.index(")", start)
+        return code[start:end]
+
     def test_dataset_imports_emitted(self, tmp_path):
         """Dataset and Image are present in the generated imports when needed."""
         nn = self._build_simple_nn()
@@ -1483,9 +1491,9 @@ class TestNNModelBuilder:
         nn_model_to_code(nn, file_path)
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
-        # First non-empty line should be the import block; Dataset + Image must appear in it
-        assert "Dataset" in code.split("\n")[1]
-        assert "Image" in code
+        imports = self._nn_imports_block(code)
+        assert "Dataset" in imports
+        assert "Image" in imports
 
     def test_no_dataset_no_dataset_import(self, tmp_path):
         """When NN has no datasets, Dataset/Image are not imported."""
@@ -1494,9 +1502,9 @@ class TestNNModelBuilder:
         nn_model_to_code(nn, file_path)
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
-        header = code.split(")")[0]  # first import block ends at ")"
-        assert "Dataset" not in header
-        assert "Image" not in header
+        imports = self._nn_imports_block(code)
+        assert "Dataset" not in imports
+        assert "Image" not in imports
 
     # ------------------------------------------------------------------ #
     # Exec-round-trip coverage per layer class                            #

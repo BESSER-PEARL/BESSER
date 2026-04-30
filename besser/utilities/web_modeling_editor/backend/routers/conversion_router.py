@@ -32,8 +32,20 @@ from besser.utilities.kg_to_owl import serialize_knowledge_graph
 
 # BESSER KG → B-UML (deterministic, offline)
 from besser.BUML.notations.kg_to_buml import (
+    KGResolution,
+    ResolutionError,
+    analyze_kg_for_class_diagram,
+    analyze_kg_for_object_diagram,
+    apply_resolutions,
+    dispatch_decision,
+    kg_signature,
     kg_to_class_diagram as kg_to_class_diagram_buml,
     kg_to_object_diagram as kg_to_object_diagram_buml,
+)
+
+# Custom exception types translated to HTTP codes by @handle_endpoint_errors.
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 # BESSER utilities
@@ -751,19 +763,144 @@ def _kg_payload_to_kg(input_data: DiagramInput):
     return process_kg_diagram(json_data), json_data
 
 
+def _enforce_signature(input_data: DiagramInput, kg) -> None:
+    """If the request includes a ``kgSignature``, ensure it matches the current KG."""
+    if not input_data.kgSignature:
+        return
+    actual = kg_signature(kg)
+    if actual != input_data.kgSignature:
+        raise ConversionError(
+            "Knowledge graph changed since analysis; please re-run the preflight before "
+            "applying resolutions."
+        )
+
+
+def _apply_v2_decisions(kg, decisions, analyzer):
+    """Apply v2-style ``[{issueId, decision}]`` choices.
+
+    Re-runs the preflight on ``kg``, looks up each issue by id, dispatches its
+    recommended/skip action. Returns the resolved KG (deep copy mutated).
+    """
+    report = analyzer(kg)
+    issues_by_id = {i.id: i for i in report.issues}
+    resolved_kg = kg
+    for entry in decisions:
+        if not isinstance(entry, dict):
+            continue
+        issue_id = entry.get("issueId") or entry.get("issue_id")
+        decision = entry.get("decision")
+        if not issue_id or not decision:
+            raise ConversionError("Each resolution must include 'issueId' and 'decision'.")
+        issue = issues_by_id.get(issue_id)
+        if issue is None:
+            # Issue might have already been resolved by a prior decision, or the
+            # signature check would catch a stale graph; tolerate silently.
+            continue
+        try:
+            resolved_kg = dispatch_decision(resolved_kg, issue, decision)
+        except ResolutionError as exc:
+            raise ConversionError(str(exc)) from exc
+        # Refresh the issues map after each apply: the topology has shifted.
+        report = analyzer(resolved_kg)
+        issues_by_id = {i.id: i for i in report.issues}
+    return resolved_kg
+
+
+def _apply_v1_resolutions(kg, raw_list):
+    """Backward-compat: v1-style ``[{issueId, choice, parameters}]`` payload."""
+    parsed = []
+    for r in raw_list:
+        if not isinstance(r, dict):
+            continue
+        issue_id = r.get("issueId") or r.get("issue_id") or ""
+        choice = r.get("choice") or ""
+        parameters = r.get("parameters") or {}
+        if not choice:
+            raise ConversionError("Each resolution must include a 'choice' key.")
+        parsed.append(KGResolution(issue_id=issue_id, choice=choice, parameters=parameters))
+    try:
+        return apply_resolutions(kg, parsed)
+    except ResolutionError as exc:
+        raise ConversionError(str(exc)) from exc
+
+
+def _resolve_kg(kg, input_data: DiagramInput, analyzer):
+    """Apply ``input_data.resolutions`` to ``kg``. Auto-detects the payload shape:
+    v2 entries have ``decision``; v1 entries have ``choice``."""
+    if not input_data.resolutions:
+        return kg
+    raw_list = input_data.resolutions
+    is_v2 = all(
+        isinstance(r, dict) and ("decision" in r and "choice" not in r)
+        for r in raw_list
+    )
+    if is_v2:
+        return _apply_v2_decisions(kg, raw_list, analyzer)
+    return _apply_v1_resolutions(kg, raw_list)
+
+
+def _action_to_dict(action):
+    if action is None:
+        return None
+    return {"key": action.key, "parameters": action.parameters, "label": action.label}
+
+
+def _report_to_response(report):
+    return {
+        "kgSignature": report.kg_signature,
+        "diagramType": report.diagram_type,
+        "issueCount": report.issue_count,
+        "issues": [
+            {
+                "id": i.id,
+                "code": i.code,
+                "description": i.description,
+                "affectedNodeIds": i.affected_node_ids,
+                "affectedEdgeIds": i.affected_edge_ids,
+                "recommendedAction": _action_to_dict(i.recommended_action),
+                "skipAction": _action_to_dict(i.skip_action),
+            }
+            for i in report.issues
+        ],
+    }
+
+
+@router.post("/analyze-kg-for-buml-conversion")
+@handle_endpoint_errors("analyze_kg_for_buml_conversion")
+async def analyze_kg_for_buml_conversion_endpoint(
+    input_data: DiagramInput,
+    diagramType: str = "ClassDiagram",
+):
+    """Run the KG → BUML preflight and return a structured list of issues.
+
+    The ``diagramType`` query parameter selects the analyzer:
+    ``ClassDiagram`` (default) or ``ObjectDiagram``. Each issue carries a
+    pre-filled ``recommendedAction`` and ``skipAction``; the frontend
+    renders one row per issue with a checkbox + 2 buttons.
+    """
+    kg, _json_data = _kg_payload_to_kg(input_data)
+    if (diagramType or "").lower() == "objectdiagram":
+        report = analyze_kg_for_object_diagram(kg)
+    else:
+        report = analyze_kg_for_class_diagram(kg)
+    return _report_to_response(report)
+
+
 @router.post("/kg-to-class-diagram", response_model=DiagramExportResponse)
 @handle_endpoint_errors("kg_to_class_diagram")
 async def kg_to_class_diagram_endpoint(input_data: DiagramInput):
     """Transform a Knowledge Graph diagram into a BUML Class Diagram (TBox).
 
-    Deterministic, offline (no LLM) conversion: KGClass → Class,
-    KGProperty (rdfs:domain/range driven) → attribute or BinaryAssociation,
-    rdfs:subClassOf → Generalization. Multi-valued literal usage in the
-    ABox bumps the corresponding attribute multiplicity to 0..*.
+    Optional ``resolutions`` (paired with the ``kgSignature`` from a prior
+    ``/analyze-kg-for-buml-conversion`` response) carry the user's
+    accept/skip choices for each preflight issue. Without resolutions the
+    behaviour is unchanged.
     """
     kg, _json_data = _kg_payload_to_kg(input_data)
+    _enforce_signature(input_data, kg)
     base_title = (input_data.title or kg.name or "Knowledge Graph")
-    result = kg_to_class_diagram_buml(kg, model_name=base_title)
+    resolved_kg = _resolve_kg(kg, input_data, analyze_kg_for_class_diagram)
+    result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
     diagram_json = class_buml_to_json(result.domain_model)
     return {
         "title": f"{base_title} (Class Diagram)",
@@ -780,16 +917,16 @@ async def kg_to_class_diagram_endpoint(input_data: DiagramInput):
 async def kg_to_object_diagram_endpoint(input_data: DiagramInput):
     """Transform a Knowledge Graph diagram into a BUML Object Diagram (ABox).
 
-    KGIndividual → Object (typed via rdf:type), literal-target edges → slots,
-    individual-target edges → links. Blank nodes are skipped. The freshly
-    derived class diagram is embedded as ``referenceDiagramData`` so the
-    frontend can resolve ``classId`` references.
+    Accepts the same optional ``resolutions`` and ``kgSignature`` as
+    ``/kg-to-class-diagram``, but the resolutions are interpreted against
+    the *object-diagram* preflight report.
     """
     kg, _json_data = _kg_payload_to_kg(input_data)
+    _enforce_signature(input_data, kg)
     base_title = (input_data.title or kg.name or "Knowledge Graph")
-
-    class_result = kg_to_class_diagram_buml(kg, model_name=base_title)
-    object_result = kg_to_object_diagram_buml(kg, class_result=class_result, model_name=base_title)
+    resolved_kg = _resolve_kg(kg, input_data, analyze_kg_for_object_diagram)
+    class_result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
+    object_result = kg_to_object_diagram_buml(resolved_kg, class_result=class_result, model_name=base_title)
     domain_json = class_buml_to_json(class_result.domain_model)
     domain_json = {**domain_json, "type": "ClassDiagram"}
     diagram_json = object_model_to_json(object_result.object_model, domain_json)

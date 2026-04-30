@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from besser.BUML.metamodel.kg import (
     KGBlank,
@@ -53,6 +53,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDFS_SUBCLASS_OF,
     add_warning,
     build_indexes,
+    is_meta_vocab,
     local_name,
     normalize_predicate,
     sanitize_python_identifier,
@@ -102,8 +103,23 @@ def kg_to_class_diagram(
     kg: KnowledgeGraph,
     *,
     model_name: Optional[str] = None,
+    resolutions: Optional[List["KGResolution"]] = None,
 ) -> ClassConversionResult:
-    """Convert a :class:`KnowledgeGraph` into a :class:`DomainModel` (TBox)."""
+    """Convert a :class:`KnowledgeGraph` into a :class:`DomainModel` (TBox).
+
+    Args:
+        kg: Source KG.
+        model_name: Override for the resulting :class:`DomainModel.name`.
+        resolutions: Optional list of user choices from a preflight report
+            (see :mod:`besser.BUML.notations.kg_to_buml.preflight`). When
+            provided, :func:`apply_resolutions` rewrites a deep-copied
+            KG before conversion (so the input is untouched).
+    """
+    if resolutions:
+        # Lazy import to avoid a top-of-module cycle through the package's
+        # ``__init__.py`` re-exports.
+        from besser.BUML.notations.kg_to_buml.resolutions import apply_resolutions
+        kg = apply_resolutions(kg, resolutions)
     indexes = build_indexes(kg)
     warnings: List[KGConversionWarning] = []
 
@@ -120,6 +136,12 @@ def kg_to_class_diagram(
     for node in sorted_by_id([n for n in kg.nodes if isinstance(n, KGClass)]):
         if _looks_like_datatype_iri(getattr(node, "iri", None)):
             continue
+        if is_meta_vocab(getattr(node, "iri", None)):
+            # OWL/RDFS framework terms (owl:Class, rdfs:Class, …) are not user
+            # concepts; the importer occasionally classifies them as KGClass
+            # when an OWL2 punning ontology declares them. Skip them so they
+            # don't pollute the BUML output.
+            continue
         cls = _build_class(node, used_class_names)
         id_to_class[node.id] = cls
         if node.iri:
@@ -128,10 +150,15 @@ def kg_to_class_diagram(
     # ------------------------------------------------------------------
     # Step 2: synthesise classes from references (rdf:type targets,
     # rdfs:domain/range targets pointing to non-class nodes,
-    # rdfs:subClassOf endpoints) — but never from KGBlank/KGLiteral nodes.
+    # rdfs:subClassOf endpoints) — but never from KGBlank/KGLiteral nodes
+    # and never from OWL/RDFS framework vocabulary IRIs (owl:Class,
+    # owl:DatatypeProperty, …) which would otherwise leak into the
+    # diagram as spurious "Class", "DatatypeProperty" boxes.
     # ------------------------------------------------------------------
     def _ensure_class_for_node(node: KGNode) -> Optional[Class]:
         if isinstance(node, (KGBlank, KGLiteral, KGProperty)):
+            return None
+        if is_meta_vocab(getattr(node, "iri", None)):
             return None
         existing = id_to_class.get(node.id)
         if existing is not None:
@@ -340,6 +367,21 @@ def kg_to_class_diagram(
                 )
 
     # ------------------------------------------------------------------
+    # Step 4.5: lift OWL restrictions and property characteristics into
+    # BUML Multiplicity. owl:FunctionalProperty caps max=1; owl:Restriction
+    # blank nodes attached via rdfs:subClassOf or owl:equivalentClass refine
+    # the multiplicity of the matching attribute or association end.
+    # ------------------------------------------------------------------
+    explicit_multiplicity_props: Set[str] = _apply_restrictions_and_characteristics(
+        kg=kg,
+        id_to_class=id_to_class,
+        property_iri_to_attribute=property_iri_to_attribute,
+        property_iri_to_association=property_iri_to_association,
+        assoc_source_end=assoc_source_end,
+        warnings=warnings,
+    )
+
+    # ------------------------------------------------------------------
     # Step 5: ABox-driven multiplicity bump for datatype properties.
     # ------------------------------------------------------------------
     if property_iri_to_attribute:
@@ -364,6 +406,10 @@ def kg_to_class_diagram(
                 continue
             attr = property_iri_to_attribute.get(prop_iri)
             if attr is None:
+                continue
+            if prop_iri in explicit_multiplicity_props:
+                # An explicit OWL restriction (or FunctionalProperty) already
+                # set the multiplicity; don't override it from ABox usage.
                 continue
             attr.multiplicity = Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)
             add_warning(
@@ -522,6 +568,157 @@ def _would_create_cycle(
         seen.add(node)
         stack.extend(parents_of.get(node, ()))
     return False
+
+
+_OWL_RESTRICTION_LINK_PREDICATES = {
+    RDFS_SUBCLASS_OF,
+    "http://www.w3.org/2002/07/owl#equivalentClass",
+}
+
+
+def _apply_restrictions_and_characteristics(
+    *,
+    kg: KnowledgeGraph,
+    id_to_class: Dict[str, Class],
+    property_iri_to_attribute: Dict[str, Property],
+    property_iri_to_association: Dict[str, BinaryAssociation],
+    assoc_source_end: Dict[int, Property],
+    warnings: List[KGConversionWarning],
+) -> Set[str]:
+    """Lift OWL property characteristics + ``owl:Restriction`` payloads into
+    BUML ``Multiplicity`` on attributes and association target ends.
+
+    Returns the set of property IRIs whose multiplicity was set explicitly
+    (so ABox-driven heuristics in Step 5 can avoid overriding them).
+    """
+    explicit: Set[str] = set()
+
+    # 1. Property characteristics on KGProperty.metadata
+    #    Functional → max=1.
+    for node in kg.nodes:
+        if not isinstance(node, KGProperty):
+            continue
+        chars = node.metadata.get("characteristics") if node.metadata else None
+        if not chars or "Functional" not in chars:
+            continue
+        prop_iri = node.iri or node.id
+        attr = property_iri_to_attribute.get(prop_iri)
+        if attr is not None:
+            new_min = attr.multiplicity.min if attr.multiplicity is not None else 0
+            attr.multiplicity = Multiplicity(min(new_min, 1), 1)
+            attr.is_optional = attr.multiplicity.min == 0
+            explicit.add(prop_iri)
+            continue
+        assoc = property_iri_to_association.get(prop_iri)
+        if assoc is not None:
+            target_end = _target_end_of(assoc, assoc_source_end)
+            if target_end is not None:
+                tmin = target_end.multiplicity.min if target_end.multiplicity is not None else 0
+                target_end.multiplicity = Multiplicity(min(tmin, 1), 1)
+                explicit.add(prop_iri)
+
+    # 2. owl:Restriction payloads on KGBlank nodes attached via rdfs:subClassOf
+    #    or owl:equivalentClass to an owner KGClass.
+    #    Group restrictions by (owner_class_id, on_property_iri).
+    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for edge in kg.edges:
+        pred = normalize_predicate(edge.iri)
+        if pred not in _OWL_RESTRICTION_LINK_PREDICATES:
+            continue
+        if not isinstance(edge.target, KGBlank):
+            continue
+        if edge.target.metadata.get("kind") != "restriction":
+            continue
+        owner_cls = id_to_class.get(edge.source.id)
+        if owner_cls is None:
+            continue
+        on_prop = edge.target.metadata.get("on_property")
+        if not on_prop:
+            continue
+        grouped[(edge.source.id, on_prop)].append(edge.target.metadata)
+
+    for (owner_id, prop_iri), payloads in grouped.items():
+        attr = property_iri_to_attribute.get(prop_iri)
+        assoc = property_iri_to_association.get(prop_iri)
+        target_end: Optional[Property] = (
+            _target_end_of(assoc, assoc_source_end) if assoc is not None else None
+        )
+        if attr is None and target_end is None:
+            # Restriction on a property we didn't lift — skip silently; the
+            # blank metadata is preserved on the KG and surfaced by preflight.
+            continue
+
+        # Combine OWL restriction values across all payloads for this
+        # (owner_class, property) pair. Multiple ``minCardinality`` axioms
+        # combine via max() (most restrictive lower bound); multiple
+        # ``maxCardinality`` axioms combine via min(). Default (BUML)
+        # multiplicity is *not* used as a constraint — an explicit OWL
+        # restriction overrides the default.
+        explicit_min: Optional[int] = None
+        explicit_max: Optional[int] = None
+        owner_name = id_to_class[owner_id].name if owner_id in id_to_class else "?"
+        for payload in payloads:
+            kind = payload.get("restriction_type")
+            value = payload.get("value")
+            if kind in ("cardinality", "qualifiedCardinality") and isinstance(value, int):
+                explicit_min = value if explicit_min is None else max(explicit_min, value)
+                explicit_max = value if explicit_max is None else min(explicit_max, value)
+            elif kind in ("minCardinality", "minQualifiedCardinality") and isinstance(value, int):
+                explicit_min = value if explicit_min is None else max(explicit_min, value)
+            elif kind in ("maxCardinality", "maxQualifiedCardinality") and isinstance(value, int):
+                explicit_max = value if explicit_max is None else min(explicit_max, value)
+            elif kind == "someValuesFrom":
+                explicit_min = 1 if explicit_min is None else max(explicit_min, 1)
+            else:
+                add_warning(
+                    warnings,
+                    "ADV_RESTRICTION_UNSUPPORTED",
+                    f"Restriction '{kind}' on property '{prop_iri}' (class '{owner_name}') has no clean BUML mapping; "
+                    f"left unmodelled.",
+                )
+
+        if explicit_min is None and explicit_max is None:
+            continue  # only unsupported payloads → already warned
+
+        current = attr.multiplicity if attr is not None else target_end.multiplicity
+        cur_min = current.min if current is not None else 0
+        cur_max = current.max if current is not None else UNLIMITED_MAX_MULTIPLICITY
+        new_min = explicit_min if explicit_min is not None else cur_min
+        new_max = explicit_max if explicit_max is not None else cur_max
+        if new_max != UNLIMITED_MAX_MULTIPLICITY and new_min > new_max:
+            add_warning(
+                warnings,
+                "ADV_RESTRICTION_UNSUPPORTED",
+                f"Restrictions on property '{prop_iri}' (class '{owner_name}') yield contradictory multiplicity "
+                f"({new_min}..{new_max}); ignored.",
+            )
+            continue
+        new_mult = Multiplicity(new_min, new_max)
+        if attr is not None:
+            attr.multiplicity = new_mult
+            attr.is_optional = new_min == 0
+        elif target_end is not None:
+            target_end.multiplicity = new_mult
+        explicit.add(prop_iri)
+
+    return explicit
+
+
+def _target_end_of(
+    assoc: Optional[BinaryAssociation],
+    assoc_source_end: Dict[int, Property],
+) -> Optional[Property]:
+    """Return the *target* end of a binary association (the end opposite the
+    recorded source end). Returns None if either input is missing."""
+    if assoc is None:
+        return None
+    src_end = assoc_source_end.get(id(assoc))
+    if src_end is None:
+        return None
+    for end in assoc.ends:
+        if end is not src_end:
+            return end
+    return None
 
 
 __all__ = ["ClassConversionResult", "kg_to_class_diagram"]

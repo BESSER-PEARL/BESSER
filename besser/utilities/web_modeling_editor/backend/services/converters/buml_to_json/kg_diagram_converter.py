@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from dataclasses import asdict, is_dataclass
+
 from besser.BUML.metamodel.kg import (
+    KGAxiom,
     KGBlank,
     KGClass,
     KGEdge,
@@ -33,9 +36,17 @@ _CLASS_TO_NODE_TYPE = {
 
 
 def kg_to_json(kg: KnowledgeGraph) -> Dict[str, Any]:
-    """Serialize a ``KnowledgeGraph`` to the KG diagram JSON shape."""
+    """Serialize a ``KnowledgeGraph`` to the KG diagram JSON shape.
+
+    The output preserves :class:`KGNode.metadata`, :class:`KGEdge.metadata`,
+    and :class:`KnowledgeGraph.axioms` so the OWL-imported information
+    survives a JSON round-trip — without that, the preflight detectors
+    (PUNNING, RESTRICTION_UNATTACHED, EQUIVALENT_CLASSES, INVERSE_PROPERTY,
+    …) would silently miss issues that depend on those fields.
+    """
     nodes = [_node_to_dict(n) for n in _sorted_nodes(kg.nodes)]
     edges = [_edge_to_dict(e) for e in _sorted_edges(kg.edges)]
+    axioms = [_axiom_to_dict(a) for a in kg.axioms]
     return {
         "title": kg.name,
         "model": {
@@ -43,6 +54,7 @@ def kg_to_json(kg: KnowledgeGraph) -> Dict[str, Any]:
             "version": "1.0.0",
             "nodes": nodes,
             "edges": edges,
+            "axioms": axioms,
         },
     }
 
@@ -120,6 +132,8 @@ def _node_to_dict(n: KGNode) -> Dict[str, Any]:
     else:
         if n.iri:
             d["iri"] = n.iri
+    if n.metadata:
+        d["metadata"] = dict(n.metadata)
     return d
 
 
@@ -133,7 +147,17 @@ def _edge_to_dict(e: KGEdge) -> Dict[str, Any]:
         d["label"] = e.label
     if e.iri:
         d["iri"] = e.iri
+    if e.metadata:
+        d["metadata"] = dict(e.metadata)
     return d
+
+
+def _axiom_to_dict(a: KGAxiom) -> Dict[str, Any]:
+    """Serialise an axiom dataclass with its concrete subclass name."""
+    payload: Dict[str, Any] = {"kind": type(a).__name__}
+    if is_dataclass(a):
+        payload.update(asdict(a))
+    return payload
 
 
 def _sorted_nodes(nodes):

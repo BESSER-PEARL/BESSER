@@ -1,4 +1,4 @@
-from typing import Dict, Any, Literal, Optional
+from typing import Dict, Any, List, Literal, Optional
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -23,6 +23,13 @@ class DiagramInput(BaseModel):
     config: Optional[dict] = None
     referenceDiagramData: Optional[Dict[str, Any]] = None
     references: Optional[Dict[str, str]] = None  # Per-diagram cross-references by ID (e.g. {"ClassDiagram": "uuid-..."})
+    # KG → BUML preflight integration. ``resolutions`` lets the frontend
+    # send back user choices for issues surfaced by
+    # ``/analyze-kg-for-buml-conversion``; ``kgSignature`` is the value
+    # echoed from the analyze response so the backend can detect a
+    # stale resolution payload (KG mutated between analyze & convert).
+    resolutions: Optional[List[Dict[str, Any]]] = None
+    kgSignature: Optional[str] = None
 
 
 class FeedbackSubmission(BaseModel):

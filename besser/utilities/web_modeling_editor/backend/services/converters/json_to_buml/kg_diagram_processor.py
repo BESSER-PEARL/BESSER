@@ -9,6 +9,13 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from besser.BUML.metamodel.kg import (
+    DisjointClassesAxiom,
+    DisjointUnionAxiom,
+    EquivalentClassesAxiom,
+    HasKeyAxiom,
+    ImportAxiom,
+    InversePropertiesAxiom,
+    KGAxiom,
     KGBlank,
     KGClass,
     KGEdge,
@@ -16,8 +23,22 @@ from besser.BUML.metamodel.kg import (
     KGLiteral,
     KGProperty,
     KnowledgeGraph,
+    PropertyChainAxiom,
+    SubPropertyOfAxiom,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+
+_AXIOM_KIND_TO_CLASS = {
+    "EquivalentClassesAxiom": EquivalentClassesAxiom,
+    "DisjointClassesAxiom": DisjointClassesAxiom,
+    "DisjointUnionAxiom": DisjointUnionAxiom,
+    "SubPropertyOfAxiom": SubPropertyOfAxiom,
+    "InversePropertiesAxiom": InversePropertiesAxiom,
+    "PropertyChainAxiom": PropertyChainAxiom,
+    "HasKeyAxiom": HasKeyAxiom,
+    "ImportAxiom": ImportAxiom,
+}
 
 
 _NODE_TYPE_TO_CLASS = {
@@ -52,7 +73,26 @@ def process_kg_diagram(json_data: Dict[str, Any]) -> KnowledgeGraph:
         edge = _build_edge(raw_edge, nodes_by_id)
         kg.add_edge(edge)
 
+    for raw_axiom in model.get("axioms", []) or []:
+        axiom = _build_axiom(raw_axiom)
+        if axiom is not None:
+            kg.add_axiom(axiom)
+
     return kg
+
+
+def _build_axiom(raw: Dict[str, Any]):
+    kind = raw.get("kind")
+    if not kind:
+        return None
+    cls = _AXIOM_KIND_TO_CLASS.get(kind)
+    if cls is None:
+        return None
+    payload = {k: v for k, v in raw.items() if k != "kind"}
+    try:
+        return cls(**payload)
+    except TypeError:
+        return None
 
 
 def _build_node(raw: Dict[str, Any]):
@@ -62,13 +102,14 @@ def _build_node(raw: Dict[str, Any]):
         raise ConversionError("KG node is missing 'id'.")
     label = raw.get("label", "") or ""
     iri = raw.get("iri")
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else None
 
     if node_type == "literal":
         value = raw.get("value")
         if value is None:
             value = label or ""
         datatype = raw.get("datatype")
-        return KGLiteral(id=node_id, value=value, datatype=datatype, label=label)
+        return KGLiteral(id=node_id, value=value, datatype=datatype, label=label, metadata=metadata)
 
     cls = _NODE_TYPE_TO_CLASS.get(node_type)
     if cls is None:
@@ -76,7 +117,7 @@ def _build_node(raw: Dict[str, Any]):
             f"Unknown KG nodeType '{raw.get('nodeType')!r}' (expected one of "
             "'class', 'individual', 'property', 'literal', 'blank')."
         )
-    return cls(id=node_id, label=label, iri=iri)
+    return cls(id=node_id, label=label, iri=iri, metadata=metadata)
 
 
 def _build_edge(raw: Dict[str, Any], nodes_by_id: Dict[str, Any]) -> KGEdge:
@@ -89,12 +130,14 @@ def _build_edge(raw: Dict[str, Any], nodes_by_id: Dict[str, Any]) -> KGEdge:
         raise ConversionError(f"KG edge {edge_id!r} references unknown source node {source_id!r}.")
     if target_id not in nodes_by_id:
         raise ConversionError(f"KG edge {edge_id!r} references unknown target node {target_id!r}.")
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else None
     return KGEdge(
         id=edge_id,
         source=nodes_by_id[source_id],
         target=nodes_by_id[target_id],
         label=raw.get("label", "") or "",
         iri=raw.get("iri"),
+        metadata=metadata,
     )
 
 

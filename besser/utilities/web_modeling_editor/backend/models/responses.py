@@ -44,3 +44,37 @@ class FeedbackResponse(BaseModel):
     """Response for feedback submission."""
     message: str
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class KGResolutionOptionModel(BaseModel):
+    """One resolution choice the frontend can present to the user."""
+    key: str
+    label: str
+    parametersSchema: Dict[str, str] = Field(default_factory=dict)
+
+
+class KGIssueModel(BaseModel):
+    """A preflight finding emitted by ``/analyze-kg-for-buml-conversion``."""
+    id: str
+    code: str
+    severity: str  # "blocking" | "advisory"
+    message: str
+    affectedNodeIds: List[str] = []
+    affectedEdgeIds: List[str] = []
+    context: Dict[str, Any] = Field(default_factory=dict)
+    suggestedResolutions: List[KGResolutionOptionModel] = []
+
+
+class KGPreflightResponse(BaseModel):
+    """Response for ``POST /besser_api/analyze-kg-for-buml-conversion``."""
+    kgSignature: str
+    blockingCount: int
+    advisoryCount: int
+    issues: List[KGIssueModel] = []
+
+
+class KGResolutionInputModel(BaseModel):
+    """A resolution submitted by the frontend back to ``/kg-to-class-diagram``."""
+    issueId: str
+    choice: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)

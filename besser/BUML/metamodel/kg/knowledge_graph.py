@@ -14,9 +14,10 @@ are not Python-identifier-safe, KGNode inherits from ``Element`` rather than
 """
 
 from abc import ABC
-from typing import Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from besser.BUML.metamodel.structural import Element, Model
+from besser.BUML.metamodel.kg.axioms import KGAxiom
 
 
 __all__ = [
@@ -38,13 +39,25 @@ class KGNode(Element, ABC):
         id: Stable identifier unique within the graph.
         label: Human-readable label shown in the editor.
         iri: Optional IRI (populated for OWL-sourced nodes).
+        metadata: Free-form dict of structured annotations attached during
+            import (e.g., ``{"kind": "restriction", "on_property": iri,
+            "restriction_type": "minCardinality", "value": 1}`` on a
+            ``KGBlank`` representing an ``owl:Restriction``). Defaults to an
+            empty dict; never participates in identity / hashing.
     """
 
-    def __init__(self, id: str, label: str = "", iri: Optional[str] = None):
+    def __init__(
+        self,
+        id: str,
+        label: str = "",
+        iri: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__()
         self.id = id
         self.label = label
         self.iri = iri
+        self.metadata = metadata
 
     @property
     def id(self) -> str:
@@ -71,6 +84,19 @@ class KGNode(Element, ABC):
     @iri.setter
     def iri(self, value: Optional[str]):
         self.__iri = value
+
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return self.__metadata
+
+    @metadata.setter
+    def metadata(self, value: Optional[Dict[str, Any]]):
+        if value is None:
+            self.__metadata = {}
+            return
+        if not isinstance(value, dict):
+            raise ValueError("KGNode.metadata must be a dict or None.")
+        self.__metadata = value
 
     def __hash__(self):
         return hash((type(self).__name__, self.id))
@@ -107,10 +133,18 @@ class KGLiteral(KGNode):
         value: Lexical form of the literal.
         datatype: Optional datatype IRI (e.g. ``xsd:integer``).
         label: Optional display label; defaults to ``value`` when omitted.
+        metadata: Free-form annotations dict (forwarded to :class:`KGNode`).
     """
 
-    def __init__(self, id: str, value: str, datatype: Optional[str] = None, label: str = ""):
-        super().__init__(id, label=label if label else str(value), iri=None)
+    def __init__(
+        self,
+        id: str,
+        value: str,
+        datatype: Optional[str] = None,
+        label: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(id, label=label if label else str(value), iri=None, metadata=metadata)
         self.value = value
         self.datatype = datatype
 
@@ -142,15 +176,27 @@ class KGEdge(Element):
         target: Target node.
         label: Optional display label (often the predicate's local name).
         iri: Optional predicate IRI.
+        metadata: Free-form dict of structured annotations attached during
+            import. Defaults to an empty dict; never participates in identity
+            / hashing.
     """
 
-    def __init__(self, id: str, source: KGNode, target: KGNode, label: str = "", iri: Optional[str] = None):
+    def __init__(
+        self,
+        id: str,
+        source: KGNode,
+        target: KGNode,
+        label: str = "",
+        iri: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__()
         self.id = id
         self.source = source
         self.target = target
         self.label = label
         self.iri = iri
+        self.metadata = metadata
 
     @property
     def id(self) -> str:
@@ -198,6 +244,19 @@ class KGEdge(Element):
     def iri(self, value: Optional[str]):
         self.__iri = value
 
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return self.__metadata
+
+    @metadata.setter
+    def metadata(self, value: Optional[Dict[str, Any]]):
+        if value is None:
+            self.__metadata = {}
+            return
+        if not isinstance(value, dict):
+            raise ValueError("KGEdge.metadata must be a dict or None.")
+        self.__metadata = value
+
     def __hash__(self):
         return hash(("KGEdge", self.id))
 
@@ -215,13 +274,22 @@ class KnowledgeGraph(Model):
         name: Python-identifier-safe name for the model (``NamedElement.name`` rules apply).
         nodes: Initial set of nodes.
         edges: Initial set of edges; their source/target must be in ``nodes``.
+        axioms: Initial list of decoded OWL axioms (equivalentClass, disjoint,
+            inverseOf, subPropertyOf, …) that don't naturally belong on a single
+            node or edge. Defaults to an empty list.
     """
 
-    def __init__(self, name: str = "knowledge_graph", nodes: Optional[Set[KGNode]] = None,
-                 edges: Optional[Set[KGEdge]] = None):
+    def __init__(
+        self,
+        name: str = "knowledge_graph",
+        nodes: Optional[Set[KGNode]] = None,
+        edges: Optional[Set[KGEdge]] = None,
+        axioms: Optional[List[KGAxiom]] = None,
+    ):
         super().__init__(name)
         self.nodes = nodes if nodes is not None else set()
         self.edges = edges if edges is not None else set()
+        self.axioms = axioms
 
     @property
     def nodes(self) -> Set[KGNode]:
@@ -272,6 +340,27 @@ class KnowledgeGraph(Model):
                 f"(source={edge.source.id!r}, target={edge.target.id!r})."
             )
         self.__edges.add(edge)
+
+    @property
+    def axioms(self) -> List[KGAxiom]:
+        return self.__axioms
+
+    @axioms.setter
+    def axioms(self, value: Optional[List[KGAxiom]]):
+        if value is None:
+            self.__axioms = []
+            return
+        if not isinstance(value, list):
+            raise ValueError("KnowledgeGraph.axioms must be a list or None.")
+        for a in value:
+            if not isinstance(a, KGAxiom):
+                raise ValueError("KnowledgeGraph.axioms must contain only KGAxiom instances.")
+        self.__axioms = list(value)
+
+    def add_axiom(self, axiom: KGAxiom) -> None:
+        if not isinstance(axiom, KGAxiom):
+            raise ValueError("add_axiom expects a KGAxiom instance.")
+        self.__axioms.append(axiom)
 
     def get_node(self, node_id: str) -> Optional[KGNode]:
         for n in self.__nodes:

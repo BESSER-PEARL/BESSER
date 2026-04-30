@@ -1,0 +1,98 @@
+@prefix : <http://besser.example.org/complex/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# A small but intentionally messy ontology used by the end-to-end smoke
+# test for the KG → BUML preflight + resolutions flow. It triggers
+# multiple distinct preflight issues:
+#
+#   - PROPERTY_NO_DOMAIN          (:likes has no rdfs:domain but ABox usage)
+#   - MULTIPLE_DOMAINS            (:address has unrelated domains)
+#   - RESTRICTION_UNATTACHED      (free-floating owl:Restriction)
+#   - RESTRICTION_UNSUPPORTED     (owl:hasValue restriction)
+#   - PROPERTY_NO_RANGE           (:nickname has no rdfs:range)
+#   - PUNNING                     (:Eagle is class + named individual)
+#   - EQUIVALENT_CLASSES          (Person ≡ Human)
+#   - INVERSE_PROPERTY            (hasParent inverse hasChild)
+#   - BLANK_NODE_INSTANCE         (a blank node typed as a Person)
+#   - MULTIVALUED_LITERAL         (alice has two :name literals)
+
+<http://besser.example.org/complex>
+  a owl:Ontology ;
+  rdfs:comment "Fixture used by the KG → BUML smoke test."@en .
+
+# --- Classes -------------------------------------------------------------
+:Person a owl:Class ;
+  rdfs:comment "Any natural person."@en .
+:Human  a owl:Class .
+:Person owl:equivalentClass :Human .
+
+:Pet      a owl:Class .
+:Building a owl:Class .
+
+# OWL2 punning: Eagle is both a class and a named individual.
+:Eagle a owl:Class , owl:NamedIndividual .
+
+# --- Properties ----------------------------------------------------------
+:hasParent a owl:ObjectProperty ;
+  rdfs:domain :Person ;
+  rdfs:range  :Person ;
+  owl:inverseOf :hasChild .
+
+:hasChild a owl:ObjectProperty ;
+  rdfs:domain :Person ;
+  rdfs:range  :Person .
+
+# Property without a domain that's used in the ABox → triggers PROPERTY_NO_DOMAIN.
+:likes a owl:ObjectProperty ;
+  rdfs:range :Pet .
+
+# Property with two unrelated domains → triggers MULTIPLE_DOMAINS.
+:address a owl:DatatypeProperty ;
+  rdfs:domain :Person , :Building ;
+  rdfs:range  xsd:string .
+
+# Property with no range → triggers PROPERTY_NO_RANGE.
+:nickname a owl:DatatypeProperty ;
+  rdfs:domain :Person .
+
+# Property used to demonstrate cardinality restriction lifting.
+:name a owl:DatatypeProperty ;
+  rdfs:domain :Person ;
+  rdfs:range  xsd:string .
+
+# --- Restrictions --------------------------------------------------------
+# A *valid* min-cardinality restriction (lifted into BUML multiplicity).
+:Person rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty :name ;
+  owl:minCardinality "1"^^xsd:nonNegativeInteger
+] .
+
+# A free-floating restriction → triggers RESTRICTION_UNATTACHED.
+[] a owl:Restriction ;
+   owl:onProperty :nickname ;
+   owl:cardinality "1"^^xsd:nonNegativeInteger .
+
+# An attached but unsupported restriction → triggers RESTRICTION_UNSUPPORTED.
+:Person rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty :address ;
+  owl:hasValue   "redacted"
+] .
+
+# --- ABox ---------------------------------------------------------------
+:alice a :Person ;
+  :name    "Alice" , "Alicia" ;          # MULTIVALUED_LITERAL
+  :likes   :rex .                         # consumes :likes (no domain)
+
+:bob   a :Person ;
+  :name  "Bob" .
+
+:rex   a :Pet ;
+  :name "Rex".
+
+# Blank-node instance → triggers BLANK_NODE_INSTANCE.
+_:anon1 a :Person .

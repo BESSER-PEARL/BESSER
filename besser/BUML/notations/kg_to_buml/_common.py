@@ -18,6 +18,25 @@ RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain"
 RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range"
 RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 
+# OWL/RDF/RDFS/XSD framework namespaces. IRIs in these namespaces are
+# vocabulary terms (``owl:Class``, ``owl:DatatypeProperty``, ``rdfs:Class``,
+# …), not user concepts. They appear as objects of ``rdf:type`` triples in
+# every well-formed ontology, but they should NEVER produce user-facing
+# BUML classes when the converter synthesises classes from references.
+_META_VOCAB_NAMESPACES = (
+    "http://www.w3.org/2002/07/owl#",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "http://www.w3.org/2000/01/rdf-schema#",
+    "http://www.w3.org/2001/XMLSchema#",
+)
+
+
+def is_meta_vocab(iri: Optional[str]) -> bool:
+    """True when ``iri`` is in OWL / RDF / RDFS / XSD framework vocabulary."""
+    if not iri:
+        return False
+    return any(iri.startswith(ns) for ns in _META_VOCAB_NAMESPACES)
+
 # Compact forms occasionally appear when KGs are hand-edited in the web
 # editor; treat both forms as equivalent.
 _PREDICATE_ALIASES: Dict[str, str] = {
@@ -149,6 +168,7 @@ __all__ = [
     "RDFS_DOMAIN",
     "RDFS_RANGE",
     "RDFS_LABEL",
+    "is_meta_vocab",
     "normalize_predicate",
     "local_name",
     "sanitize_python_identifier",

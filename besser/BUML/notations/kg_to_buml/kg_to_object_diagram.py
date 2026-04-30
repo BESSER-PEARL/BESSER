@@ -73,8 +73,22 @@ def kg_to_object_diagram(
     class_result: Optional[ClassConversionResult] = None,
     *,
     model_name: Optional[str] = None,
+    resolutions: Optional[List["KGResolution"]] = None,
 ) -> ObjectConversionResult:
-    """Convert a :class:`KnowledgeGraph` into an :class:`ObjectModel`."""
+    """Convert a :class:`KnowledgeGraph` into an :class:`ObjectModel`.
+
+    When ``resolutions`` is provided, the same list is forwarded to
+    :func:`kg_to_class_diagram` so the class diagram and object diagram
+    derive from the same resolved KG. To keep them perfectly in sync, the
+    caller may compute the class diagram once with resolutions and pass it
+    via ``class_result``.
+    """
+    if resolutions and class_result is None:
+        # Forward the resolutions to the class diagram pass and use the
+        # same resolved KG for the object diagram pass.
+        from besser.BUML.notations.kg_to_buml.resolutions import apply_resolutions
+        kg = apply_resolutions(kg, resolutions)
+        class_result = kg_to_class_diagram(kg)
     if class_result is None:
         class_result = kg_to_class_diagram(kg)
 

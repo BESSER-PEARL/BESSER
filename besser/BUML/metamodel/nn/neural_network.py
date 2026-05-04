@@ -3,9 +3,9 @@ This module defines the neural network metamodel.
 """
 
 from __future__ import annotations
+import keyword
 from typing import List, Self, Union
 from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
-
 
 
 class TensorOp(NamedElement):
@@ -2064,10 +2064,16 @@ class Dataset(NamedElement):
             labels = set()
         super().__init__(name)
         self.path_data: str = path_data
+        # Initialize backing fields unconditionally so the getters never raise
+        # AttributeError on a Dataset constructed without these optional values.
+        # The setters validate against allowlists and so cannot accept ``None``;
+        # assign to the mangled attribute directly to bypass setter validation.
+        self.__task_type: str = None
+        self.__input_format: str = None
         if task_type is not None:
-            self.task_type: str = task_type
+            self.task_type = task_type
         if input_format is not None:
-            self.input_format: str = input_format
+            self.input_format = input_format
         self.image: Image = image
         self.labels: set[Label] = labels
 
@@ -2550,3 +2556,268 @@ class NN(BehaviorImplementation):
             f'NN({self.name}, {self.configuration}, {self.modules}, '
             f'{self.train_data}, {self.test_data})'
             )
+
+    def validate(self, raise_exception: bool = True, _visited: set = None) -> dict:
+        """
+        Validate the neural network model.
+
+        Checks performed:
+            * Module names are unique within this NN scope.
+            * Layer ``name_module_input`` references resolve to a module
+              defined in the same NN.
+            * TensorOp ``layers_of_tensors`` string entries resolve to a
+              module defined in the same NN.
+            * The first module in the sequence does not declare an input
+              dependency (it is the entry point).
+            * Sub-NNs are acyclic (no NN directly or transitively
+              contains itself).
+            * Each sub-NN is itself valid (recursive validation).
+            * Warnings are emitted for empty NNs and for missing
+              configuration on a top-level NN that has training data.
+
+        Args:
+            raise_exception: If True, raises ``ValueError`` when errors
+                are found. Warnings never raise.
+            _visited: Internal — tracks NN instances already validated to
+                stop infinite recursion on cyclic sub-NN graphs.
+
+        Returns:
+            dict: ``{"success": bool, "errors": list[str], "warnings": list[str]}``
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        if _visited is None:
+            _visited = set()
+        if id(self) in _visited:
+            return {"success": True, "errors": errors, "warnings": warnings}
+        _visited.add(id(self))
+
+        self._validate_module_uniqueness(errors)
+        self._validate_module_input_references(errors)
+        self._validate_tensor_op_references(errors)
+        self._validate_first_module_entry_point(errors)
+        self._validate_numerical_bounds(errors)
+        self._validate_module_names(errors, warnings)
+        cycle_detected = self._validate_sub_nn_acyclic(errors)
+        if not cycle_detected:
+            self._validate_sub_nns_recursive(errors, warnings, _visited)
+        self._collect_nn_warnings(warnings)
+        self._validate_dataset_consistency(warnings)
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _module_names(self) -> set:
+        """Names of every module declared in this NN (layers, tensor_ops, sub_nns)."""
+        return {m.name for m in self.modules}
+
+    def _validate_module_uniqueness(self, errors: list):
+        seen: dict = {}
+        for module in self.modules:
+            name = module.name
+            if name in seen:
+                errors.append(
+                    f"NN '{self.name}' has duplicate module name '{name}' "
+                    f"(declared twice)."
+                )
+            seen[name] = module
+
+    def _validate_module_input_references(self, errors: list):
+        names = self._module_names()
+        for layer in self.layers:
+            ref = layer.name_module_input
+            if ref and ref not in names:
+                errors.append(
+                    f"NN '{self.name}': layer '{layer.name}' references input "
+                    f"module '{ref}' which is not defined in this NN."
+                )
+
+    def _validate_tensor_op_references(self, errors: list):
+        names = self._module_names()
+        for tensor_op in self.tensor_ops:
+            entries = tensor_op.layers_of_tensors or []
+            for entry in entries:
+                if isinstance(entry, str) and entry not in names:
+                    errors.append(
+                        f"NN '{self.name}': tensorOp '{tensor_op.name}' references "
+                        f"input module '{entry}' which is not defined in this NN."
+                    )
+
+    def _validate_first_module_entry_point(self, errors: list):
+        if not self.modules:
+            return
+        first = self.modules[0]
+        # Only Layer carries ``name_module_input``; NN and TensorOp first
+        # modules can't declare an input dependency in the first place, so
+        # the entry-point constraint is vacuously satisfied for them.
+        if not isinstance(first, Layer):
+            return
+        if first.name_module_input:
+            errors.append(
+                f"NN '{self.name}': first module '{first.name}' must not declare "
+                f"a 'name_module_input' (it is the entry point)."
+            )
+
+    def _validate_sub_nn_acyclic(self, errors: list) -> bool:
+        """Detect cycles in the sub-NN graph rooted at this NN. Returns True if a cycle was found."""
+        def visit(nn: NN, stack: set) -> bool:
+            if id(nn) in stack:
+                return True
+            stack.add(id(nn))
+            for child in nn.sub_nns:
+                if visit(child, stack):
+                    return True
+            stack.remove(id(nn))
+            return False
+
+        if visit(self, set()):
+            errors.append(
+                f"NN '{self.name}': sub-NN graph contains a cycle (an NN "
+                f"directly or transitively contains itself)."
+            )
+            return True
+        return False
+
+    def _validate_sub_nns_recursive(self, errors: list, warnings: list, _visited: set):
+        for sub in self.sub_nns:
+            sub_result = sub.validate(raise_exception=False, _visited=_visited)
+            errors.extend(sub_result["errors"])
+            warnings.extend(sub_result["warnings"])
+
+    def _collect_nn_warnings(self, warnings: list):
+        if not self.modules:
+            warnings.append(f"NN '{self.name}' has no modules.")
+        if self.train_data is not None and self.configuration is None:
+            warnings.append(
+                f"NN '{self.name}' has training data but no configuration."
+            )
+
+    def _validate_dataset_consistency(self, warnings: list):
+        """Surface mismatches between training and test datasets that usually indicate user error."""
+        train, test = self.train_data, self.test_data
+        if test is not None and train is None:
+            warnings.append(
+                f"NN '{self.name}' has a test dataset but no training dataset."
+            )
+        if train is None or test is None:
+            return
+        train_fmt = train.input_format
+        test_fmt = test.input_format
+        if train_fmt and test_fmt and train_fmt != test_fmt:
+            warnings.append(
+                f"NN '{self.name}': train input_format '{train_fmt}' differs "
+                f"from test input_format '{test_fmt}'."
+            )
+        if train.image is not None and test.image is not None:
+            if train.image.shape != test.image.shape:
+                warnings.append(
+                    f"NN '{self.name}': train image shape {train.image.shape} "
+                    f"differs from test image shape {test.image.shape}."
+                )
+
+    def _validate_module_names(self, errors: list, warnings: list):
+        """Reject names that aren't valid Python identifiers; warn (matching
+        ``NamedElement.name``'s warn-not-error stance) on Python keywords."""
+        def _check(name, label):
+            if not name.isidentifier():
+                errors.append(
+                    f"{label} name '{name}' is not a valid Python identifier."
+                )
+            elif keyword.iskeyword(name):
+                warnings.append(
+                    f"{label} name '{name}' is a Python reserved keyword "
+                    f"and may cause issues in generated code."
+                )
+
+        _check(self.name, "NN")
+        for module in self.modules:
+            _check(module.name, type(module).__name__)
+
+    def _validate_numerical_bounds(self, errors: list):
+        """Reject non-positive sizes/rates that would crash the trainer at runtime."""
+        cfg = self.configuration
+        if cfg is not None:
+            if cfg.batch_size <= 0:
+                errors.append(
+                    f"NN '{self.name}': configuration batch_size must be > 0, "
+                    f"got {cfg.batch_size}."
+                )
+            if cfg.epochs <= 0:
+                errors.append(
+                    f"NN '{self.name}': configuration epochs must be > 0, "
+                    f"got {cfg.epochs}."
+                )
+            if cfg.learning_rate <= 0:
+                errors.append(
+                    f"NN '{self.name}': configuration learning_rate must be > 0, "
+                    f"got {cfg.learning_rate}."
+                )
+            if cfg.weight_decay < 0:
+                errors.append(
+                    f"NN '{self.name}': configuration weight_decay must be >= 0, "
+                    f"got {cfg.weight_decay}."
+                )
+
+        for layer in self.layers:
+            cls_name = type(layer).__name__
+            label = f"NN '{self.name}': {cls_name} '{layer.name}'"
+
+            if isinstance(layer, DropoutLayer):
+                if not 0 <= layer.rate < 1:
+                    errors.append(f"{label} rate must be in [0, 1), got {layer.rate}.")
+
+            if isinstance(layer, RNN):
+                if layer.hidden_size <= 0:
+                    errors.append(f"{label} hidden_size must be > 0, got {layer.hidden_size}.")
+                if not 0 <= layer.dropout < 1:
+                    errors.append(f"{label} dropout must be in [0, 1), got {layer.dropout}.")
+
+            if isinstance(layer, LinearLayer):
+                if layer.out_features <= 0:
+                    errors.append(f"{label} out_features must be > 0, got {layer.out_features}.")
+                if layer.in_features is not None and layer.in_features <= 0:
+                    errors.append(f"{label} in_features must be > 0, got {layer.in_features}.")
+
+            if isinstance(layer, ConvolutionalLayer):
+                if layer.out_channels <= 0:
+                    errors.append(f"{label} out_channels must be > 0, got {layer.out_channels}.")
+                if layer.in_channels is not None and layer.in_channels <= 0:
+                    errors.append(f"{label} in_channels must be > 0, got {layer.in_channels}.")
+                if any(d <= 0 for d in (layer.kernel_dim or [])):
+                    errors.append(f"{label} kernel_dim entries must all be > 0, got {layer.kernel_dim}.")
+                if layer.stride_dim is not None and any(d <= 0 for d in layer.stride_dim):
+                    errors.append(f"{label} stride_dim entries must all be > 0, got {layer.stride_dim}.")
+
+            if isinstance(layer, PoolingLayer):
+                if layer.kernel_dim is not None and any(d <= 0 for d in layer.kernel_dim):
+                    errors.append(f"{label} kernel_dim entries must all be > 0, got {layer.kernel_dim}.")
+                if layer.stride_dim is not None and any(d <= 0 for d in layer.stride_dim):
+                    errors.append(f"{label} stride_dim entries must all be > 0, got {layer.stride_dim}.")
+
+            if isinstance(layer, BatchNormLayer):
+                if layer.num_features <= 0:
+                    errors.append(f"{label} num_features must be > 0, got {layer.num_features}.")
+
+            if isinstance(layer, LayerNormLayer):
+                if layer.normalized_shape is not None and any(d <= 0 for d in layer.normalized_shape):
+                    errors.append(
+                        f"{label} normalized_shape entries must all be > 0, "
+                        f"got {layer.normalized_shape}."
+                    )
+
+            if isinstance(layer, EmbeddingLayer):
+                if layer.num_embeddings <= 0:
+                    errors.append(f"{label} num_embeddings must be > 0, got {layer.num_embeddings}.")
+                if layer.embedding_dim <= 0:
+                    errors.append(f"{label} embedding_dim must be > 0, got {layer.embedding_dim}.")
+
+        for ds_label, ds in (("train_data", self.train_data), ("test_data", self.test_data)):
+            if ds is not None and ds.image is not None:
+                if any(d <= 0 for d in ds.image.shape):
+                    errors.append(
+                        f"NN '{self.name}': {ds_label} image shape entries must all be > 0, "
+                        f"got {ds.image.shape}."
+                    )

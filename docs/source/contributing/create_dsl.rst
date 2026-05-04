@@ -39,7 +39,7 @@ that repository, then the submodule pointer updated in BESSER.
 
   - **Enable an existing diagram type** (already implemented in the editor package): wire it into the webapp project
     model, sidebar, and import/export flows. See
-    ``packages/webapp2/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md`` in the WME repo.
+    ``packages/webapp/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md`` in the WME repo.
   - **Add a brand-new diagram/DSL**: extend the editor package first (diagram type, element types, renderers, palette
     previews, translations, property editors), then wire it into the webapp.
 * Frontend (WME repo): update the editor package and webapp to expose the new diagram type and UI affordances. Follow

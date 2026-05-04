@@ -40,6 +40,7 @@ from besser.BUML.metamodel.platform_customization import (
     DiagramCustomization,
     FontWeight,
     LabelPosition,
+    LineRouting,
     LineStyle,
     NodeShape,
     PlatformCustomizationModel,
@@ -153,6 +154,7 @@ def _parse_class_customization(data: Dict[str, Any]) -> ClassCustomization:
         edge_color=_str_or_none(data.get("edgeColor")),
         line_width=_int_in_range_or_none(data.get("lineWidth"), 1, 6),
         line_style=_enum_or_none(LineStyle, data.get("lineStyle")),
+        line_routing=_enum_or_none(LineRouting, data.get("lineRouting")),
         source_arrow_style=_enum_or_none(ArrowStyle, data.get("sourceArrowStyle")),
         target_arrow_style=_enum_or_none(ArrowStyle, data.get("targetArrowStyle")),
         label_visible=_bool_or_none(data.get("labelVisible")),
@@ -172,6 +174,7 @@ def _parse_association_customization(data: Dict[str, Any]) -> AssociationCustomi
         edge_color=_str_or_none(data.get("edgeColor")),
         line_width=_int_in_range_or_none(data.get("lineWidth"), 1, 6),
         line_style=_enum_or_none(LineStyle, data.get("lineStyle")),
+        line_routing=_enum_or_none(LineRouting, data.get("lineRouting")),
         source_arrow_style=_enum_or_none(ArrowStyle, data.get("sourceArrowStyle")),
         target_arrow_style=_enum_or_none(ArrowStyle, data.get("targetArrowStyle")),
         label_visible=_bool_or_none(data.get("labelVisible")),
@@ -192,6 +195,7 @@ def _parse_diagram_customization(data: Optional[Dict[str, Any]]) -> Optional[Dia
         grid_size=_int_in_range_or_none(data.get("gridSize"), 8, 64),
         snap_to_grid=_bool_or_none(data.get("snapToGrid")),
         theme=_enum_or_none(Theme, data.get("theme")),
+        line_routing=_enum_or_none(LineRouting, data.get("lineRouting")),
     )
     # Skip the all-defaults case so round-tripping an empty diagram block
     # doesn't materialise a non-None DiagramCustomization on the model.
@@ -201,6 +205,7 @@ def _parse_diagram_customization(data: Optional[Dict[str, Any]]) -> Optional[Dia
         and diagram.grid_size is None
         and diagram.snap_to_grid is None
         and diagram.theme is None
+        and diagram.line_routing is None
     ):
         return None
     return diagram

@@ -56,6 +56,7 @@ def _class_customization_to_json(cust: ClassCustomization) -> Dict[str, Any]:
     _set_if(out, "edgeColor", cust.edge_color)
     _set_if(out, "lineWidth", cust.line_width)
     _set_if(out, "lineStyle", _enum_value(cust.line_style))
+    _set_if(out, "lineRouting", _enum_value(cust.line_routing))
     _set_if(out, "sourceArrowStyle", _enum_value(cust.source_arrow_style))
     _set_if(out, "targetArrowStyle", _enum_value(cust.target_arrow_style))
     _set_if(out, "labelVisible", cust.label_visible)
@@ -69,6 +70,7 @@ def _association_customization_to_json(cust: AssociationCustomization) -> Dict[s
     _set_if(out, "edgeColor", cust.edge_color)
     _set_if(out, "lineWidth", cust.line_width)
     _set_if(out, "lineStyle", _enum_value(cust.line_style))
+    _set_if(out, "lineRouting", _enum_value(cust.line_routing))
     _set_if(out, "sourceArrowStyle", _enum_value(cust.source_arrow_style))
     _set_if(out, "targetArrowStyle", _enum_value(cust.target_arrow_style))
     _set_if(out, "labelVisible", cust.label_visible)
@@ -90,6 +92,7 @@ def _diagram_customization_to_json(diagram: DiagramCustomization) -> Dict[str, A
     _set_if(out, "gridSize", diagram.grid_size)
     _set_if(out, "snapToGrid", diagram.snap_to_grid)
     _set_if(out, "theme", _enum_value(diagram.theme))
+    _set_if(out, "lineRouting", _enum_value(diagram.line_routing))
     return out
 
 

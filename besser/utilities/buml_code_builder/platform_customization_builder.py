@@ -39,6 +39,7 @@ _ASSOC_FIELDS = (
     ("edge_color", None),
     ("line_width", None),
     ("line_style", None),
+    ("line_routing", None),
     ("source_arrow_style", None),
     ("target_arrow_style", None),
     ("label_visible", None),
@@ -53,6 +54,7 @@ _DIAGRAM_FIELDS = (
     ("grid_size", None),
     ("snap_to_grid", None),
     ("theme", None),
+    ("line_routing", None),
 )
 
 
@@ -93,13 +95,16 @@ def _collect_used_enums(model: PlatformCustomizationModel) -> List[str]:
                 enums.add(type(value).__name__)
     for cust in model.association_overrides.values():
         for value in (
-            cust.line_style, cust.source_arrow_style, cust.target_arrow_style,
+            cust.line_style, cust.line_routing,
+            cust.source_arrow_style, cust.target_arrow_style,
         ):
             if value is not None:
                 enums.add(type(value).__name__)
     if model.diagram_customization is not None:
         if model.diagram_customization.theme is not None:
             enums.add(type(model.diagram_customization.theme).__name__)
+        if model.diagram_customization.line_routing is not None:
+            enums.add(type(model.diagram_customization.line_routing).__name__)
     return sorted(enums)
 
 

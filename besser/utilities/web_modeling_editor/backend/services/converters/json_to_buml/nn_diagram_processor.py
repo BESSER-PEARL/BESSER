@@ -594,7 +594,7 @@ def process_nn_diagram(json_data):
     outgoing_connections = {}  # source_id -> [target_ids]
     incoming_connections = {}  # target_id -> [source_ids]
 
-    for rel_id, rel in relationships.items():
+    for _, rel in relationships.items():
         rel_type = rel.get('type', '')
         if rel_type == 'NNNext':
             source_id = rel.get('source', {}).get('element')
@@ -632,28 +632,28 @@ def process_nn_diagram(json_data):
     # Depth-first post-order traversal: emits each container after all its
     # transitive dependencies. GRAY coloring detects any cycle (direct or
     # through intermediaries) and surfaces a clear error listing the chain.
-    _WHITE, _GRAY, _BLACK = 0, 1, 2
-    color = {cname: _WHITE for cname in name_by_id.values()}
+    _white, _gray, _black = 0, 1, 2
+    color = {cname: _white for cname in name_by_id.values()}
     dep_order: list = []
 
     def _visit_container(name: str, path: list) -> None:
-        if color.get(name) == _GRAY:
+        if color.get(name) == _gray:
             cycle_chain = ' -> '.join(path + [name])
             raise ValueError(
                 f"NNReference cycle detected among NNContainers: {cycle_chain}. "
                 f"Break the cycle by removing one of the NNReference links."
             )
-        if color.get(name) != _WHITE:
+        if color.get(name) != _white:
             return
-        color[name] = _GRAY
+        color[name] = _gray
         for dep in sorted(ref_graph.get(name, ())):
             if dep in color:  # ignore references that don't resolve (handled later)
                 _visit_container(dep, path + [name])
-        color[name] = _BLACK
+        color[name] = _black
         dep_order.append(name)
 
     for cname in name_by_id.values():
-        if color[cname] == _WHITE:
+        if color[cname] == _white:
             _visit_container(cname, [])
 
     name_to_id = {cname: cid for cid, cname in name_by_id.items()}

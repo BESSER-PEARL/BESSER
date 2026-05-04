@@ -274,9 +274,10 @@ class OCLConstraint(Constraint):
         # Deferred import to avoid circular dependency on package load.
         try:
             from besser.BUML.notations.ocl.pretty_printer import pretty_print
+        except ImportError:
+            source_text = repr(expression)
+        else:
             source_text = pretty_print(expression)
-        except Exception:
-            source_text = str(expression)
         super().__init__(name, context, source_text, language)
         self.__ast = expression
 
@@ -299,9 +300,10 @@ class OCLConstraint(Constraint):
         self.__ast = ast
         try:
             from besser.BUML.notations.ocl.pretty_printer import pretty_print
+        except ImportError:
+            self.expression = repr(ast)
+        else:
             self.expression = pretty_print(ast)
-        except Exception:
-            self.expression = str(ast)
 
 
 class IfExp(OCLExpression):

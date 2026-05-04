@@ -2,7 +2,7 @@ Grammar for OCL specification
 =============================
 
 We have designed grammar for parsing OCL constraints. The lexer and parser generated using this grammar can parse all the constraints defined in `Royal and Loyal Example project <https://github.com/jcabot/ocl-repository/blob/master/academic/RoyalAndLoyal/RoyalAndLoyal.ocl/>`_.
-All the test cases corresponding to these example are in the tests/ocl/test_ocl_parser.py.
+The corresponding test cases live in ``tests/BUML/notations/ocl/test_parse_ocl.py``.
 
 The grammar for OCL is shown below:
 

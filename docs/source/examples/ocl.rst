@@ -13,7 +13,7 @@ We can set a rule that says *every book must have more than zero pages*. To do t
 
 .. code-block:: python
 
-    context Book: self.pages > 0
+    context Book inv: self.pages > 0
 
 .. note::
 

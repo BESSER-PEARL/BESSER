@@ -521,12 +521,14 @@ def test_validate_module_names_special_char_rejected():
     assert any("'my.dotted' is not a valid Python identifier" in e for e in errors)
 
 
-def test_validate_module_names_python_keyword_rejected():
-    """A module name that is a Python reserved keyword is rejected at validate time."""
+def test_validate_module_names_python_keyword_warned():
+    """A module name that is a Python reserved keyword surfaces as a warning,
+    matching ``NamedElement.name``'s warn-not-error stance for keywords."""
     nn = NN(name="OkNet")
     nn.add_layer(LinearLayer(name="class", out_features=4))
-    errors = nn.validate(raise_exception=False)["errors"]
-    assert any("'class' is a Python reserved keyword" in e for e in errors)
+    result = nn.validate(raise_exception=False)
+    assert any("'class' is a Python reserved keyword" in w for w in result["warnings"])
+    assert not any("'class' is a Python reserved keyword" in e for e in result["errors"])
 
 
 def test_validate_module_names_nn_name_leading_digit_rejected():
@@ -538,15 +540,17 @@ def test_validate_module_names_nn_name_leading_digit_rejected():
 
 
 def test_validate_module_names_valid_identifiers_accepted():
-    """A model with only valid identifier names produces no module-name errors."""
+    """A model with only valid identifier names produces no module-name errors or warnings."""
     nn = NN(name="GoodNet")
     nn.add_layer(LinearLayer(name="layer_1", out_features=4))
     nn.add_layer(LinearLayer(name="_layer", out_features=4))
-    errors = nn.validate(raise_exception=False)["errors"]
-    name_errors = [e for e in errors
-                   if "is not a valid Python identifier" in e
-                   or "is a Python reserved keyword" in e]
+    result = nn.validate(raise_exception=False)
+    name_errors = [e for e in result["errors"]
+                   if "is not a valid Python identifier" in e]
+    name_warnings = [w for w in result["warnings"]
+                     if "is a Python reserved keyword" in w]
     assert name_errors == []
+    assert name_warnings == []
 
 
 # ---------------------------------------------------------------------------

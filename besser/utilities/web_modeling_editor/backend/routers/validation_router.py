@@ -159,17 +159,10 @@ async def validate_diagram(input_data: DiagramInput):
             }
 
         elif diagram_type == "NNDiagram":
-            # Build the NN model; process_nn_diagram raises ValueError on
-            # missing mandatory attributes, cycles, unresolved NNReferences,
-            # duplicate datasets, and multiple top-level containers.
-            # Non-ValueError exceptions (KeyError on dangling element IDs,
-            # TypeError from malformed attribute payloads, AttributeError on
-            # non-dict elements) are collected into validation_errors as well
-            # so the frontend sees a structured response instead of a 500.
             try:
                 nn_model = process_nn_diagram(input_data.model_dump())
-            except (ValueError, KeyError, TypeError, AttributeError) as e:
-                validation_errors.extend(str(e).splitlines() or [repr(e)])
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
             else:
                 if nn_model is not None:
                     nn_validation = nn_model.validate(raise_exception=False)

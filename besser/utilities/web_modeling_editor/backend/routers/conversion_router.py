@@ -357,16 +357,13 @@ async def export_buml(input_data: DiagramInput):
         elif elements_data.get("type") == "NNDiagram":
             try:
                 nn_model = process_nn_diagram(json_data)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except (KeyError, TypeError, AttributeError) as exc:
                 # Malformed NN payload (dangling element IDs, wrong types on
-                # attribute values, non-dict elements). Surface as 400 so the
-                # frontend can display a structured error instead of 500.
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Malformed NN diagram payload: {exc}",
-                ) from exc
+                # attribute values, non-dict elements). Surface as a 400 via
+                # the decorator instead of leaking as a 500.
+                raise ConversionError(f"Malformed NN diagram payload: {exc}") from exc
+            # ValueError from process_nn_diagram is mapped to 400 by
+            # @handle_endpoint_errors — no explicit re-raise needed.
             output_file_path = os.path.join(temp_dir, "nn_model.py")
             nn_model_to_code(model=nn_model, file_path=output_file_path)
             file_content = await _read_file(output_file_path, "rb")
@@ -464,6 +461,12 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             elif parsed_project.get("GUINoCodeDiagram") and parsed_project["GUINoCodeDiagram"].get("model"):
                 diagram_data = parsed_project["GUINoCodeDiagram"]
                 diagram_type = "GUINoCodeDiagram"
+            elif parsed_project.get("NNDiagram") and parsed_project["NNDiagram"].get("model"):
+                diagram_data = parsed_project["NNDiagram"]
+                diagram_type = "NNDiagram"
+            elif parsed_project.get("QuantumCircuitDiagram") and parsed_project["QuantumCircuitDiagram"].get("model"):
+                diagram_data = parsed_project["QuantumCircuitDiagram"]
+                diagram_type = "QuantumCircuitDiagram"
 
             if diagram_data and diagram_data.get("title"):
                 diagram_title = diagram_data["title"]

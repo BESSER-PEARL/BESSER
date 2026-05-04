@@ -32,6 +32,21 @@ def _esc(value) -> str:
     return _escape_python_string(str(value))
 
 
+def _safe_comment(value) -> str:
+    """Sanitize a user-controlled string for inclusion in a Python source
+    comment.
+
+    Replaces CR/LF with a space so the value cannot break out of the
+    surrounding ``# ...`` line. Without this, a name like
+    ``"foo\\nimport os; os.system('id')"`` would inject executable code into
+    the generated file (which is later ``exec()``'d). Returns an empty
+    string for ``None``.
+    """
+    if value is None:
+        return ''
+    return str(value).replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+
+
 def _fmt_metrics(metrics) -> str:
     """Format a list of metric names as a Python list literal, escaping each
     entry so user-controlled strings cannot break out of the quotes."""
@@ -116,9 +131,10 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
         # lets the importer recover it; the NN metamodel only stores a
         # sanitized name, so this is the only carrier for the original title.
         if title:
-            # The importer's regex captures `"([^"]*)"` so an embedded `"`
-            # would truncate the title — safer to convert to a similar glyph.
-            safe_title = str(title).replace('"', "'")
+            # _safe_comment strips CR/LF so the title cannot break out of the
+            # comment line. The importer's regex captures `"([^"]*)"` so an
+            # embedded `"` would also truncate the title — convert to `'`.
+            safe_title = _safe_comment(title).replace('"', "'")
             header_line = f'# NN MODEL: "{safe_title}" #'
         else:
             header_line = "# NN MODEL #"
@@ -132,8 +148,16 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
         f.write(")\n\n")
 
         # Main NN's variable name — caller can override for project-level
-        # disambiguation; otherwise derive from the model's name.
-        main_var = model_var_name if model_var_name else _name_to_var(model.name)
+        # disambiguation; otherwise derive from the model's name. Route both
+        # paths through ``safe_var_name`` defensively: today's only caller
+        # (``project_to_code``) supplies a safe ``nn_model_<idx>`` prefix,
+        # but the public signature accepts arbitrary input and a future
+        # caller could pass user-controlled data into a value that gets
+        # interpolated raw as a Python identifier in generated source.
+        if model_var_name:
+            main_var = safe_var_name(model_var_name, lowercase=False)
+        else:
+            main_var = _name_to_var(model.name)
 
         # Track which variable names are already bound in this file so that
         # sub-NNs never collide with the main NN, sibling sub-NNs, layers,
@@ -152,7 +176,7 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
             _write_all_sub_nns(f, model.sub_nns, sub_nn_vars, used_names=used_names,
                                name_prefix=main_var)
 
-        f.write(f"# Neural Network: {model.name}\n")
+        f.write(f"# Neural Network: {_safe_comment(model.name)}\n")
         f.write(f"{main_var} = NN(name='{_esc(model.name)}')\n")
 
         # Add modules in order (sub_nns, layers, tensor_ops)
@@ -274,7 +298,7 @@ def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None,
         var_name = _unique_var(base_var, used_names)
         sub_nn_vars[id(sub_nn)] = var_name
 
-        f.write(f"# Sub-Network: {sub_nn.name}\n")
+        f.write(f"# Sub-Network: {_safe_comment(sub_nn.name)}\n")
         f.write(f"{var_name} = NN(name='{_esc(sub_nn.name)}')\n")
 
         # Add modules in order (preserves NNNext relationship order)
@@ -325,7 +349,7 @@ def _write_layer(f, layer, var_name: str):
     elif isinstance(layer, BatchNormLayer):
         _write_batch_norm(f, layer, var_name)
     else:
-        f.write(f"# Unknown layer type: {type(layer).__name__}\n")
+        f.write(f"# Unknown layer type: {_safe_comment(type(layer).__name__)}\n")
 
 
 def _write_conv(f, layer, var_name: str):

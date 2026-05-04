@@ -4,13 +4,8 @@ This module defines the neural network metamodel.
 
 from __future__ import annotations
 import keyword
-import re
 from typing import List, Self, Union
 from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
-
-
-_PY_IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-
 
 
 class TensorOp(NamedElement):
@@ -2069,10 +2064,16 @@ class Dataset(NamedElement):
             labels = set()
         super().__init__(name)
         self.path_data: str = path_data
+        # Initialize backing fields unconditionally so the getters never raise
+        # AttributeError on a Dataset constructed without these optional values.
+        # The setters validate against allowlists and so cannot accept ``None``;
+        # assign to the mangled attribute directly to bypass setter validation.
+        self.__task_type: str = None
+        self.__input_format: str = None
         if task_type is not None:
-            self.task_type: str = task_type
+            self.task_type = task_type
         if input_format is not None:
-            self.input_format: str = input_format
+            self.input_format = input_format
         self.image: Image = image
         self.labels: set[Label] = labels
 
@@ -2586,7 +2587,6 @@ class NN(BehaviorImplementation):
         errors: list[str] = []
         warnings: list[str] = []
 
-        is_root = _visited is None
         if _visited is None:
             _visited = set()
         if id(self) in _visited:
@@ -2598,7 +2598,7 @@ class NN(BehaviorImplementation):
         self._validate_tensor_op_references(errors)
         self._validate_first_module_entry_point(errors)
         self._validate_numerical_bounds(errors)
-        self._validate_module_names(errors)
+        self._validate_module_names(errors, warnings)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
         if not cycle_detected:
             self._validate_sub_nns_recursive(errors, warnings, _visited)
@@ -2606,20 +2606,18 @@ class NN(BehaviorImplementation):
         self._validate_dataset_consistency(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
-        if errors and raise_exception and is_root:
+        if errors and raise_exception:
             raise ValueError("\n".join(errors))
         return result
 
     def _module_names(self) -> set:
         """Names of every module declared in this NN (layers, tensor_ops, sub_nns)."""
-        return {m.name for m in self.modules if getattr(m, "name", None)}
+        return {m.name for m in self.modules}
 
     def _validate_module_uniqueness(self, errors: list):
         seen: dict = {}
         for module in self.modules:
-            name = getattr(module, "name", None)
-            if not name:
-                continue
+            name = module.name
             if name in seen:
                 errors.append(
                     f"NN '{self.name}' has duplicate module name '{name}' "
@@ -2630,7 +2628,7 @@ class NN(BehaviorImplementation):
     def _validate_module_input_references(self, errors: list):
         names = self._module_names()
         for layer in self.layers:
-            ref = getattr(layer, "name_module_input", None)
+            ref = layer.name_module_input
             if ref and ref not in names:
                 errors.append(
                     f"NN '{self.name}': layer '{layer.name}' references input "
@@ -2640,7 +2638,7 @@ class NN(BehaviorImplementation):
     def _validate_tensor_op_references(self, errors: list):
         names = self._module_names()
         for tensor_op in self.tensor_ops:
-            entries = getattr(tensor_op, "layers_of_tensors", None) or []
+            entries = tensor_op.layers_of_tensors or []
             for entry in entries:
                 if isinstance(entry, str) and entry not in names:
                     errors.append(
@@ -2652,8 +2650,12 @@ class NN(BehaviorImplementation):
         if not self.modules:
             return
         first = self.modules[0]
-        ref = getattr(first, "name_module_input", None)
-        if ref:
+        # Only Layer carries ``name_module_input``; NN and TensorOp first
+        # modules can't declare an input dependency in the first place, so
+        # the entry-point constraint is vacuously satisfied for them.
+        if not isinstance(first, Layer):
+            return
+        if first.name_module_input:
             errors.append(
                 f"NN '{self.name}': first module '{first.name}' must not declare "
                 f"a 'name_module_input' (it is the entry point)."
@@ -2702,8 +2704,8 @@ class NN(BehaviorImplementation):
             )
         if train is None or test is None:
             return
-        train_fmt = getattr(train, "input_format", None)
-        test_fmt = getattr(test, "input_format", None)
+        train_fmt = train.input_format
+        test_fmt = test.input_format
         if train_fmt and test_fmt and train_fmt != test_fmt:
             warnings.append(
                 f"NN '{self.name}': train input_format '{train_fmt}' differs "
@@ -2716,23 +2718,23 @@ class NN(BehaviorImplementation):
                     f"differs from test image shape {test.image.shape}."
                 )
 
-    def _validate_module_names(self, errors: list):
-        """Reject names that aren't valid Python identifiers or are reserved keywords."""
+    def _validate_module_names(self, errors: list, warnings: list):
+        """Reject names that aren't valid Python identifiers; warn (matching
+        ``NamedElement.name``'s warn-not-error stance) on Python keywords."""
         def _check(name, label):
-            if not name:
-                return
-            if not _PY_IDENT_RE.match(name):
+            if not name.isidentifier():
                 errors.append(
                     f"{label} name '{name}' is not a valid Python identifier."
                 )
             elif keyword.iskeyword(name):
-                errors.append(
-                    f"{label} name '{name}' is a Python reserved keyword."
+                warnings.append(
+                    f"{label} name '{name}' is a Python reserved keyword "
+                    f"and may cause issues in generated code."
                 )
 
         _check(self.name, "NN")
         for module in self.modules:
-            _check(getattr(module, "name", None), type(module).__name__)
+            _check(module.name, type(module).__name__)
 
     def _validate_numerical_bounds(self, errors: list):
         """Reject non-positive sizes/rates that would crash the trainer at runtime."""
@@ -2753,11 +2755,10 @@ class NN(BehaviorImplementation):
                     f"NN '{self.name}': configuration learning_rate must be > 0, "
                     f"got {cfg.learning_rate}."
                 )
-            weight_decay = getattr(cfg, "weight_decay", None)
-            if weight_decay is not None and weight_decay < 0:
+            if cfg.weight_decay < 0:
                 errors.append(
                     f"NN '{self.name}': configuration weight_decay must be >= 0, "
-                    f"got {weight_decay}."
+                    f"got {cfg.weight_decay}."
                 )
 
         for layer in self.layers:
@@ -2771,9 +2772,8 @@ class NN(BehaviorImplementation):
             if isinstance(layer, RNN):
                 if layer.hidden_size <= 0:
                     errors.append(f"{label} hidden_size must be > 0, got {layer.hidden_size}.")
-                dropout = getattr(layer, "dropout", None)
-                if dropout is not None and not 0 <= dropout < 1:
-                    errors.append(f"{label} dropout must be in [0, 1), got {dropout}.")
+                if not 0 <= layer.dropout < 1:
+                    errors.append(f"{label} dropout must be in [0, 1), got {layer.dropout}.")
 
             if isinstance(layer, LinearLayer):
                 if layer.out_features <= 0:

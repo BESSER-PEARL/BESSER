@@ -80,6 +80,7 @@ from besser.utilities.web_modeling_editor.backend.config import (
     SUPPORTED_GENERATORS,
     get_generator_info,
     get_filename_for_generator,
+    get_nn_filename,
     is_generator_supported,
 )
 
@@ -104,6 +105,7 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
     GenerationError,
     ValidationError,
 )
@@ -428,46 +430,29 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
-    # Handle Qiskit generator (requires QuantumCircuitDiagram)
-    if generator_type == "qiskit":
-        quantum_diagram = input_data.get_active_diagram("QuantumCircuitDiagram")
-        if not quantum_diagram:
+    # Handle generators that consume a non-class diagram (Qiskit → quantum,
+    # PyTorch/TensorFlow → neural network). The required diagram type comes
+    # from the registry, so this branch covers every such generator without
+    # name-literal switches.
+    required_diagram_type = generator_info.required_diagram_type
+    if required_diagram_type:
+        diagram = input_data.get_active_diagram(required_diagram_type)
+        if not diagram:
             raise HTTPException(
                 status_code=400,
-                detail="QuantumCircuitDiagram is required for Qiskit generator"
-            )
-        # Convert to DiagramInput with the quantum diagram data
-        diagram_input = DiagramInput(
-            id=quantum_diagram.id,
-            title=quantum_diagram.title,
-            model=quantum_diagram.model,
-            lastUpdate=quantum_diagram.lastUpdate,
-            generator=generator_type,
-            config=config,
-            referenceDiagramData=(
-                quantum_diagram.referenceDiagramData
-                if hasattr(quantum_diagram, 'referenceDiagramData')
-                else None
-            ),
-        )
-        return await generate_code_output(diagram_input)
-
-    # Handle NN generators (require NNDiagram)
-    if generator_type in ("pytorch", "tensorflow"):
-        nn_diagram = input_data.get_active_diagram("NNDiagram")
-        if not nn_diagram:
-            raise HTTPException(
-                status_code=400,
-                detail="NNDiagram is required for neural network generators"
+                detail=(
+                    f"{required_diagram_type} is required for "
+                    f"'{generator_type}' generator"
+                ),
             )
         diagram_input = DiagramInput(
-            id=nn_diagram.id,
-            title=nn_diagram.title,
-            model=nn_diagram.model,
-            lastUpdate=nn_diagram.lastUpdate,
+            id=diagram.id,
+            title=diagram.title,
+            model=diagram.model,
+            lastUpdate=diagram.lastUpdate,
             generator=generator_type,
             config=config,
-            referenceDiagramData=nn_diagram.referenceDiagramData if hasattr(nn_diagram, 'referenceDiagramData') else None
+            referenceDiagramData=getattr(diagram, "referenceDiagramData", None),
         )
         return await generate_code_output(diagram_input)
 
@@ -905,44 +890,40 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
 async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):
     """Generate neural network code (PyTorch or TensorFlow)."""
     if generator_class is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Generator '{generator_type}' is not available. Please install the required dependencies."
+        raise ConversionError(
+            f"Generator '{generator_type}' is not available. "
+            f"Please install the required dependencies."
         )
     try:
         nn_model = process_nn_diagram(json_data)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (KeyError, TypeError, AttributeError) as exc:
         # Malformed NN payload (dangling element id, non-dict element,
-        # non-string attribute value). Surface as 400 with context instead
-        # of letting the generic handler in error_handler.py turn it into
-        # a 500. Matches the pattern in /export-buml.
-        raise HTTPException(
-            status_code=400,
-            detail=f"Malformed NN diagram payload: {exc}",
-        ) from exc
+        # non-string attribute value). Surface as a structured 400 via the
+        # decorator instead of letting it leak as a 500.
+        raise ConversionError(f"Malformed NN diagram payload: {exc}") from exc
+    # ValueError from process_nn_diagram (missing mandatory attributes,
+    # cycles, unresolved NNReferences, ...) is caught and mapped to 400 by
+    # @handle_endpoint_errors — no explicit re-raise needed here.
 
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
     if generator_type == "tensorflow":
         generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
     else:
         channel_last = config.get("channel_last", False) if config else False
-        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type, channel_last=channel_last)
+        generator_instance = generator_class(
+            nn_model, output_dir=temp_dir,
+            generation_type=generation_type, channel_last=channel_last,
+        )
     await asyncio.to_thread(generator_instance.generate)
 
-    # The NN generator strips the trailing ".py" from its configured file_name
-    # and appends "_{generation_type}.py" (see NNCodeGenerator.generate), so
-    # the actual artifact is e.g. pytorch_nn_subclassing.py / tf_nn_sequential.py.
-    prefix = "tf" if generator_type == "tensorflow" else "pytorch"
-    download_filename = f"{prefix}_nn_{generation_type}.py"
+    download_filename = get_nn_filename(generator_type, generation_type)
 
     # Read the known-named file emitted by the generator. Scanning the
     # directory and picking "the first file" is fragile — if the generator
     # drops helpers alongside the main artifact we'd ship the wrong one.
     output_file_path = _safe_path(temp_dir, download_filename)
     if not os.path.isfile(output_file_path):
-        raise ValueError(
+        raise GenerationError(
             f"{generator_type} generation failed: expected output "
             f"{download_filename!r} was not produced."
         )

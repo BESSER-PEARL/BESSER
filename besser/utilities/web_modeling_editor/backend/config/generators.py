@@ -2,7 +2,7 @@
 Generator configuration and metadata for the BESSER backend.
 """
 
-from typing import Dict, Any, NamedTuple
+from typing import Dict, Any, NamedTuple, Optional
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
@@ -37,6 +37,12 @@ class GeneratorInfo(NamedTuple):
     file_extension: str
     category: str
     requires_class_diagram: bool = True
+    # Non-class diagram type this generator consumes (e.g. ``NNDiagram``,
+    # ``QuantumCircuitDiagram``, ``AgentDiagram``). ``None`` means the
+    # generator works off the project's active class diagram. Used by the
+    # project endpoint to dispatch to the right diagram without branching
+    # on generator-name string literals.
+    required_diagram_type: Optional[str] = None
 
 
 # Generator configuration mapping
@@ -136,7 +142,8 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         output_type="file",
         file_extension=".py",
         category="quantum",
-        requires_class_diagram=False
+        requires_class_diagram=False,
+        required_diagram_type="QuantumCircuitDiagram",
     ),
 
     # RDF generator (class diagram based)
@@ -193,7 +200,8 @@ if PytorchGenerator is not None:
         output_type="file",
         file_extension=".py",
         category="neural_network",
-        requires_class_diagram=False
+        requires_class_diagram=False,
+        required_diagram_type="NNDiagram",
     )
 
 if TFGenerator is not None:
@@ -202,8 +210,28 @@ if TFGenerator is not None:
         output_type="file",
         file_extension=".py",
         category="neural_network",
-        requires_class_diagram=False
+        requires_class_diagram=False,
+        required_diagram_type="NNDiagram",
     )
+
+
+# Filename prefix for NN generator output. The NN generator strips the
+# trailing ".py" from its configured file_name and appends
+# ``_{generation_type}.py``, so the artifact for ``pytorch`` /
+# ``tensorflow`` is e.g. ``pytorch_nn_subclassing.py`` /
+# ``tf_nn_sequential.py``. Centralizing the mapping here keeps the router
+# free of hard-coded string switches.
+_NN_FILENAME_PREFIX: Dict[str, str] = {
+    "pytorch": "pytorch",
+    "tensorflow": "tf",
+}
+
+
+def get_nn_filename(generator_type: str, generation_type: str) -> str:
+    """Return the on-disk filename produced by an NN generator for the given
+    ``generation_type`` variant (``"subclassing"`` or ``"sequential"``)."""
+    prefix = _NN_FILENAME_PREFIX[generator_type]
+    return f"{prefix}_nn_{generation_type}.py"
 
 
 def get_generator_info(generator_type: str) -> GeneratorInfo | None:

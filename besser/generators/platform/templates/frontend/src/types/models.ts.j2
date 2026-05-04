@@ -78,6 +78,10 @@ export type FontWeightName = 'normal' | 'bold';
 export type LabelPositionName = 'top' | 'bottom' | 'inside';
 export type ThemeName = 'light' | 'dark' | 'auto';
 export type PortSideName = 'auto' | 'top' | 'right' | 'bottom' | 'left';
+/** xyflow edge routing style. ``bezier`` = curved (default), ``smoothstep`` =
+ *  rounded right-angles, ``step`` = sharp right-angles, ``straight`` =
+ *  point-to-point line. */
+export type LineRoutingName = 'bezier' | 'smoothstep' | 'step' | 'straight';
 
 export interface NodeStyle {
   shape?: NodeShape;
@@ -96,6 +100,8 @@ export interface EdgeStyle {
   color?: string;
   lineWidth?: number;
   lineStyle?: LineStyleName;
+  /** Per-edge routing override; falls back to the diagram default. */
+  lineRouting?: LineRoutingName;
   sourceArrow?: ArrowStyleName;
   targetArrow?: ArrowStyleName;
   labelVisible?: boolean;
@@ -109,6 +115,8 @@ export interface DiagramStyle {
   gridSize?: number;
   snapToGrid?: boolean;
   theme?: ThemeName;
+  /** Default edge routing. ``bezier`` when omitted. */
+  lineRouting?: LineRoutingName;
 }
 
 // Class metadata
@@ -240,6 +248,7 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
       {%- if cls_edge.edge_color is not none %}{% do edge_style_parts_cls.append("color: '" ~ cls_edge.edge_color ~ "'") %}{% endif %}
       {%- if cls_edge.line_width is not none %}{% do edge_style_parts_cls.append("lineWidth: " ~ cls_edge.line_width) %}{% endif %}
       {%- if cls_edge.line_style is not none %}{% do edge_style_parts_cls.append("lineStyle: '" ~ (cls_edge.line_style | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_edge.line_routing is not none %}{% do edge_style_parts_cls.append("lineRouting: '" ~ (cls_edge.line_routing | enum_value) ~ "'") %}{% endif %}
       {%- if cls_edge.source_arrow_style is not none %}{% do edge_style_parts_cls.append("sourceArrow: '" ~ (cls_edge.source_arrow_style | enum_value) ~ "'") %}{% endif %}
       {%- if cls_edge.target_arrow_style is not none %}{% do edge_style_parts_cls.append("targetArrow: '" ~ (cls_edge.target_arrow_style | enum_value) ~ "'") %}{% endif %}
       {%- if cls_edge.label_visible is not none %}{% do edge_style_parts_cls.append("labelVisible: " ~ ('true' if cls_edge.label_visible else 'false')) %}{% endif %}
@@ -281,6 +290,7 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
           {%- if assoc_cust.edge_color is not none %}{% do edge_style_parts.append("color: '" ~ assoc_cust.edge_color ~ "'") %}{% endif %}
           {%- if assoc_cust.line_width is not none %}{% do edge_style_parts.append("lineWidth: " ~ assoc_cust.line_width) %}{% endif %}
           {%- if assoc_cust.line_style is not none %}{% do edge_style_parts.append("lineStyle: '" ~ (assoc_cust.line_style | enum_value) ~ "'") %}{% endif %}
+          {%- if assoc_cust.line_routing is not none %}{% do edge_style_parts.append("lineRouting: '" ~ (assoc_cust.line_routing | enum_value) ~ "'") %}{% endif %}
           {%- if assoc_cust.source_arrow_style is not none %}{% do edge_style_parts.append("sourceArrow: '" ~ (assoc_cust.source_arrow_style | enum_value) ~ "'") %}{% endif %}
           {%- if assoc_cust.target_arrow_style is not none %}{% do edge_style_parts.append("targetArrow: '" ~ (assoc_cust.target_arrow_style | enum_value) ~ "'") %}{% endif %}
           {%- if assoc_cust.label_visible is not none %}{% do edge_style_parts.append("labelVisible: " ~ ('true' if assoc_cust.label_visible else 'false')) %}{% endif %}
@@ -304,6 +314,7 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
   {%- if dc.grid_size is not none %}{% do diagram_style_parts.append("gridSize: " ~ dc.grid_size) %}{% endif %}
   {%- if dc.snap_to_grid is not none %}{% do diagram_style_parts.append("snapToGrid: " ~ ('true' if dc.snap_to_grid else 'false')) %}{% endif %}
   {%- if dc.theme is not none %}{% do diagram_style_parts.append("theme: '" ~ (dc.theme | enum_value) ~ "'") %}{% endif %}
+  {%- if dc.line_routing is not none %}{% do diagram_style_parts.append("lineRouting: '" ~ (dc.line_routing | enum_value) ~ "'") %}{% endif %}
 {%- endif %}
 // Diagram-level style overrides (emitted only when set in the customization).
 export const DIAGRAM_STYLE: DiagramStyle = { {{ diagram_style_parts | join(', ') }} };

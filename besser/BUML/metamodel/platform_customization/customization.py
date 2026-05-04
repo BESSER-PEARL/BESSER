@@ -84,6 +84,21 @@ class PortSide(str, Enum):
     LEFT = "left"
 
 
+class LineRouting(str, Enum):
+    """xyflow edge routing style.
+
+    BEZIER  — curved (default).
+    SMOOTHSTEP — orthogonal segments with rounded corners.
+    STEP    — orthogonal segments with sharp corners.
+    STRAIGHT — direct point-to-point line.
+    """
+
+    BEZIER = "bezier"
+    SMOOTHSTEP = "smoothstep"
+    STEP = "step"
+    STRAIGHT = "straight"
+
+
 _E = TypeVar("_E", bound=Enum)
 
 
@@ -159,6 +174,7 @@ class ClassCustomization:
     edge_color: Optional[str] = None
     line_width: Optional[int] = None
     line_style: Optional[LineStyle] = None
+    line_routing: Optional[LineRouting] = None
     source_arrow_style: Optional[ArrowStyle] = None
     target_arrow_style: Optional[ArrowStyle] = None
     label_visible: Optional[bool] = None
@@ -232,6 +248,7 @@ class ClassCustomization:
         _validate_int_range(self.line_width, 1, 6, "line_width")
         _validate_int_range(self.label_font_size, 8, 18, "label_font_size")
         self.line_style = _coerce_enum(LineStyle, self.line_style, "line_style")
+        self.line_routing = _coerce_enum(LineRouting, self.line_routing, "line_routing")
         self.source_arrow_style = _coerce_enum(
             ArrowStyle, self.source_arrow_style, "source_arrow_style"
         )
@@ -269,6 +286,7 @@ class AssociationCustomization:
     edge_color: Optional[str] = None
     line_width: Optional[int] = None
     line_style: Optional[LineStyle] = None
+    line_routing: Optional[LineRouting] = None
     source_arrow_style: Optional[ArrowStyle] = None
     target_arrow_style: Optional[ArrowStyle] = None
     label_visible: Optional[bool] = None
@@ -292,6 +310,7 @@ class AssociationCustomization:
         _validate_int_range(self.label_font_size, 8, 18, "label_font_size")
 
         self.line_style = _coerce_enum(LineStyle, self.line_style, "line_style")
+        self.line_routing = _coerce_enum(LineRouting, self.line_routing, "line_routing")
         self.source_arrow_style = _coerce_enum(
             ArrowStyle, self.source_arrow_style, "source_arrow_style"
         )
@@ -327,11 +346,13 @@ class DiagramCustomization:
     grid_size: Optional[int] = None
     snap_to_grid: Optional[bool] = None
     theme: Optional[Theme] = None
+    line_routing: Optional[LineRouting] = None
 
     def __post_init__(self):
         _validate_color(self.background_color, "background_color")
         _validate_int_range(self.grid_size, 8, 64, "grid_size")
         self.theme = _coerce_enum(Theme, self.theme, "theme")
+        self.line_routing = _coerce_enum(LineRouting, self.line_routing, "line_routing")
         if self.grid_visible is not None and not isinstance(self.grid_visible, bool):
             raise ValueError("grid_visible must be a bool or None")
         if self.snap_to_grid is not None and not isinstance(self.snap_to_grid, bool):
@@ -440,6 +461,7 @@ __all__ = [
     "DiagramCustomization",
     "FontWeight",
     "LabelPosition",
+    "LineRouting",
     "LineStyle",
     "NodeShape",
     "PlatformCustomizationModel",

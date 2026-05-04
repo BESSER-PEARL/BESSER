@@ -164,7 +164,7 @@ def resolve_connection_edge_style(cls, customization):
 
     # Manually merge each edge field — first non-None ancestor wins.
     fields = (
-        "edge_color", "line_width", "line_style",
+        "edge_color", "line_width", "line_style", "line_routing",
         "source_arrow_style", "target_arrow_style",
         "label_visible", "label_font_size", "label_font_color",
     )

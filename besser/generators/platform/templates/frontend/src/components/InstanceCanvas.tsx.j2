@@ -12,6 +12,7 @@ import {
   Controls,
   Background,
   BackgroundVariant,
+  ConnectionLineType,
   MarkerType,
   useNodesState,
   useEdgesState,
@@ -47,6 +48,35 @@ const DASH_FOR_LINE: Record<string, string | undefined> = {
   dashed: '8 4',
   dotted: '2 4',
 };
+
+/** Default edge routing for the canvas — falls back to ``bezier`` when the
+ *  diagram-level customization didn't set one. Per-association and
+ *  per-connection-class overrides shadow this at edge-build time. */
+const DEFAULT_EDGE_ROUTING = (DIAGRAM_STYLE.lineRouting ?? 'bezier');
+
+/** Map our ``LineRoutingName`` to xyflow's edge type string. xyflow uses
+ *  ``'default'`` for bezier — naming kept consistent with the rest of the
+ *  generator's edge-style fields. */
+function edgeTypeFor(routing: string | undefined): string {
+  switch (routing) {
+    case 'smoothstep': return 'smoothstep';
+    case 'step': return 'step';
+    case 'straight': return 'straight';
+    case 'bezier':
+    default: return 'default';
+  }
+}
+
+/** Map our ``LineRoutingName`` to xyflow's ``ConnectionLineType`` enum used
+ *  for the in-flight drag preview. */
+const CONNECTION_LINE_TYPE: ConnectionLineType =
+  DEFAULT_EDGE_ROUTING === 'smoothstep'
+    ? ConnectionLineType.SmoothStep
+    : DEFAULT_EDGE_ROUTING === 'step'
+      ? ConnectionLineType.Step
+      : DEFAULT_EDGE_ROUTING === 'straight'
+        ? ConnectionLineType.Straight
+        : ConnectionLineType.Bezier;
 
 /** Translate an ArrowStyleName to either an xyflow MarkerType or a custom
  * url() reference into the shared <defs> block injected by SvgMarkerDefs. */
@@ -601,7 +631,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           sourceHandle: savedHandles?.sourceHandle,
           targetHandle: savedHandles?.targetHandle,
           label: labelVisible ? link.association_name : undefined,
-          type: 'default',
+          type: edgeTypeFor(edgeStyle?.lineRouting ?? DEFAULT_EDGE_ROUTING),
           animated: false,
           hidden: childOfSource,
           style: lineCss,
@@ -656,7 +686,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         sourceHandle: sourcePortId,
         targetHandle: targetPortId,
         label: labelVisible ? conn.instance_name : undefined,
-        type: 'default',
+        type: edgeTypeFor(edgeStyle?.lineRouting ?? DEFAULT_EDGE_ROUTING),
         animated: false,
         style: lineCss,
         labelBgStyle: { fill: 'hsl(var(--card))' },
@@ -1101,6 +1131,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           isValidConnection={isValidConnection}
           nodeTypes={nodeTypes}
           connectionMode={ConnectionMode.Loose}
+          connectionLineType={CONNECTION_LINE_TYPE}
+          defaultEdgeOptions={{ type: edgeTypeFor(DEFAULT_EDGE_ROUTING) }}
           deleteKeyCode={['Delete', 'Backspace']}
           edgesFocusable
           edgesReconnectable={false}

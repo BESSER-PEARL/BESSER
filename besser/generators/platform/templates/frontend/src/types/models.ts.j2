@@ -143,6 +143,11 @@ export interface ClassMetadata {
   /** Edge style — only meaningful for connection classes; applied by the
    *  runtime to the synthetic edge drawn between two ports. */
   edgeStyle?: EdgeStyle;
+  /** Concrete port-classes the user can spawn from an instance of this class
+   *  (resolved via inheritance + association walks at generation time). The
+   *  generated InstanceNode renders a "+" affordance when this list is
+   *  non-empty so a port can be created without dragging from the palette. */
+  addablePortClasses?: Array<{ className: string; associationName: string }>;
 }
 
 export interface AttributeMetadata {
@@ -257,6 +262,14 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
     {%- endif %}
     {%- if edge_style_parts_cls %}
     edgeStyle: { {{ edge_style_parts_cls | join(', ') }} },
+    {%- endif %}
+    {%- set addable = addable_port_classes.get(cls.name) if addable_port_classes else None %}
+    {%- if addable %}
+    addablePortClasses: [
+      {%- for entry in addable %}
+      { className: '{{ entry.className }}', associationName: '{{ entry.associationName }}' }{% if not loop.last %},{% endif %}
+      {%- endfor %}
+    ],
     {%- endif %}
     attributes: [
       {%- for attr in cls.attributes | union(cls.inherited_attributes()) %}

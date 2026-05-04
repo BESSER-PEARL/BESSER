@@ -1,0 +1,128 @@
+/**
+ * AddPortPopover Component
+ * Hover-revealed "+" affordance on equipment nodes that spawns a port
+ * instance attached via the appropriate composition association.
+ *
+ * Behavior:
+ *   - Single addable port-class -> click the "+" creates the port directly,
+ *     no popover shown.
+ *   - Multiple addable port-classes -> click opens a small list; the user
+ *     picks one and the port is then created.
+ *
+ * Visibility of the trigger button is controlled by the parent via a Tailwind
+ * `group-hover:opacity-100` class passed through `className`. Once the popover
+ * opens, it stays open (independent of hover) until the user picks an option
+ * or clicks outside.
+ */
+{% raw %}
+import React from 'react';
+import { Plus } from 'lucide-react';
+import { cn } from '@/lib/utils';
+
+interface AddPortEntry {
+  className: string;
+  associationName: string;
+}
+
+interface AddPortPopoverProps {
+  addable: AddPortEntry[];
+  onAddPort: (portClassName: string, associationName: string) => void;
+  /** Wrapper classes — passed in by the parent so visibility (e.g. opacity-0
+   *  group-hover:opacity-100) and positioning live with the equipment node. */
+  className?: string;
+}
+
+export const AddPortPopover: React.FC<AddPortPopoverProps> = ({
+  addable,
+  onAddPort,
+  className,
+}) => {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Click-outside closes the popover. Mounted only while open so we don't pay
+  // for the listener on every node.
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  if (addable.length === 0) return null;
+
+  const handleTriggerClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (addable.length === 1) {
+      // Single option -> bypass the chooser entirely.
+      onAddPort(addable[0].className, addable[0].associationName);
+      return;
+    }
+    setOpen((v) => !v);
+  };
+
+  const handleSelect = (entry: AddPortEntry) => {
+    setOpen(false);
+    onAddPort(entry.className, entry.associationName);
+  };
+
+  // The wrapper itself is the hover-anchor + popover-anchor. We keep it
+  // focusable-as-a-region but not as a button (the button is inside).
+  return (
+    <div ref={containerRef} className={cn('h-5 w-5', className)}>
+      <button
+        type="button"
+        onClick={handleTriggerClick}
+        title={addable.length === 1
+          ? `Add ${addable[0].className}`
+          : `Add port (${addable.length} types)`}
+        aria-label="Add port"
+        className={cn(
+          'flex h-5 w-5 items-center justify-center rounded-full border border-primary bg-card text-primary shadow-sm transition-all',
+          'hover:scale-110 hover:bg-primary hover:text-primary-foreground',
+          // When the popover is open, force the trigger visible so the user
+          // can see the anchor while hovering items below.
+          open && '!opacity-100',
+        )}
+      >
+        <Plus className="size-3.5" />
+      </button>
+
+      {open && addable.length > 1 && (
+        <div
+          // Anchored just below the "+" button. min-w-[180px] keeps short
+          // class names from collapsing the menu into a sliver.
+          className="absolute right-0 top-7 z-30 min-w-[180px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <div className="mb-1 px-2 pt-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Add port
+          </div>
+          {addable.map((entry) => (
+            <button
+              key={`${entry.className}::${entry.associationName}`}
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSelect(entry);
+              }}
+              className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <span className="font-medium">{entry.className}</span>
+              <span className="text-[10px] text-muted-foreground">
+                {entry.associationName}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+{% endraw %}

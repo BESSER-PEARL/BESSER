@@ -6,8 +6,9 @@
 {% raw %}
 import React from 'react';
 import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { AddPortPopover } from './AddPortPopover';
 import { cn } from '@/lib/utils';
 import type { BaseInstance, ClassMetadata, NodeStyle, PortSideName } from '../types/models';
 import { PORT_CLASSES } from '../types/models';
@@ -22,6 +23,11 @@ export type InstanceNodeData = {
   onEdit: () => void;
   onDelete: () => void;
   onPortClick?: (port: BaseInstance) => void;
+  /** Invoked when the user picks (or auto-picks) a port-class to spawn from
+   *  the "+" affordance. The canvas then creates the port instance, links
+   *  it to this equipment via the chosen association, and opens the property
+   *  editor on the new port. */
+  onAddPort?: (portClassName: string, associationName: string) => void;
 };
 
 export type InstanceNodeType = Node<InstanceNodeData, 'instance'>;
@@ -178,9 +184,10 @@ const PortHandles: React.FC<{
 };
 
 export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, selected }) => {
-  const { instance, classMetadata, onEdit, onDelete, ports, onPortClick } = data;
+  const { instance, classMetadata, onEdit, onDelete, ports, onPortClick, onAddPort } = data;
   const [isHovered, setIsHovered] = React.useState(false);
   const portList = ports ?? [];
+  const addable = classMetadata.addablePortClasses ?? [];
   // Default = all four sides; ``[]`` hides handles; explicit list restricts.
   const allowedSides = classMetadata.connectionPoints;
   const handlePositions = allowedSides === undefined
@@ -201,7 +208,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
     return (
       <div
         className={cn(
-          'relative h-full w-full rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
+          'group relative h-full w-full rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
           selected && 'border-primary ring-2 ring-ring ring-offset-2 ring-offset-background'
         )}
         style={{ minWidth: size.width, minHeight: size.height, ...inlineStyle }}
@@ -226,6 +233,13 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           />
         ))}
         <PortHandles ports={portList} onPortClick={onPortClick} />
+        {addable.length > 0 && onAddPort && (
+          <AddPortPopover
+            addable={addable}
+            onAddPort={onAddPort}
+            className="absolute -right-2 -top-2 z-20 opacity-0 transition-opacity group-hover:opacity-100"
+          />
+        )}
         <div className="flex items-center justify-between gap-2 rounded-t-[10px] border-b border-primary/30 bg-primary/10 px-3 py-2">
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-semibold uppercase tracking-wider text-primary/80">
@@ -277,7 +291,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
     return (
       <div
         className={cn(
-          'relative flex items-center justify-center text-center',
+          'group relative flex items-center justify-center text-center',
           selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
         )}
         style={{ width: size.width, height: size.height }}
@@ -296,6 +310,13 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           />
         ))}
         <PortHandles ports={portList} onPortClick={onPortClick} />
+        {addable.length > 0 && onAddPort && (
+          <AddPortPopover
+            addable={addable}
+            onAddPort={onAddPort}
+            className="absolute right-1 top-1 z-20 opacity-0 transition-opacity group-hover:opacity-100"
+          />
+        )}
         <ShapeBackground
           shape={shape}
           fill={fill}
@@ -319,7 +340,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
 
   return (
     <div
-      className="relative flex min-w-[100px] flex-col items-center"
+      className="group relative flex min-w-[100px] flex-col items-center"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -337,6 +358,13 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
         />
       ))}
       <PortHandles ports={portList} onPortClick={onPortClick} />
+      {addable.length > 0 && onAddPort && (
+        <AddPortPopover
+          addable={addable}
+          onAddPort={onAddPort}
+          className="absolute -right-2 -top-2 z-20 opacity-0 transition-opacity group-hover:opacity-100"
+        />
+      )}
 
       {/* Label-on-top is opt-in via labelPosition: 'top'. The icon variant
           defaults to "bottom"; the box variant defaults to "inside". */}

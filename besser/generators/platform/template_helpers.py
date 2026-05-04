@@ -249,6 +249,58 @@ def build_representation_registries(classes, customization):
     return {"port_classes": port_classes, "connection_classes": connection_classes}
 
 
+def compute_addable_port_classes(classes, customization, subclass_registry, port_class_names):
+    """For each class, find which concrete port-classes the user can spawn from it.
+
+    A class ``E`` can spawn a port of class ``P`` if some association ``A``
+    (own or inherited) has an end whose target class is ``P`` itself OR is a
+    superclass of ``P`` (so subclasses of a flagged port class qualify).
+    Abstract classes are excluded from the result — only concrete spawnable
+    classes are listed.
+
+    Returns:
+        ``{class_name: [{className: str, associationName: str}, ...]}``. The
+        list is deduplicated by (className, associationName).
+    """
+    port_class_names = set(port_class_names or ())
+    if not port_class_names:
+        return {cls.name: [] for cls in classes}
+
+    is_abstract = {c.name: bool(getattr(c, "is_abstract", False)) for c in classes}
+
+    out = {}
+    for cls in classes:
+        ends_method = getattr(cls, "all_association_ends", None)
+        if not callable(ends_method):
+            out[cls.name] = []
+            continue
+
+        seen = set()
+        addable = []
+        for end in ends_method():
+            assoc_name = end.owner.name
+            target_name = getattr(getattr(end, "type", None), "name", None)
+            if not target_name:
+                continue
+
+            # The target name plus all its descendants — any of those that
+            # are flagged port-classes are addable through this association.
+            candidates = subclass_registry.get(target_name, [target_name])
+            for cand in candidates:
+                if cand not in port_class_names:
+                    continue
+                if is_abstract.get(cand, False):
+                    continue
+                key = (cand, assoc_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                addable.append({"className": cand, "associationName": assoc_name})
+
+        out[cls.name] = addable
+    return out
+
+
 def validate_representation(classes, customization):
     """Check the customization for connection-class wiring problems.
 

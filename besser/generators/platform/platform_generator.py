@@ -17,6 +17,7 @@ from besser.generators import GeneratorInterface
 from besser.generators.platform.template_helpers import (
     build_representation_registries,
     build_subclass_registry,
+    compute_addable_port_classes,
     dash_for,
     enum_value,
     marker_for,
@@ -101,10 +102,11 @@ class PlatformGenerator(GeneratorInterface):
     def _representation_context(self):
         """Compute customization-derived metadata shared by several templates.
 
-        Returns a dict with three keys:
+        Returns a dict with these keys:
           - ``class_representations``: name -> {'mode', 'port_side'}
           - ``port_classes_registry``: name -> {'portSide'}
           - ``connection_classes_registry``: name -> endpoint info
+          - ``addable_port_classes``: name -> [{className, associationName}, …]
         """
         classes = list(self.domain_model.get_classes())
         registries = build_representation_registries(classes, self.customization)
@@ -122,12 +124,20 @@ class PlatformGenerator(GeneratorInterface):
                 merged = resolve_connection_edge_style(cls, self.customization)
                 if merged is not None:
                     connection_edge_styles[cls.name] = merged
+        subclass_registry = build_subclass_registry(classes)
+        addable_port_classes = compute_addable_port_classes(
+            classes,
+            self.customization,
+            subclass_registry,
+            registries["port_classes"].keys(),
+        )
         return {
             "class_representations": class_representations,
             "port_classes_registry": registries["port_classes"],
             "connection_classes_registry": registries["connection_classes"],
             "connection_edge_styles": connection_edge_styles,
-            "subclass_registry": build_subclass_registry(classes),
+            "subclass_registry": subclass_registry,
+            "addable_port_classes": addable_port_classes,
         }
 
     def generate(self):
@@ -440,6 +450,14 @@ class PlatformGenerator(GeneratorInterface):
         # Generate InstanceCreationModal component
         template = self.env.get_template('frontend/src/components/InstanceCreationModal.tsx.j2')
         output_path = os.path.join(components_dir, 'InstanceCreationModal.tsx')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
+        # Generate AddPortPopover component (the hover-revealed "+" affordance
+        # on equipment nodes that spawns a port via composition).
+        template = self.env.get_template('frontend/src/components/AddPortPopover.tsx.j2')
+        output_path = os.path.join(components_dir, 'AddPortPopover.tsx')
 
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())

@@ -537,6 +537,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onEdit: () => setSelectedInstance(instance),
           onDelete: () => onInstanceDelete(instance.class_name, instance.id),
           onPortClick: (port: BaseInstance) => setSelectedInstance(port),
+          onAddPort: (portClassName: string, associationName: string) =>
+            handleAddPort(instance, portClassName, associationName),
         },
       };
       if (isContainer) {
@@ -996,6 +998,45 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     await onInstanceUpdate(updatedInstance);
     await reconcileLinks(updatedInstance, selectedLinks);
     setSelectedInstance(null);
+  };
+
+  /** Create a port-class instance attached to ``equipment`` via the chosen
+   *  composition association, then open the property editor on the new port
+   *  so the user can name / configure it immediately. Triggered by the
+   *  hover-revealed "+" affordance on equipment nodes (see AddPortPopover).
+   *
+   *  No position is needed — port instances render as Handles on the parent,
+   *  not as standalone nodes, so xyflow positions don't apply. */
+  const handleAddPort = async (
+    equipment: BaseInstance,
+    portClassName: string,
+    associationName: string,
+  ) => {
+    try {
+      // Auto-named with a short timestamp suffix so successive clicks don't
+      // collide on uniqueness; user can rename in the property editor.
+      const created = await api.createInstance({
+        class_name: portClassName,
+        instance_name: `${portClassName.toLowerCase()}_${Date.now().toString(36).slice(-4)}`,
+        attributes: {},
+      });
+      if (!created?.id) return;
+      await api.createLink({
+        source_class: equipment.class_name,
+        source_id: equipment.id,
+        target_class: portClassName,
+        target_id: created.id,
+        association_name: associationName,
+      });
+      // Refetch via the same signal the create modal uses; xyflow position
+      // doesn't apply here (port renders as a Handle on the equipment).
+      onInstanceCreate(portClassName, { x: 0, y: 0 });
+      // Open the property editor on the new port so the user can rename /
+      // fill attributes without an extra click.
+      setSelectedInstance(created);
+    } catch (error) {
+      console.error('Failed to add port:', error);
+    }
   };
 
   const handleCreateFromModal = async (

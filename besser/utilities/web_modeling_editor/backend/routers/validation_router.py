@@ -37,6 +37,9 @@ from besser.utilities.web_modeling_editor.backend.services.validators import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +192,11 @@ async def validate_diagram(input_data: DiagramInput):
                 "message": "\u274c Validation failed"
             }
 
+    except ConversionError as e:
+        # Structured conversion errors (e.g. malformed multiplicity strings).
+        # These are expected user-input problems, not server bugs.
+        logger.warning("Conversion error during validation: %s", e)
+        validation_errors.extend(str(e).splitlines())
     except ValueError as e:
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)

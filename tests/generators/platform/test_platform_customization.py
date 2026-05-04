@@ -357,6 +357,16 @@ class TestAddablePortClasses:
         assert "export const AddPortPopover" in text
         assert "addable.length === 1" in text
 
+    def test_add_association_popover_template_emitted(self, tmp_path, region_sensor_model):
+        # InstanceNode imports AddAssociationPopover unconditionally — missing
+        # the file would break Vite import-analysis at dev-server start.
+        out = tmp_path / "assoc_popover_check"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        popover = out / "frontend" / "src" / "components" / "AddAssociationPopover.tsx"
+        assert popover.exists()
+        text = popover.read_text(encoding="utf-8")
+        assert "export const AddAssociationPopover" in text
+
 
     def test_only_some_fields_set_emits_only_those(self, tmp_path, region_sensor_model):
         cust = PlatformCustomizationModel(

@@ -14,6 +14,7 @@ import {
   BackgroundVariant,
   ConnectionLineType,
   MarkerType,
+  MiniMap,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -24,6 +25,8 @@ import {
   type EdgeMarker,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { Grid3x3, Magnet, Map as MapIcon, Maximize2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
 import { AssociationSelector } from './AssociationSelector';
@@ -286,6 +289,11 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
      *  the instance is created. */
     parentHostId?: string;
     parentHostClass?: string;
+    /** When the host association is pre-determined (e.g., the user clicked the
+     *  "+" affordance and the port class has exactly one matching association
+     *  on the host, OR the popover let them pick one), bypass the auto-detect
+     *  in handleCreateFromModal and just use this. */
+    parentHostAssociation?: string;
   } | null>(null);
 
   const onDrop = useCallback(
@@ -539,6 +547,22 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onPortClick: (port: BaseInstance) => setSelectedInstance(port),
           onAddPort: (portClassName: string, associationName: string) =>
             handleAddPort(instance, portClassName, associationName),
+          candidatesFor: (assoc: AssociationMetadata) =>
+            instances.filter(
+              (i) => i.id !== instance.id && isAssignableTo(i.class_name, assoc.targetClass),
+            ),
+          onPickAssociationTarget: (assoc: AssociationMetadata, target: BaseInstance) =>
+            onLinkCreate(instance.id, target.id, assoc.name),
+          onCreateAssociationTarget: (assoc: AssociationMetadata) => {
+            const sourcePos = nodePositionsRef.current.get(instance.id) ?? { x: 100, y: 100 };
+            setCreateInstanceModal({
+              className: assoc.targetClass,
+              position: { x: sourcePos.x + 280, y: sourcePos.y },
+              parentHostId: instance.id,
+              parentHostClass: instance.class_name,
+              parentHostAssociation: assoc.name,
+            });
+          },
         },
       };
       if (isContainer) {
@@ -869,10 +893,35 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
   const onEdgesDelete = useCallback(
     async (deletedEdges: Edge[]) => {
+      let deletedAnyConnection = false;
       for (const edge of deletedEdges) {
         const data = edge.data as
-          | { sourceClass?: string; targetClass?: string; associationName?: string }
+          | {
+              sourceClass?: string;
+              targetClass?: string;
+              associationName?: string;
+              connectionInstanceId?: string;
+              connectionClass?: string;
+              isConnectionInstanceEdge?: boolean;
+            }
           | undefined;
+
+        // Synthetic connection-class edges represent an instance, not a link.
+        // Deleting just the link would leave the instance in place — so on the
+        // next refetch the edge would re-materialize from `instances`. Delete
+        // the connection instance instead; the backend cascade also removes
+        // its endpoint links. We bypass the parent's onInstanceDelete to skip
+        // its confirm() prompt — pressing DEL on a stream is direct intent.
+        if (data?.isConnectionInstanceEdge && data.connectionClass && data.connectionInstanceId) {
+          try {
+            await api.deleteInstance(data.connectionClass, data.connectionInstanceId);
+            deletedAnyConnection = true;
+          } catch (error) {
+            console.error('Failed to delete connection instance:', error);
+          }
+          continue;
+        }
+
         if (!data?.sourceClass || !data.targetClass || !data.associationName) continue;
         try {
           await api.deleteLink(
@@ -886,8 +935,14 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           console.error('Failed to delete link:', error);
         }
       }
+      // Trigger an instances refetch so the UI mirrors backend state. Without
+      // this, a follow-up createLink could rebuild edges from a stale snapshot
+      // and resurrect the just-deleted stream visually.
+      if (deletedAnyConnection) {
+        onInstanceCreate('', { x: 0, y: 0 });
+      }
     },
-    []
+    [onInstanceCreate]
   );
 
   const isValidConnection = useCallback(
@@ -1000,43 +1055,23 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     setSelectedInstance(null);
   };
 
-  /** Create a port-class instance attached to ``equipment`` via the chosen
-   *  composition association, then open the property editor on the new port
-   *  so the user can name / configure it immediately. Triggered by the
-   *  hover-revealed "+" affordance on equipment nodes (see AddPortPopover).
-   *
-   *  No position is needed — port instances render as Handles on the parent,
-   *  not as standalone nodes, so xyflow positions don't apply. */
-  const handleAddPort = async (
+  /** Triggered by the hover-revealed "+" affordance on equipment nodes (see
+   *  AddPortPopover). Opens the standard instance-creation modal pre-bound to
+   *  ``equipment`` via ``associationName``; the port instance and its
+   *  equipment→port link are persisted only after the user submits the form.
+   *  Cancelling the modal leaves no traces — no half-created port. */
+  const handleAddPort = (
     equipment: BaseInstance,
     portClassName: string,
     associationName: string,
   ) => {
-    try {
-      // Auto-named with a short timestamp suffix so successive clicks don't
-      // collide on uniqueness; user can rename in the property editor.
-      const created = await api.createInstance({
-        class_name: portClassName,
-        instance_name: `${portClassName.toLowerCase()}_${Date.now().toString(36).slice(-4)}`,
-        attributes: {},
-      });
-      if (!created?.id) return;
-      await api.createLink({
-        source_class: equipment.class_name,
-        source_id: equipment.id,
-        target_class: portClassName,
-        target_id: created.id,
-        association_name: associationName,
-      });
-      // Refetch via the same signal the create modal uses; xyflow position
-      // doesn't apply here (port renders as a Handle on the equipment).
-      onInstanceCreate(portClassName, { x: 0, y: 0 });
-      // Open the property editor on the new port so the user can rename /
-      // fill attributes without an extra click.
-      setSelectedInstance(created);
-    } catch (error) {
-      console.error('Failed to add port:', error);
-    }
+    setCreateInstanceModal({
+      className: portClassName,
+      position: { x: 0, y: 0 },
+      parentHostId: equipment.id,
+      parentHostClass: equipment.class_name,
+      parentHostAssociation: associationName,
+    });
   };
 
   const handleCreateFromModal = async (
@@ -1076,39 +1111,54 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       // this, the freshly-created port would have no owner and stay as an
       // orphan node on the canvas instead of becoming a handle on the
       // equipment border.
-      const { parentHostId, parentHostClass } = createInstanceModal;
+      const { parentHostId, parentHostClass, parentHostAssociation } = createInstanceModal;
       if (parentHostId && parentHostClass && created?.id) {
-        const hostMeta = availableClasses.find((c) => c.name === parentHostClass);
-        // Polymorphic: pick any association whose target is this class or an ancestor.
-        const hostAssocs = hostMeta?.associations.filter(
-          (a) => isAssignableTo(createInstanceModal.className, a.targetClass),
-        ) ?? [];
-        if (hostAssocs.length === 1) {
+        if (parentHostAssociation) {
+          // The "+" affordance pre-binds the association — skip the heuristic.
           try {
             await api.createLink({
               source_class: parentHostClass,
               source_id: parentHostId,
               target_class: createInstanceModal.className,
               target_id: created.id,
-              association_name: hostAssocs[0].name,
+              association_name: parentHostAssociation,
             });
           } catch (error) {
-            console.error('Failed to auto-create equipment→port link:', error);
+            console.error('Failed to create equipment→port link:', error);
           }
-        } else if (hostAssocs.length > 1) {
-          // Multiple associations match — surface the picker so the user
-          // chooses (e.g., "inputPorts" vs "outputPorts"). The pending link
-          // gets fulfilled by handleAssociationSelect.
-          setPendingConnection({
-            sourceId: parentHostId,
-            targetId: created.id,
-            sourceClass: parentHostClass,
-            targetClass: createInstanceModal.className,
-          });
+        } else {
+          const hostMeta = availableClasses.find((c) => c.name === parentHostClass);
+          // Polymorphic: pick any association whose target is this class or an ancestor.
+          const hostAssocs = hostMeta?.associations.filter(
+            (a) => isAssignableTo(createInstanceModal.className, a.targetClass),
+          ) ?? [];
+          if (hostAssocs.length === 1) {
+            try {
+              await api.createLink({
+                source_class: parentHostClass,
+                source_id: parentHostId,
+                target_class: createInstanceModal.className,
+                target_id: created.id,
+                association_name: hostAssocs[0].name,
+              });
+            } catch (error) {
+              console.error('Failed to auto-create equipment→port link:', error);
+            }
+          } else if (hostAssocs.length > 1) {
+            // Multiple associations match — surface the picker so the user
+            // chooses (e.g., "inputPorts" vs "outputPorts"). The pending link
+            // gets fulfilled by handleAssociationSelect.
+            setPendingConnection({
+              sourceId: parentHostId,
+              targetId: created.id,
+              sourceClass: parentHostClass,
+              targetClass: createInstanceModal.className,
+            });
+          }
+          // hostAssocs.length === 0: nothing to do — host has no association
+          // to this port class. The port will render as an orphan node and the
+          // user can wire it manually via the property panel.
         }
-        // hostAssocs.length === 0: nothing to do — host has no association
-        // to this port class. The port will render as an orphan node and the
-        // user can wire it manually via the property panel.
       }
 
       // If dropped inside a container, auto-create the containment association.
@@ -1153,8 +1203,23 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   };
 
   const gridSize = DIAGRAM_STYLE.gridSize ?? 24;
-  const gridVisible = DIAGRAM_STYLE.gridVisible !== false;
-  const snapEnabled = Boolean(DIAGRAM_STYLE.snapToGrid);
+  // Diagram-style values are the *initial* state; user toggles override at
+  // runtime via the toolbar panel below the xyflow Controls.
+  const [gridVisible, setGridVisible] = useState<boolean>(DIAGRAM_STYLE.gridVisible !== false);
+  const [snapEnabled, setSnapEnabled] = useState<boolean>(Boolean(DIAGRAM_STYLE.snapToGrid));
+  const [minimapVisible, setMinimapVisible] = useState<boolean>(false);
+
+  const handleFitToView = useCallback(() => {
+    // When at least one node is selected, fit just to those; otherwise fit
+    // to everything. Matches typical IDE behavior (Ctrl+. in some editors).
+    const selected = nodes.filter((n) => n.selected);
+    if (selected.length > 0) {
+      reactFlow.fitView({ nodes: selected, padding: 0.2, duration: 250 });
+    } else {
+      reactFlow.fitView({ padding: 0.2, duration: 250 });
+    }
+  }, [reactFlow, nodes]);
+
   const wrapperStyle: React.CSSProperties = {};
   if (DIAGRAM_STYLE.backgroundColor) wrapperStyle.backgroundColor = DIAGRAM_STYLE.backgroundColor;
 
@@ -1183,6 +1248,70 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           proOptions={{ hideAttribution: true }}
         >
           <Controls className="!bg-card !border-border !shadow-sm [&>button]:!bg-card [&>button]:!border-border [&>button:hover]:!bg-accent" />
+
+          {/* Custom toolbar — sits just above the xyflow Controls. Each button
+              toggles a runtime canvas affordance; defaults come from the
+              compiled DIAGRAM_STYLE so the customization still drives the
+              initial look. */}
+          <Panel position="bottom-left" className="!bottom-[160px] !left-[15px]">
+            <div className="flex flex-col gap-1 rounded-md border border-border bg-card p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setGridVisible((v) => !v)}
+                title={gridVisible ? 'Hide grid' : 'Show grid'}
+                aria-pressed={gridVisible}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded transition-colors hover:bg-accent',
+                  gridVisible ? 'text-primary' : 'text-muted-foreground',
+                )}
+              >
+                <Grid3x3 className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSnapEnabled((v) => !v)}
+                title={snapEnabled ? 'Disable snap-to-grid' : 'Enable snap-to-grid'}
+                aria-pressed={snapEnabled}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded transition-colors hover:bg-accent',
+                  snapEnabled ? 'text-primary' : 'text-muted-foreground',
+                )}
+              >
+                <Magnet className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setMinimapVisible((v) => !v)}
+                title={minimapVisible ? 'Hide minimap' : 'Show minimap'}
+                aria-pressed={minimapVisible}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded transition-colors hover:bg-accent',
+                  minimapVisible ? 'text-primary' : 'text-muted-foreground',
+                )}
+              >
+                <MapIcon className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={handleFitToView}
+                title="Fit view (selection or all)"
+                className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <Maximize2 className="size-4" />
+              </button>
+            </div>
+          </Panel>
+
+          {minimapVisible && (
+            <MiniMap
+              className="!bg-card !border !border-border !shadow-sm"
+              nodeColor="hsl(var(--primary))"
+              maskColor="hsl(var(--background) / 0.6)"
+              pannable
+              zoomable
+            />
+          )}
+
           {gridVisible && (
             <Background
               variant={BackgroundVariant.Dots}
@@ -1246,6 +1375,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           existingInstances={instances}
           onSubmit={handleCreateFromModal}
           onCancel={() => setCreateInstanceModal(null)}
+          hideAssociationsToClass={createInstanceModal.parentHostClass}
         />
       )}
     </div>

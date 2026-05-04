@@ -1,4 +1,4 @@
-/**
+﻿/**
  * InstanceNode Component
  * Visual representation of a domain model instance with optional SVG icon.
  * Consumes the per-class style overrides exposed via classMetadata.style.
@@ -6,18 +6,19 @@
 {% raw %}
 import React from 'react';
 import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AddPortPopover } from './AddPortPopover';
+import { AddAssociationPopover } from './AddAssociationPopover';
 import { cn } from '@/lib/utils';
-import type { BaseInstance, ClassMetadata, NodeStyle, PortSideName } from '../types/models';
-import { PORT_CLASSES } from '../types/models';
+import type { AssociationMetadata, BaseInstance, ClassMetadata, NodeStyle, PortSideName } from '../types/models';
+import { PORT_CLASSES, isPortClass } from '../types/models';
 
 export type InstanceNodeData = {
   instance: BaseInstance;
   classMetadata: ClassMetadata;
   /** Port-class child instances anchored on this node. Each becomes an xyflow
-   *  Handle whose id is the port instance's UUID — connection-class edges bind
+   *  Handle whose id is the port instance's UUID â€” connection-class edges bind
    *  to those handles. */
   ports?: BaseInstance[];
   onEdit: () => void;
@@ -28,6 +29,14 @@ export type InstanceNodeData = {
    *  it to this equipment via the chosen association, and opens the property
    *  editor on the new port. */
   onAddPort?: (portClassName: string, associationName: string) => void;
+  /** Existing instances that match the target type of an outgoing association
+   *  on this node â€” used to populate the AddAssociationPopover candidate list. */
+  candidatesFor?: (assoc: AssociationMetadata) => BaseInstance[];
+  /** Link an existing target instance via the chosen association. */
+  onPickAssociationTarget?: (assoc: AssociationMetadata, target: BaseInstance) => void;
+  /** Spawn a new target instance via the chosen association â€” opens the
+   *  create-instance modal at the canvas level with the back-link pre-bound. */
+  onCreateAssociationTarget?: (assoc: AssociationMetadata) => void;
 };
 
 export type InstanceNodeType = Node<InstanceNodeData, 'instance'>;
@@ -119,7 +128,7 @@ const SIDE_TO_POSITION: Record<Exclude<PortSideName, 'auto'>, Position> = {
 
 /** Decide which side a port handle anchors on. Order of precedence:
  *   1. PORT_CLASSES[port.class_name].portSide (if not 'auto')
- *   2. port.attributes.direction ('Inlet' → Left, 'Outlet' → Right)
+ *   2. port.attributes.direction ('Inlet' â†’ Left, 'Outlet' â†’ Right)
  *   3. fallback: Left
  */
 function resolvePortSide(port: BaseInstance): Position {
@@ -184,7 +193,18 @@ const PortHandles: React.FC<{
 };
 
 export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, selected }) => {
-  const { instance, classMetadata, onEdit, onDelete, ports, onPortClick, onAddPort } = data;
+  const {
+    instance,
+    classMetadata,
+    onEdit,
+    onDelete,
+    ports,
+    onPortClick,
+    onAddPort,
+    candidatesFor,
+    onPickAssociationTarget,
+    onCreateAssociationTarget,
+  } = data;
   const [isHovered, setIsHovered] = React.useState(false);
   const portList = ports ?? [];
   const addable = classMetadata.addablePortClasses ?? [];
@@ -193,6 +213,25 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
   const handlePositions = allowedSides === undefined
     ? HANDLE_POSITIONS
     : HANDLE_POSITIONS.filter((h) => allowedSides.includes(h.id as 'top' | 'right' | 'bottom' | 'left'));
+
+  // Associations the user can create from the "â†”" affordance. Filters out
+  // links already covered by other UI: container nesting, port spawning ("+"),
+  // and connection-class endpoints (handled at port-handle level).
+  const associationOptions: AssociationMetadata[] = React.useMemo(
+    () =>
+      classMetadata.associations.filter((a) => {
+        if (a.isContainerAssociation) return false;
+        if (a.isSourceEndpoint || a.isTargetEndpoint) return false;
+        if (isPortClass(a.targetClass)) return false;
+        return true;
+      }),
+    [classMetadata.associations],
+  );
+  const canAddAssociation =
+    associationOptions.length > 0 &&
+    !!candidatesFor &&
+    !!onPickAssociationTarget &&
+    !!onCreateAssociationTarget;
   const hasIcon = Boolean(classMetadata.icon);
   const isContainer = Boolean(classMetadata.isContainer);
   const isResizable = Boolean(classMetadata.isResizable);
@@ -228,16 +267,25 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
             type="source"
             position={position}
             id={id}
-            style={offset}
-            className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
+            style={{ ...offset, zIndex: 30 }}
+            className="!h-3 !w-3 !border-2 !border-background !bg-primary transition-all hover:!h-4 hover:!w-4 hover:!bg-primary/90"
           />
         ))}
         <PortHandles ports={portList} onPortClick={onPortClick} />
+        {canAddAssociation && (
+          <AddAssociationPopover
+            associations={associationOptions}
+            candidatesFor={candidatesFor!}
+            onPickExisting={onPickAssociationTarget!}
+            onCreateNew={onCreateAssociationTarget!}
+            className="absolute -right-9 -top-2 z-[1100] opacity-0 transition-opacity group-hover:opacity-100"
+          />
+        )}
         {addable.length > 0 && onAddPort && (
           <AddPortPopover
             addable={addable}
             onAddPort={onAddPort}
-            className="absolute -right-2 -top-2 z-20 opacity-0 transition-opacity group-hover:opacity-100"
+            className="absolute -right-2 -top-2 z-[1100] opacity-0 transition-opacity group-hover:opacity-100"
           />
         )}
         <div className="flex items-center justify-between gap-2 rounded-t-[10px] border-b border-primary/30 bg-primary/10 px-3 py-2">
@@ -305,16 +353,25 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
             type="source"
             position={position}
             id={id}
-            style={offset}
-            className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
+            style={{ ...offset, zIndex: 30 }}
+            className="!h-3 !w-3 !border-2 !border-background !bg-primary transition-all hover:!h-4 hover:!w-4 hover:!bg-primary/90"
           />
         ))}
         <PortHandles ports={portList} onPortClick={onPortClick} />
+        {canAddAssociation && (
+          <AddAssociationPopover
+            associations={associationOptions}
+            candidatesFor={candidatesFor!}
+            onPickExisting={onPickAssociationTarget!}
+            onCreateNew={onCreateAssociationTarget!}
+            className="absolute right-7 top-1 z-[1100] opacity-0 transition-opacity group-hover:opacity-100"
+          />
+        )}
         {addable.length > 0 && onAddPort && (
           <AddPortPopover
             addable={addable}
             onAddPort={onAddPort}
-            className="absolute right-1 top-1 z-20 opacity-0 transition-opacity group-hover:opacity-100"
+            className="absolute right-1 top-1 z-[1100] opacity-0 transition-opacity group-hover:opacity-100"
           />
         )}
         <ShapeBackground
@@ -353,16 +410,25 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           type="source"
           position={position}
           id={id}
-          style={offset}
-          className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
+          style={{ ...offset, zIndex: 30 }}
+          className="!h-3 !w-3 !border-2 !border-background !bg-primary transition-all hover:!h-4 hover:!w-4 hover:!bg-primary/90"
         />
       ))}
       <PortHandles ports={portList} onPortClick={onPortClick} />
+      {canAddAssociation && (
+        <AddAssociationPopover
+          associations={associationOptions}
+          candidatesFor={candidatesFor!}
+          onPickExisting={onPickAssociationTarget!}
+          onCreateNew={onCreateAssociationTarget!}
+          className="absolute -right-9 -top-2 z-[1100] opacity-0 transition-opacity group-hover:opacity-100"
+        />
+      )}
       {addable.length > 0 && onAddPort && (
         <AddPortPopover
           addable={addable}
           onAddPort={onAddPort}
-          className="absolute -right-2 -top-2 z-20 opacity-0 transition-opacity group-hover:opacity-100"
+          className="absolute -right-2 -top-2 z-[1100] opacity-0 transition-opacity group-hover:opacity-100"
         />
       )}
 
@@ -394,8 +460,8 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           type="button"
           onClick={onEdit}
           className={cn(
-            'relative z-10 min-w-[160px] overflow-hidden rounded-lg border-2 border-primary bg-card text-left shadow-sm transition-all',
-            isHovered && 'scale-[1.03] shadow-md',
+            'relative z-10 min-w-[160px] overflow-hidden rounded-lg border-2 border-primary bg-card text-left shadow-sm transition-shadow',
+            isHovered && 'shadow-md',
             selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
           )}
           style={inlineStyle}
@@ -424,7 +490,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
                   className="flex justify-between gap-2 border-t border-border pt-1 text-[10px]"
                 >
                   <span className="font-semibold text-muted-foreground">{key}:</span>
-                  <span className="truncate text-foreground">{String(value || '—')}</span>
+                  <span className="truncate text-foreground">{String(value || 'â€”')}</span>
                 </div>
               ))}
             {Object.entries(instance.attributes).length > 2 && (
@@ -463,7 +529,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
                   className="flex justify-between gap-3 rounded bg-muted/50 px-2 py-1 text-[11px]"
                 >
                   <span className="font-semibold text-muted-foreground">{key}:</span>
-                  <span className="break-words text-foreground">{String(value || '—')}</span>
+                  <span className="break-words text-foreground">{String(value || 'â€”')}</span>
                 </div>
               ))}
             </div>
@@ -503,3 +569,4 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
   );
 };
 {% endraw %}
+

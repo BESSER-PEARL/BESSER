@@ -40,6 +40,11 @@ interface InstanceCreationModalProps {
     selectedLinks: SelectedLink[],
   ) => void;
   onCancel: () => void;
+  /** Hide associations whose target class is, or is an ancestor of, this class.
+   *  Used by the "+" port flow on equipment nodes: the equipment-back link is
+   *  set automatically by the caller, so the field is hidden to avoid a
+   *  redundant or conflicting picker. */
+  hideAssociationsToClass?: string;
 }
 
 const inputTypeFor = (attrType: string): string => {
@@ -189,6 +194,7 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
   existingInstances,
   onSubmit,
   onCancel,
+  hideAssociationsToClass,
 }) => {
   const [instanceName, setInstanceName] = useState('');
   const [attributes, setAttributes] = useState<Record<string, any>>(() => {
@@ -203,12 +209,18 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
 
   // Skip self-association rows whose target class doesn't match any existing
   // class (defensive — shouldn't happen for a well-formed model).
+  // Also hide back-links to a host class that the caller is binding for us
+  // (e.g., the "Equipment" field when the user clicked "+" on a PEMElectrolyzer).
   const associations = useMemo(
     () =>
-      classMetadata.associations.filter((a) =>
-        availableClasses.some((c) => c.name === a.targetClass),
-      ),
-    [classMetadata.associations, availableClasses],
+      classMetadata.associations.filter((a) => {
+        if (!availableClasses.some((c) => c.name === a.targetClass)) return false;
+        if (hideAssociationsToClass && isAssignableTo(hideAssociationsToClass, a.targetClass)) {
+          return false;
+        }
+        return true;
+      }),
+    [classMetadata.associations, availableClasses, hideAssociationsToClass],
   );
 
   const candidatesByAssociation = useMemo(() => {

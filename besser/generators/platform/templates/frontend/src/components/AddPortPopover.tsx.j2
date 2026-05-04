@@ -95,8 +95,10 @@ export const AddPortPopover: React.FC<AddPortPopoverProps> = ({
       {open && addable.length > 1 && (
         <div
           // Anchored just below the "+" button. min-w-[180px] keeps short
-          // class names from collapsing the menu into a sliver.
-          className="absolute right-0 top-7 z-30 min-w-[180px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
+          // class names from collapsing the menu into a sliver. z-index sits
+          // above the InstanceNode hover-attributes popup (z-[1000]) so the
+          // dropdown stays clickable when the cursor lingers on the node.
+          className="absolute right-0 top-7 z-[1100] min-w-[180px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
           onClick={(e) => e.stopPropagation()}
           role="menu"
         >

@@ -1,0 +1,179 @@
+/**
+ * AddAssociationPopover Component
+ * Hover-revealed "↔" affordance on equipment / domain nodes that lets the
+ * user create an outgoing association without dragging from a side handle.
+ *
+ * Two-level popover:
+ *   1. Pick an association (list shows association name + target class).
+ *   2. Pick an existing target instance, OR "Create new <Target>" — the
+ *      latter signals the canvas to open the InstanceCreationModal for that
+ *      target class with the back-link pre-bound (handled at canvas level).
+ *
+ * Ports, container associations, and connection-class endpoints are filtered
+ * out by the parent — those have their own UI.
+ */
+{% raw %}
+import React from 'react';
+import { ArrowLeftRight, Plus } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import type { AssociationMetadata, BaseInstance } from '../types/models';
+
+interface AddAssociationPopoverProps {
+  associations: AssociationMetadata[];
+  /** Existing instances that can be picked as a target for a given association. */
+  candidatesFor: (assoc: AssociationMetadata) => BaseInstance[];
+  /** Link an existing instance to this node via the chosen association. */
+  onPickExisting: (assoc: AssociationMetadata, target: BaseInstance) => void;
+  /** Open the create-instance modal for the target class with the back-link
+   *  pre-bound. The canvas owns the modal; this component just signals intent. */
+  onCreateNew: (assoc: AssociationMetadata) => void;
+  /** Wrapper classes — passed in by the parent (positioning + opacity-on-hover). */
+  className?: string;
+}
+
+export const AddAssociationPopover: React.FC<AddAssociationPopoverProps> = ({
+  associations,
+  candidatesFor,
+  onPickExisting,
+  onCreateNew,
+  className,
+}) => {
+  const [open, setOpen] = React.useState(false);
+  const [activeAssoc, setActiveAssoc] = React.useState<AssociationMetadata | null>(null);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Click-outside closes the popover. Active only while open so the listener
+  // doesn't burn cycles for nodes the user isn't interacting with.
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setActiveAssoc(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  if (associations.length === 0) return null;
+
+  const handleTriggerClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpen((v) => {
+      const next = !v;
+      if (!next) setActiveAssoc(null);
+      return next;
+    });
+  };
+
+  return (
+    <div ref={containerRef} className={cn('h-5 w-5', className)}>
+      <button
+        type="button"
+        onClick={handleTriggerClick}
+        title={`Add association (${associations.length} available)`}
+        aria-label="Add association"
+        className={cn(
+          'flex h-5 w-5 items-center justify-center rounded-full border border-primary bg-card text-primary shadow-sm transition-all',
+          'hover:scale-110 hover:bg-primary hover:text-primary-foreground',
+          open && '!opacity-100',
+        )}
+      >
+        <ArrowLeftRight className="size-3" />
+      </button>
+
+      {open && !activeAssoc && (
+        <div
+          className="absolute right-0 top-7 z-[1100] min-w-[220px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <div className="mb-1 px-2 pt-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Add association
+          </div>
+          {associations.map((assoc) => (
+            <button
+              key={assoc.name + ':' + assoc.targetClass}
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveAssoc(assoc);
+              }}
+              className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <span className="font-medium">{assoc.targetEndName || assoc.name}</span>
+              <span className="text-[10px] text-muted-foreground">{assoc.targetClass}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {open && activeAssoc && (
+        <div
+          className="absolute right-0 top-7 z-[1100] min-w-[240px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <div className="flex items-center justify-between border-b px-2 py-1">
+            <button
+              type="button"
+              onClick={() => setActiveAssoc(null)}
+              className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
+            >
+              ← Back
+            </button>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              {activeAssoc.targetClass}
+            </span>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto py-1">
+            {candidatesFor(activeAssoc).map((cand) => (
+              <button
+                key={cand.id}
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  setActiveAssoc(null);
+                  onPickExisting(activeAssoc, cand);
+                }}
+                className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <span className="truncate font-medium">{cand.instance_name}</span>
+                <span className="text-[10px] text-muted-foreground">{cand.class_name}</span>
+              </button>
+            ))}
+            {candidatesFor(activeAssoc).length === 0 && (
+              <div className="px-2 py-2 text-[11px] italic text-muted-foreground">
+                No existing {activeAssoc.targetClass} instances.
+              </div>
+            )}
+          </div>
+
+          <div className="border-t p-1">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+                const assoc = activeAssoc;
+                setActiveAssoc(null);
+                onCreateNew(assoc);
+              }}
+              className="flex w-full items-center gap-2 rounded bg-primary/10 px-2 py-1.5 text-left text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
+            >
+              <Plus className="size-3.5" />
+              Create new {activeAssoc.targetClass}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+{% endraw %}

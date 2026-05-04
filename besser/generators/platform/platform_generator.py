@@ -462,6 +462,15 @@ class PlatformGenerator(GeneratorInterface):
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())
 
+        # Generate AddAssociationPopover component (the hover-revealed "↔"
+        # affordance for picking / creating association targets — replaces the
+        # old drag-from-side-handle UX as the primary association entry point).
+        template = self.env.get_template('frontend/src/components/AddAssociationPopover.tsx.j2')
+        output_path = os.path.join(components_dir, 'AddAssociationPopover.tsx')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
         # Generate shared lib (cn helper)
         lib_dir = os.path.join(frontend_dir, 'src', 'lib')
         template = self.env.get_template('frontend/src/lib/utils.ts.j2')

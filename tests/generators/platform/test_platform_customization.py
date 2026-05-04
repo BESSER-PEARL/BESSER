@@ -15,6 +15,7 @@ from besser.BUML.metamodel.platform_customization import (
     DiagramCustomization,
     FontWeight,
     LabelPosition,
+    LineRouting,
     LineStyle,
     NodeShape,
     PlatformCustomizationModel,
@@ -187,6 +188,44 @@ class TestPlatformGeneratorWithCustomization:
         # DIAGRAM_STYLE is still emitted but empty
         assert "DIAGRAM_STYLE: DiagramStyle = {" in models
         assert "theme:" not in models or "theme:" in models  # noop assertion guard
+
+    def test_line_routing_default_emits_bezier_fallback(self, tmp_path, region_sensor_model):
+        # No customization at all → DEFAULT_EDGE_ROUTING resolves to 'bezier'.
+        out = tmp_path / "platform_routing_default"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        # The runtime constant resolves DIAGRAM_STYLE.lineRouting ?? 'bezier'.
+        assert "DIAGRAM_STYLE.lineRouting ?? 'bezier'" in canvas
+        assert "defaultEdgeOptions={{ type: edgeTypeFor(DEFAULT_EDGE_ROUTING) }}" in canvas
+        assert "connectionLineType={CONNECTION_LINE_TYPE}" in canvas
+
+    def test_line_routing_diagram_default_smoothstep(self, tmp_path, region_sensor_model):
+        cust = PlatformCustomizationModel(
+            name="DiagramRouting",
+            diagram_customization=DiagramCustomization(line_routing=LineRouting.SMOOTHSTEP),
+        )
+        out = tmp_path / "platform_routing_diagram"
+        PlatformGenerator(region_sensor_model, cust, str(out)).generate()
+        models = (out / "frontend" / "src" / "types" / "models.ts").read_text(encoding="utf-8")
+        # lineRouting lands in DIAGRAM_STYLE
+        assert "lineRouting: 'smoothstep'" in models
+        assert "DIAGRAM_STYLE: DiagramStyle = {" in models
+
+    def test_line_routing_per_association_overrides_diagram(self, tmp_path, region_sensor_model):
+        cust = PlatformCustomizationModel(
+            name="AssocRouting",
+            association_overrides={
+                "has": AssociationCustomization(line_routing=LineRouting.STEP),
+            },
+            diagram_customization=DiagramCustomization(line_routing=LineRouting.SMOOTHSTEP),
+        )
+        out = tmp_path / "platform_routing_assoc"
+        PlatformGenerator(region_sensor_model, cust, str(out)).generate()
+        models = (out / "frontend" / "src" / "types" / "models.ts").read_text(encoding="utf-8")
+        # Per-association payload mentions the override
+        assert "lineRouting: 'step'" in models
+        # Diagram default is still emitted
+        assert "lineRouting: 'smoothstep'" in models
 
     def test_only_some_fields_set_emits_only_those(self, tmp_path, region_sensor_model):
         cust = PlatformCustomizationModel(

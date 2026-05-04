@@ -9,6 +9,7 @@ from besser.BUML.metamodel.platform_customization import (
     DiagramCustomization,
     FontWeight,
     LabelPosition,
+    LineRouting,
     LineStyle,
     NodeShape,
     PlatformCustomizationModel,
@@ -199,6 +200,22 @@ class TestAssociationCustomization:
         with pytest.raises(ValueError, match="is_container_association"):
             AssociationCustomization(is_container_association="yes")  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("routing", ["bezier", "smoothstep", "step", "straight"])
+    def test_line_routing_accepts_string(self, routing):
+        a = AssociationCustomization(line_routing=routing)
+        assert a.line_routing is LineRouting(routing)
+
+    def test_line_routing_accepts_enum_member(self):
+        a = AssociationCustomization(line_routing=LineRouting.SMOOTHSTEP)
+        assert a.line_routing is LineRouting.SMOOTHSTEP
+
+    def test_line_routing_default_none(self):
+        assert AssociationCustomization().line_routing is None
+
+    def test_line_routing_rejects_invalid(self):
+        with pytest.raises(ValueError, match="line_routing"):
+            AssociationCustomization(line_routing="curvy")
+
 
 class TestDiagramCustomization:
     def test_defaults(self):
@@ -228,6 +245,18 @@ class TestDiagramCustomization:
     def test_invalid_theme(self):
         with pytest.raises(ValueError, match="theme"):
             DiagramCustomization(theme="solarized")
+
+    def test_line_routing_default_none(self):
+        assert DiagramCustomization().line_routing is None
+
+    @pytest.mark.parametrize("routing", ["bezier", "smoothstep", "step", "straight"])
+    def test_line_routing_accepts_string(self, routing):
+        d = DiagramCustomization(line_routing=routing)
+        assert d.line_routing is LineRouting(routing)
+
+    def test_line_routing_rejects_invalid(self):
+        with pytest.raises(ValueError, match="line_routing"):
+            DiagramCustomization(line_routing="zigzag")
 
 
 class TestPlatformCustomizationModel:

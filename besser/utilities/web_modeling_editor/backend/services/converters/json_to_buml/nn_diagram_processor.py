@@ -594,7 +594,7 @@ def process_nn_diagram(json_data):
     outgoing_connections = {}  # source_id -> [target_ids]
     incoming_connections = {}  # target_id -> [source_ids]
 
-    for rel_id, rel in relationships.items():
+    for _, rel in relationships.items():
         rel_type = rel.get('type', '')
         if rel_type == 'NNNext':
             source_id = rel.get('source', {}).get('element')

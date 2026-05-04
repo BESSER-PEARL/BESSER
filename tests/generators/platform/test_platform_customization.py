@@ -25,11 +25,17 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation,
     Class,
     DomainModel,
+    Generalization,
     Multiplicity,
     Property,
     StringType,
 )
 from besser.generators.platform.platform_generator import PlatformGenerator
+from besser.generators.platform.template_helpers import (
+    build_representation_registries,
+    build_subclass_registry,
+    compute_addable_port_classes,
+)
 
 
 @pytest.fixture
@@ -226,6 +232,131 @@ class TestPlatformGeneratorWithCustomization:
         assert "lineRouting: 'step'" in models
         # Diagram default is still emitted
         assert "lineRouting: 'smoothstep'" in models
+
+class TestAddablePortClasses:
+    """Compute the {className, associationName} list a class can spawn."""
+
+    @pytest.fixture
+    def equipment_with_ports_model(self):
+        # Equipment ─has-ports→ Port  (Port has two concrete subclasses)
+        port = Class(name="Port", attributes={Property(name="kind", type=StringType)})
+        inlet = Class(name="InletPort", attributes=set())
+        outlet = Class(name="OutletPort", attributes=set())
+        equipment = Class(name="Equipment", attributes={Property(name="tag", type=StringType)})
+        ports_assoc = BinaryAssociation(
+            name="ports",
+            ends={
+                Property(
+                    name="owner",
+                    type=equipment,
+                    multiplicity=Multiplicity(min_multiplicity=1, max_multiplicity=1),
+                ),
+                Property(
+                    name="ports",
+                    type=port,
+                    multiplicity=Multiplicity(min_multiplicity=0, max_multiplicity=9999),
+                ),
+            },
+        )
+        gen_inlet = Generalization(general=port, specific=inlet)
+        gen_outlet = Generalization(general=port, specific=outlet)
+        return DomainModel(
+            name="EquipPorts",
+            types={equipment, port, inlet, outlet},
+            associations={ports_assoc},
+            generalizations={gen_inlet, gen_outlet},
+        )
+
+    def test_helper_resolves_subclasses_of_a_port_targeted_association(
+        self, equipment_with_ports_model
+    ):
+        cust = PlatformCustomizationModel(
+            name="C",
+            class_overrides={
+                # Only the base Port is flagged — subclasses inherit the flag
+                # via build_representation_registries' inheritance walk.
+                "Port": ClassCustomization(is_port=True),
+            },
+        )
+        classes = list(equipment_with_ports_model.get_classes())
+        registry = build_representation_registries(classes, cust)
+        sub_reg = build_subclass_registry(classes)
+        addable = compute_addable_port_classes(
+            classes, cust, sub_reg, registry["port_classes"].keys()
+        )
+
+        # Equipment can spawn Port itself + both concrete subclasses through
+        # the same association.
+        spawned = {(e["className"], e["associationName"]) for e in addable["Equipment"]}
+        assert ("Port", "ports") in spawned
+        assert ("InletPort", "ports") in spawned
+        assert ("OutletPort", "ports") in spawned
+        # Port can't spawn anything off this model — no association.
+        assert addable["Port"] == []
+        # Subclasses inherit nothing (they aren't on the source side of the assoc).
+        assert addable["InletPort"] == []
+
+    def test_helper_skips_abstract_classes(self, equipment_with_ports_model):
+        # Mark the base Port as abstract — it should drop out of the addable
+        # list while concrete subclasses remain.
+        for c in equipment_with_ports_model.get_classes():
+            if c.name == "Port":
+                c.is_abstract = True
+        cust = PlatformCustomizationModel(
+            name="C",
+            class_overrides={"Port": ClassCustomization(is_port=True)},
+        )
+        classes = list(equipment_with_ports_model.get_classes())
+        registry = build_representation_registries(classes, cust)
+        sub_reg = build_subclass_registry(classes)
+        addable = compute_addable_port_classes(
+            classes, cust, sub_reg, registry["port_classes"].keys()
+        )
+
+        spawned = {e["className"] for e in addable["Equipment"]}
+        assert "Port" not in spawned
+        assert "InletPort" in spawned
+        assert "OutletPort" in spawned
+
+    def test_addable_port_classes_lands_in_models_ts(
+        self, tmp_path, equipment_with_ports_model
+    ):
+        cust = PlatformCustomizationModel(
+            name="C",
+            class_overrides={"Port": ClassCustomization(is_port=True)},
+        )
+        out = tmp_path / "addable_ports"
+        PlatformGenerator(equipment_with_ports_model, cust, str(out)).generate()
+        models = (out / "frontend" / "src" / "types" / "models.ts").read_text(encoding="utf-8")
+
+        # The Equipment class has an addablePortClasses block, with all three
+        # concrete + base port classes available through "ports".
+        assert "addablePortClasses: [" in models
+        assert "className: 'Port', associationName: 'ports'" in models
+        assert "className: 'InletPort', associationName: 'ports'" in models
+        assert "className: 'OutletPort', associationName: 'ports'" in models
+
+    def test_addable_port_classes_empty_when_no_port_class_flagged(
+        self, tmp_path, equipment_with_ports_model
+    ):
+        # No customization → no class is flagged is_port → addablePortClasses
+        # should not appear anywhere in the generated metadata.
+        out = tmp_path / "no_ports"
+        PlatformGenerator(equipment_with_ports_model, customization=None, output_dir=str(out)).generate()
+        models = (out / "frontend" / "src" / "types" / "models.ts").read_text(encoding="utf-8")
+        assert "addablePortClasses:" not in models
+
+    def test_add_port_popover_template_emitted(self, tmp_path, region_sensor_model):
+        # The component file ships unconditionally — InstanceNode imports it.
+        out = tmp_path / "popover_check"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        popover = out / "frontend" / "src" / "components" / "AddPortPopover.tsx"
+        assert popover.exists()
+        text = popover.read_text(encoding="utf-8")
+        # Sanity: the export and the single-option auto-fire branch are present.
+        assert "export const AddPortPopover" in text
+        assert "addable.length === 1" in text
+
 
     def test_only_some_fields_set_emits_only_those(self, tmp_path, region_sensor_model):
         cust = PlatformCustomizationModel(

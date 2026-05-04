@@ -15,7 +15,7 @@ from typing import List, Tuple
 
 from besser.BUML.metamodel.ocl import clone
 from besser.BUML.metamodel.ocl.ocl import (
-    IfExp, InfixOperator, LoopExp, OCLConstraint,
+    IfExp, InfixOperator, LoopExp, OCLConstraint, OCLExpression,
     OperationCallExpression, PropertyCallExpression,
 )
 from besser.BUML.metamodel.structural import DomainModel
@@ -141,7 +141,7 @@ def _rewrite_pass(node, rules, ctx):
             # copy_location_from only fills fields that are None on the new node,
             # so synthesized children that already carry their own positions are
             # left intact.
-            if hasattr(new_node, "copy_location_from"):
+            if isinstance(new_node, OCLExpression):
                 new_node.copy_location_from(node)
             ctx.log.append((rule.name, _short(node), _short(new_node)))
             return new_node, True

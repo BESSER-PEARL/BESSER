@@ -170,21 +170,6 @@ def test_if_with_non_boolean_branches_is_left_alone(model):
     )
 
 
-def test_normalization_preserves_source_location(model):
-    """Rewritten root nodes inherit line/col from the original (Pre-work C)."""
-    parsed = parse_ocl(
-        "context Employee inv: self.age < 25 implies self.salary <= 50000.0",
-        model,
-    )
-    assert parsed.ast.line is not None
-    original_line = parsed.ast.line
-
-    normalized = normalize(parsed, model)
-    # ``implies`` is rewritten to ``not e1 or e2``; the new top-level OR
-    # node should carry the original line.
-    assert normalized.ast.line == original_line
-
-
 def test_if_with_boolean_branches_is_eliminated(model):
     """``if C then <bool-expr> else <bool-expr> endif`` is still folded."""
     parsed = parse_ocl(

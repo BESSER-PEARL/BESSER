@@ -75,41 +75,6 @@ does not return a partial AST — failures are surfaced upfront.
 If the supplied ``context_class`` is missing or cannot be resolved against
 ``model.types``, ``parse_ocl`` raises ``ValueError``.
 
-Source-location tracking
-------------------------
-
-Every :class:`~besser.BUML.metamodel.ocl.ocl.OCLExpression` node returned by
-``parse_ocl`` carries the location of its origin in the OCL source:
-
-* ``node.line`` — 1-indexed line number, or ``None`` if not populated.
-* ``node.col`` — 0-indexed column number, or ``None`` if not populated.
-* ``node.source_text`` — the OCL source text spanned by this node, as
-  concatenated by ANTLR's ``ctx.getText()``. Whitespace is stripped from
-  the spanned region; this is sufficient for "underline this region"
-  diagnostics, but not for byte-accurate substitutions back into the
-  original source.
-
-Locations are populated automatically by ``BOCLVisitorImpl.visit`` and
-preserved through :func:`~besser.BUML.metamodel.ocl.clone.clone` and
-:func:`~besser.BUML.notations.ocl.normalization.normalize.normalize`.
-
-For synthetic nodes built outside the parser, use
-``OCLExpression.copy_location_from(other)`` to inherit the origin of an
-existing node. The helper only fills fields that are ``None`` on the
-target, so a partially-populated synthetic node will not have its
-existing location overwritten.
-
-.. code-block:: python
-
-  root = constraint.ast
-  print(f"line={root.line} col={root.col}")
-  print(f"text={root.source_text!r}")
-
-  for child in root.arguments:
-      # InfixOperator entries are not OCLExpression nodes and have no location.
-      if hasattr(child, "line"):
-          print(f"  child: line={child.line} text={child.source_text!r}")
-
 Anchoring constraints on operations
 -----------------------------------
 

@@ -11,7 +11,7 @@ through ``Property.owner``.
 """
 
 from besser.BUML.metamodel.ocl.ocl import (
-    OCLExpression, OperationCallExpression, LoopExp, IteratorExp, IfExp,
+    OperationCallExpression, LoopExp, IteratorExp, IfExp,
     PropertyCallExpression, VariableExp, TypeExp, InfixOperator,
     IntegerLiteralExpression, RealLiteralExpression,
     BooleanLiteralExpression, StringLiteralExpression, DateLiteralExpression,
@@ -19,19 +19,7 @@ from besser.BUML.metamodel.ocl.ocl import (
 
 
 def clone(node):
-    """Return a fresh copy of `node` with shared structural-model references.
-
-    Source-location fields (``line``, ``col``, ``source_text``) on
-    :class:`OCLExpression` nodes are preserved on the clone so diagnostics
-    issued downstream still point at the original OCL source.
-    """
-    new = _clone_inner(node)
-    if isinstance(node, OCLExpression) and isinstance(new, OCLExpression):
-        new.copy_location_from(node)
-    return new
-
-
-def _clone_inner(node):
+    """Return a fresh copy of `node` with shared structural-model references."""
     if node is None:
         return None
 

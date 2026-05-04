@@ -76,29 +76,6 @@ Method contracts are anchored on the :class:`Method` itself via the
 ``add_pre`` / ``add_post`` raise ``ValueError`` if a precondition or
 postcondition with the same name already exists on the method.
 
-Inspecting source location
---------------------------
-
-Every node in the parsed AST records where it came from in the source
-text — useful for downstream consumers that need to point at the user's
-original OCL when something goes wrong:
-
-.. code-block:: python
-
-  root = invariant.ast
-  print(f"line={root.line} col={root.col} text={root.source_text!r}")
-  # line=1 col=21 text='self.balance>=0'
-
-  for child in root.arguments:
-      if hasattr(child, "line"):
-          print(f"  line={child.line} text={child.source_text!r}")
-  # line=1 text='self.balance'
-  # line=1 text='0'
-
-(``InfixOperator`` entries in ``arguments`` are not :class:`OCLExpression`
-nodes and have no location fields — filter on ``isinstance(child,
-OCLExpression)`` if you need to walk operands only.)
-
 Normalization and pretty-printing
 ---------------------------------
 
@@ -122,9 +99,6 @@ implement semantics for a minimal set of operators in your consumer:
   c_norm = normalize(c, model)
   print(pretty_print(c_norm.ast))
   # 'not self.is_active or self.balance >= 0'
-
-The normalizer preserves source location, so a diagnostic raised against
-``c_norm.ast`` still points at the user's original ``implies`` source.
 
 Validating with the B-OCL Interpreter
 -------------------------------------

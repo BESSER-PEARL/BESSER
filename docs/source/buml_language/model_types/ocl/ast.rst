@@ -30,9 +30,6 @@ Inheritance
                              ├── StringLiteralExpression
                              └── DateLiteralExpression
 
-Every :class:`OCLExpression` carries the source-location fields ``line``,
-``col``, ``source_text`` documented in :doc:`parsing`.
-
 Major node types
 ----------------
 
@@ -40,9 +37,8 @@ Major node types
     A binary or unary operation. Notable shape: ``arguments`` is a list of
     operands **plus** the operator marker. For a binary op, the layout is
     ``[lhs, InfixOperator, rhs]``. The ``InfixOperator`` entry is *not* an
-    :class:`OCLExpression` and has no ``line`` / ``col`` / ``source_text``;
-    consumers walking ``arguments`` should filter on
-    ``isinstance(child, OCLExpression)`` when they only want operands.
+    :class:`OCLExpression`; consumers walking ``arguments`` should filter
+    on ``isinstance(child, OCLExpression)`` when they only want operands.
 
     The operator name is also exposed on the call as ``operation`` (e.g.
     ``'>='``, ``'and'``, ``'+'``).

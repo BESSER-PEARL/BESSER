@@ -30,14 +30,6 @@ post-order until no rule applies. Termination is guaranteed by the
 lexicographic measure ⟨#sugar-operators, AST size, #negations⟩, which
 every rule strictly decreases.
 
-Source location is preserved across rewrites: a synthesized root
-inherits its origin location from the node it replaced, so a downstream
-diagnostic still cites the user's original OCL source even after the AST
-shape has changed. Note that the preserved ``source_text`` describes the
-**origin** node (e.g. the original ``implies``), not the rewritten node
-(e.g. the resulting ``or``); consumers reading ``source_text`` for
-display should be aware of this.
-
 The input is not mutated: ``normalize`` clones the AST internally before
 rewriting.
 
@@ -75,10 +67,6 @@ AST node. Structural-model references (Properties, Classes, Types) are
   fresh = clone(c.ast)
   # `fresh` and `c.ast` are independent trees, but
   # fresh.referredProperty is c.ast.referredProperty (same Property instance).
-
-Source-location fields are preserved on the clone via
-:meth:`OCLExpression.copy_location_from`, so diagnostics issued against
-the cloned tree still point at the original OCL source.
 
 Use ``clone`` whenever you mutate an AST (rewriting, normalization,
 encoding-time substitution) rather than mutating the parsed tree

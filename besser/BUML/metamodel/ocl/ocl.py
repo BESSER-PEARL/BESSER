@@ -16,24 +16,12 @@ class OCLExpression(TypedElement):
     Attributes:
         source (OCLExpression): the source of expression
         _referredOperation: points to any refferred operation that the expression has.
-        line (int | None): 1-indexed line of the OCL source where this node
-            begins, or None if not populated. Set by the parser visitor when
-            building the AST from a parse tree.
-        col (int | None): 0-indexed column of the OCL source where this node
-            begins, or None if not populated.
-        source_text (str | None): The OCL source text spanned by this node,
-            or None if not populated. Useful for diagnostics that cite the
-            original constraint text. May be lossy for nodes constructed
-            during AST rewrites (e.g. normalization).
     """
 
     def __init__(self, name: str, type: Type):
         super().__init__(name, type)
         self._source = None
         self._referredOperation = None
-        self._line: int | None = None
-        self._col: int | None = None
-        self._source_text: str | None = None
 
     @property
     def source(self) ->Any:
@@ -54,65 +42,6 @@ class OCLExpression(TypedElement):
     def referredOperation(self, op):
         """Set the referredOperation of OCL Expression"""
         self._referredOperation = op
-
-    @property
-    def line(self) -> "int | None":
-        """int | None: 1-indexed line of the OCL source for this node."""
-        return self._line
-
-    @line.setter
-    def line(self, line: "int | None"):
-        if line is not None and not isinstance(line, int):
-            raise TypeError(
-                f"OCLExpression.line must be int or None; got {type(line).__name__}"
-            )
-        self._line = line
-
-    @property
-    def col(self) -> "int | None":
-        """int | None: 0-indexed column of the OCL source for this node."""
-        return self._col
-
-    @col.setter
-    def col(self, col: "int | None"):
-        if col is not None and not isinstance(col, int):
-            raise TypeError(
-                f"OCLExpression.col must be int or None; got {type(col).__name__}"
-            )
-        self._col = col
-
-    @property
-    def source_text(self) -> "str | None":
-        """str | None: The OCL source text spanned by this node."""
-        return self._source_text
-
-    @source_text.setter
-    def source_text(self, source_text: "str | None"):
-        if source_text is not None and not isinstance(source_text, str):
-            raise TypeError(
-                f"OCLExpression.source_text must be str or None; got {type(source_text).__name__}"
-            )
-        self._source_text = source_text
-
-    def copy_location_from(self, other: "OCLExpression") -> "OCLExpression":
-        """Copy ``line``, ``col``, and ``source_text`` from ``other`` to ``self``.
-
-        Use this when constructing a rewritten or synthetic AST node that
-        should be reported as originating from the same OCL source as
-        ``other`` (e.g. during normalization). Only fields that are None on
-        ``self`` are populated, so existing locations on ``self`` are
-        preserved.
-
-        Returns ``self`` to allow fluent chaining.
-        """
-        if isinstance(other, OCLExpression):
-            if self._line is None:
-                self._line = other._line
-            if self._col is None:
-                self._col = other._col
-            if self._source_text is None:
-                self._source_text = other._source_text
-        return self
 
     def __str__(self) -> str:
         pass

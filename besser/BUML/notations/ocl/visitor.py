@@ -1,5 +1,5 @@
 from besser.BUML.metamodel.ocl.ocl import (
-    OCLExpression, OperationCallExpression, LoopExp, IfExp, IteratorExp,
+    OperationCallExpression, LoopExp, IfExp, IteratorExp,
     IntegerLiteralExpression, RealLiteralExpression,
     BooleanLiteralExpression, StringLiteralExpression,
     DateLiteralExpression, InfixOperator, PropertyCallExpression,
@@ -23,29 +23,6 @@ class BOCLVisitorImpl(BOCLVisitor):
         self.context_class = context_class
         self.context_name = None
         self.iterators_context = {}
-
-    def visit(self, ctx):
-        """Override to attach source-location information to AST nodes.
-
-        Wraps the base visitor: dispatches as usual, then if the result is
-        an :class:`OCLExpression` and ``ctx`` carries a start token, populates
-        ``line`` / ``col`` / ``source_text`` on the AST node. Only sets fields
-        that are still ``None`` so deeper-recursion populated values on the
-        same node are not clobbered by an enclosing ctx.
-        """
-        result = super().visit(ctx)
-        if isinstance(result, OCLExpression) and ctx is not None:
-            start = getattr(ctx, "start", None)
-            if start is not None:
-                if result.line is None:
-                    result.line = start.line
-                if result.col is None:
-                    result.col = start.column
-                if result.source_text is None:
-                    get_text = getattr(ctx, "getText", None)
-                    if callable(get_text):
-                        result.source_text = get_text()
-        return result
 
     # ------------------------------------------------------------------
     # Property / attribute resolution

@@ -210,6 +210,12 @@ The grammar for OCL is shown below:
 
 To Evaluate the OCL Constraints you can create the test case using the following code:
 
+.. note::
+
+  ``constraint.expression`` holds the constraint as a source-text string (always a ``str``),
+  while ``constraint.ast`` (on :class:`OCLConstraint`) exposes the parsed AST as an
+  :class:`OCLExpression` for downstream tooling that needs to walk the tree.
+
 .. code-block:: python
 
     from models.library_object import library_model,object_model
@@ -219,7 +225,7 @@ To Evaluate the OCL Constraints you can create the test case using the following
     def test_1():
         wrapper = OCLWrapper(library_model, object_model)
         constraint=list(library_model.constraints)[0]
-        print("Query: " + str(constraint.expression), end=": ")
+        print("Query: " + constraint.expression, end=": ")
         res = None
         try:
             res = wrapper.evaluate(constraint)

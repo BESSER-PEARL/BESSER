@@ -2,8 +2,8 @@ OCL specification
 =================
 
 We have added support for defining OCL constraints (e.g. to specify invariants or business rules) on the B-UML models.
-OCL expressions can be written in plain text and then automatically parsed to create the abstract syntax tree (AST) 
-for expression according to the OCL metamodel shown below
+OCL expressions can be written in plain text and then automatically parsed to create the abstract syntax tree (AST)
+for expression according to the OCL metamodel shown below.
 
 .. image:: ../../img/ocl_mm.png
   :width: 800
@@ -61,6 +61,22 @@ naming conventions:
   deposit.add_pre(pre)
   deposit.add_post(post)
 
+
+Working with parsed constraints
+-------------------------------
+
+If you are writing a tool that walks the OCL AST — to evaluate
+constraints, encode them into another formalism, or transform them —
+the following sub-pages cover the public surface:
+
+.. toctree::
+   :maxdepth: 1
+
+   ocl/parsing
+   ocl/ast
+   ocl/normalization
+
+For a runnable end-to-end example, see :doc:`../../examples/ocl`.
 
 Supported notations
 -------------------

@@ -44,10 +44,7 @@ class BOCLVisitorImpl(BOCLVisitor):
                 if result.source_text is None:
                     get_text = getattr(ctx, "getText", None)
                     if callable(get_text):
-                        try:
-                            result.source_text = get_text()
-                        except Exception:
-                            pass
+                        result.source_text = get_text()
         return result
 
     # ------------------------------------------------------------------

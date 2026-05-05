@@ -151,6 +151,14 @@ def class_buml_to_json(domain_model):
     # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
     # Keyed by element name (classes/enums) or composite key (relationships).
     layout_positions = getattr(domain_model, '_layout_positions', {})
+    # Retrieve element id mappings populated by json_to_buml on a previous
+    # round-trip. Reusing these ids keeps OCL pre/post targetMethodId
+    # references stable across save/load cycles; minting fresh UUIDs each
+    # time would silently break those references on the next reload.
+    saved_class_ids: dict[str, str] = getattr(domain_model, '_class_element_ids', {})
+    saved_method_ids: dict[tuple, str] = getattr(domain_model, '_method_element_ids', {})
+    # method_id_lookup: Method object -> JSON element id (for OCL pre/post emission)
+    method_id_lookup: dict = {}
     # Default diagram size
     default_size = {
         "width": LAYOUT_GRID_WIDTH,
@@ -192,8 +200,13 @@ def class_buml_to_json(domain_model):
         (t for t in domain_model.types | domain_model.constraints if isinstance(t, (Class, Enumeration, Constraint))),
         key=lambda t: t.name,
     ):
-            # Generate UUID for the element
-            element_id = str(uuid.uuid4())
+            # Reuse the original element id from a prior round-trip when we
+            # have it; otherwise mint a fresh UUID. Stable ids are required
+            # for OCL pre/post boxes that reference methods by id.
+            if isinstance(type_obj, (Class, Enumeration)):
+                element_id = saved_class_ids.get(type_obj.name) or str(uuid.uuid4())
+            else:
+                element_id = str(uuid.uuid4())
             class_id_map[type_obj] = element_id
 
             # Use saved layout position if available, otherwise fall back to grid layout
@@ -247,7 +260,8 @@ def class_buml_to_json(domain_model):
 
                 # Process methods
                 for method in sorted(type_obj.methods, key=lambda m: m.name):
-                    method_id = str(uuid.uuid4())
+                    method_id = saved_method_ids.get((type_obj.name, method.name)) or str(uuid.uuid4())
+                    method_id_lookup[method] = method_id
                     visibility_symbol = next(
                         k for k, v in VISIBILITY_MAP.items() if v == method.visibility
                     )
@@ -401,7 +415,15 @@ def class_buml_to_json(domain_model):
                         ),
                     }
                     if not isinstance(type_obj, Constraint)
-                    else {"constraint": type_obj.expression}
+                    # Class-level constraints are always invariants. Tag the
+                    # box so the frontend renders a stereotype badge and so a
+                    # follow-up ingest takes the new (kind-aware) routing
+                    # path instead of the legacy text-splitter.
+                    else {
+                        "constraint": type_obj.expression,
+                        "kind": "invariant",
+                        "constraintName": type_obj.name,
+                    }
                 ),
             }
 
@@ -629,6 +651,61 @@ def class_buml_to_json(domain_model):
                 "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
                 "isManuallyLayouted": False,
             }
+
+    # Emit pre/post conditions anchored on Method.pre and Method.post.
+    # These are stored on the metamodel as first-class fields (not inside
+    # domain_model.constraints), so they need their own emission pass.
+    # Each constraint becomes its own ClassOCLConstraint element + a
+    # ClassOCLLink to the owning class, matching the visual contract for
+    # invariants — the difference is the `kind` and `targetMethodId` fields.
+    for cls in sorted(
+        (t for t in domain_model.types if isinstance(t, Class)),
+        key=lambda c: c.name,
+    ):
+        if cls not in class_id_map:
+            continue
+        for method in sorted(cls.methods, key=lambda m: m.name):
+            method_id = method_id_lookup.get(method)
+            if method_id is None:
+                # Method was sorted/skipped earlier; nothing to anchor.
+                continue
+            for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
+                                       ("postcondition", getattr(method, "post", []) or [])):
+                for constraint in constraints:
+                    box_id = str(uuid.uuid4())
+                    elements[box_id] = {
+                        "id": box_id,
+                        "name": "OCL",
+                        "type": "ClassOCLConstraint",
+                        "owner": None,
+                        "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
+                        "constraint": constraint.expression,
+                        "kind": kind,
+                        "targetMethodId": method_id,
+                        "constraintName": constraint.name,
+                    }
+                    rel_id = str(uuid.uuid4())
+                    relationships[rel_id] = {
+                        "id": rel_id,
+                        "name": "",
+                        "type": "ClassOCLLink",
+                        "owner": None,
+                        "source": {
+                            "direction": "Left",
+                            "element": box_id,
+                            "multiplicity": "",
+                            "role": "",
+                        },
+                        "target": {
+                            "direction": "Right",
+                            "element": class_id_map[cls],
+                            "multiplicity": "",
+                            "role": "",
+                        },
+                        "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+                        "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
+                        "isManuallyLayouted": False,
+                    }
 
     # Create comment elements from metadata descriptions
     for comment_text, linked_class_id in comments_to_create:

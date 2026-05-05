@@ -51,6 +51,22 @@ class PhaseEvent(BaseSseEvent):
     message: str
 
 
+class PhaseUpdateEvent(BaseSseEvent):
+    """Adds details to an already-emitted phase row.
+
+    Distinct from PhaseEvent so the frontend can update an existing
+    timeline entry in place (rather than appending a duplicate row).
+    Used by the gap analyser to surface the task list after the planning
+    LLM call returns. ``details`` is rendered behind a chevron on the
+    smart-gen card.
+    """
+
+    event: Literal["phase_update"] = "phase_update"
+    phase: PhaseName
+    details: str
+    message: Optional[str] = None
+
+
 class TextDeltaEvent(BaseSseEvent):
     """A streaming text delta from the underlying LLM response.
 

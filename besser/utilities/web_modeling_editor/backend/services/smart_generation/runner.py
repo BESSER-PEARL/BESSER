@@ -57,6 +57,7 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_
     DoneEvent,
     ErrorEvent,
     PhaseEvent,
+    PhaseUpdateEvent,
     StartEvent,
     TextDeltaEvent,
     ToolCallEvent,
@@ -518,6 +519,22 @@ class SmartGenerationRunner:
         def on_text(delta: str) -> None:
             _put(TextDeltaEvent(delta=delta))
 
+        def on_phase_details(phase: str, details: str) -> None:
+            """Attach details (e.g. gap task list) to an existing phase row.
+
+            Currently only emitted for the gap phase by gap_analyzer
+            after the planning LLM call returns. The frontend renders
+            this behind a chevron on the smart-gen card.
+            """
+            if not details:
+                return
+            try:
+                _put(PhaseUpdateEvent(phase=phase, details=details))
+            except Exception:
+                logger.debug(
+                    "PhaseUpdateEvent emission failed (phase=%s)", phase, exc_info=True
+                )
+
         def on_progress(turn: int, tool: str, status: str) -> None:
             if tool == "validation":
                 _put(PhaseEvent(phase="validate", message=status))
@@ -530,6 +547,24 @@ class SmartGenerationRunner:
                 _put(PhaseEvent(phase="gap", message="Analysing gaps"))
                 return
             if turn == 0:
+                if tool == "__skipped__":
+                    # Phase 1 skipped — surface a clear reason on the
+                    # smart-gen card so users don't think the run jumped
+                    # straight to gap analysis by mistake.
+                    if status == "no_generator":
+                        msg = (
+                            "skipped — no deterministic generator for this "
+                            "stack; the LLM will scaffold from scratch"
+                        )
+                    elif status == "no_model":
+                        msg = (
+                            "skipped — no class diagram or quantum circuit "
+                            "to build from"
+                        )
+                    else:
+                        msg = "skipped"
+                    _put(PhaseEvent(phase="generate", message=msg))
+                    return
                 _put(PhaseEvent(phase="generate", message=f"running {tool}"))
                 return
             # turn >= 1 means we're inside the LLM customization loop.
@@ -570,6 +605,7 @@ class SmartGenerationRunner:
             max_runtime_seconds=self.request.max_runtime_seconds,
             on_progress=on_progress,
             on_text=on_text,
+            on_phase_details=on_phase_details,
             use_streaming=True,
             should_continue=should_continue,
             # Carry through the assembled primary so the orchestrator

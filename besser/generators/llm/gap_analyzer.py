@@ -53,6 +53,7 @@ def analyze_gaps_via_llm(
     inventory: str,
     llm_client,
     on_progress: Callable[[int, str, str], None] | None = None,
+    on_phase_details: Callable[[str, str], None] | None = None,
 ) -> list[str]:
     """Return a focused task list for Phase 2.
 
@@ -85,12 +86,14 @@ def analyze_gaps_via_llm(
             logger.debug("on_progress callback raised; continuing", exc_info=True)
 
     if not generator_used:
-        return [
+        fallback = [
             "No BESSER generator was used. Build the entire application "
             "from scratch using the domain model as your specification. "
             "Every entity, attribute, type, and relationship in your code "
             "must match the model."
         ]
+        _emit_phase_details(on_phase_details, fallback, fallback_label=True)
+        return fallback
 
     if not _is_real_provider(llm_client):
         # Test client / mock — skip the LLM call.
@@ -119,7 +122,42 @@ def analyze_gaps_via_llm(
     if tasks is None:
         logger.warning("Gap analyzer returned non-JSON response: %r", text[:200])
         return []
-    return [t.strip() for t in tasks[:_MAX_TASKS] if isinstance(t, str) and t.strip()]
+    cleaned = [t.strip() for t in tasks[:_MAX_TASKS] if isinstance(t, str) and t.strip()]
+    _emit_phase_details(on_phase_details, cleaned)
+    return cleaned
+
+
+def _emit_phase_details(
+    callback: Callable[[str, str], None] | None,
+    tasks: list[str],
+    fallback_label: bool = False,
+) -> None:
+    """Best-effort: surface the gap task list to the SSE consumer.
+
+    Builds a markdown bullet list from the tasks so the smart-gen card
+    can render it behind a chevron. Silently no-ops if the callback
+    raises — the gap analyser must never break the run.
+    """
+    if callback is None:
+        return
+    try:
+        if not tasks:
+            return
+        if fallback_label:
+            details = (
+                "No deterministic generator ran. The LLM will scaffold the "
+                "entire codebase from the domain model."
+            )
+        else:
+            bullets = "\n".join(f"- {t}" for t in tasks)
+            details = (
+                f"Identified {len(tasks)} task"
+                f"{'s' if len(tasks) != 1 else ''} for the customise loop:\n\n"
+                f"{bullets}"
+            )
+        callback("gap", details)
+    except Exception:
+        logger.debug("on_phase_details callback raised; ignoring", exc_info=True)
 
 
 # ----------------------------------------------------------------------

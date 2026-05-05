@@ -187,6 +187,7 @@ class LLMOrchestrator:
         max_runtime_seconds: int = 1200,
         on_progress: Callable[[int, str, str], None] | None = None,
         on_text: Callable[[str], None] | None = None,
+        on_phase_details: Callable[[str, str], None] | None = None,
         use_streaming: bool = True,
         object_model=None,
         state_machines=None,
@@ -228,6 +229,7 @@ class LLMOrchestrator:
         self.max_runtime_seconds = max_runtime_seconds
         self.on_progress = on_progress
         self.on_text = on_text
+        self.on_phase_details = on_phase_details
         self.use_streaming = use_streaming
         self.executor = ToolExecutor(
             workspace=self.output_dir,
@@ -526,6 +528,11 @@ class LLMOrchestrator:
                 "primary_kind=%s). LLM writes from scratch in Phase 2.",
                 self.primary_kind,
             )
+            if self.on_progress:
+                # Surface the skip so the smart-gen card shows a `generate`
+                # row with a clear "skipped — no model" message instead of
+                # silently jumping from `select` to `gap`.
+                self.on_progress(0, "__skipped__", "no_model")
             return
 
         generator_name = self._select_generator(instructions)
@@ -553,6 +560,8 @@ class LLMOrchestrator:
                 logger.warning("Phase 1: Generator failed: %s", result.get("error"))
         else:
             logger.info("Phase 1: No matching generator -- LLM will write from scratch")
+            if self.on_progress:
+                self.on_progress(0, "__skipped__", "no_generator")
 
     def _select_generator(self, instructions: str = "") -> str | None:
         """
@@ -844,6 +853,7 @@ class LLMOrchestrator:
                 inventory=self._inventory,
                 llm_client=self.client,
                 on_progress=self.on_progress,
+                on_phase_details=self.on_phase_details,
             )
             messages = [{"role": "user", "content": instructions}]
 

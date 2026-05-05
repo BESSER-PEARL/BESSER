@@ -125,6 +125,27 @@ def _normalize_path_for_comparison(path: str) -> str:
     return path
 
 
+# Stderr fragments that indicate the requested binary isn't installed in
+# the execution container. The smart-gen runner image has Python +
+# Node + a few essentials; everything else (ruby, go, rustc, dotnet, ...)
+# routinely falls into this bucket. We treat these as soft skips so the
+# LLM doesn't surface "X is not installed" to the user as if it were a
+# real failure — the user can't act on it and it's just noise.
+_RUNTIME_NOT_INSTALLED_PATTERNS: tuple[str, ...] = (
+    "command not found",
+    "not recognized as an internal or external command",  # Windows shell
+    "no such file or directory",
+)
+
+
+def _looks_like_command_not_found(stderr: str) -> bool:
+    """True if the subprocess stderr matches a "binary missing" message."""
+    if not isinstance(stderr, str) or not stderr:
+        return False
+    lowered = stderr.lower()
+    return any(pat in lowered for pat in _RUNTIME_NOT_INSTALLED_PATTERNS)
+
+
 def _safe_subprocess_env() -> dict[str, str]:
     """Return a minimal subprocess environment with secrets stripped.
 
@@ -718,6 +739,29 @@ class ToolExecutor:
             stdout = self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2)
             # For stderr (errors), keep the tail where the actual error message is
             stderr = self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
+
+            # If the command failed because the runtime isn't installed in
+            # this container (e.g. `ruby -c file.rb` when ruby is absent),
+            # treat it as a soft skip rather than a real error. Otherwise
+            # the LLM dutifully reports "Ruby is not installed in the
+            # execution environment" in its user-facing summary, which is
+            # noise the user can't act on.
+            if result.returncode != 0 and _looks_like_command_not_found(stderr):
+                logger.info(
+                    "run_command: runtime not available, treating as soft skip: %s",
+                    command,
+                )
+                return {
+                    "exit_code": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "success": True,
+                    "skipped": True,
+                    "skip_reason": (
+                        "Runtime for this command is not installed in the "
+                        "execution environment; validation skipped."
+                    ),
+                }
 
             return {
                 "exit_code": result.returncode,

@@ -29,6 +29,51 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 )
 
 
+_KW_FROM_KIND = {"invariant": "inv", "precondition": "pre", "postcondition": "post"}
+
+
+def _ocl_typeref_name(t) -> str:
+    if t is None:
+        return "any"
+    if hasattr(t, "name") and t.name:
+        return t.name
+    return str(t)
+
+
+def _emit_full_ocl_text(constraint, kind: str, method=None) -> str:
+    """Reconstruct the full ``context X (inv|pre|post) ...:body`` text.
+
+    The metamodel only stores the body of a constraint
+    (``constraint.expression`` is body-only after pretty-printing). The
+    WME's canonical wire shape is full text, so on emit we rebuild the
+    header from:
+
+    * ``constraint.context`` — the class providing ``self``.
+    * ``kind`` — invariant / precondition / postcondition (decided by the
+      caller based on whether the constraint lives in
+      ``domain_model.constraints`` or on a ``Method.pre`` / ``Method.post``
+      list).
+    * ``method`` — required for pre/post; provides the
+      ``::method(params)`` segment of the BOCL header.
+
+    Invariants carry a name in the BOCL header; pre/post don't (the
+    grammar disallows it).
+    """
+    cls_name = constraint.context.name if getattr(constraint, "context", None) is not None else "?"
+    body = constraint.expression
+    if kind == "invariant":
+        if constraint.name and constraint.name != "parsed":
+            return f"context {cls_name} inv {constraint.name}: {body}"
+        return f"context {cls_name} inv: {body}"
+    if method is None:
+        # Defensive: pre/post must have a method anchor.
+        return f"context {cls_name} {_KW_FROM_KIND[kind]}: {body}"
+    params = ", ".join(
+        f"{p.name}: {_ocl_typeref_name(p.type)}" for p in method.parameters
+    )
+    return f"context {cls_name}::{method.name}({params}) {_KW_FROM_KIND[kind]}: {body}"
+
+
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
@@ -151,14 +196,6 @@ def class_buml_to_json(domain_model):
     # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
     # Keyed by element name (classes/enums) or composite key (relationships).
     layout_positions = getattr(domain_model, '_layout_positions', {})
-    # Retrieve element id mappings populated by json_to_buml on a previous
-    # round-trip. Reusing these ids keeps OCL pre/post targetMethodId
-    # references stable across save/load cycles; minting fresh UUIDs each
-    # time would silently break those references on the next reload.
-    saved_class_ids: dict[str, str] = getattr(domain_model, '_class_element_ids', {})
-    saved_method_ids: dict[tuple, str] = getattr(domain_model, '_method_element_ids', {})
-    # method_id_lookup: Method object -> JSON element id (for OCL pre/post emission)
-    method_id_lookup: dict = {}
     # Default diagram size
     default_size = {
         "width": LAYOUT_GRID_WIDTH,
@@ -200,13 +237,10 @@ def class_buml_to_json(domain_model):
         (t for t in domain_model.types | domain_model.constraints if isinstance(t, (Class, Enumeration, Constraint))),
         key=lambda t: t.name,
     ):
-            # Reuse the original element id from a prior round-trip when we
-            # have it; otherwise mint a fresh UUID. Stable ids are required
-            # for OCL pre/post boxes that reference methods by id.
-            if isinstance(type_obj, (Class, Enumeration)):
-                element_id = saved_class_ids.get(type_obj.name) or str(uuid.uuid4())
-            else:
-                element_id = str(uuid.uuid4())
+            # Generate UUID for the element. OCL pre/post are emitted as
+            # full text including the Class::method header, so element-id
+            # stability is no longer required.
+            element_id = str(uuid.uuid4())
             class_id_map[type_obj] = element_id
 
             # Use saved layout position if available, otherwise fall back to grid layout
@@ -260,8 +294,7 @@ def class_buml_to_json(domain_model):
 
                 # Process methods
                 for method in sorted(type_obj.methods, key=lambda m: m.name):
-                    method_id = saved_method_ids.get((type_obj.name, method.name)) or str(uuid.uuid4())
-                    method_id_lookup[method] = method_id
+                    method_id = str(uuid.uuid4())
                     visibility_symbol = next(
                         k for k, v in VISIBILITY_MAP.items() if v == method.visibility
                     )
@@ -415,14 +448,11 @@ def class_buml_to_json(domain_model):
                         ),
                     }
                     if not isinstance(type_obj, Constraint)
-                    # Class-level constraints are always invariants. Tag the
-                    # box so the frontend renders a stereotype badge and so a
-                    # follow-up ingest takes the new (kind-aware) routing
-                    # path instead of the legacy text-splitter.
+                    # Class-level constraints are always invariants. Emit
+                    # the full ``context X inv name: body`` text so the next
+                    # ingest takes the canonical full-text path.
                     else {
-                        "constraint": type_obj.expression,
-                        "kind": "invariant",
-                        "constraintName": type_obj.name,
+                        "constraint": _emit_full_ocl_text(type_obj, "invariant"),
                     }
                 ),
             }
@@ -656,8 +686,9 @@ def class_buml_to_json(domain_model):
     # These are stored on the metamodel as first-class fields (not inside
     # domain_model.constraints), so they need their own emission pass.
     # Each constraint becomes its own ClassOCLConstraint element + a
-    # ClassOCLLink to the owning class, matching the visual contract for
-    # invariants — the difference is the `kind` and `targetMethodId` fields.
+    # ClassOCLLink to the owning class. The textbox carries the full
+    # ``context X::method(params) pre|post: body`` form — same shape the
+    # ingest path now expects from a freshly-typed constraint.
     for cls in sorted(
         (t for t in domain_model.types if isinstance(t, Class)),
         key=lambda c: c.name,
@@ -665,10 +696,6 @@ def class_buml_to_json(domain_model):
         if cls not in class_id_map:
             continue
         for method in sorted(cls.methods, key=lambda m: m.name):
-            method_id = method_id_lookup.get(method)
-            if method_id is None:
-                # Method was sorted/skipped earlier; nothing to anchor.
-                continue
             for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
                                        ("postcondition", getattr(method, "post", []) or [])):
                 for constraint in constraints:
@@ -679,10 +706,7 @@ def class_buml_to_json(domain_model):
                         "type": "ClassOCLConstraint",
                         "owner": None,
                         "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
-                        "constraint": constraint.expression,
-                        "kind": kind,
-                        "targetMethodId": method_id,
-                        "constraintName": constraint.name,
+                        "constraint": _emit_full_ocl_text(constraint, kind, method=method),
                     }
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {

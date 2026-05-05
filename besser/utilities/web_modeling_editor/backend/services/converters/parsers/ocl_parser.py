@@ -1,22 +1,29 @@
 """
-OCL constraint parsing utilities for converting JSON to BUML format.
+OCL constraint parsing utilities for converting WME JSON to BUML.
 
-Two ingest paths coexist here:
+The canonical wire shape is **full OCL text** in the ``ClassOCLConstraint``
+element's ``constraint`` field — e.g.
 
-* ``process_ocl_constraints`` — legacy: a single textarea blob containing
-  one or more full ``context X inv name: expr`` blocks. Used when a JSON
-  ``ClassOCLConstraint`` element has no ``kind`` field.
-* ``parse_ocl_body`` — new shape: the JSON element carries ``kind`` (one
-  of ``invariant`` / ``precondition`` / ``postcondition``) and a body-only
-  expression, plus a ``targetMethodId`` for pre/post. The header is
-  synthesized internally to match the BOCL grammar. Pre/post require the
-  full method-signature header (``context C::m(p: T) pre|post: expr``);
-  invariants accept ``context C inv name: expr``.
+    context Book inv pages_positive: self.pages > 0
+    context Book::decrease_stock(qty: int) pre: qty > 0
+    context Book::decrease_stock(qty: int) post: self.stock >= 0
 
-Both paths return parsed :class:`OCLConstraint` objects with ``.ast``
-populated, so downstream consumers (validator, generators, B-OCL
-Interpreter) can walk the AST directly. Malformed OCL is skipped with a
-warning rather than aborting the whole conversion.
+This file extracts the routing kind (invariant / precondition / postcondition)
+and target method from the parsed OCL header, then defers the actual lex/parse
+work to :func:`besser.BUML.notations.ocl.api.parse_ocl`. The caller in
+``class_diagram_processor.py`` uses the returned routing tuple to decide
+whether the constraint lands on ``domain_model.constraints`` or on a
+``Method.pre`` / ``Method.post`` list.
+
+Malformed OCL is skipped with a warning rather than aborting the whole
+conversion (matches the project's "skip-with-warning" policy).
+
+A small back-compat helper :func:`legacy_body_only_to_text` is kept for
+JSON files that were produced by an earlier intermediate iteration that
+stored body-only OCL alongside ``kind`` / ``targetMethodId`` /
+``constraintName`` metadata. It synthesises the canonical full-text form
+so the rest of the pipeline only ever sees one shape. New code should not
+call it.
 """
 
 import re
@@ -28,8 +35,22 @@ from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 
 
-_VALID_KINDS = ("invariant", "precondition", "postcondition")
-_KIND_KEYWORD = {"invariant": "inv", "precondition": "pre", "postcondition": "post"}
+_KIND_FROM_KW = {"inv": "invariant", "pre": "precondition", "post": "postcondition"}
+_KW_FROM_KIND = {v: k for k, v in _KIND_FROM_KW.items()}
+
+# Match the routing prefix of an OCL constraint:
+#   context X inv [name]:
+#   context X::method(params) pre|post:
+# The method-signature segment is optional (only present for pre/post).
+# The constraint name is optional; only invariants accept one in BOCL.
+_HEADER_RE = re.compile(
+    r"\bcontext\s+(?P<class>\w+)"
+    r"(?:::(?P<method>\w+)\s*\([^)]*\))?"
+    r"\s+(?P<kw>inv|pre|post)\b"
+    r"(?:\s+(?P<name>\w+))?"
+    r"\s*:",
+    re.IGNORECASE,
+)
 
 
 def _typeref_name(t) -> str:
@@ -41,111 +62,153 @@ def _typeref_name(t) -> str:
     return str(t)
 
 
-def parse_ocl_body(
-    body: str,
-    kind: str,
-    name: str,
-    context_class: Class,
+def parse_constraint_text(
+    text: str,
     domain_model: DomainModel,
-    method: Optional[Method] = None,
-) -> OCLConstraint:
-    """Synthesize a BOCL header for ``body`` and parse it into an :class:`OCLConstraint`.
+) -> tuple[str, OCLConstraint, Optional[str], Optional[str]]:
+    """Parse one OCL block and report enough routing context to attach it.
 
-    The OCL grammar requires every constraint to start with a ``context``
-    header. The WME stores body-only OCL on each constraint element along
-    with its kind and (for pre/post) the target method, so this helper
-    reconstructs the header from the surrounding metadata before handing
-    it to :func:`parse_ocl`.
+    Returns a 4-tuple:
 
-    Args:
-        body: The OCL body, e.g. ``"self.balance >= 0"``.
-        kind: One of ``"invariant"``, ``"precondition"``, ``"postcondition"``.
-        name: Name to assign to the resulting constraint.
-        context_class: Class providing the OCL ``self`` context.
-        domain_model: Owning domain model (used by :func:`parse_ocl` for
-            property/method resolution).
-        method: Required iff ``kind`` is pre/post. Provides the method
-            signature segment of the synthesized header.
-
-    Returns:
-        An :class:`OCLConstraint` whose ``.ast`` is the parsed expression
-        and whose ``.name`` is ``name``.
+    * ``kind`` — ``"invariant"`` / ``"precondition"`` / ``"postcondition"``.
+    * ``constraint`` — the parsed :class:`OCLConstraint`. If the OCL header
+      carried a name (only valid for invariants), it is set on
+      ``constraint.name``; otherwise ``constraint.name`` is left at the
+      ``"parsed"`` default for the caller to rename.
+    * ``class_name`` — the context class name as written in the header.
+    * ``method_name`` — for pre/post, the target method name; ``None`` for
+      invariants.
 
     Raises:
-        ValueError: invalid ``kind``, or pre/post without ``method``.
-        BOCLSyntaxError: if ``body`` fails to parse.
+        ValueError: when the text doesn't contain a recognisable OCL header.
+        BOCLSyntaxError: when the body fails to parse against the BOCL grammar.
     """
-    if kind not in _VALID_KINDS:
-        raise ValueError(f"parse_ocl_body: unknown kind {kind!r}; expected one of {_VALID_KINDS}")
-    if kind == "invariant":
-        header = f"context {context_class.name} inv {name}: {body}"
-    else:
-        if method is None:
-            raise ValueError(
-                f"parse_ocl_body: method is required when kind={kind!r}"
-            )
-        params = ", ".join(
-            f"{p.name}: {_typeref_name(p.type)}" for p in method.parameters
+    match = _HEADER_RE.search(text)
+    if match is None:
+        raise ValueError(
+            "OCL text does not contain a recognisable "
+            "'context <Class> inv|pre|post' header"
         )
-        header = f"context {context_class.name}::{method.name}({params}) {_KIND_KEYWORD[kind]}: {body}"
+    class_name = match.group("class")
+    method_name = match.group("method")
+    kw = match.group("kw").lower()
+    name = match.group("name")
 
-    constraint = parse_ocl(header, domain_model, context_class=context_class)
-    constraint.name = name
-    return constraint
+    kind = _KIND_FROM_KW[kw]
+
+    # Resolve the context class ourselves and pass it to parse_ocl.
+    # parse_ocl's auto-detection regex assumes `context X inv|pre|post|init`
+    # and does not handle the method-signature segment in
+    # `context X::method(params) pre:`, so passing context_class explicitly
+    # bypasses the upstream regex entirely.
+    context_class = next(
+        (t for t in domain_model.types if isinstance(t, Class) and t.name == class_name),
+        None,
+    )
+    if context_class is None:
+        raise ValueError(
+            f"OCL header references unknown class {class_name!r}"
+        )
+
+    constraint = parse_ocl(text, domain_model, context_class=context_class)
+    if name:
+        # Only invariants carry a name in BOCL; preserve it verbatim.
+        constraint.name = name
+    return kind, constraint, class_name, method_name
 
 
-def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: int) -> tuple[list, list]:
-    """Parse a legacy free-text OCL blob into a list of :class:`OCLConstraint` objects.
+def process_ocl_constraints(
+    ocl_text: str,
+    domain_model: DomainModel,
+    counter: int,
+) -> tuple[list[tuple[str, OCLConstraint, Optional[str], Optional[str]]], list[str]]:
+    """Split a textarea blob on ``context`` boundaries and parse each block.
 
-    Used for backward compatibility with WME projects whose
-    ``ClassOCLConstraint`` element predates the ``kind`` field — the
-    textarea then holds one or more complete ``context X inv name: expr``
-    blocks. Each block is parsed independently; malformed blocks are
-    skipped with a warning so a single bad constraint does not lose the
-    whole document.
+    The WME's OCL constraint element holds free text that may contain
+    several `context X (inv|pre|post) ...` blocks pasted together. Each is
+    parsed independently; failures are reported as warnings so one bad
+    block does not lose the rest of the document.
+
+    Returns:
+        ``(routing_tuples, warnings)`` where each routing tuple has the
+        same shape as :func:`parse_constraint_text`'s return value.
     """
     if not ocl_text:
         return [], []
 
-    constraints: list[OCLConstraint] = []
+    routing: list[tuple[str, OCLConstraint, Optional[str], Optional[str]]] = []
     warnings: list[str] = []
-    constraint_count = 0
 
-    domain_classes = {cls.name.lower(): cls for cls in domain_model.types}
-
-    # Split on word-boundary "context" while preserving the keyword in each chunk.
-    blocks = re.split(r'(?i)(?=\bcontext\b)', ocl_text)
+    blocks = re.split(r"(?i)(?=\bcontext\b)", ocl_text)
+    block_idx = 0
 
     for block in blocks:
         block = block.strip()
-        if not block:
+        if not block or not block.lower().startswith("context"):
             continue
-
-        line = block.replace('\n', ' ').strip()
-        if not line.lower().startswith('context'):
-            continue
-
-        parts = line.split()
-        if len(parts) < 2:
-            warnings.append(f"Warning: Malformed OCL constraint (too few tokens): {line}")
-            continue
-
-        context_class_name = parts[1].split('::')[0]  # 'Class' or 'Class::method'
-        context_class = domain_classes.get(context_class_name.lower())
-        if not context_class:
-            warnings.append(f"Warning: Context class {context_class_name} not found")
-            continue
-
-        constraint_count += 1
-        constraint_name = f"constraint_{context_class_name}_{counter}_{constraint_count}"
+        line = block.replace("\n", " ").strip()
+        block_idx += 1
 
         try:
-            constraint = parse_ocl(line, domain_model, context_class=context_class)
-            constraint.name = constraint_name
-            constraints.append(constraint)
+            kind, constraint, class_name, method_name = parse_constraint_text(line, domain_model)
         except BOCLSyntaxError as e:
-            warnings.append(f"Warning: Invalid OCL syntax in constraint '{constraint_name}': {e}")
+            warnings.append(f"Warning: Invalid OCL syntax in '{line}': {e}")
+            continue
         except ValueError as e:
-            warnings.append(f"Warning: Could not parse OCL constraint '{constraint_name}': {e}")
+            warnings.append(f"Warning: Could not parse OCL constraint '{line}': {e}")
+            continue
 
-    return constraints, warnings
+        # Auto-generate a fallback name only when the user didn't supply one.
+        # ``parse_ocl`` initialises constraints with ``name='parsed'``; if it's
+        # still that value we know no header name was captured.
+        if constraint.name in (None, "", "parsed"):
+            if kind == "invariant":
+                constraint.name = f"{class_name}_inv_{counter}_{block_idx}"
+            else:
+                base_method = method_name or class_name
+                constraint.name = f"{base_method}_{_KW_FROM_KIND[kind]}_{counter}_{block_idx}"
+
+        routing.append((kind, constraint, class_name, method_name))
+
+    return routing, warnings
+
+
+def legacy_body_only_to_text(
+    body: str,
+    kind: str,
+    name: Optional[str],
+    context_class: Class,
+    method: Optional[Method] = None,
+) -> str:
+    """Reconstruct full-text OCL from the body-only intermediate JSON shape.
+
+    The WME briefly stored constraints in a body-only form during an
+    earlier iteration (textarea = ``self.pages > 0``, with ``kind`` /
+    ``targetMethodId`` / ``constraintName`` siblings). To keep those JSON
+    files loadable without a manual migration, the ingest path detects
+    them and synthesises the canonical full-text form here. The result
+    is then fed through the normal :func:`parse_constraint_text` path.
+
+    New code should not call this; the canonical wire shape is full text.
+
+    Raises:
+        ValueError: invalid ``kind``, or pre/post without a ``method``.
+    """
+    if kind not in _KIND_FROM_KW.values():
+        raise ValueError(
+            f"legacy_body_only_to_text: unknown kind {kind!r}; "
+            f"expected one of {tuple(_KIND_FROM_KW.values())}"
+        )
+    safe_name = (name or "").strip()
+    if kind == "invariant":
+        if safe_name:
+            return f"context {context_class.name} inv {safe_name}: {body}"
+        return f"context {context_class.name} inv: {body}"
+    if method is None:
+        raise ValueError(
+            f"legacy_body_only_to_text: method is required when kind={kind!r}"
+        )
+    params = ", ".join(
+        f"{p.name}: {_typeref_name(p.type)}" for p in method.parameters
+    )
+    return f"context {context_class.name}::{method.name}({params}) {_KW_FROM_KIND[kind]}: {body}"

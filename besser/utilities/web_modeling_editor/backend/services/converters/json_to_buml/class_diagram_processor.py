@@ -15,7 +15,8 @@ from besser.BUML.metamodel.structural import (
     Metadata, Parameter, MethodImplementationType, Type
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
-    parse_attribute, parse_method, parse_multiplicity, parse_ocl_body, process_ocl_constraints
+    parse_attribute, parse_method, parse_multiplicity,
+    legacy_body_only_to_text, parse_constraint_text, process_ocl_constraints,
 )
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 
@@ -631,6 +632,106 @@ def _process_association_classes(
         domain_model.types.add(association_class)
 
 
+def _ocl_box_to_full_text(
+    element: dict[str, Any],
+    element_id: str,
+    elements: dict[str, Any],
+    relationships: dict[str, Any],
+    class_id_to_class: dict[str, Class],
+    method_id_to_method: dict[str, Method],
+    warnings: list[str],
+) -> Optional[str]:
+    """Coerce a ``ClassOCLConstraint`` element to its canonical full-text form.
+
+    The canonical wire shape is the full ``context X (inv|pre|post) ...:
+    body`` text in ``element['constraint']``. WME projects produced by an
+    earlier intermediate iteration instead carried a body-only string with
+    sibling ``kind`` / ``targetMethodId`` / ``constraintName`` fields; for
+    those, the helper synthesises the canonical text from the metadata so
+    the rest of the pipeline only has to deal with one shape.
+
+    Returns ``None`` (with a warning appended) when the legacy shape can't
+    be reconstructed — e.g. unlinked, unknown kind, missing target method.
+    """
+    raw = element.get("constraint")
+    if not raw:
+        return None
+
+    # Already canonical full text — fast path.
+    if raw.lstrip().lower().startswith("context"):
+        return raw
+
+    # Legacy body-only path. Detect by the presence of `kind` (the field
+    # that earlier iterations stamped onto every box).
+    legacy_kind = element.get("kind")
+    if not legacy_kind:
+        # No header and no legacy metadata: nothing we can do.
+        warnings.append(
+            f"Warning: OCL constraint {element_id} has no recognisable header "
+            f"and no legacy 'kind' field; skipping."
+        )
+        return None
+    if legacy_kind not in ("invariant", "precondition", "postcondition"):
+        warnings.append(
+            f"Warning: OCL constraint {element_id} has unknown kind {legacy_kind!r}; skipping."
+        )
+        return None
+
+    # Resolve the linked class via the ClassOCLLink relationship.
+    linked_class_id: Optional[str] = None
+    for rel in relationships.values():
+        if rel.get("type") != "ClassOCLLink":
+            continue
+        source_id = (rel.get("source") or {}).get("element")
+        target_id = (rel.get("target") or {}).get("element")
+        if source_id == element_id:
+            linked_class_id = target_id
+            break
+        if target_id == element_id:
+            linked_class_id = source_id
+            break
+    if linked_class_id is None:
+        warnings.append(
+            f"Warning: legacy body-only OCL constraint {element_id} is not linked to a class; skipping."
+        )
+        return None
+    linked_class = class_id_to_class.get(linked_class_id)
+    if linked_class is None:
+        warnings.append(
+            f"Warning: legacy body-only OCL constraint {element_id} links to non-class element "
+            f"{linked_class_id}; skipping."
+        )
+        return None
+
+    method = None
+    if legacy_kind in ("precondition", "postcondition"):
+        target_method_id = element.get("targetMethodId")
+        if not target_method_id:
+            warnings.append(
+                f"Warning: legacy {legacy_kind} constraint {element_id} has no targetMethodId; skipping."
+            )
+            return None
+        method = method_id_to_method.get(target_method_id)
+        if method is None:
+            warnings.append(
+                f"Warning: legacy {legacy_kind} constraint {element_id} targets missing method "
+                f"{target_method_id}; skipping."
+            )
+            return None
+
+    try:
+        return legacy_body_only_to_text(
+            body=raw,
+            kind=legacy_kind,
+            name=element.get("constraintName"),
+            context_class=linked_class,
+            method=method,
+        )
+    except ValueError as e:
+        warnings.append(f"Warning: legacy {legacy_kind} constraint {element_id}: {e}")
+        return None
+
+
 def _process_constraints(
     elements: dict[str, Any],
     relationships: dict[str, Any],
@@ -639,132 +740,73 @@ def _process_constraints(
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
 ) -> None:
-    """Process OCL constraint elements and attach them to the domain model.
+    """Parse every ``ClassOCLConstraint`` element and attach the results.
 
-    Routes each ``ClassOCLConstraint`` element by its ``kind`` field:
+    The textarea holds canonical full OCL text — one or more blocks of
+    ``context <Class> inv [name]: body`` or
+    ``context <Class>::<method>(<params>) pre|post: body``. The parser
+    routes each block by inspecting the kind keyword and (for pre/post)
+    the method name extracted from the header.
 
-    * absent ``kind`` (legacy projects) → parse the textarea content via
-      :func:`process_ocl_constraints`, which expects a complete
-      ``context X inv name: expr`` block (and adds the result to
-      ``domain_model.constraints``).
-    * ``"invariant"`` → look up the linked class via the box's
-      ``ClassOCLLink`` relationship, parse the body via
-      :func:`parse_ocl_body`, attach to ``domain_model.constraints``.
-    * ``"precondition"`` / ``"postcondition"`` → resolve the target method
-      via ``targetMethodId``, parse the body, call ``method.add_pre`` or
-      ``add_post``.
+    Legacy body-only JSON files produced by an intermediate iteration are
+    transparently lifted to full text via :func:`_ocl_box_to_full_text`.
 
-    Malformed OCL, missing links, or unresolved method references are
-    skipped with a warning so a single bad constraint does not abort the
-    conversion (see project plan: "Skip with warning").
+    Malformed OCL, unresolved methods, and duplicate names are skipped
+    with a warning rather than aborting conversion.
     """
-    # Walk relationships once to map each ClassOCLConstraint element id to
-    # the linked class element id. ClassOCLLink is the only relationship
-    # type that connects an OCL box to a class; the source/target order
-    # depends on which way the user drew the line, so accept either.
-    ocl_to_class_id: dict[str, str] = {}
-    for rel in relationships.values():
-        if rel.get("type") != "ClassOCLLink":
+    # Build a (class_name, method_name) -> Method index for pre/post routing.
+    # Method names are unique per class in the metamodel, so we can look up
+    # the target Method by the ``Class::method`` pair from the OCL header.
+    method_by_qualified_name: dict[tuple[str, str], Method] = {}
+    for cls in domain_model.types:
+        if not isinstance(cls, Class):
             continue
-        source_id = (rel.get("source") or {}).get("element")
-        target_id = (rel.get("target") or {}).get("element")
-        if not source_id or not target_id:
-            continue
-        # The OCL endpoint is whichever side points at a ClassOCLConstraint element.
-        for ocl_id, other_id in ((source_id, target_id), (target_id, source_id)):
-            ocl_el = elements.get(ocl_id)
-            if ocl_el and ocl_el.get("type") == "ClassOCLConstraint":
-                ocl_to_class_id[ocl_id] = other_id
-                break
+        for m in getattr(cls, "methods", []) or []:
+            method_by_qualified_name[(cls.name, m.name)] = m
 
-    all_constraints: set = set()
+    extra_invariants: set = set()
     counter = 0
     for element_id, element in elements.items():
         if element.get("type") != "ClassOCLConstraint":
             continue
-        body = element.get("constraint")
-        if not body:
+
+        text = _ocl_box_to_full_text(
+            element, element_id, elements, relationships,
+            class_id_to_class, method_id_to_method, all_warnings,
+        )
+        if not text:
             continue
 
-        kind = element.get("kind")
-        user_name = element.get("constraintName")
-
-        # Legacy path: no kind set, body holds full OCL text with header(s).
-        if kind is None:
-            try:
-                new_constraints, warnings = process_ocl_constraints(body, domain_model, counter)
-                all_constraints.update(new_constraints)
-                all_warnings.extend(warnings)
-                counter += 1
-            except Exception as e:
-                all_warnings.append(f"Warning: Error processing OCL constraint for element {element_id}: {e}")
-            continue
-
-        # New path: kind is explicit, body is body-only.
-        if kind not in ("invariant", "precondition", "postcondition"):
-            all_warnings.append(f"Warning: OCL constraint {element_id} has unknown kind {kind!r}; skipping.")
-            continue
-
-        linked_class_id = ocl_to_class_id.get(element_id)
-        if not linked_class_id:
-            all_warnings.append(
-                f"Warning: OCL constraint {element_id} (kind={kind}) is not linked to a class; skipping."
-            )
-            continue
-        linked_class = class_id_to_class.get(linked_class_id)
-        if linked_class is None:
-            all_warnings.append(
-                f"Warning: OCL constraint {element_id} links to non-class element {linked_class_id}; skipping."
-            )
-            continue
-
-        method = None
-        if kind in ("precondition", "postcondition"):
-            target_method_id = element.get("targetMethodId")
-            if not target_method_id:
-                all_warnings.append(
-                    f"Warning: {kind} constraint {element_id} has no targetMethodId; skipping."
-                )
-                continue
-            method = method_id_to_method.get(target_method_id)
-            if method is None:
-                all_warnings.append(
-                    f"Warning: {kind} constraint {element_id} targets missing method {target_method_id}; skipping."
-                )
-                continue
-
-        # Auto-generate a name if the user did not supply one. Names must be
-        # unique within their target list (DomainModel.constraints rejects
-        # dupes; Method.add_pre/add_post also reject dupes).
         counter += 1
-        if user_name:
-            name = user_name
-        elif kind == "invariant":
-            name = f"{linked_class.name}_inv_{counter}"
-        else:
-            kw = "pre" if kind == "precondition" else "post"
-            name = f"{method.name}_{kw}_{counter}"
-
         try:
-            constraint = parse_ocl_body(body, kind, name, linked_class, domain_model, method=method)
-        except (BOCLSyntaxError, ValueError) as e:
-            all_warnings.append(f"Warning: Could not parse {kind} constraint '{name}': {e}")
+            routing, warnings = process_ocl_constraints(text, domain_model, counter)
+        except Exception as e:  # defensive — process_ocl_constraints already swallows most
+            all_warnings.append(f"Warning: Error processing OCL element {element_id}: {e}")
             continue
+        all_warnings.extend(warnings)
 
-        try:
-            if kind == "invariant":
-                all_constraints.add(constraint)
-            elif kind == "precondition":
-                method.add_pre(constraint)
-            else:  # postcondition
-                method.add_post(constraint)
-        except ValueError as e:
-            all_warnings.append(f"Warning: Could not attach {kind} constraint '{name}': {e}")
+        for kind, constraint, class_name, method_name in routing:
+            try:
+                if kind == "invariant":
+                    extra_invariants.add(constraint)
+                else:
+                    method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
+                    if method is None:
+                        all_warnings.append(
+                            f"Warning: {kind} '{constraint.name}' targets unknown method "
+                            f"{class_name}::{method_name}; skipping."
+                        )
+                        continue
+                    if kind == "precondition":
+                        method.add_pre(constraint)
+                    else:  # postcondition
+                        method.add_post(constraint)
+            except ValueError as e:
+                all_warnings.append(f"Warning: Could not attach {kind} '{constraint.name}': {e}")
 
     domain_model.ocl_warnings = all_warnings
-    # Combine with any existing constraints already on the domain model
-    # (legacy round-trips may have populated it via process_ocl_constraints).
-    domain_model.constraints = set(domain_model.constraints) | all_constraints
+    # Combine with any existing constraints already on the domain model.
+    domain_model.constraints = set(domain_model.constraints) | extra_invariants
 
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
@@ -862,18 +904,6 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     # Store method diagram references for buml_to_json round-trip fidelity.
     # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
     domain_model.method_diagram_refs = method_diagram_refs
-
-    # Stash the original JSON element ids for class and method elements so
-    # buml_to_json can re-emit the same UUIDs on round-trip. Without this,
-    # every save-load minted fresh UUIDs and broke targetMethodId references
-    # on OCL pre/post boxes.
-    domain_model._class_element_ids = {
-        cls.name: element_id for element_id, cls in class_id_to_class.items()
-    }
-    domain_model._method_element_ids = {
-        (method.owner.name if getattr(method, "owner", None) else "", method.name): element_id
-        for element_id, method in method_id_to_method.items()
-    }
 
     # Store layout positions for buml_to_json round-trip fidelity.
     # Keyed by element name (classes/enums) or composite key (relationships).

@@ -29,51 +29,6 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 )
 
 
-_KW_FROM_KIND = {"invariant": "inv", "precondition": "pre", "postcondition": "post"}
-
-
-def _ocl_typeref_name(t) -> str:
-    if t is None:
-        return "any"
-    if hasattr(t, "name") and t.name:
-        return t.name
-    return str(t)
-
-
-def _emit_full_ocl_text(constraint, kind: str, method=None) -> str:
-    """Reconstruct the full ``context X (inv|pre|post) ...:body`` text.
-
-    The metamodel only stores the body of a constraint
-    (``constraint.expression`` is body-only after pretty-printing). The
-    WME's canonical wire shape is full text, so on emit we rebuild the
-    header from:
-
-    * ``constraint.context`` — the class providing ``self``.
-    * ``kind`` — invariant / precondition / postcondition (decided by the
-      caller based on whether the constraint lives in
-      ``domain_model.constraints`` or on a ``Method.pre`` / ``Method.post``
-      list).
-    * ``method`` — required for pre/post; provides the
-      ``::method(params)`` segment of the BOCL header.
-
-    Invariants carry a name in the BOCL header; pre/post don't (the
-    grammar disallows it).
-    """
-    cls_name = constraint.context.name if getattr(constraint, "context", None) is not None else "?"
-    body = constraint.expression
-    if kind == "invariant":
-        if constraint.name and constraint.name != "parsed":
-            return f"context {cls_name} inv {constraint.name}: {body}"
-        return f"context {cls_name} inv: {body}"
-    if method is None:
-        # Defensive: pre/post must have a method anchor.
-        return f"context {cls_name} {_KW_FROM_KIND[kind]}: {body}"
-    params = ", ".join(
-        f"{p.name}: {_ocl_typeref_name(p.type)}" for p in method.parameters
-    )
-    return f"context {cls_name}::{method.name}({params}) {_KW_FROM_KIND[kind]}: {body}"
-
-
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
@@ -448,11 +403,13 @@ def class_buml_to_json(domain_model):
                         ),
                     }
                     if not isinstance(type_obj, Constraint)
-                    # Class-level constraints are always invariants. Emit
-                    # the full ``context X inv name: body`` text so the next
-                    # ingest takes the canonical full-text path.
+                    # Class-level constraints are always invariants and their
+                    # ``expression`` field already carries the full canonical
+                    # ``context X inv name: body`` text (set at JSON-to-BUML
+                    # parse time). Emit it verbatim — no reconstruction
+                    # needed.
                     else {
-                        "constraint": _emit_full_ocl_text(type_obj, "invariant"),
+                        "constraint": type_obj.expression,
                     }
                 ),
             }
@@ -710,7 +667,11 @@ def class_buml_to_json(domain_model):
                         "type": "ClassOCLConstraint",
                         "owner": None,
                         "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
-                        "constraint": _emit_full_ocl_text(constraint, kind, method=method),
+                        # ``expression`` carries the full canonical
+                        # ``context X::method(params) pre|post: body`` text
+                        # (set at JSON-to-BUML parse time). No reconstruction
+                        # needed.
+                        "constraint": constraint.expression,
                     }
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {

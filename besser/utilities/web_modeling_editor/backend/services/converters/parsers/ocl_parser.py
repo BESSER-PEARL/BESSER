@@ -135,6 +135,13 @@ def parse_constraint_text(
         )
 
     constraint = parse_ocl(text, domain_model, context_class=context_class)
+    # Store the full canonical OCL text on ``constraint.expression``.
+    # Without this override the value would be the AST pretty-printed to
+    # body-only ("self.pages > 10"), which forces every downstream consumer
+    # (validator, BUML emit, BUML→JSON converter, BOCL ``OCLWrapper.evaluate``)
+    # to reconstruct the canonical header from sibling fields. Storing it
+    # once at parse time eliminates that whole reconstruction layer.
+    constraint.expression = text
     if name:
         # Only invariants carry a name in BOCL; preserve it verbatim.
         constraint.name = name
@@ -220,6 +227,16 @@ def legacy_body_only_to_text(
     method: Optional[Method] = None,
 ) -> str:
     """Reconstruct full-text OCL from the body-only intermediate JSON shape.
+
+    .. deprecated:: target removal 2026-Q4
+        This shim exists solely to keep loading projects that were saved
+        during a brief intermediate iteration (mid-2026) where the WME
+        stored constraints body-only with sibling ``kind`` /
+        ``targetMethodId`` / ``constraintName`` fields. The first
+        ``buml_to_json`` round-trip rewrites those projects to canonical
+        full-text, so by 2026-Q4 the surviving population should be
+        empty and this whole function (plus the body-only branch in
+        ``_ocl_box_to_full_text``) can be deleted.
 
     The WME briefly stored constraints in a body-only form during an
     earlier iteration (textarea = ``self.pages > 0``, with ``kind`` /

@@ -427,24 +427,52 @@ def domain_model_to_code(
                         f"(general={general_var_name}, specific={specific_var_name})\n")
             f.write("\n")
 
-        # Write OCL constraints if they exist
-        if hasattr(model, 'constraints') and model.constraints:
+        # Helper: emit a single ``Constraint(...)`` declaration. Reused for
+        # invariants (top-level) and for method ``pre`` / ``post`` contracts
+        # (which are then attached via ``Method.add_pre`` / ``add_post``).
+        def _emit_constraint_decl(constraint, var_name: str) -> None:
+            context_var_name = safe_class_name(constraint.context.name)
+            f.write(f"{var_name}: Constraint = Constraint(\n")
+            f.write(f"    name=\"{_escape_python_string(constraint.name)}\",\n")
+            f.write(f"    context={context_var_name},\n")
+            f.write(f"    expression=\"{_escape_python_string(constraint.expression)}\",\n")
+            f.write(f"    language=\"{_escape_python_string(constraint.language)}\"")
+            description = getattr(constraint, 'description', None)
+            if description:
+                f.write(",\n")
+                f.write(f"    description=\"{_escape_python_string(description)}\"\n")
+            else:
+                f.write("\n")
+            f.write(")\n")
+
+        # Collect every method's pre / post contracts. Emit them alongside
+        # invariants so the generated file round-trips back to the editor
+        # with the same routing — without this loop, BUML export would
+        # silently drop method contracts (a regression we hit in
+        # https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/124).
+        method_contracts: list[tuple] = []  # (constraint, method, kind, cls)
+        for cls in sorted(
+            (t for t in getattr(model, 'types', []) if hasattr(t, 'methods')),
+            key=lambda t: getattr(t, 'name', '')
+        ):
+            for method in getattr(cls, 'methods', None) or []:
+                for c in getattr(method, 'pre', None) or []:
+                    method_contracts.append((c, method, 'pre', cls))
+                for c in getattr(method, 'post', None) or []:
+                    method_contracts.append((c, method, 'post', cls))
+
+        invariants = list(getattr(model, 'constraints', None) or [])
+        if invariants or method_contracts:
             f.write("\n# OCL Constraints\n")
-            for constraint in sort(model.constraints):
-                constraint_name = constraint.name.replace("-", "_")
-                context_var_name = safe_class_name(constraint.context.name)
-                f.write(f"{constraint_name}: Constraint = Constraint(\n")
-                f.write(f"    name=\"{_escape_python_string(constraint.name)}\",\n")
-                f.write(f"    context={context_var_name},\n")
-                f.write(f"    expression=\"{_escape_python_string(constraint.expression)}\",\n")
-                f.write(f"    language=\"{_escape_python_string(constraint.language)}\"")
-                description = getattr(constraint, 'description', None)
-                if description:
-                    f.write(",\n")
-                    f.write(f"    description=\"{_escape_python_string(description)}\"\n")
-                else:
-                    f.write("\n")
-                f.write(")\n")
+            for constraint in sort(invariants):
+                _emit_constraint_decl(constraint, constraint.name.replace("-", "_"))
+            for constraint, method, kind, cls in method_contracts:
+                cls_var = safe_class_name(cls.name)
+                method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
+                method_var = f"{cls_var}_m_{method_var_name}"
+                contract_var = constraint.name.replace("-", "_")
+                _emit_constraint_decl(constraint, contract_var)
+                f.write(f"{method_var}.add_{kind}({contract_var})\n")
             f.write("\n")
 
         # Write domain model

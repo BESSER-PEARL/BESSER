@@ -753,15 +753,27 @@ def _process_constraints(
     Malformed OCL, unresolved methods, and duplicate names are skipped
     with a warning rather than aborting conversion.
     """
-    # Build a (class_name, method_name) -> Method index for pre/post routing.
-    # Method names are unique per class in the metamodel, so we can look up
-    # the target Method by the ``Class::method`` pair from the OCL header.
+    # Build ``(class_name, method_name) -> Method`` index for pre/post
+    # routing. The metamodel guarantees method names are unique within a
+    # class today; if that changes (overloading), the BOCL header parser
+    # would also need to start emitting parameter types so we can build a
+    # disambiguating signature here.
     method_by_qualified_name: dict[tuple[str, str], Method] = {}
+    duplicates: set[tuple[str, str]] = set()
     for cls in domain_model.types:
         if not isinstance(cls, Class):
             continue
         for m in getattr(cls, "methods", []) or []:
-            method_by_qualified_name[(cls.name, m.name)] = m
+            key = (cls.name, m.name)
+            if key in method_by_qualified_name:
+                duplicates.add(key)
+            method_by_qualified_name[key] = m
+    for cls_name, m_name in duplicates:
+        all_warnings.append(
+            f"Warning: class {cls_name!r} has multiple methods named "
+            f"{m_name!r}; pre/post lookup may be ambiguous. "
+            f"Latest definition wins."
+        )
 
     extra_invariants: set = set()
     counter = 0

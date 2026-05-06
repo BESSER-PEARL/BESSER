@@ -124,7 +124,10 @@ def test_parse_constraint_text_invariant_extracts_name(banking_model):
     assert kind == "invariant"
     assert isinstance(c, OCLConstraint)
     assert c.name == "positive"        # user-typed name preserved
-    assert c.expression == "self.balance >= 0"
+    # ``expression`` carries the full canonical OCL text (set by
+    # ``parse_constraint_text``) so downstream consumers — validator,
+    # BUML emitter, BOCL evaluator — don't need to reconstruct it.
+    assert c.expression == "context Account inv positive: self.balance >= 0"
     assert c.context is account
     assert class_name == "Account"
     assert method_name is None
@@ -180,21 +183,26 @@ def test_invariant_routed_to_domain_model_constraints(account_diagram_json):
     assert invariants == ["positive"]
     inv = next(iter(dm.constraints))
     assert isinstance(inv, OCLConstraint)
-    assert inv.expression == "self.balance >= 0"
+    # ``expression`` carries the full canonical text post-consolidation.
+    assert inv.expression == "context Account inv positive: self.balance >= 0"
 
 
 def test_precondition_routed_to_method_pre(account_diagram_json):
     dm = process_class_diagram(account_diagram_json)
     account = next(c for c in dm.types if c.name == "Account")
     deposit = next(m for m in account.methods if m.name == "deposit")
-    assert [c.expression for c in deposit.pre] == ["amount > 0"]
+    assert [c.expression for c in deposit.pre] == [
+        "context Account::deposit(amount: int) pre: amount > 0"
+    ]
 
 
 def test_postcondition_routed_to_method_post(account_diagram_json):
     dm = process_class_diagram(account_diagram_json)
     account = next(c for c in dm.types if c.name == "Account")
     deposit = next(m for m in account.methods if m.name == "deposit")
-    assert [c.expression for c in deposit.post] == ["self.balance >= 0"]
+    assert [c.expression for c in deposit.post] == [
+        "context Account::deposit(amount: int) post: self.balance >= 0"
+    ]
 
 
 def test_unknown_method_in_pre_skipped_with_warning(account_diagram_json):
@@ -217,7 +225,9 @@ def test_invalid_ocl_skipped_with_warning(account_diagram_json):
     assert all(c.name != "positive" for c in dm.constraints)
     account = next(c for c in dm.types if c.name == "Account")
     deposit = next(m for m in account.methods if m.name == "deposit")
-    assert [c.expression for c in deposit.pre] == ["amount > 0"]
+    assert [c.expression for c in deposit.pre] == [
+        "context Account::deposit(amount: int) pre: amount > 0"
+    ]
     assert any("Invalid OCL syntax" in w for w in dm.ocl_warnings)
 
 
@@ -285,7 +295,12 @@ def test_body_only_legacy_files_still_load():
     assert sorted(c.name for c in dm.constraints) == ["positive"]
     account = next(c for c in dm.types if c.name == "Account")
     deposit = next(m for m in account.methods if m.name == "deposit")
-    assert [c.expression for c in deposit.pre] == ["amount > 0"]
+    # Legacy body-only ingest goes through ``legacy_body_only_to_text``
+    # which lifts to canonical full text before parsing — so the stored
+    # ``expression`` matches the post-consolidation contract.
+    assert [c.expression for c in deposit.pre] == [
+        "context Account::deposit(amount: int) pre: amount > 0"
+    ]
     assert dm.ocl_warnings == []
 
 

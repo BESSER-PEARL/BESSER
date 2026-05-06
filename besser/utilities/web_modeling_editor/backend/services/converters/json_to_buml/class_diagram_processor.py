@@ -16,9 +16,8 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity,
-    legacy_body_only_to_text, parse_constraint_text, process_ocl_constraints,
+    legacy_body_only_to_text, process_ocl_constraints,
 )
-from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 
 
 def parse_method_signature_from_code(

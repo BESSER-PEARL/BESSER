@@ -1782,6 +1782,9 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        description (str): Optional natural-language explanation shown to end-users when the
+            constraint is violated. Intended for non-technical audiences (e.g. graphical
+            editor users) who may not understand the raw constraint expression.
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -1791,17 +1794,20 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        description (str): Optional natural-language explanation surfaced on validation failure.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, context: Class, expression: str, language: str, timestamp: datetime = None,
+    def __init__(self, name: str, context: Class, expression: str, language: str,
+                 description: str = None, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
+        self.description: str = description
 
     @property
     def context(self) -> Class:
@@ -1843,10 +1849,23 @@ class Constraint(NamedElement):
         """str: Set the language in which the constraint expression is written."""
         self.__language = language
 
+    @property
+    def description(self) -> str:
+        """str: Get the natural-language explanation shown when the constraint is violated."""
+        return self.__description
+
+    @description.setter
+    def description(self, description: str):
+        """str: Set the natural-language explanation shown when the constraint is violated."""
+        if description is not None and not isinstance(description, str):
+            raise TypeError("description must be a string or None")
+        self.__description = description
+
     def __repr__(self):
         return (
             f'Constraint({self.name}, {self.context.name}, {self.language}, {self.expression}, '
-            f'{self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
+            f'description={self.description!r}, {self.timestamp}, {self.metadata}, '
+            f'is_derived={self.is_derived})'
         )
 class Model(NamedElement):
     """A model is the root element. There are different types of models
@@ -2295,13 +2314,30 @@ class DomainModel(Model):
                     )
 
     def _validate_constraints(self, errors: list[str]):
-        """Validate that constraint contexts reference classes in the model."""
-        for constraint in self.__constraints:
-            if constraint.context not in self.get_classes():
+        """Validate that constraint contexts reference classes in the model.
+
+        Walks both class-level invariants (``self.__constraints``) and every
+        class's methods' pre/post lists so a precondition with a stale or
+        external context class is flagged the same way an invariant would be.
+        """
+        classes = self.get_classes()
+
+        def _check(constraint: "Constraint", label: str):
+            if constraint.context not in classes:
                 errors.append(
-                    f"Constraint '{constraint.name}' references context class '{constraint.context.name}' "
-                    f"which is not in the domain model '{self.name}'."
+                    f"{label} '{constraint.name}' references context class "
+                    f"'{constraint.context.name}' which is not in the domain "
+                    f"model '{self.name}'."
                 )
+
+        for constraint in self.__constraints:
+            _check(constraint, "Constraint")
+        for cls in classes:
+            for method in cls.methods:
+                for pre in method.pre:
+                    _check(pre, f"Precondition on {cls.name}::{method.name}")
+                for post in method.post:
+                    _check(post, f"Postcondition on {cls.name}::{method.name}")
 
     def _validate_circular_inheritance(self, errors: list[str]):
         """Detect circular inheritance in the class hierarchy."""

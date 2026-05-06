@@ -133,10 +133,11 @@ class TestProcessOclConstraintsDescription:
         assert len(routing) == 1
         _kind, constraint, _cls, _method = routing[0]
         assert constraint.description == "Inline wins"
-        # The comment is stripped from the expression so the OCL parser
-        # never has to deal with it.
-        assert "--" not in constraint.expression
-        assert "Inline wins" not in constraint.expression
+        # The ``--`` comment now *stays* in the canonical expression so
+        # JSON↔BUML round-trips are bit-stable. BOCL's lexer natively
+        # skips ``--`` comments, so leaving them in the expression is
+        # safe for evaluation.
+        assert "-- Inline wins" in constraint.expression
 
     def test_no_description_yields_none(self, professor_domain_model):
         ocl = "context Professor inv: self.age > 25"

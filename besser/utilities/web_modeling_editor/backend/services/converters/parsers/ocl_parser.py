@@ -63,15 +63,20 @@ def _typeref_name(t) -> str:
 
 
 def _extract_inline_description(block: str) -> tuple[str, str]:
-    """Split an OCL constraint block into its expression and an inline description.
+    """Split an OCL block into ``(stripped_for_parser, description)``.
 
-    OCL supports ``--`` single-line comments. We treat any text following ``--``
-    on a line as a natural-language description of the constraint. The returned
-    expression has the comment stripped so it can be fed to the OCL parser
-    without relying on comment-handling behaviour.
+    OCL's lexer skips ``--`` comments, but the upstream
+    :func:`besser.BUML.notations.ocl.api.parse_ocl` runs a *visitor*
+    over the parse tree and chokes on the trailing comment tokens. So
+    we hand the parser a comment-stripped copy while the canonical
+    text stored on ``constraint.expression`` (set in
+    :func:`process_ocl_constraints`) keeps the ``--`` verbatim — the
+    JSON↔BUML round-trip is bit-stable that way and a user's
+    ``context X inv: self.x > 0 -- must be positive`` survives
+    unchanged on every emit.
 
     Returns:
-        tuple[str, str]: ``(expression_without_comments, description_or_empty_string)``.
+        tuple[str, str]: ``(stripped_block, description_or_empty)``.
     """
     description_parts: list[str] = []
     cleaned_lines: list[str] = []
@@ -81,9 +86,7 @@ def _extract_inline_description(block: str) -> tuple[str, str]:
             description_parts.append(match.group(1))
             raw_line = raw_line[:match.start()].rstrip()
         cleaned_lines.append(raw_line)
-    cleaned = '\n'.join(cleaned_lines)
-    description = ' '.join(description_parts).strip()
-    return cleaned, description
+    return '\n'.join(cleaned_lines), ' '.join(description_parts).strip()
 
 
 def parse_constraint_text(
@@ -184,19 +187,25 @@ def process_ocl_constraints(
         if not block or not block.lower().startswith("context"):
             continue
         # Extract inline ``--`` description per block before collapsing
-        # newlines: OCL comments terminate at end-of-line, so newlines must
-        # still be present when we scan for them.
+        # newlines: OCL comments terminate at end-of-line, so newlines
+        # must still be present when we scan for them. We feed the
+        # parser the comment-stripped form (``parse_ocl``'s visitor
+        # rejects trailing comment tokens) but keep the original block
+        # — comments included — as the canonical text on
+        # ``constraint.expression`` below, so JSON↔BUML round-trips are
+        # bit-stable.
         cleaned_block, inline_description = _extract_inline_description(block)
-        line = cleaned_block.replace("\n", " ").strip()
+        line_for_parse = cleaned_block.replace("\n", " ").strip()
+        line_canonical = block.replace("\n", " ").strip()
         block_idx += 1
 
         try:
-            kind, constraint, class_name, method_name = parse_constraint_text(line, domain_model)
+            kind, constraint, class_name, method_name = parse_constraint_text(line_for_parse, domain_model)
         except BOCLSyntaxError as e:
-            warnings.append(f"Warning: Invalid OCL syntax in '{line}': {e}")
+            warnings.append(f"Warning: Invalid OCL syntax in '{line_for_parse}': {e}")
             continue
         except ValueError as e:
-            warnings.append(f"Warning: Could not parse OCL constraint '{line}': {e}")
+            warnings.append(f"Warning: Could not parse OCL constraint '{line_for_parse}': {e}")
             continue
 
         # Auto-generate a fallback name only when the user didn't supply one.
@@ -208,6 +217,12 @@ def process_ocl_constraints(
             else:
                 base_method = method_name or class_name
                 constraint.name = f"{base_method}_{_KW_FROM_KIND[kind]}_{counter}_{block_idx}"
+
+        # ``parse_constraint_text`` set ``constraint.expression`` to the
+        # comment-stripped form it parsed; restore the original — with
+        # ``--`` comments intact — so the canonical text round-trips
+        # bit-stable through JSON↔BUML emit.
+        constraint.expression = line_canonical
 
         # Inline ``--`` description always wins over the per-element default.
         description = inline_description or (default_description or None)

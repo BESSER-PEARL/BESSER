@@ -663,7 +663,6 @@ def class_buml_to_json(domain_model):
                     box_id = str(uuid.uuid4())
                     elements[box_id] = {
                         "id": box_id,
-                        "name": "OCL",
                         "type": "ClassOCLConstraint",
                         "owner": None,
                         "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
@@ -673,6 +672,11 @@ def class_buml_to_json(domain_model):
                         # needed.
                         "constraint": constraint.expression,
                     }
+                    # Mirror the invariant emit path: surface the
+                    # natural-language description so JSON↔BUML round-trips
+                    # are symmetric for method contracts too.
+                    if getattr(constraint, "description", None):
+                        elements[box_id]["description"] = constraint.description
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {
                         "id": rel_id,

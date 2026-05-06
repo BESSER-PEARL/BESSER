@@ -400,3 +400,58 @@ def test_legacy_body_only_normalized_to_full_text_on_emit():
     out = class_buml_to_json(dm)
     ocl = next(e for e in out["elements"].values() if e.get("type") == "ClassOCLConstraint")
     assert ocl["constraint"] == "context Account inv positive: self.balance >= 0"
+
+
+# ---------------------------------------------------------------------------
+# Duplicate constraint names across boxes
+# ---------------------------------------------------------------------------
+
+def test_duplicate_constraint_name_across_boxes_does_not_crash():
+    """Two ``ClassOCLConstraint`` boxes that parse to the same constraint
+    name must not crash the conversion.
+
+    ``DomainModel.constraints`` rejects duplicate names with a
+    ``ValueError``; ``_process_constraints`` de-dups by name before
+    assigning, keeping the first occurrence and emitting a warning for
+    each subsequent collision rather than letting the setter raise.
+
+    Discovered by the 2000-constraint stress test (PR #529 review).
+    """
+    diagram = {
+        "title": "DupNames",
+        "model": {
+            "elements": {
+                "cls-Account": {
+                    "id": "cls-Account", "name": "Account", "type": "Class",
+                    "attributes": ["a-balance"], "methods": [],
+                },
+                "a-balance": {
+                    "id": "a-balance", "name": "balance",
+                    "visibility": "public", "attributeType": "int",
+                },
+                "ocl-1": {
+                    "id": "ocl-1", "type": "ClassOCLConstraint",
+                    "constraint": "context Account inv dup: self.balance > 0",
+                },
+                "ocl-2": {
+                    "id": "ocl-2", "type": "ClassOCLConstraint",
+                    "constraint": "context Account inv dup: self.balance >= 0",
+                },
+            },
+            "relationships": {
+                "r1": {"id": "r1", "type": "ClassOCLLink",
+                       "source": {"element": "ocl-1"},
+                       "target": {"element": "cls-Account"}},
+                "r2": {"id": "r2", "type": "ClassOCLLink",
+                       "source": {"element": "ocl-2"},
+                       "target": {"element": "cls-Account"}},
+            },
+        },
+    }
+    dm = process_class_diagram(diagram)  # must not raise
+    # Exactly one ``dup`` constraint survives — first wins.
+    dups = [c for c in dm.constraints if c.name == "dup"]
+    assert len(dups) == 1
+    assert dups[0].expression == "context Account inv dup: self.balance > 0"
+    # And we surfaced the collision in ocl_warnings instead of crashing.
+    assert any("duplicate constraint name" in w for w in dm.ocl_warnings)

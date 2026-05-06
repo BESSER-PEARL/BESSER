@@ -775,7 +775,11 @@ def _process_constraints(
             f"Latest definition wins."
         )
 
-    extra_invariants: set = set()
+    # Use a list (not a set) so the iteration order at de-dup time matches
+    # the order constraints were encountered in ``elements.items()``. With
+    # a set, "first wins" would silently become "any-wins" on Python
+    # versions whose set ordering differs from the insertion order.
+    extra_invariants: list = []
     counter = 0
     for element_id, element in elements.items():
         if element.get("type") != "ClassOCLConstraint":
@@ -807,7 +811,7 @@ def _process_constraints(
         for kind, constraint, class_name, method_name in routing:
             try:
                 if kind == "invariant":
-                    extra_invariants.add(constraint)
+                    extra_invariants.append(constraint)
                 else:
                     method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
                     if method is None:

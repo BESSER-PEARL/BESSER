@@ -7,6 +7,7 @@ This module generates Python code for BUML domain models and object models.
 import os
 from typing import Optional
 from besser.BUML.metamodel.structural.structural import (
+    Class,
     DomainModel,
     AssociationClass,
     MethodImplementationType,
@@ -473,18 +474,23 @@ def domain_model_to_code(
         # with the same routing — without this loop, BUML export would
         # silently drop method contracts (a regression we hit in
         # https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/124).
-        method_contracts: list[tuple] = []  # (constraint, method, kind, cls)
+        # Tuple shape: (constraint, method, kind, cls).
+        method_contracts: list[tuple] = []
         for cls in sorted(
-            (t for t in getattr(model, 'types', []) if hasattr(t, 'methods')),
-            key=lambda t: getattr(t, 'name', '')
+            (t for t in model.types if isinstance(t, Class)),
+            key=lambda t: t.name,
         ):
-            for method in getattr(cls, 'methods', None) or []:
-                for c in getattr(method, 'pre', None) or []:
+            for method in cls.methods:
+                for c in method.pre:
                     method_contracts.append((c, method, 'pre', cls))
-                for c in getattr(method, 'post', None) or []:
+                for c in method.post:
                     method_contracts.append((c, method, 'post', cls))
+        # Emit deterministically: same model → same byte-stable output.
+        method_contracts.sort(
+            key=lambda t: (t[3].name, t[1].name, t[2], t[0].name)
+        )
 
-        invariants = list(getattr(model, 'constraints', None) or [])
+        invariants = list(model.constraints) if hasattr(model, 'constraints') else []
         if invariants or method_contracts:
             f.write("\n# OCL Constraints\n")
             for constraint in sort(invariants):

@@ -119,7 +119,12 @@ def parse_constraint_text(
     class_name = match.group("class")
     method_name = match.group("method")
     kw = match.group("kw").lower()
-    name = match.group("name")
+    # The BOCL grammar only attaches a constraint name to invariants
+    # (``context X inv name: ...``). The header regex is permissive and
+    # would also capture a name segment after ``pre``/``post``; ignore
+    # it there so we don't silently override the auto-generated method-
+    # contract name with whatever followed the keyword.
+    name = match.group("name") if kw == "inv" else None
 
     kind = _KIND_FROM_KW[kw]
 
@@ -211,7 +216,8 @@ def process_ocl_constraints(
         # Auto-generate a fallback name only when the user didn't supply one.
         # ``parse_ocl`` initialises constraints with ``name='parsed'``; if it's
         # still that value we know no header name was captured.
-        if constraint.name in (None, "", "parsed"):
+        auto_named = constraint.name in (None, "", "parsed")
+        if auto_named:
             if kind == "invariant":
                 constraint.name = f"{class_name}_inv_{counter}_{block_idx}"
             else:
@@ -223,6 +229,20 @@ def process_ocl_constraints(
         # ``--`` comments intact — so the canonical text round-trips
         # bit-stable through JSON↔BUML emit.
         constraint.expression = line_canonical
+
+        # If we synthesised an invariant name, splice it back into the
+        # canonical expression so the next BUML→JSON→BUML cycle parses out
+        # the same name (instead of generating a fresh ``counter_blockidx``
+        # suffix). Pre/post don't carry names in BOCL syntax, so only do
+        # this for invariants.
+        if auto_named and kind == "invariant":
+            constraint.expression = re.sub(
+                r"(\bcontext\s+\w+\s+inv)(\s*:)",
+                lambda m: f"{m.group(1)} {constraint.name}{m.group(2)}",
+                constraint.expression,
+                count=1,
+                flags=re.IGNORECASE,
+            )
 
         # Inline ``--`` description always wins over the per-element default.
         description = inline_description or (default_description or None)

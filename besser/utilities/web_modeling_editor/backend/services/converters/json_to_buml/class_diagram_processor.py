@@ -18,6 +18,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
     parse_attribute, parse_method, parse_multiplicity,
     legacy_body_only_to_text, process_ocl_constraints,
 )
+from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 
 
 def parse_method_signature_from_code(
@@ -754,25 +755,47 @@ def _process_constraints(
     with a warning rather than aborting conversion.
     """
     # Build ``(class_name, method_name) -> Method`` index for pre/post
-    # routing. The metamodel guarantees method names are unique within a
-    # class today; if that changes (overloading), the BOCL header parser
-    # would also need to start emitting parameter types so we can build a
-    # disambiguating signature here.
+    # routing. Walks the inheritance chain so a constraint written as
+    # ``context Sub::base_method() pre: ...`` can still resolve to a
+    # method declared on a parent class. Direct (own) methods always win
+    # over inherited ones; the metamodel today guarantees method names
+    # are unique within a class, but a subclass that overrides a parent
+    # method also wins via the own-first traversal.
     method_by_qualified_name: dict[tuple[str, str], Method] = {}
     duplicates: set[tuple[str, str]] = set()
+
+    def _walk_inherited_methods(start: Class):
+        """Yield the start class's own methods first, then ancestors'."""
+        seen: set[Class] = set()
+        # BFS: own → direct parents → grandparents …
+        frontier: list[Class] = [start]
+        while frontier:
+            next_frontier: list[Class] = []
+            for cls in frontier:
+                if cls in seen:
+                    continue
+                seen.add(cls)
+                for m in cls.methods:
+                    yield m
+                next_frontier.extend(cls.parents())
+            frontier = next_frontier
+
     for cls in domain_model.types:
         if not isinstance(cls, Class):
             continue
-        for m in getattr(cls, "methods", []) or []:
+        for m in _walk_inherited_methods(cls):
             key = (cls.name, m.name)
             if key in method_by_qualified_name:
-                duplicates.add(key)
+                # Already indexed via own-method or a closer ancestor.
+                if method_by_qualified_name[key] is not m:
+                    duplicates.add(key)
+                continue
             method_by_qualified_name[key] = m
     for cls_name, m_name in duplicates:
         all_warnings.append(
             f"Warning: class {cls_name!r} has multiple methods named "
-            f"{m_name!r}; pre/post lookup may be ambiguous. "
-            f"Latest definition wins."
+            f"{m_name!r} (across inheritance); pre/post lookup may be "
+            f"ambiguous. Closest definition wins."
         )
 
     # Use a list (not a set) so the iteration order at de-dup time matches
@@ -803,7 +826,12 @@ def _process_constraints(
             routing, warnings = process_ocl_constraints(
                 text, domain_model, counter, default_description=description,
             )
-        except Exception as e:  # defensive — process_ocl_constraints already swallows most
+        except (BOCLSyntaxError, ValueError) as e:
+            # ``process_ocl_constraints`` already swallows most parse errors
+            # into the warnings list; this catch handles the residual
+            # narrow set (header-resolve errors, malformed BOCL the
+            # inner parser re-raised). Programmer errors (KeyError,
+            # AttributeError, etc.) deliberately propagate.
             all_warnings.append(f"Warning: Error processing OCL element {element_id}: {e}")
             continue
         all_warnings.extend(warnings)

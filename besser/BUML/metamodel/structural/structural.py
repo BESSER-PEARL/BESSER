@@ -2314,13 +2314,30 @@ class DomainModel(Model):
                     )
 
     def _validate_constraints(self, errors: list[str]):
-        """Validate that constraint contexts reference classes in the model."""
-        for constraint in self.__constraints:
-            if constraint.context not in self.get_classes():
+        """Validate that constraint contexts reference classes in the model.
+
+        Walks both class-level invariants (``self.__constraints``) and every
+        class's methods' pre/post lists so a precondition with a stale or
+        external context class is flagged the same way an invariant would be.
+        """
+        classes = self.get_classes()
+
+        def _check(constraint: "Constraint", label: str):
+            if constraint.context not in classes:
                 errors.append(
-                    f"Constraint '{constraint.name}' references context class '{constraint.context.name}' "
-                    f"which is not in the domain model '{self.name}'."
+                    f"{label} '{constraint.name}' references context class "
+                    f"'{constraint.context.name}' which is not in the domain "
+                    f"model '{self.name}'."
                 )
+
+        for constraint in self.__constraints:
+            _check(constraint, "Constraint")
+        for cls in classes:
+            for method in cls.methods:
+                for pre in method.pre:
+                    _check(pre, f"Precondition on {cls.name}::{method.name}")
+                for post in method.post:
+                    _check(post, f"Postcondition on {cls.name}::{method.name}")
 
     def _validate_circular_inheritance(self, errors: list[str]):
         """Detect circular inheritance in the class hierarchy."""

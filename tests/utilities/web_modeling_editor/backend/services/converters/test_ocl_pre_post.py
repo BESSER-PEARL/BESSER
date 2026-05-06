@@ -346,18 +346,49 @@ def _summarize_ocl(json_out):
         (e for e in elements.values() if e.get("type") == "ClassOCLConstraint"),
         key=lambda e: e.get("constraint", ""),
     )
-    return [e.get("constraint") for e in boxes]
+    return [(e.get("constraint"), e.get("description")) for e in boxes]
+
+
+def _summarize_links(json_out):
+    """Aggregate ClassOCLLink wiring (which class each box anchors to).
+
+    Element/relationship ids are minted fresh on every emit, so we can't
+    compare them directly; instead we resolve each link to the *names* of
+    its endpoints' types (constraint text + class name) which are stable.
+    """
+    elements = json_out.get("elements") or json_out["model"]["elements"]
+    relationships = json_out.get("relationships") or json_out["model"]["relationships"]
+    pairs = []
+    for rel in relationships.values():
+        if rel.get("type") != "ClassOCLLink":
+            continue
+        src = elements.get(rel["source"]["element"], {})
+        tgt = elements.get(rel["target"]["element"], {})
+        # The OCL box can be on either end; normalize.
+        if src.get("type") == "ClassOCLConstraint":
+            pairs.append((src.get("constraint", ""), tgt.get("name", "")))
+        else:
+            pairs.append((tgt.get("constraint", ""), src.get("name", "")))
+    return sorted(pairs)
 
 
 def test_round_trip_full_mix_is_byte_stable(account_diagram_json):
-    """JSON -> BUML -> JSON -> BUML -> JSON: OCL constraint set survives byte-stably."""
+    """JSON -> BUML -> JSON -> BUML -> JSON: OCL boxes + their wiring survive."""
     dm1 = process_class_diagram(account_diagram_json)
     out1 = class_buml_to_json(dm1)
 
     dm2 = process_class_diagram({"title": "BankingTest", "model": out1})
     out2 = class_buml_to_json(dm2)
 
+    # Constraint text + description per box is stable (catches name-churn
+    # on auto-generated invariant names and box-splitting on description).
     assert _summarize_ocl(out1) == _summarize_ocl(out2)
+    # Box → class anchoring is stable (catches a missing pre/post emit
+    # path that would silently drop the link on the second cycle).
+    assert _summarize_links(out1) == _summarize_links(out2)
+    # Same number of OCL elements and links on both cycles.
+    assert sum(1 for e in out1["elements"].values() if e.get("type") == "ClassOCLConstraint") \
+        == sum(1 for e in out2["elements"].values() if e.get("type") == "ClassOCLConstraint")
 
 
 def test_emitted_ocl_boxes_carry_no_legacy_metadata(account_diagram_json):

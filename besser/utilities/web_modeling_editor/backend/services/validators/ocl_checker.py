@@ -123,16 +123,16 @@ def _collect_all_constraints(domain_model):
     """
     for c in domain_model.constraints:
         _ensure_canonical_expression(c, "invariant")
-        ctx_name = c.context.name if getattr(c, "context", None) is not None else "?"
+        ctx_name = c.context.name if c.context is not None else "?"
         yield (f"[{ctx_name} inv {c.name}]", "invariant", c)
     for cls in domain_model.types:
         if not isinstance(cls, Class):
             continue
-        for method in getattr(cls, "methods", []) or []:
-            for c in getattr(method, "pre", []) or []:
+        for method in cls.methods:
+            for c in method.pre:
                 _ensure_canonical_expression(c, "precondition", method)
                 yield (f"[{cls.name}::{method.name} pre {c.name}]", "precondition", c)
-            for c in getattr(method, "post", []) or []:
+            for c in method.post:
                 _ensure_canonical_expression(c, "postcondition", method)
                 yield (f"[{cls.name}::{method.name} post {c.name}]", "postcondition", c)
 

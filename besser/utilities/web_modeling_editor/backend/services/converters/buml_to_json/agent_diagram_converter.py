@@ -352,6 +352,87 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 states_x = -280
                                 states_y += 220
 
+        # Collect Tool/Skill/Workspace primitives. The model_builder emits
+        # them as bare expression statements (``agent.new_tool(...)``), not
+        # assignments, so this scan is separate from the Assign-based loop
+        # above and walks every Call node.
+        primitive_factories = {"new_tool", "new_skill", "new_workspace"}
+        seen_primitive_calls: set = set()
+        for call_node in ast.walk(tree):
+            if not (
+                isinstance(call_node, ast.Call)
+                and isinstance(call_node.func, ast.Attribute)
+                and call_node.func.attr in primitive_factories
+            ):
+                continue
+            if id(call_node) in seen_primitive_calls:
+                continue
+            seen_primitive_calls.add(id(call_node))
+
+            builder_attr = call_node.func.attr
+            primitive_kwargs: Dict[str, Any] = {}
+            for kw in call_node.keywords:
+                try:
+                    primitive_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    continue
+            positional = call_node.args or []
+            if positional and "name" not in primitive_kwargs:
+                try:
+                    primitive_kwargs["name"] = ast.literal_eval(positional[0])
+                except (ValueError, SyntaxError):
+                    pass
+
+            primitive_name = primitive_kwargs.get("name")
+            if not isinstance(primitive_name, str) or not primitive_name.strip():
+                continue
+
+            primitive_id = str(uuid.uuid4())
+            base_bounds = {
+                "x": states_x,
+                "y": states_y,
+                "width": 160,
+                "height": 80,
+            }
+            if builder_attr == "new_tool":
+                primitive_element = {
+                    "id": primitive_id,
+                    "name": primitive_name,
+                    "type": "AgentTool",
+                    "owner": None,
+                    "bounds": base_bounds,
+                    "description": primitive_kwargs.get("description", "") or "",
+                    "code": primitive_kwargs.get("code", "") or "",
+                }
+            elif builder_attr == "new_skill":
+                primitive_element = {
+                    "id": primitive_id,
+                    "name": primitive_name,
+                    "type": "AgentSkill",
+                    "owner": None,
+                    "bounds": base_bounds,
+                    "content": primitive_kwargs.get("content", "") or "",
+                    "description": primitive_kwargs.get("description"),
+                }
+            else:  # new_workspace
+                primitive_element = {
+                    "id": primitive_id,
+                    "name": primitive_name,
+                    "type": "AgentWorkspace",
+                    "owner": None,
+                    "bounds": base_bounds,
+                    "path": primitive_kwargs.get("path", "") or "",
+                    "description": primitive_kwargs.get("description"),
+                    "writable": bool(primitive_kwargs.get("writable", True)),
+                    "max_read_bytes": int(primitive_kwargs.get("max_read_bytes", 200_000)),
+                }
+            elements[primitive_id] = primitive_element
+            if states_x < 200:
+                states_x += 300
+            else:
+                states_x = -280
+                states_y += 220
+
         # Second pass: collect all functions
         states_x = -280
         states_y += 220
@@ -503,10 +584,111 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         # Store the initial node ID for later use with transitions
 
 
+        # Build a var-name -> LLM name map so reasoning states can resolve
+        # their ``llm=...`` kwarg back to the registered LLM name.
+        llm_var_to_name: Dict[str, str] = {}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id.startswith("LLM")
+            ):
+                resolved_name = None
+                for kw in node.value.keywords:
+                    if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        resolved_name = kw.value.value
+                        break
+                if resolved_name:
+                    llm_var_to_name[node.targets[0].id] = resolved_name
+
         # Second pass: collect states and their configurations
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
+                if (
+                    isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "new_reasoning_state"
+                ):
+                    state_id = str(uuid.uuid4())
+                    state_name = var_name
+                    is_initial = False
+                    rs_kwargs: Dict[str, Any] = {}
+                    llm_var_ref = None
+                    llm_literal_name: str | None = None
+
+                    if (
+                        node.value.args
+                        and isinstance(node.value.args[0], ast.Constant)
+                        and isinstance(node.value.args[0].value, str)
+                    ):
+                        state_name = node.value.args[0].value
+
+                    for kw in node.value.keywords:
+                        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                            state_name = kw.value.value
+                        elif kw.arg == "initial" and isinstance(kw.value, ast.Constant):
+                            is_initial = bool(kw.value.value)
+                        elif kw.arg == "llm":
+                            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_literal_name = kw.value.value
+                            elif isinstance(kw.value, ast.Name):
+                                llm_var_ref = kw.value.id
+                        else:
+                            try:
+                                rs_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                            except (ValueError, SyntaxError):
+                                continue
+
+                    state_var_to_name[var_name] = state_name
+
+                    state_obj = {
+                        "id": state_id,
+                        "name": state_name,
+                        "is_initial": is_initial,
+                        "bodies": [],
+                        "fallback_bodies": [],
+                    }
+                    states[var_name] = state_obj
+                    if state_name != var_name:
+                        states[state_name] = state_obj
+
+                    if llm_literal_name is not None:
+                        llm_name_resolved = llm_literal_name
+                    elif llm_var_ref:
+                        llm_name_resolved = llm_var_to_name.get(llm_var_ref)
+                    else:
+                        llm_name_resolved = None
+
+                    elements[state_id] = {
+                        "id": state_id,
+                        "name": state_name,
+                        "type": "AgentReasoningState",
+                        "owner": None,
+                        "bounds": {
+                            "x": states_x,
+                            "y": states_y,
+                            "width": 200,
+                            "height": 110,
+                        },
+                        "llm_name": llm_name_resolved,
+                        "max_steps": int(rs_kwargs.get("max_steps", 8)),
+                        "enable_task_planning": bool(rs_kwargs.get("enable_task_planning", True)),
+                        "stream_steps": bool(rs_kwargs.get("stream_steps", True)),
+                        "system_prompt": rs_kwargs.get("system_prompt"),
+                        "fallback_message": rs_kwargs.get("fallback_message"),
+                    }
+
+                    if states_x < 200:
+                        states_x += 490
+                    else:
+                        states_x = -280
+                        states_y += 220
+                    continue
+
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
                     state_id = str(uuid.uuid4())
                     state_name = var_name  # Default to variable name

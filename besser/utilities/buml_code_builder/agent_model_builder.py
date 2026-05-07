@@ -6,7 +6,10 @@ This module generates Python code for BUML agent models.
 
 import os
 from re import search
-from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply, RAGReply, DBReply
+from besser.BUML.metamodel.state_machine.agent import (
+    Agent, AgentReply, LLMReply, RAGReply, DBReply,
+    ReasoningState,
+)
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
 
@@ -49,6 +52,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "Agent, AgentReply, LLMReply, RAGReply, DBReply, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter, "
+            "Tool, Skill, Workspace, ReasoningState, "
             "ReceiveTextEvent, ReceiveFileEvent, ReceiveJSONEvent, "
             "ReceiveMessageEvent, WildcardEvent, DummyEvent\n"
         )
@@ -78,6 +82,52 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 f.write(f"description=\"{_escape_python_string(intent.description)}\"")
             f.write(")\n")
         f.write("\n")
+
+        # Write tools (reasoning extension)
+        tools = getattr(model, 'tools', []) or []
+        if tools:
+            f.write("# TOOLS\n")
+            for tool in tools:
+                if tool.code:
+                    # Emit the source verbatim so the function is defined in
+                    # the generated module's namespace; then register it on
+                    # the agent. The `code` field carries a complete `def`.
+                    f.write(f"{tool.code}\n")
+                f.write(
+                    f"{model_var_name}.new_tool("
+                    f"name={repr(tool.name)}, "
+                    f"description={repr(tool.description)}, "
+                    f"code={repr(tool.code)})\n"
+                )
+            f.write("\n")
+
+        # Write skills (reasoning extension)
+        skills = getattr(model, 'skills', []) or []
+        if skills:
+            f.write("# SKILLS\n")
+            for skill in skills:
+                f.write(
+                    f"{model_var_name}.new_skill("
+                    f"name={repr(skill.name)}, "
+                    f"content={repr(skill.content)}, "
+                    f"description={repr(skill.description)})\n"
+                )
+            f.write("\n")
+
+        # Write workspaces (reasoning extension)
+        workspaces = getattr(model, 'workspaces', []) or []
+        if workspaces:
+            f.write("# WORKSPACES\n")
+            for ws in workspaces:
+                f.write(
+                    f"{model_var_name}.new_workspace("
+                    f"name={repr(ws.name)}, "
+                    f"path={repr(ws.path)}, "
+                    f"description={repr(ws.description)}, "
+                    f"writable={ws.writable}, "
+                    f"max_read_bytes={ws.max_read_bytes})\n"
+                )
+            f.write("\n")
 
         rag_configs = getattr(model, 'rags', []) or []
         if rag_configs:
@@ -125,8 +175,34 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 if hasattr(state.fallback_body, 'actions') and isinstance(state.fallback_body.actions[0], LLMReply):
                     llm_required = True
                     break
-        if llm_required:
-            # Create an LLM instance for use in state bodies
+
+        # Emit explicit LLM instances when the agent declares any. Reasoning
+        # states reference their driving LLM by variable name, so we need a
+        # stable identifier per LLM (rather than the legacy hardcoded ``llm``).
+        llms = getattr(model, 'llms', []) or []
+        llm_var_names: dict[str, str] = {}
+        if llms:
+            f.write("# LLMs\n")
+            for llm in llms:
+                llm_var = safe_var_name(llm.name)
+                # Avoid collisions with reserved names already used elsewhere
+                # (``llm`` is the legacy fallback variable below).
+                if llm_var == "llm":
+                    llm_var = f"{llm_var}_{safe_var_name(llm.__class__.__name__)}"
+                llm_var_names[llm.name] = llm_var
+                llm_class = llm.__class__.__name__
+                params = getattr(llm, 'parameters', None) or {}
+                f.write(
+                    f"{llm_var} = {llm_class}("
+                    f"agent={model_var_name}, "
+                    f"name={repr(llm.name)}, "
+                    f"parameters={repr(params)})\n"
+                )
+            f.write("\n")
+
+        if llm_required and not llms:
+            # Backward-compatible default: only synthesised when no LLM is
+            # registered on the agent but a state body needs one.
             f.write("# Create LLM instance for use in state bodies\n")
             f.write(f"llm = LLMOpenAI(agent={model_var_name}, name='gpt-4o-mini', parameters={{}})\n\n")
 
@@ -134,10 +210,31 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         f.write("# STATES\n")
         for state in model.states:
             state_var = state_var_names[state.name]
-            f.write(f"{state_var} = {model_var_name}.new_state('{_escape_python_string(state.name)}'")
-            if state.initial:
-                f.write(", initial=True")
-            f.write(")\n")
+            if isinstance(state, ReasoningState):
+                # Reasoning states use the dedicated factory; their body is
+                # supplied automatically by ``new_reasoning_state`` and the
+                # metamodel rejects manual ``set_body`` / ``set_fallback_body``.
+                llm_ref = "None"
+                if state.llm:
+                    llm_ref = repr(state.llm)
+                f.write(f"{state_var} = {model_var_name}.new_reasoning_state(\n")
+                f.write(f"    name='{_escape_python_string(state.name)}',\n")
+                f.write(f"    llm={llm_ref},\n")
+                if state.initial:
+                    f.write("    initial=True,\n")
+                f.write(f"    max_steps={state.max_steps},\n")
+                f.write(f"    enable_task_planning={state.enable_task_planning},\n")
+                f.write(f"    stream_steps={state.stream_steps},\n")
+                if state.system_prompt is not None:
+                    f.write(f"    system_prompt={repr(state.system_prompt)},\n")
+                if state.fallback_message is not None:
+                    f.write(f"    fallback_message={repr(state.fallback_message)},\n")
+                f.write(")\n")
+            else:
+                f.write(f"{state_var} = {model_var_name}.new_state('{_escape_python_string(state.name)}'")
+                if state.initial:
+                    f.write(", initial=True")
+                f.write(")\n")
         f.write("\n")
 
         # Write state metadata if any states have it

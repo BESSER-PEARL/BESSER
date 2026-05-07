@@ -23,6 +23,17 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from baf import nlp
 from baf.nlp.rag.rag import RAG
 {% endif %}
+{% set reasoning_states_ns = namespace(items=[]) %}
+{% for state in agent.states %}
+{% if is_class(state, 'ReasoningState') %}
+{% set reasoning_states_ns.items = reasoning_states_ns.items + [state] %}
+{% endif %}
+{% endfor %}
+{% set has_reasoning_primitives = (agent.tools and agent.tools|length > 0) or (agent.skills and agent.skills|length > 0) or (agent.workspaces and agent.workspaces|length > 0) %}
+{% set has_reasoning_states = reasoning_states_ns.items|length > 0 %}
+{% if has_reasoning_states %}
+from baf.library.state import new_reasoning_state
+{% endif %}
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
@@ -355,6 +366,7 @@ reply_llm = {{ llm.__class__.__name__}}(
     num_previous_messages={{ llm.num_previous_messages }},
     {% endif %}
 )
+{{ llm.name | replace('-', '_') | replace('.', '_') | replace(' ', '_') }} = reply_llm
 {% set has_reply_llm_state.value = true %}
 {% endfor %}
 {% endif %}
@@ -369,6 +381,25 @@ reply_llm = LLMOpenAI(
 {% endif %}
 {% set has_reply_llm = has_reply_llm_state.value %}
 {% set has_db_reply = has_db_reply_state.value %}
+
+{# Ensure a Python LLM variable exists for every ReasoningState's llm name.
+   ReasoningState.llm is a free-form string in the metamodel; the agent
+   may not have it registered in agent.llms, so we instantiate one here
+   when needed. #}
+{% set reasoning_llm_ns = namespace(seen=[]) %}
+{% for existing_llm in agent.llms %}
+{% set _ = reasoning_llm_ns.seen.append(existing_llm.name) %}
+{% endfor %}
+{% for state in agent.states %}
+{% if is_class(state, 'ReasoningState') and state.llm and state.llm not in reasoning_llm_ns.seen %}
+{% set _ = reasoning_llm_ns.seen.append(state.llm) %}
+{{ state.llm | replace('-', '_') | replace('.', '_') | replace(' ', '_') }} = LLMOpenAI(
+    agent=agent,
+    name='{{ state.llm }}',
+    parameters={}
+)
+{% endif %}
+{% endfor %}
 
 {% if has_db_reply %}
 # Make relational databases available through session.db_handler
@@ -391,6 +422,45 @@ ic_config = LLMIntentClassifierConfiguration(
 )
 agent.set_default_ic_config(ic_config)
 {% endif %}
+
+{% if agent.tools and agent.tools|length > 0 %}
+##############################
+# TOOLS
+##############################
+{% for tool in agent.tools %}
+{{ tool.code }}
+agent.new_tool({{ tool.name }}, description={{ tool.description | string | tojson }})
+{% endfor %}
+{% endif %}
+
+{% if agent.skills and agent.skills|length > 0 %}
+##############################
+# SKILLS
+##############################
+{% for skill in agent.skills %}
+agent.new_skill(
+    name={{ skill.name | string | tojson }},
+    content={{ skill.content | string | tojson }}{% if skill.description %},
+    description={{ skill.description | string | tojson }}{% endif %}
+)
+{% endfor %}
+{% endif %}
+
+{% if agent.workspaces and agent.workspaces|length > 0 %}
+##############################
+# WORKSPACES
+##############################
+{% for ws in agent.workspaces %}
+agent.new_workspace(
+    name={{ ws.name | string | tojson }},
+    path={{ ws.path | string | tojson }}{% if ws.description %},
+    description={{ ws.description | string | tojson }}{% endif %},
+    writable={{ ws.writable }},
+    max_read_bytes={{ ws.max_read_bytes }}
+)
+{% endfor %}
+{% endif %}
+
 {% if agent.entities %}
 ##############################
 # ENTITIES
@@ -507,7 +577,25 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
 {% endif %}
 
 {% for state in agent.states %}
+{% if is_class(state, 'ReasoningState') %}
+{{ state.name }} = new_reasoning_state(
+    agent=agent,
+    {% if state.llm %}
+    llm={{ state.llm | replace('-', '_') | replace('.', '_') | replace(' ', '_') }},
+    {% else %}
+    llm=reply_llm,
+    {% endif %}
+    name={{ state.name | string | tojson }},
+    {% if state.initial and not has_personalization %}initial=True,{% endif %}
+    max_steps={{ state.max_steps }},
+    enable_task_planning={{ state.enable_task_planning }},
+    stream_steps={{ state.stream_steps }}{% if state.system_prompt %},
+    system_prompt={{ state.system_prompt | string | tojson }}{% endif %}{% if state.fallback_message %},
+    fallback_message={{ state.fallback_message | string | tojson }}{% endif %}
+)
+{% else %}
 {{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial and not has_personalization %}, initial=True{% endif %}{% if state.ic_config != None %}, ic_config={{ write_ic_config(state.ic_config) }}{% endif %})
+{% endif %}
 {% endfor %}
 
 {% if has_personalization %}

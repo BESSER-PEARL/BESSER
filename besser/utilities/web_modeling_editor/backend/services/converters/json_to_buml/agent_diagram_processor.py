@@ -31,6 +31,10 @@ from besser.BUML.metamodel.state_machine.agent import (
     DBReply,
     RAGVectorStore,
     RAGTextSplitter,
+    LLMOpenAI,
+    LLMHuggingFace,
+    LLMHuggingFaceAPI,
+    LLMReplicate,
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
@@ -211,13 +215,84 @@ def process_agent_diagram(json_data):
     comment_elements = {}  # {comment_id: comment_text}
     comment_links = {}  # {comment_id: [linked_element_ids]}
 
-    # First pass: Process intents and comments
+    # First pass: Process intents, primitives, and comments
     intent_count = 0
+    # Track ref-resolution requests for ReasoningState until after primitives
+    # are registered on the agent.
+    pending_reasoning_refs: list = []
     for element_id, element in elements.items():
         element_type = element.get("type")
         if element_type == "Comments":
             comment_text = element.get("name", "")
             comment_elements[element_id] = comment_text
+            continue
+        elif element_type == "AgentLLM":
+            llm_name = sanitize_text((element.get("name") or "").strip())
+            if not llm_name:
+                continue
+            if any(existing.name == llm_name for existing in agent.llms):
+                continue
+            provider = (element.get("provider") or "openai").lower()
+            llm_parameters = element.get("parameters")
+            if not isinstance(llm_parameters, dict):
+                llm_parameters = {}
+            provider_classes = {
+                "openai": LLMOpenAI,
+                "huggingface": LLMHuggingFace,
+                "huggingface_api": LLMHuggingFaceAPI,
+                "replicate": LLMReplicate,
+            }
+            llm_cls = provider_classes.get(provider, LLMOpenAI)
+            # The LLM constructor self-registers on ``agent.llms``.
+            llm_cls(agent=agent, name=llm_name, parameters=llm_parameters)
+            continue
+        elif element_type == "AgentTool":
+            tool_name = sanitize_text((element.get("name") or "").strip())
+            if not tool_name:
+                continue
+            if any(t.name == tool_name for t in agent.tools):
+                continue
+            agent.new_tool(
+                name=tool_name,
+                description=element.get("description", "") or "",
+                code=element.get("code", "") or "",
+            )
+            continue
+        elif element_type == "AgentSkill":
+            skill_name = sanitize_text((element.get("name") or "").strip())
+            if not skill_name:
+                continue
+            if any(s.name == skill_name for s in agent.skills):
+                continue
+            agent.new_skill(
+                name=skill_name,
+                content=element.get("content", "") or "",
+                description=element.get("description") or None,
+            )
+            continue
+        elif element_type == "AgentWorkspace":
+            ws_name = sanitize_text((element.get("name") or "").strip())
+            if not ws_name:
+                continue
+            if any(w.name == ws_name for w in agent.workspaces):
+                continue
+            writable = element.get("writable")
+            if writable is None:
+                writable = True
+            max_read_bytes = element.get("max_read_bytes")
+            if max_read_bytes is None:
+                max_read_bytes = 200_000
+            agent.new_workspace(
+                name=ws_name,
+                path=element.get("path", "") or "",
+                description=element.get("description") or None,
+                writable=bool(writable),
+                max_read_bytes=int(max_read_bytes),
+            )
+            continue
+        elif element_type == "AgentReasoningState":
+            # Reasoning states are created in the state-construction passes
+            # below (alongside AgentState).
             continue
         elif element_type == "AgentIntent":
             intent_name = element.get("name")
@@ -271,7 +346,7 @@ def process_agent_diagram(json_data):
     # First identify the initial state
     initial_state_id = None
     for element_id, element in elements.items():
-        if element.get("type") == "AgentState":
+        if element.get("type") in ("AgentState", "AgentReasoningState"):
             # Check if this is an initial state
             for rel in relationships.values():
                 rel_type = rel.get("type")
@@ -287,34 +362,70 @@ def process_agent_diagram(json_data):
             if initial_state_id:
                 break
 
+    def _build_reasoning_state(element_id: str, element: dict, is_initial: bool):
+        state_name = element.get("name", "")
+        llm_name = element.get("llm_name") or element.get("llm")
+        llm_value = llm_name.strip() if isinstance(llm_name, str) and llm_name.strip() else None
+        kwargs = {
+            "name": state_name,
+            "llm": llm_value,
+            "initial": is_initial,
+        }
+        if element.get("max_steps") is not None:
+            kwargs["max_steps"] = int(element.get("max_steps"))
+        if element.get("enable_task_planning") is not None:
+            kwargs["enable_task_planning"] = bool(element.get("enable_task_planning"))
+        if element.get("stream_steps") is not None:
+            kwargs["stream_steps"] = bool(element.get("stream_steps"))
+        if element.get("system_prompt") is not None:
+            kwargs["system_prompt"] = element.get("system_prompt")
+        if element.get("fallback_message") is not None:
+            kwargs["fallback_message"] = element.get("fallback_message")
+        rs = agent.new_reasoning_state(**kwargs)
+        # Optional ref lists carried by the JSON node. The metamodel's
+        # ReasoningState does not currently store per-state subsets, so we
+        # attach them as instance attributes for downstream consumers.
+        for ref_field in ("tool_refs", "skill_refs", "workspace_refs"):
+            ref_value = element.get(ref_field)
+            if isinstance(ref_value, list):
+                pending_reasoning_refs.append((rs, ref_field, list(ref_value)))
+        states_by_id[element_id] = rs
+        return rs
+
     # Process the initial state first if found
     if initial_state_id:
         element = elements.get(initial_state_id)
         state_name = element.get("name", "")
 
-        agent_state = agent.new_state(name=state_name, initial=True)
-        states_by_id[initial_state_id] = agent_state
+        if element.get("type") == "AgentReasoningState":
+            _build_reasoning_state(initial_state_id, element, is_initial=True)
+        else:
+            agent_state = agent.new_state(name=state_name, initial=True)
+            states_by_id[initial_state_id] = agent_state
 
-        # Process state bodies
-        body_messages = _collect_body_messages(
-            element.get("bodies", []), elements, language, source_language, translate_text,
-            serialize_db_reply_payload=serialize_db_reply_payload
-        )
-        body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
-        if body:
-            agent_state.set_body(body)
+            # Process state bodies
+            body_messages = _collect_body_messages(
+                element.get("bodies", []), elements, language, source_language, translate_text,
+                serialize_db_reply_payload=serialize_db_reply_payload
+            )
+            body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
+            if body:
+                agent_state.set_body(body)
 
-        # Process fallback bodies
-        fallback_messages = _collect_body_messages(
-            element.get("fallbackBodies", []), elements, language, source_language, translate_text,
-            serialize_db_reply_payload=serialize_db_reply_payload
-        )
-        fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
-        if fallback_body:
-            agent_state.set_fallback_body(fallback_body)
+            # Process fallback bodies
+            fallback_messages = _collect_body_messages(
+                element.get("fallbackBodies", []), elements, language, source_language, translate_text,
+                serialize_db_reply_payload=serialize_db_reply_payload
+            )
+            fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
+            if fallback_body:
+                agent_state.set_fallback_body(fallback_body)
 
-    # Now process the rest of the states
+    # Now process the rest of the states (including reasoning states)
     for element_id, element in elements.items():
+        if element.get("type") == "AgentReasoningState" and element_id != initial_state_id:
+            _build_reasoning_state(element_id, element, is_initial=False)
+            continue
         if element.get("type") == "AgentState" and element_id != initial_state_id:
             # Create state and add to agent
             state_name = element.get("name", "")
@@ -638,6 +749,34 @@ def process_agent_diagram(json_data):
                 # Append to existing description
                 existing_desc = agent.metadata.description or ""
                 agent.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
+
+    # Resolve ReasoningState ref lists by name now that all primitives are
+    # registered on the agent. Stored as plain attributes since the metamodel
+    # does not yet carry per-state subsets.
+    if pending_reasoning_refs:
+        tool_lookup = {t.name: t for t in agent.tools}
+        skill_lookup = {s.name: s for s in agent.skills}
+        workspace_lookup = {w.name: w for w in agent.workspaces}
+        ref_lookup = {
+            "tool_refs": tool_lookup,
+            "skill_refs": skill_lookup,
+            "workspace_refs": workspace_lookup,
+        }
+        for state_obj, ref_field, names in pending_reasoning_refs:
+            lookup = ref_lookup[ref_field]
+            resolved = []
+            for ref_name in names:
+                if not isinstance(ref_name, str):
+                    continue
+                target = lookup.get(ref_name)
+                if target is None:
+                    raise ValueError(
+                        f"AgentReasoningState '{state_obj.name}' references "
+                        f"{ref_field[:-5]} '{ref_name}' which is not "
+                        f"registered on agent '{agent.name}'."
+                    )
+                resolved.append(target)
+            setattr(state_obj, ref_field, resolved)
 
     # Validate the agent model at build time so all callers get validation for free
     agent.validate(raise_exception=True)

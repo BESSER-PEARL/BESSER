@@ -76,6 +76,22 @@ Web Modeling Editor — Backend Fixes
 * **Django generator**: re-introduced the ``chdir(temp_dir)`` guard around the ``django-admin startproject`` invocation. The pre-refactor ``backend.py`` wrapped the call in ``chdir/try-finally``; the extracted ``_generate_django`` helper in ``generation_router.py`` had dropped the guard, so the project got scaffolded in the FastAPI process's CWD while the harvester walked an empty ``temp_dir/<project_name>``, surfacing as ``Django project generation failed: Output directory is empty``. The guard is now scoped to the worker thread and restores CWD in ``finally``.
 * **GitHub deploy**: ``deploy_webapp_to_github`` now branches on ``httpx.HTTPStatusError`` and surfaces the actual GitHub API error (``"name already exists on this account"``, expired token, rate limit) instead of letting it fall through to the catch-all 500 handler. ``401`` / ``403`` pass through; ``422`` maps to ``409 Conflict`` so the UI can offer rename / overwrite; other ``4xx`` pass through; ``5xx`` becomes ``502 Bad Gateway``. The frontend's deploy popup now shows something the user can act on.
 
+Modeling Assistant — Natural Language to OCL
+--------------------------------------------
+
+Closes ``BESSER-PEARL/B-OCL-Interpreter#5``. The modeling assistant can now author
+OCL constraints from a plain-language description. When the user explicitly asks
+for an invariant, precondition, or postcondition (``"add a constraint that a
+Library always has at least one Book"``, ``"the precondition of Account::deposit
+is amount > 0"``, ``"after deposit the balance must not be negative"``), the
+agent emits an ``add_ocl_constraint`` modification, and the frontend spawns a
+constraint box on the canvas linked to the target class via a ``ClassOCLLink``.
+
+* **Modeling-agent** (``BESSER-PEARL/modeling-agent``): ``ClassModification`` adds the ``add_ocl_constraint`` action with optional ``changes.constraint`` (full BOCL block) and ``changes.text`` (plain-language description). The class-diagram system prompt gains an OCL section listing the four header shapes (``inv`` / ``pre`` / ``post`` / ``init``) plus five NL→BOCL examples. Emission is gated on the user explicitly asking — the prompt forbids unprompted OCL.
+* **Web Modeling Editor frontend**: ``ClassDiagramModifier.addOclConstraint`` consumes the new action and creates a ``ClassOCLConstraint`` element + ``ClassOCLLink`` to the anchor class, with the BOCL text in the constraint field and the plain-language description in the ``description`` field. The rendered box picks up the canonical stereotype badge (``«inv»`` / ``«pre»`` / ``«post»``) introduced earlier in this release.
+* **Validation**: pre-flight validation (calling ``/validate-diagram`` before writing) is a known follow-up — for now, malformed BOCL surfaces post-hoc through the ``parse_constraint_text`` validator path landed in PR #529.
+* **Deploy alongside**: this feature requires the matching modeling-agent commit (``c0e47e8`` on ``main``) to be live. Use ``./scripts/deploy.sh agent`` to roll the modeling-agent container forward at release time.
+
 Documentation
 -------------
 

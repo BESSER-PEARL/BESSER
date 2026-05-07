@@ -819,12 +819,14 @@ class Method(TypedElement):
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        pre (list[Constraint]): Preconditions of the method (list() as default).
+        post (list[Constraint]): Postconditions of the method (list() as default).
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the method.
         visibility (str): Inherited from TypedElement, represents the visibility of the method (public as default).
         is_abstract (bool): Indicates if the method is abstract. (False as default)
-        parameters (list[Parameter]): The set of parameters for the method (set() as default).
+        parameters (list[Parameter]): The list of parameters for the method (list() as default).
         type (Type): Inherited from TypedElement, represents the type of the method (None as default).
         owner (Type): The type that owns the property (None as default).
         code (str): code of the method ("" as default).
@@ -834,13 +836,16 @@ class Method(TypedElement):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        pre (list[Constraint]): Preconditions of the method (list() as default).
+        post (list[Constraint]): Postconditions of the method (list() as default).
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
                  parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
-                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 pre: list["Constraint"] = None, post: list["Constraint"] = None):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
         self.parameters: list[Parameter] = parameters if parameters is not None else list()
@@ -848,6 +853,8 @@ class Method(TypedElement):
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
         self.quantum_circuit: "QuantumCircuit" = quantum_circuit
+        self.pre = pre
+        self.post = post
         # Auto-detect implementation type if not provided
         if implementation_type is not None:
             self.implementation_type: MethodImplementationType = implementation_type
@@ -911,6 +918,80 @@ class Method(TypedElement):
             if parameter.name in [parameter.name for parameter in self.parameters]:
                 raise ValueError(f"A method cannot have two parameters with the same name: '{parameter.name}'")
         self.parameters.append(parameter)
+
+    @property
+    def pre(self) -> list["Constraint"]:
+        """list[Constraint]: Get the preconditions of the method."""
+        return self.__pre
+
+    @pre.setter
+    def pre(self, pre: list["Constraint"]):
+        """
+        list[Constraint]: Set the preconditions of the method.
+
+        Raises:
+            ValueError: if two preconditions have the same name.
+        """
+        if pre is None:
+            self.__pre = list()
+            return
+        names_seen = set()
+        duplicates = set()
+        for c in pre:
+            if c.name in names_seen:
+                duplicates.add(c.name)
+            names_seen.add(c.name)
+        if duplicates:
+            raise ValueError(f"A method cannot have preconditions with duplicate names: {', '.join(sorted(duplicates))}")
+        self.__pre = list(pre)
+
+    @property
+    def post(self) -> list["Constraint"]:
+        """list[Constraint]: Get the postconditions of the method."""
+        return self.__post
+
+    @post.setter
+    def post(self, post: list["Constraint"]):
+        """
+        list[Constraint]: Set the postconditions of the method.
+
+        Raises:
+            ValueError: if two postconditions have the same name.
+        """
+        if post is None:
+            self.__post = list()
+            return
+        names_seen = set()
+        duplicates = set()
+        for c in post:
+            if c.name in names_seen:
+                duplicates.add(c.name)
+            names_seen.add(c.name)
+        if duplicates:
+            raise ValueError(f"A method cannot have postconditions with duplicate names: {', '.join(sorted(duplicates))}")
+        self.__post = list(post)
+
+    def add_pre(self, constraint: "Constraint"):
+        """
+        Constraint: Add a precondition to the method.
+
+        Raises:
+            ValueError: if the precondition name already exists on this method.
+        """
+        if constraint.name in (c.name for c in self.__pre):
+            raise ValueError(f"A method cannot have two preconditions with the same name: '{constraint.name}'")
+        self.__pre.append(constraint)
+
+    def add_post(self, constraint: "Constraint"):
+        """
+        Constraint: Add a postcondition to the method.
+
+        Raises:
+            ValueError: if the postcondition name already exists on this method.
+        """
+        if constraint.name in (c.name for c in self.__post):
+            raise ValueError(f"A method cannot have two postconditions with the same name: '{constraint.name}'")
+        self.__post.append(constraint)
 
     @property
     def owner(self) -> Type:
@@ -1701,6 +1782,9 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        description (str): Optional natural-language explanation shown to end-users when the
+            constraint is violated. Intended for non-technical audiences (e.g. graphical
+            editor users) who may not understand the raw constraint expression.
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -1710,17 +1794,20 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        description (str): Optional natural-language explanation surfaced on validation failure.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: datetime = None,
+    def __init__(self, name: str, context: Class, expression: str, language: str,
+                 description: str = None, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
+        self.description: str = description
 
     @property
     def context(self) -> Class:
@@ -1734,12 +1821,22 @@ class Constraint(NamedElement):
 
     @property
     def expression(self) -> str:
-        """str: Get the expression or condition defined by the constraint."""
+        """str: Get the source text of the constraint expression."""
         return self.__expression
 
     @expression.setter
-    def expression(self, expression: Any):
-        """str: Set the expression or condition defined by the constraint."""
+    def expression(self, expression: str):
+        """str: Set the source text of the constraint expression.
+
+        Raises:
+            TypeError: if ``expression`` is not a string. To attach a parsed
+                OCL AST, use :class:`OCLConstraint` and its ``ast`` field.
+        """
+        if not isinstance(expression, str):
+            raise TypeError(
+                f"Constraint.expression must be a string; got {type(expression).__name__}. "
+                f"To attach a parsed OCL AST, use OCLConstraint with its ast field."
+            )
         self.__expression = expression
 
     @property
@@ -1752,10 +1849,23 @@ class Constraint(NamedElement):
         """str: Set the language in which the constraint expression is written."""
         self.__language = language
 
+    @property
+    def description(self) -> str:
+        """str: Get the natural-language explanation shown when the constraint is violated."""
+        return self.__description
+
+    @description.setter
+    def description(self, description: str):
+        """str: Set the natural-language explanation shown when the constraint is violated."""
+        if description is not None and not isinstance(description, str):
+            raise TypeError("description must be a string or None")
+        self.__description = description
+
     def __repr__(self):
         return (
             f'Constraint({self.name}, {self.context.name}, {self.language}, {self.expression}, '
-            f'{self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
+            f'description={self.description!r}, {self.timestamp}, {self.metadata}, '
+            f'is_derived={self.is_derived})'
         )
 class Model(NamedElement):
     """A model is the root element. There are different types of models
@@ -2204,13 +2314,30 @@ class DomainModel(Model):
                     )
 
     def _validate_constraints(self, errors: list[str]):
-        """Validate that constraint contexts reference classes in the model."""
-        for constraint in self.__constraints:
-            if constraint.context not in self.get_classes():
+        """Validate that constraint contexts reference classes in the model.
+
+        Walks both class-level invariants (``self.__constraints``) and every
+        class's methods' pre/post lists so a precondition with a stale or
+        external context class is flagged the same way an invariant would be.
+        """
+        classes = self.get_classes()
+
+        def _check(constraint: "Constraint", label: str):
+            if constraint.context not in classes:
                 errors.append(
-                    f"Constraint '{constraint.name}' references context class '{constraint.context.name}' "
-                    f"which is not in the domain model '{self.name}'."
+                    f"{label} '{constraint.name}' references context class "
+                    f"'{constraint.context.name}' which is not in the domain "
+                    f"model '{self.name}'."
                 )
+
+        for constraint in self.__constraints:
+            _check(constraint, "Constraint")
+        for cls in classes:
+            for method in cls.methods:
+                for pre in method.pre:
+                    _check(pre, f"Precondition on {cls.name}::{method.name}")
+                for post in method.post:
+                    _check(post, f"Postcondition on {cls.name}::{method.name}")
 
     def _validate_circular_inheritance(self, errors: list[str]):
         """Detect circular inheritance in the class hierarchy."""

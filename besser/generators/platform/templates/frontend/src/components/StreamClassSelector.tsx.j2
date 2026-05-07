@@ -1,0 +1,90 @@
+/**
+ * StreamClassSelector Component
+ * Modal shown when a port-to-port drag matches multiple connection-class
+ * candidates (e.g., MaterialStream vs EnergyStream). Lets the user pick which
+ * concrete connection class to instantiate before the attribute-entry modal
+ * opens.
+ */
+{% raw %}
+import React, { useState } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import type { ClassMetadata } from '../types/models';
+
+interface StreamClassSelectorProps {
+  /** Class names of every connection class whose declared port matches both
+   *  endpoints — typically subclasses of the same abstract connection class. */
+  candidates: string[];
+  availableClasses: ClassMetadata[];
+  onSelect: (className: string) => void;
+  onCancel: () => void;
+}
+
+export const StreamClassSelector: React.FC<StreamClassSelectorProps> = ({
+  candidates,
+  availableClasses,
+  onSelect,
+  onCancel,
+}) => {
+  const [picked, setPicked] = useState<string>(candidates[0] ?? '');
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Select connection type</DialogTitle>
+          <DialogDescription>
+            Multiple connection classes match these ports. Choose which one to create.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 py-2">
+          {candidates.map((name) => {
+            const meta = availableClasses.find((c) => c.name === name);
+            const isPicked = name === picked;
+            const attrCount = meta?.attributes?.length ?? 0;
+            return (
+              <label
+                key={name}
+                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-accent ${
+                  isPicked ? 'border-primary bg-primary/5' : 'border-border'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="streamClass"
+                  className="mt-1 size-4 cursor-pointer accent-primary"
+                  checked={isPicked}
+                  onChange={() => setPicked(name)}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-foreground">{name}</div>
+                  {attrCount > 0 && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {attrCount} attribute{attrCount === 1 ? '' : 's'}
+                    </div>
+                  )}
+                </div>
+              </label>
+            );
+          })}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={!picked} onClick={() => onSelect(picked)}>
+            Continue
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+{% endraw %}

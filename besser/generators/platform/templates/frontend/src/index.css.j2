@@ -111,3 +111,24 @@
     background: hsl(var(--muted-foreground));
   }
 }
+
+/* Selected-edge highlight. Edge paths set their stroke/strokeWidth via inline
+   `style` (per-association/per-connection-class customization), so these rules
+   need !important to win specificity. Adds a glow plus a thicker stroke and
+   the ring color so the user can see which stream is selected — the default
+   xyflow selection cue is too subtle on colored connection lines. */
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path,
+.react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke: hsl(var(--ring)) !important;
+  stroke-width: 4 !important;
+  filter: drop-shadow(0 0 6px hsl(var(--ring) / 0.55));
+}
+
+/* Edge labels also get a selection treatment so the link is unambiguous. */
+.react-flow__edge.selected .react-flow__edge-textbg {
+  fill: hsl(var(--ring) / 0.12) !important;
+}
+.react-flow__edge.selected .react-flow__edge-text {
+  fill: hsl(var(--ring)) !important;
+}

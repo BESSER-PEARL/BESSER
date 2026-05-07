@@ -45,6 +45,11 @@ interface InstanceCreationModalProps {
    *  set automatically by the caller, so the field is hidden to avoid a
    *  redundant or conflicting picker. */
   hideAssociationsToClass?: string;
+  /** Hide every association flagged ``isSourceEndpoint`` or
+   *  ``isTargetEndpoint``. Used by the port-to-port stream-creation flow:
+   *  the canvas auto-binds those links after submit, so showing them would
+   *  let the user double-pick endpoints. */
+  hideEndpointAssociations?: boolean;
 }
 
 const inputTypeFor = (attrType: string): string => {
@@ -195,6 +200,7 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
   onSubmit,
   onCancel,
   hideAssociationsToClass,
+  hideEndpointAssociations,
 }) => {
   const [instanceName, setInstanceName] = useState('');
   const [attributes, setAttributes] = useState<Record<string, any>>(() => {
@@ -218,9 +224,12 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
         if (hideAssociationsToClass && isAssignableTo(hideAssociationsToClass, a.targetClass)) {
           return false;
         }
+        if (hideEndpointAssociations && (a.isSourceEndpoint || a.isTargetEndpoint)) {
+          return false;
+        }
         return true;
       }),
-    [classMetadata.associations, availableClasses, hideAssociationsToClass],
+    [classMetadata.associations, availableClasses, hideAssociationsToClass, hideEndpointAssociations],
   );
 
   const candidatesByAssociation = useMemo(() => {

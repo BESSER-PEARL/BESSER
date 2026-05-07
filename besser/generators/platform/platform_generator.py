@@ -471,6 +471,15 @@ class PlatformGenerator(GeneratorInterface):
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())
 
+        # Generate StreamClassSelector component (the modal shown when a
+        # port-to-port drag matches multiple connection-class candidates so the
+        # user can pick which concrete class to instantiate).
+        template = self.env.get_template('frontend/src/components/StreamClassSelector.tsx.j2')
+        output_path = os.path.join(components_dir, 'StreamClassSelector.tsx')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
         # Generate shared lib (cn helper)
         lib_dir = os.path.join(frontend_dir, 'src', 'lib')
         template = self.env.get_template('frontend/src/lib/utils.ts.j2')

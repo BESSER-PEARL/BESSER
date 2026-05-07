@@ -84,8 +84,11 @@ export const AddAssociationPopover: React.FC<AddAssociationPopoverProps> = ({
       </button>
 
       {open && !activeAssoc && (
+        // Open to the RIGHT of the trigger icon (left-full + small gap) so the
+        // panel doesn't cover the equipment node itself. ``top-0`` keeps the
+        // top aligned with the icon — the panel grows downward as needed.
         <div
-          className="absolute right-0 top-7 z-[1100] min-w-[220px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
+          className="absolute left-full top-0 ml-2 z-[1100] min-w-[220px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
           onClick={(e) => e.stopPropagation()}
           role="menu"
         >
@@ -111,8 +114,10 @@ export const AddAssociationPopover: React.FC<AddAssociationPopoverProps> = ({
       )}
 
       {open && activeAssoc && (
+        // Same right-of-icon anchor as the first-level menu — keeps the second
+        // level visually continuous with the first instead of jumping.
         <div
-          className="absolute right-0 top-7 z-[1100] min-w-[240px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
+          className="absolute left-full top-0 ml-2 z-[1100] min-w-[240px] overflow-hidden rounded-md border border-border bg-card p-1 shadow-lg"
           onClick={(e) => e.stopPropagation()}
           role="menu"
         >

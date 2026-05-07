@@ -133,8 +133,12 @@ export interface ClassMetadata {
   isConnectionClass?: boolean;
   /** Side on the owning node where a port-class instance anchors. */
   portSide?: PortSideName;
-  /** Sides on which the default xyflow handles render. ``undefined`` keeps
-   *  the four-side default; an explicit list restricts; ``[]`` hides them. */
+  /** Sides on which the default xyflow handles render. ``undefined`` defers
+   *  to the runtime: regular classes render handles on all four sides;
+   *  port-host classes (those whose ``addablePortClasses`` is non-empty) hide
+   *  the corner handles so they don't clutter the equipment border. Set
+   *  ``[]`` to force-hide on a regular class, or a specific list (e.g.
+   *  ``['top', 'bottom']``) to restrict the sides. */
   connectionPoints?: Array<'top' | 'right' | 'bottom' | 'left'>;
   defaultSize?: { width: number; height: number };
   attributes: AttributeMetadata[];

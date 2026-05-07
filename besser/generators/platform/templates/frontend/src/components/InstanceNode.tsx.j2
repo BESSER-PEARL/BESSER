@@ -183,7 +183,10 @@ const PortHandles: React.FC<{
                 onPortClick?.(port);
               }}
               title={`${port.class_name}: ${port.instance_name}`}
-              className="!h-3.5 !w-3.5 !rounded-[2px] !border !border-foreground/70 !bg-foreground/85 shadow-sm transition-transform hover:!scale-125 hover:!bg-primary"
+              // No scale-on-hover transform: it shifts the click target by a
+              // few pixels right when the user is trying to drop a connection,
+              // which makes port-to-port linking flaky. Color hover stays.
+              className="!h-3.5 !w-3.5 !rounded-[2px] !border !border-foreground/70 !bg-foreground/85 shadow-sm hover:!bg-primary"
             />
           );
         }),
@@ -208,10 +211,17 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
   const [isHovered, setIsHovered] = React.useState(false);
   const portList = ports ?? [];
   const addable = classMetadata.addablePortClasses ?? [];
-  // Default = all four sides; ``[]`` hides handles; explicit list restricts.
+  // Default handles render on all four sides for regular classes so
+  // association edges have anchor points. Port-host classes (those that can
+  // spawn port-class children, e.g. equipment with Inlet/Outlet ports) hide
+  // the four corner handles by default to avoid visually fighting with the
+  // tiny port squares — the port handles themselves carry the connection.
+  // Explicit ``connectionPoints`` always wins (`[]` to force-hide, or a
+  // specific subset of sides).
   const allowedSides = classMetadata.connectionPoints;
+  const isPortHost = (classMetadata.addablePortClasses?.length ?? 0) > 0;
   const handlePositions = allowedSides === undefined
-    ? HANDLE_POSITIONS
+    ? (isPortHost ? [] : HANDLE_POSITIONS)
     : HANDLE_POSITIONS.filter((h) => allowedSides.includes(h.id as 'top' | 'right' | 'bottom' | 'left'));
 
   // Associations the user can create from the "â†”" affordance. Filters out

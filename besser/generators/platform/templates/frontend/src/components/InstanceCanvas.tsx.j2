@@ -31,6 +31,7 @@ import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
 import { AssociationSelector } from './AssociationSelector';
 import { InstanceCreationModal } from './InstanceCreationModal';
+import { StreamClassSelector } from './StreamClassSelector';
 import {
   DIAGRAM_STYLE,
   PORT_CLASSES,
@@ -294,6 +295,25 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
      *  on the host, OR the popover let them pick one), bypass the auto-detect
      *  in handleCreateFromModal and just use this. */
     parentHostAssociation?: string;
+  } | null>(null);
+
+  // Set when a port-to-port drag matches more than one connection-class
+  // candidate. The picker resolves to a className, which then transitions to
+  // ``createStreamModal`` for attribute entry.
+  const [streamClassPicker, setStreamClassPicker] = useState<{
+    candidates: string[];
+    sourcePortInstance: BaseInstance;
+    targetPortInstance: BaseInstance;
+  } | null>(null);
+
+  // Set after the user has chosen a connection class (or when only one matched).
+  // Drives a second InstanceCreationModal instance dedicated to streams; the
+  // endpoint links are auto-bound by handleCreateStreamFromModal so the modal
+  // hides them via ``hideEndpointAssociations``.
+  const [createStreamModal, setCreateStreamModal] = useState<{
+    className: string;
+    sourcePortInstance: BaseInstance;
+    targetPortInstance: BaseInstance;
   } | null>(null);
 
   const onDrop = useCallback(
@@ -788,9 +808,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       if (!sourceInstance || !targetInstance) return;
 
       // Port-handle path: when both endpoints are port instances (the handle
-      // ids are the port instance UUIDs), we create a connection-class
-      // instance and bind its source/target endpoint links — instead of the
-      // ordinary association-based link that would otherwise be created.
+      // ids are the port instance UUIDs), defer the actual creation to a
+      // modal flow — first the (optional) StreamClassSelector when several
+      // connection classes match, then InstanceCreationModal for attributes.
+      // The endpoint links get auto-bound by handleCreateStreamFromModal.
       const sourcePortInstance = connection.sourceHandle
         ? instances.find((i) => i.id === connection.sourceHandle)
         : undefined;
@@ -800,9 +821,18 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       if (sourcePortInstance && targetPortInstance &&
           isPortClass(sourcePortInstance.class_name) &&
           isPortClass(targetPortInstance.class_name)) {
-        // Pick a connection class whose endpoint ports match. If multiple match
-        // we pick the first one for now — the property editor lets the user
-        // change the class afterwards. (A modal selector is a follow-up.)
+        // Lenient inlet/outlet check: only reject when BOTH ports declare a
+        // direction and they're equal. Empty / unset directions are allowed
+        // through so users can wire up before filling in port attributes.
+        const sd = String(sourcePortInstance.attributes?.direction ?? '').trim().toLowerCase();
+        const td = String(targetPortInstance.attributes?.direction ?? '').trim().toLowerCase();
+        if (sd && td && sd === td) {
+          console.warn(
+            `Cannot connect two ${sd} ports — direction must differ (one inlet, one outlet).`,
+          );
+          return;
+        }
+
         // Polymorphic match: a port class matches any connection-class whose
         // declared portClass is the port's class OR an ancestor.
         const candidates = Object.entries(CONNECTION_CLASSES).filter(([_, meta]) => {
@@ -813,34 +843,18 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           );
         });
         if (candidates.length === 0) return;
-        const [connClassName, connMeta] = candidates[0];
-        try {
-          const created = await api.createInstance({
-            class_name: connClassName,
-            instance_name: `${connClassName.toLowerCase()}_${Date.now().toString(36)}`,
-            attributes: {},
+        if (candidates.length === 1) {
+          setCreateStreamModal({
+            className: candidates[0][0],
+            sourcePortInstance,
+            targetPortInstance,
           });
-          if (created?.id && connMeta.sourceAssociation && connMeta.targetAssociation) {
-            await api.createLink({
-              source_class: connClassName,
-              source_id: created.id,
-              target_class: sourcePortInstance.class_name,
-              target_id: sourcePortInstance.id,
-              association_name: connMeta.sourceAssociation,
-            });
-            await api.createLink({
-              source_class: connClassName,
-              source_id: created.id,
-              target_class: targetPortInstance.class_name,
-              target_id: targetPortInstance.id,
-              association_name: connMeta.targetAssociation,
-            });
-            // Trigger upstream refetch via the existing onInstanceCreate signal
-            // — the parent re-fetches instances and the synthetic edge appears.
-            onInstanceCreate(connClassName, { x: 0, y: 0 });
-          }
-        } catch (error) {
-          console.error('Failed to create connection-class instance:', error);
+        } else {
+          setStreamClassPicker({
+            candidates: candidates.map(([name]) => name),
+            sourcePortInstance,
+            targetPortInstance,
+          });
         }
         return;
       }
@@ -890,6 +904,21 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     }
     setPendingConnection(null);
   };
+
+  /** Double-click on a stream edge opens the property editor for the
+   *  underlying connection-class instance. Single click already selects the
+   *  edge (so the user can press Delete) — double click is the "edit" action. */
+  const onEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      const data = edge.data as
+        | { isConnectionInstanceEdge?: boolean; connectionInstanceId?: string }
+        | undefined;
+      if (!data?.isConnectionInstanceEdge || !data.connectionInstanceId) return;
+      const conn = instances.find((i) => i.id === data.connectionInstanceId);
+      if (conn) setSelectedInstance(conn);
+    },
+    [instances],
+  );
 
   const onEdgesDelete = useCallback(
     async (deletedEdges: Edge[]) => {
@@ -951,6 +980,22 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       const sourceInstance = instances.find((i) => i.id === connection.source);
       const targetInstance = instances.find((i) => i.id === connection.target);
       if (!sourceInstance || !targetInstance) return false;
+
+      // Port-handle branch: accept the drag whenever both handles resolve to
+      // port-class instances. Without this xyflow silently vetoes the
+      // connection because the equipment classes themselves rarely declare a
+      // direct association to each other — onConnect then handles the actual
+      // connection-class instantiation and inlet/outlet validation.
+      if (connection.sourceHandle && connection.targetHandle) {
+        const sourcePort = instances.find((i) => i.id === connection.sourceHandle);
+        const targetPort = instances.find((i) => i.id === connection.targetHandle);
+        if (sourcePort && targetPort &&
+            isPortClass(sourcePort.class_name) &&
+            isPortClass(targetPort.class_name)) {
+          return true;
+        }
+      }
+
       const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
       if (!sourceClass) return false;
       return sourceClass.associations.some(
@@ -1072,6 +1117,72 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       parentHostClass: equipment.class_name,
       parentHostAssociation: associationName,
     });
+  };
+
+  /** Submit handler for the stream-creation modal opened by a port-to-port
+   *  drag. Creates the connection-class instance with the attributes the user
+   *  filled in, then auto-binds the source/target endpoint links. Any
+   *  additional non-endpoint associations the user picked in the modal are
+   *  also created. */
+  const handleCreateStreamFromModal = async (
+    instanceName: string,
+    attributes: Record<string, any>,
+    selectedLinks: Array<{ associationName: string; targetClass: string; targetId: string }>,
+  ) => {
+    if (!createStreamModal) return;
+    const { className, sourcePortInstance, targetPortInstance } = createStreamModal;
+    const meta = CONNECTION_CLASSES[className];
+    if (!meta?.sourceAssociation || !meta?.targetAssociation) {
+      console.error(
+        `Connection class '${className}' has no source/target endpoint associations configured.`,
+      );
+      setCreateStreamModal(null);
+      return;
+    }
+    try {
+      const created = await api.createInstance({
+        class_name: className,
+        instance_name: instanceName,
+        attributes,
+      });
+      if (created?.id) {
+        await api.createLink({
+          source_class: className,
+          source_id: created.id,
+          target_class: sourcePortInstance.class_name,
+          target_id: sourcePortInstance.id,
+          association_name: meta.sourceAssociation,
+        });
+        await api.createLink({
+          source_class: className,
+          source_id: created.id,
+          target_class: targetPortInstance.class_name,
+          target_id: targetPortInstance.id,
+          association_name: meta.targetAssociation,
+        });
+        // Any non-endpoint associations the user picked in the modal — create
+        // those links too so the stream lands fully wired.
+        for (const sel of selectedLinks) {
+          try {
+            await api.createLink({
+              source_class: className,
+              source_id: created.id,
+              target_class: sel.targetClass,
+              target_id: sel.targetId,
+              association_name: sel.associationName,
+            });
+          } catch (error) {
+            console.error('Failed to add link from stream modal selection:', error);
+          }
+        }
+        // Trigger upstream refetch — the synthetic edge appears once the
+        // parent re-fetches instances.
+        onInstanceCreate(className, { x: 0, y: 0 });
+      }
+    } catch (error) {
+      console.error('Failed to create connection-class instance:', error);
+    }
+    setCreateStreamModal(null);
   };
 
   const handleCreateFromModal = async (
@@ -1233,6 +1344,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onEdgesDelete={onEdgesDelete}
+          onEdgeDoubleClick={onEdgeDoubleClick}
           onConnect={onConnect}
           isValidConnection={isValidConnection}
           nodeTypes={nodeTypes}
@@ -1376,6 +1488,35 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onSubmit={handleCreateFromModal}
           onCancel={() => setCreateInstanceModal(null)}
           hideAssociationsToClass={createInstanceModal.parentHostClass}
+        />
+      )}
+
+      {streamClassPicker && (
+        <StreamClassSelector
+          candidates={streamClassPicker.candidates}
+          availableClasses={availableClasses}
+          onSelect={(className) => {
+            setCreateStreamModal({
+              className,
+              sourcePortInstance: streamClassPicker.sourcePortInstance,
+              targetPortInstance: streamClassPicker.targetPortInstance,
+            });
+            setStreamClassPicker(null);
+          }}
+          onCancel={() => setStreamClassPicker(null)}
+        />
+      )}
+
+      {createStreamModal && (
+        <InstanceCreationModal
+          classMetadata={
+            availableClasses.find((c) => c.name === createStreamModal.className)!
+          }
+          availableClasses={availableClasses}
+          existingInstances={instances}
+          onSubmit={handleCreateStreamFromModal}
+          onCancel={() => setCreateStreamModal(null)}
+          hideEndpointAssociations
         />
       )}
     </div>

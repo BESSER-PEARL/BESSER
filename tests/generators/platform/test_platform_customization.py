@@ -367,6 +367,60 @@ class TestAddablePortClasses:
         text = popover.read_text(encoding="utf-8")
         assert "export const AddAssociationPopover" in text
 
+    def test_stream_class_selector_template_emitted(self, tmp_path, region_sensor_model):
+        # InstanceCanvas imports StreamClassSelector unconditionally — missing
+        # the file would break Vite import-analysis at dev-server start.
+        out = tmp_path / "stream_selector_check"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        selector = out / "frontend" / "src" / "components" / "StreamClassSelector.tsx"
+        assert selector.exists()
+        text = selector.read_text(encoding="utf-8")
+        assert "export const StreamClassSelector" in text
+
+    def test_canvas_wires_port_to_port_stream_flow(self, tmp_path, region_sensor_model):
+        # The port-to-port drag flow now defers to a modal flow rather than
+        # auto-creating an empty connection-class instance. Asserts each of the
+        # five integration points lands in the rendered InstanceCanvas.
+        out = tmp_path / "canvas_stream_flow"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        # Import + state shape for the new flow.
+        assert "from './StreamClassSelector'" in canvas
+        assert "setStreamClassPicker" in canvas
+        assert "setCreateStreamModal" in canvas
+        # Lenient inlet/outlet check — same-direction ports get rejected, but
+        # ports lacking a direction attribute fall through.
+        assert "direction must differ" in canvas
+        assert "attributes?.direction" in canvas
+        # isValidConnection now has a port-handle branch (fixes silent veto).
+        assert "isPortClass(sourcePort.class_name)" in canvas
+        # Attribute modal reuses InstanceCreationModal with endpoints hidden.
+        assert "hideEndpointAssociations" in canvas
+        assert "handleCreateStreamFromModal" in canvas
+
+    def test_creation_modal_supports_hide_endpoint_associations(self, tmp_path, region_sensor_model):
+        # The new prop on InstanceCreationModal must actually be wired into the
+        # filter — otherwise the canvas would still show endpoint pickers in
+        # the stream-creation modal.
+        out = tmp_path / "modal_hide_endpoints"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        modal = (out / "frontend" / "src" / "components" / "InstanceCreationModal.tsx").read_text(encoding="utf-8")
+        assert "hideEndpointAssociations" in modal
+        assert "a.isSourceEndpoint || a.isTargetEndpoint" in modal
+
+    def test_instance_node_default_handles_for_regular_classes(self, tmp_path, region_sensor_model):
+        # Regular classes (no addablePortClasses) keep all four default
+        # handles so xyflow can anchor association edges. Port-host classes
+        # opt out automatically. Explicit `connectionPoints` overrides either
+        # way.
+        out = tmp_path / "node_handles_optin"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        node = (out / "frontend" / "src" / "components" / "InstanceNode.tsx").read_text(encoding="utf-8")
+        # The conditional default keeps HANDLE_POSITIONS for regular classes.
+        assert "isPortHost ? [] : HANDLE_POSITIONS" in node
+        # And still computes the port-host flag from addablePortClasses.
+        assert "classMetadata.addablePortClasses?.length" in node
+
 
     def test_only_some_fields_set_emits_only_those(self, tmp_path, region_sensor_model):
         cust = PlatformCustomizationModel(

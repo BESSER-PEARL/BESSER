@@ -1,21 +1,23 @@
 {
   "project": {
-    "id": "project_1777411091477_sz163or3o",
+    "id": "project_1777969797165_g7yhkxlgv",
     "type": "Project",
     "schemaVersion": 4,
     "name": "H2PlantDSL",
     "description": "Metamodel for a hydrogen-plant Digital-Twin DSL (Aspen HYSYS / Aspen Plus inspired)",
     "owner": "Iván Alfonso",
-    "createdAt": "2026-04-28T21:18:11.477Z",
+    "createdAt": "2026-05-05T08:29:57.165Z",
     "currentDiagramType": "ClassDiagram",
     "currentDiagramIndices": {
       "ClassDiagram": 0,
       "ObjectDiagram": 0,
       "StateMachineDiagram": 0,
       "AgentDiagram": 0,
+      "NNDiagram": 0,
       "UserDiagram": 0,
       "GUINoCodeDiagram": 0,
-      "QuantumCircuitDiagram": 0
+      "QuantumCircuitDiagram": 0,
+      "PlatformCustomizationDiagram": 0
     },
     "diagrams": {
       "ClassDiagram": [
@@ -26,8 +28,8 @@
             "version": "3.0.0",
             "type": "ClassDiagram",
             "size": {
-              "width": 4294,
-              "height": 3648
+              "width": 5470,
+              "height": 3476
             },
             "interactive": {
               "elements": {},
@@ -40,8 +42,8 @@
                 "type": "AbstractClass",
                 "owner": null,
                 "bounds": {
-                  "x": -1474.800048828125,
-                  "y": -1799.3999633789062,
+                  "x": -2010.800048828125,
+                  "y": -1419.3999633789062,
                   "width": 240,
                   "height": 200
                 },
@@ -61,8 +63,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0008",
                 "bounds": {
-                  "x": -1474.300048828125,
-                  "y": -1748.8999633789062,
+                  "x": -2010.300048828125,
+                  "y": -1368.8999633789062,
                   "width": 239,
                   "height": 25
                 },
@@ -73,7 +75,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0011": {
                 "id": "attr_0011",
@@ -81,8 +85,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0008",
                 "bounds": {
-                  "x": -1474.300048828125,
-                  "y": -1723.8999633789062,
+                  "x": -2010.300048828125,
+                  "y": -1343.8999633789062,
                   "width": 239,
                   "height": 25
                 },
@@ -93,7 +97,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0012": {
                 "id": "attr_0012",
@@ -101,8 +107,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0008",
                 "bounds": {
-                  "x": -1474.300048828125,
-                  "y": -1698.8999633789062,
+                  "x": -2010.300048828125,
+                  "y": -1318.8999633789062,
                   "width": 239,
                   "height": 25
                 },
@@ -113,7 +119,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0013": {
                 "id": "attr_0013",
@@ -121,8 +129,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0008",
                 "bounds": {
-                  "x": -1474.300048828125,
-                  "y": -1673.8999633789062,
+                  "x": -2010.300048828125,
+                  "y": -1293.8999633789062,
                   "width": 239,
                   "height": 25
                 },
@@ -133,7 +141,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0014": {
                 "id": "attr_0014",
@@ -141,8 +151,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0008",
                 "bounds": {
-                  "x": -1474.300048828125,
-                  "y": -1648.8999633789062,
+                  "x": -2010.300048828125,
+                  "y": -1268.8999633789062,
                   "width": 239,
                   "height": 25
                 },
@@ -153,7 +163,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0015": {
                 "id": "attr_0015",
@@ -161,8 +173,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0008",
                 "bounds": {
-                  "x": -1474.300048828125,
-                  "y": -1623.8999633789062,
+                  "x": -2010.300048828125,
+                  "y": -1243.8999633789062,
                   "width": 239,
                   "height": 25
                 },
@@ -173,7 +185,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0016": {
                 "id": "class_0016",
@@ -181,8 +195,8 @@
                 "type": "AbstractClass",
                 "owner": null,
                 "bounds": {
-                  "x": -858,
-                  "y": -1366,
+                  "x": -1046,
+                  "y": -1080,
                   "width": 240,
                   "height": 100
                 },
@@ -198,8 +212,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0016",
                 "bounds": {
-                  "x": -857.5,
-                  "y": -1315.5,
+                  "x": -1045.5,
+                  "y": -1029.5,
                   "width": 239,
                   "height": 25
                 },
@@ -210,7 +224,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0019": {
                 "id": "attr_0019",
@@ -218,8 +234,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0016",
                 "bounds": {
-                  "x": -857.5,
-                  "y": -1290.5,
+                  "x": -1045.5,
+                  "y": -1004.5,
                   "width": 239,
                   "height": 25
                 },
@@ -230,7 +246,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0020": {
                 "id": "class_0020",
@@ -269,7 +287,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0022": {
                 "id": "attr_0022",
@@ -289,7 +309,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0023": {
                 "id": "attr_0023",
@@ -309,7 +331,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0024": {
                 "id": "attr_0024",
@@ -329,7 +353,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0056": {
                 "id": "class_0056",
@@ -337,8 +363,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1787,
-                  "y": -1804,
+                  "x": 328,
+                  "y": -1396,
                   "width": 240,
                   "height": 115
                 },
@@ -355,8 +381,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0056",
                 "bounds": {
-                  "x": -1786.5,
-                  "y": -1763.5,
+                  "x": 328.5,
+                  "y": -1355.5,
                   "width": 239,
                   "height": 25
                 },
@@ -367,7 +393,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0058": {
                 "id": "attr_0058",
@@ -375,8 +403,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0056",
                 "bounds": {
-                  "x": -1786.5,
-                  "y": -1738.5,
+                  "x": 328.5,
+                  "y": -1330.5,
                   "width": 239,
                   "height": 25
                 },
@@ -387,7 +415,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0059": {
                 "id": "attr_0059",
@@ -395,8 +425,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0056",
                 "bounds": {
-                  "x": -1786.5,
-                  "y": -1713.5,
+                  "x": 328.5,
+                  "y": -1305.5,
                   "width": 239,
                   "height": 25
                 },
@@ -407,7 +437,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0065": {
                 "id": "class_0065",
@@ -415,8 +447,8 @@
                 "type": "AbstractClass",
                 "owner": null,
                 "bounds": {
-                  "x": -1845,
-                  "y": -1386,
+                  "x": -1847,
+                  "y": -1054,
                   "width": 240,
                   "height": 50
                 },
@@ -429,8 +461,8 @@
                 "type": "AbstractClass",
                 "owner": null,
                 "bounds": {
-                  "x": -1384,
-                  "y": -1455,
+                  "x": -2187,
+                  "y": -1062,
                   "width": 240,
                   "height": 100
                 },
@@ -446,8 +478,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0066",
                 "bounds": {
-                  "x": -1383.5,
-                  "y": -1404.5,
+                  "x": -2186.5,
+                  "y": -1011.5,
                   "width": 239,
                   "height": 25
                 },
@@ -458,7 +490,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0068": {
                 "id": "attr_0068",
@@ -466,8 +500,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0066",
                 "bounds": {
-                  "x": -1383.5,
-                  "y": -1379.5,
+                  "x": -2186.5,
+                  "y": -986.5,
                   "width": 239,
                   "height": 25
                 },
@@ -478,7 +512,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0069": {
                 "id": "class_0069",
@@ -486,8 +522,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": 29.7999267578125,
-                  "y": -1403.9998168945312,
+                  "x": -247.2000732421875,
+                  "y": -1279.9998168945312,
                   "width": 240,
                   "height": 240
                 },
@@ -509,8 +545,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1363.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1239.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -521,7 +557,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0071": {
                 "id": "attr_0071",
@@ -529,8 +567,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1338.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1214.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -541,7 +579,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0072": {
                 "id": "attr_0072",
@@ -549,8 +589,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1313.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1189.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -561,7 +601,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0073": {
                 "id": "attr_0073",
@@ -569,8 +611,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1288.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1164.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -581,7 +623,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0074": {
                 "id": "attr_0074",
@@ -589,8 +633,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1263.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1139.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -601,7 +645,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0075": {
                 "id": "attr_0075",
@@ -609,8 +655,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1238.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1114.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -621,7 +667,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0076": {
                 "id": "attr_0076",
@@ -629,8 +677,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1213.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1089.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -641,7 +689,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0077": {
                 "id": "attr_0077",
@@ -649,8 +699,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0069",
                 "bounds": {
-                  "x": 30.2999267578125,
-                  "y": -1188.4998168945312,
+                  "x": -246.7000732421875,
+                  "y": -1064.4998168945312,
                   "width": 239,
                   "height": 25
                 },
@@ -661,7 +711,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0078": {
                 "id": "class_0078",
@@ -669,8 +721,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -319,
-                  "y": -1364,
+                  "x": -657,
+                  "y": -1141,
                   "width": 240,
                   "height": 140
                 },
@@ -688,8 +740,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0078",
                 "bounds": {
-                  "x": -318.5,
-                  "y": -1323.5,
+                  "x": -656.5,
+                  "y": -1100.5,
                   "width": 239,
                   "height": 25
                 },
@@ -700,7 +752,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0080": {
                 "id": "attr_0080",
@@ -708,8 +762,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0078",
                 "bounds": {
-                  "x": -318.5,
-                  "y": -1298.5,
+                  "x": -656.5,
+                  "y": -1075.5,
                   "width": 239,
                   "height": 25
                 },
@@ -720,7 +774,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0081": {
                 "id": "attr_0081",
@@ -728,8 +784,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0078",
                 "bounds": {
-                  "x": -318.5,
-                  "y": -1273.5,
+                  "x": -656.5,
+                  "y": -1050.5,
                   "width": 239,
                   "height": 25
                 },
@@ -740,7 +796,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0082": {
                 "id": "attr_0082",
@@ -748,8 +806,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0078",
                 "bounds": {
-                  "x": -318.5,
-                  "y": -1248.5,
+                  "x": -656.5,
+                  "y": -1025.5,
                   "width": 239,
                   "height": 25
                 },
@@ -760,7 +818,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0083": {
                 "id": "class_0083",
@@ -797,7 +857,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0085": {
                 "id": "attr_0085",
@@ -817,7 +879,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0086": {
                 "id": "class_0086",
@@ -825,8 +889,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -968,
-                  "y": -1693,
+                  "x": -1505,
+                  "y": -1116,
                   "width": 240,
                   "height": 140
                 },
@@ -844,8 +908,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0086",
                 "bounds": {
-                  "x": -967.5,
-                  "y": -1652.5,
+                  "x": -1504.5,
+                  "y": -1075.5,
                   "width": 239,
                   "height": 25
                 },
@@ -856,7 +920,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0088": {
                 "id": "attr_0088",
@@ -864,8 +930,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0086",
                 "bounds": {
-                  "x": -967.5,
-                  "y": -1627.5,
+                  "x": -1504.5,
+                  "y": -1050.5,
                   "width": 239,
                   "height": 25
                 },
@@ -876,7 +942,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0089": {
                 "id": "attr_0089",
@@ -884,8 +952,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0086",
                 "bounds": {
-                  "x": -967.5,
-                  "y": -1602.5,
+                  "x": -1504.5,
+                  "y": -1025.5,
                   "width": 239,
                   "height": 25
                 },
@@ -896,7 +964,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0090": {
                 "id": "attr_0090",
@@ -904,8 +974,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0086",
                 "bounds": {
-                  "x": -967.5,
-                  "y": -1577.5,
+                  "x": -1504.5,
+                  "y": -1000.5,
                   "width": 239,
                   "height": 25
                 },
@@ -916,7 +986,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0103": {
                 "id": "class_0103",
@@ -924,8 +996,8 @@
                 "type": "AbstractClass",
                 "owner": null,
                 "bounds": {
-                  "x": -1843,
-                  "y": -721,
+                  "x": -1847,
+                  "y": -762,
                   "width": 240,
                   "height": 275
                 },
@@ -948,8 +1020,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -670.5,
+                  "x": -1846.5,
+                  "y": -711.5,
                   "width": 239,
                   "height": 25
                 },
@@ -960,7 +1032,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0105": {
                 "id": "attr_0105",
@@ -968,8 +1042,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -645.5,
+                  "x": -1846.5,
+                  "y": -686.5,
                   "width": 239,
                   "height": 25
                 },
@@ -980,7 +1054,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0106": {
                 "id": "attr_0106",
@@ -988,8 +1064,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -620.5,
+                  "x": -1846.5,
+                  "y": -661.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1000,7 +1076,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0107": {
                 "id": "attr_0107",
@@ -1008,8 +1086,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -595.5,
+                  "x": -1846.5,
+                  "y": -636.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1020,7 +1098,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0108": {
                 "id": "attr_0108",
@@ -1028,8 +1108,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -570.5,
+                  "x": -1846.5,
+                  "y": -611.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1040,7 +1120,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0109": {
                 "id": "attr_0109",
@@ -1048,8 +1130,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -545.5,
+                  "x": -1846.5,
+                  "y": -586.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1060,7 +1142,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0110": {
                 "id": "attr_0110",
@@ -1068,8 +1152,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -520.5,
+                  "x": -1846.5,
+                  "y": -561.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1080,7 +1164,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0111": {
                 "id": "attr_0111",
@@ -1088,8 +1174,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -495.5,
+                  "x": -1846.5,
+                  "y": -536.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1100,7 +1186,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0112": {
                 "id": "attr_0112",
@@ -1108,8 +1196,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0103",
                 "bounds": {
-                  "x": -1842.5,
-                  "y": -470.5,
+                  "x": -1846.5,
+                  "y": -511.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1120,7 +1208,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0113": {
                 "id": "class_0113",
@@ -1128,11 +1218,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1523,
-                  "y": -721,
+                  "x": -237,
+                  "y": -763,
                   "width": 240,
                   "height": 190
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2196F3\" fill-opacity=\"0.15\"/><circle cx=\"32\"    cy=\"32\" r=\"4\" fill=\"#000000\" stroke=\"none\"/><path d=\"M32 32L18 20M32 32l14-12M32 32L18 44M32 32l14 12M32 32H14M32 32h18\"/><path    d=\"M6 32h6M52 32h6\"/></svg>",
                 "attributes": [
                   "attr_0114",
                   "attr_0115",
@@ -1149,8 +1240,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0113",
                 "bounds": {
-                  "x": -1522.5,
-                  "y": -680.5,
+                  "x": -236.5,
+                  "y": -722.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1161,7 +1252,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0115": {
                 "id": "attr_0115",
@@ -1169,8 +1262,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0113",
                 "bounds": {
-                  "x": -1522.5,
-                  "y": -655.5,
+                  "x": -236.5,
+                  "y": -697.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1181,7 +1274,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0116": {
                 "id": "attr_0116",
@@ -1189,8 +1284,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0113",
                 "bounds": {
-                  "x": -1522.5,
-                  "y": -630.5,
+                  "x": -236.5,
+                  "y": -672.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1201,7 +1296,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0117": {
                 "id": "attr_0117",
@@ -1209,8 +1306,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0113",
                 "bounds": {
-                  "x": -1522.5,
-                  "y": -605.5,
+                  "x": -236.5,
+                  "y": -647.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1221,7 +1318,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0118": {
                 "id": "attr_0118",
@@ -1229,8 +1328,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0113",
                 "bounds": {
-                  "x": -1522.5,
-                  "y": -580.5,
+                  "x": -236.5,
+                  "y": -622.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1241,7 +1340,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0119": {
                 "id": "attr_0119",
@@ -1249,8 +1350,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0113",
                 "bounds": {
-                  "x": -1522.5,
-                  "y": -555.5,
+                  "x": -236.5,
+                  "y": -597.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1261,7 +1362,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0120": {
                 "id": "class_0120",
@@ -1269,11 +1372,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1203,
-                  "y": -721,
+                  "x": -1207,
+                  "y": -762,
                   "width": 240,
                   "height": 140
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"32\" cy=\"36\" r=\"16\" fill=\"#2196F3\" fill-opacity=\"0.2\"/><path d=\"M32   20v-8h12\"/><path d=\"M48 36h8\"/><path d=\"M32 24a12 12 0 0112 12\"/><path d=\"M32 24a12 12 0 00-12 12\"/><circle cx=\"32\" cy=\"36\" r=\"3\"    fill=\"#000000\" stroke=\"none\"/></svg>",
                 "attributes": [
                   "attr_0121",
                   "attr_0122",
@@ -1288,8 +1392,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0120",
                 "bounds": {
-                  "x": -1202.5,
-                  "y": -680.5,
+                  "x": -1206.5,
+                  "y": -721.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1300,7 +1404,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0122": {
                 "id": "attr_0122",
@@ -1308,8 +1414,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0120",
                 "bounds": {
-                  "x": -1202.5,
-                  "y": -655.5,
+                  "x": -1206.5,
+                  "y": -696.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1320,7 +1426,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0123": {
                 "id": "attr_0123",
@@ -1328,8 +1436,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0120",
                 "bounds": {
-                  "x": -1202.5,
-                  "y": -630.5,
+                  "x": -1206.5,
+                  "y": -671.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1340,7 +1448,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0124": {
                 "id": "attr_0124",
@@ -1348,8 +1458,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0120",
                 "bounds": {
-                  "x": -1202.5,
-                  "y": -605.5,
+                  "x": -1206.5,
+                  "y": -646.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1360,7 +1470,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0125": {
                 "id": "class_0125",
@@ -1368,11 +1480,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -883,
-                  "y": -721,
+                  "x": -887,
+                  "y": -762,
                   "width": 240,
                   "height": 165
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"10\" y=\"20\" width=\"44\" height=\"24\" rx=\"2\"/><path d=\"M14 26h36M14 32h36M14   38h36\" stroke=\"#2196F3\"/><path d=\"M4 24h6M58 40h6\" stroke=\"#43A047\" stroke-width=\"3\"/><path d=\"M10 16v8M54 40v8\"/></svg>",
                 "attributes": [
                   "attr_0126",
                   "attr_0127",
@@ -1388,8 +1501,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0125",
                 "bounds": {
-                  "x": -882.5,
-                  "y": -680.5,
+                  "x": -886.5,
+                  "y": -721.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1400,7 +1513,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0127": {
                 "id": "attr_0127",
@@ -1408,8 +1523,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0125",
                 "bounds": {
-                  "x": -882.5,
-                  "y": -655.5,
+                  "x": -886.5,
+                  "y": -696.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1420,7 +1535,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0128": {
                 "id": "attr_0128",
@@ -1428,8 +1545,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0125",
                 "bounds": {
-                  "x": -882.5,
-                  "y": -630.5,
+                  "x": -886.5,
+                  "y": -671.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1440,7 +1557,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0129": {
                 "id": "attr_0129",
@@ -1448,8 +1567,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0125",
                 "bounds": {
-                  "x": -882.5,
-                  "y": -605.5,
+                  "x": -886.5,
+                  "y": -646.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1460,7 +1579,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0130": {
                 "id": "attr_0130",
@@ -1468,8 +1589,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0125",
                 "bounds": {
-                  "x": -882.5,
-                  "y": -580.5,
+                  "x": -886.5,
+                  "y": -621.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1480,7 +1601,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0131": {
                 "id": "class_0131",
@@ -1488,8 +1611,8 @@
                 "type": "AbstractClass",
                 "owner": null,
                 "bounds": {
-                  "x": -563,
-                  "y": -721,
+                  "x": -567,
+                  "y": -762,
                   "width": 240,
                   "height": 100
                 },
@@ -1505,8 +1628,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0131",
                 "bounds": {
-                  "x": -562.5,
-                  "y": -670.5,
+                  "x": -566.5,
+                  "y": -711.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1517,7 +1640,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0133": {
                 "id": "attr_0133",
@@ -1525,8 +1650,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0131",
                 "bounds": {
-                  "x": -562.5,
-                  "y": -645.5,
+                  "x": -566.5,
+                  "y": -686.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1537,7 +1662,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0134": {
                 "id": "class_0134",
@@ -1545,11 +1672,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -243,
-                  "y": -721,
+                  "x": -1531,
+                  "y": -763,
                   "width": 240,
                   "height": 190
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><ellipse cx=\"32\" cy=\"14\" rx=\"18\" ry=\"5\"/><path d=\"M14 14v36c0 2.8 8 5 18 5s18-2.2   18-5V14\" fill=\"#2196F3\" fill-opacity=\"0.2\"/><ellipse cx=\"32\" cy=\"14\" rx=\"18\" ry=\"5\" fill=\"none\"/><path d=\"M32 4v10M28 56v4M36   56v4\"/></svg>",
                 "attributes": [
                   "attr_0135",
                   "attr_0136",
@@ -1566,8 +1694,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0134",
                 "bounds": {
-                  "x": -242.5,
-                  "y": -680.5,
+                  "x": -1530.5,
+                  "y": -722.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1578,7 +1706,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0136": {
                 "id": "attr_0136",
@@ -1586,8 +1716,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0134",
                 "bounds": {
-                  "x": -242.5,
-                  "y": -655.5,
+                  "x": -1530.5,
+                  "y": -697.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1598,7 +1728,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0137": {
                 "id": "attr_0137",
@@ -1606,8 +1738,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0134",
                 "bounds": {
-                  "x": -242.5,
-                  "y": -630.5,
+                  "x": -1530.5,
+                  "y": -672.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1618,7 +1750,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0138": {
                 "id": "attr_0138",
@@ -1626,8 +1760,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0134",
                 "bounds": {
-                  "x": -242.5,
-                  "y": -605.5,
+                  "x": -1530.5,
+                  "y": -647.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1638,7 +1772,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0139": {
                 "id": "attr_0139",
@@ -1646,8 +1782,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0134",
                 "bounds": {
-                  "x": -242.5,
-                  "y": -580.5,
+                  "x": -1530.5,
+                  "y": -622.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1658,7 +1794,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0140": {
                 "id": "attr_0140",
@@ -1666,8 +1804,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0134",
                 "bounds": {
-                  "x": -242.5,
-                  "y": -555.5,
+                  "x": -1530.5,
+                  "y": -597.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1678,7 +1816,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0141": {
                 "id": "class_0141",
@@ -1686,11 +1826,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": 77,
-                  "y": -721,
+                  "x": 73,
+                  "y": -762,
                   "width": 240,
                   "height": 190
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M8 20l24 12L8 44z\" fill=\"#2196F3\" fill-opacity=\"0.45\"/><path d=\"M56 20L32   32l24 12z\" fill=\"#2196F3\" fill-opacity=\"0.45\"/><path d=\"M32 32V14M28 14h8\"/></svg>",
                 "attributes": [
                   "attr_0142",
                   "attr_0143",
@@ -1708,8 +1849,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0141",
                 "bounds": {
-                  "x": 77.5,
-                  "y": -680.5,
+                  "x": 73.5,
+                  "y": -721.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1720,7 +1861,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0143": {
                 "id": "attr_0143",
@@ -1728,8 +1871,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0141",
                 "bounds": {
-                  "x": 77.5,
-                  "y": -655.5,
+                  "x": 73.5,
+                  "y": -696.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1740,7 +1883,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0144": {
                 "id": "attr_0144",
@@ -1748,8 +1893,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0141",
                 "bounds": {
-                  "x": 77.5,
-                  "y": -630.5,
+                  "x": 73.5,
+                  "y": -671.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1760,7 +1905,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0145": {
                 "id": "attr_0145",
@@ -1768,8 +1915,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0141",
                 "bounds": {
-                  "x": 77.5,
-                  "y": -605.5,
+                  "x": 73.5,
+                  "y": -646.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1780,7 +1927,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "method_0146": {
                 "id": "method_0146",
@@ -1788,8 +1937,8 @@
                 "type": "ClassMethod",
                 "owner": "class_0141",
                 "bounds": {
-                  "x": 77.5,
-                  "y": -580.5,
+                  "x": 73.5,
+                  "y": -621.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1800,7 +1949,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "method_0147": {
                 "id": "method_0147",
@@ -1808,8 +1959,8 @@
                 "type": "ClassMethod",
                 "owner": "class_0141",
                 "bounds": {
-                  "x": 77.5,
-                  "y": -555.5,
+                  "x": 73.5,
+                  "y": -596.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1820,7 +1971,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0148": {
                 "id": "class_0148",
@@ -1828,11 +1981,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1119,
-                  "y": -1198,
+                  "x": -2184,
+                  "y": -788,
                   "width": 240,
                   "height": 115
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"48\" cy=\"14\" r=\"6\" fill=\"#43A047\"/><path d=\"M48 2v4M48 22v2M58 14h-2M40   14h-2M55.1 7l-1.5 1.5M42.5 19.5L41 21M55.1 21l-1.5-1.5M42.5 8.5L41 7\"/><path d=\"M10 32h44l-6 22H16z\" fill=\"#2196F3\"    fill-opacity=\"0.2\"/><path d=\"M22 32l-2 22M34 32v22M46 32l2 22M14 40h36M16 48h32\"/></svg>",
                 "attributes": [
                   "attr_0149",
                   "attr_0150",
@@ -1846,8 +2000,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0148",
                 "bounds": {
-                  "x": -1118.5,
-                  "y": -1157.5,
+                  "x": -2183.5,
+                  "y": -747.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1858,7 +2012,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0150": {
                 "id": "attr_0150",
@@ -1866,8 +2022,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0148",
                 "bounds": {
-                  "x": -1118.5,
-                  "y": -1132.5,
+                  "x": -2183.5,
+                  "y": -722.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1878,7 +2034,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0151": {
                 "id": "attr_0151",
@@ -1886,8 +2044,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0148",
                 "bounds": {
-                  "x": -1118.5,
-                  "y": -1107.5,
+                  "x": -2183.5,
+                  "y": -697.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1898,7 +2056,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0152": {
                 "id": "class_0152",
@@ -1906,11 +2066,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1650,
-                  "y": -1198,
+                  "x": -2715,
+                  "y": -788,
                   "width": 240,
                   "height": 115
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M30 30l-2 28h8l-2-28z\" fill=\"#000000\" fill-opacity=\"0.05\"/><circle cx=\"32\"    cy=\"28\" r=\"3\" fill=\"#000000\" stroke=\"none\"/><path d=\"M32 28V6\" stroke=\"#43A047\" stroke-width=\"4\"/><path d=\"M32 28L12 40\"    stroke=\"#43A047\" stroke-width=\"4\"/><path d=\"M32 28l20 12\" stroke=\"#43A047\" stroke-width=\"4\"/></svg>",
                 "attributes": [
                   "attr_0153",
                   "attr_0154",
@@ -1924,8 +2085,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0152",
                 "bounds": {
-                  "x": -1649.5,
-                  "y": -1157.5,
+                  "x": -2714.5,
+                  "y": -747.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1936,7 +2097,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0154": {
                 "id": "attr_0154",
@@ -1944,8 +2107,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0152",
                 "bounds": {
-                  "x": -1649.5,
-                  "y": -1132.5,
+                  "x": -2714.5,
+                  "y": -722.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1956,7 +2119,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0155": {
                 "id": "attr_0155",
@@ -1964,8 +2129,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0152",
                 "bounds": {
-                  "x": -1649.5,
-                  "y": -1107.5,
+                  "x": -2714.5,
+                  "y": -697.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1976,7 +2141,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0156": {
                 "id": "class_0156",
@@ -1984,11 +2151,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1384,
-                  "y": -1202,
+                  "x": -2449,
+                  "y": -792,
                   "width": 240,
                   "height": 115
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M24 56l4-44h8l4 44\"/><path d=\"M14 56h36\"/><path d=\"M26 22h12M24 32h16M22   42h20\"/><path d=\"M34 4l-4 8h4l-2 6 6-9h-4l2-5z\" fill=\"#43A047\" stroke=\"none\"/></svg>",
                 "attributes": [
                   "attr_0157",
                   "attr_0158",
@@ -2002,8 +2170,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0156",
                 "bounds": {
-                  "x": -1383.5,
-                  "y": -1161.5,
+                  "x": -2448.5,
+                  "y": -751.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2014,7 +2182,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0158": {
                 "id": "attr_0158",
@@ -2022,8 +2192,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0156",
                 "bounds": {
-                  "x": -1383.5,
-                  "y": -1136.5,
+                  "x": -2448.5,
+                  "y": -726.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2034,7 +2204,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0159": {
                 "id": "attr_0159",
@@ -2042,8 +2214,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0156",
                 "bounds": {
-                  "x": -1383.5,
-                  "y": -1111.5,
+                  "x": -2448.5,
+                  "y": -701.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2054,7 +2226,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0160": {
                 "id": "class_0160",
@@ -2062,11 +2236,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -2127,
-                  "y": -276,
+                  "x": -1575,
+                  "y": -323,
                   "width": 240,
                   "height": 90
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"10\" y=\"14\" width=\"44\" height=\"36\" rx=\"2\" fill=\"#2196F3\"    fill-opacity=\"0.1\"/><path d=\"M30 14v36M34 14v36\" stroke=\"#43A047\" stroke-width=\"2\"/><circle cx=\"20\" cy=\"24\" r=\"2\"    fill=\"#2196F3\"/><circle cx=\"22\" cy=\"36\" r=\"2\" fill=\"#2196F3\"/><circle cx=\"44\" cy=\"28\" r=\"2\" fill=\"#43A047\"/><circle cx=\"42\" cy=\"40\"    r=\"2\" fill=\"#43A047\"/><path d=\"M16 6h6M42 6h6M19 6v8M45 6v8\"/></svg>",
                 "attributes": [
                   "attr_0161",
                   "attr_0162"
@@ -2079,8 +2254,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0160",
                 "bounds": {
-                  "x": -2126.5,
-                  "y": -235.5,
+                  "x": -1574.5,
+                  "y": -282.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2091,7 +2266,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0162": {
                 "id": "attr_0162",
@@ -2099,8 +2276,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0160",
                 "bounds": {
-                  "x": -2126.5,
-                  "y": -210.5,
+                  "x": -1574.5,
+                  "y": -257.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2111,7 +2288,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0163": {
                 "id": "class_0163",
@@ -2119,11 +2298,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1841,
-                  "y": -283,
+                  "x": -1845,
+                  "y": -324,
                   "width": 240,
                   "height": 90
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"10\" y=\"14\" width=\"44\" height=\"36\" rx=\"2\"/><path d=\"M10 28c4-2 8 2 12 0s8-2   12 0 8 2 12 0 8-2 8-2v22H10z\" fill=\"#2196F3\" fill-opacity=\"0.35\"/><path d=\"M32 14v36\"/><circle cx=\"20\" cy=\"22\" r=\"2\"    fill=\"#43A047\"/><circle cx=\"44\" cy=\"22\" r=\"2\" fill=\"#43A047\"/><path d=\"M16 6h6M42 6h6M19 6v8M45 6v8\"/></svg>",
                 "attributes": [
                   "attr_0164",
                   "attr_0165"
@@ -2136,8 +2316,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0163",
                 "bounds": {
-                  "x": -1840.5,
-                  "y": -242.5,
+                  "x": -1844.5,
+                  "y": -283.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2148,7 +2328,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0165": {
                 "id": "attr_0165",
@@ -2156,8 +2338,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0163",
                 "bounds": {
-                  "x": -1840.5,
-                  "y": -217.5,
+                  "x": -1844.5,
+                  "y": -258.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2168,7 +2350,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0166": {
                 "id": "class_0166",
@@ -2176,11 +2360,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -1467,
-                  "y": -278,
+                  "x": -2126,
+                  "y": -318,
                   "width": 240,
                   "height": 90
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"10\" y=\"20\" width=\"44\" height=\"32\" rx=\"2\" fill=\"#43A047\"    fill-opacity=\"0.18\"/><path d=\"M30 20v32M34 20v32\"/><path d=\"M16 14c0-3 4-3 4-6M26 14c0-3 4-3 4-6M38 14c0-3 4-3 4-6M48 14c0-3 4-3   4-6\"/><circle cx=\"20\" cy=\"34\" r=\"2\" fill=\"#2196F3\"/><circle cx=\"44\" cy=\"34\" r=\"2\" fill=\"#2196F3\"/></svg>",
                 "attributes": [
                   "attr_0167",
                   "attr_0168"
@@ -2193,8 +2378,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0166",
                 "bounds": {
-                  "x": -1466.5,
-                  "y": -237.5,
+                  "x": -2125.5,
+                  "y": -277.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2205,7 +2390,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0168": {
                 "id": "attr_0168",
@@ -2213,8 +2400,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0166",
                 "bounds": {
-                  "x": -1466.5,
-                  "y": -212.5,
+                  "x": -2125.5,
+                  "y": -252.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2225,7 +2412,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0169": {
                 "id": "class_0169",
@@ -2233,8 +2422,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -723,
-                  "y": -319,
+                  "x": -727,
+                  "y": -360,
                   "width": 240,
                   "height": 140
                 },
@@ -2252,8 +2441,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0169",
                 "bounds": {
-                  "x": -722.5,
-                  "y": -278.5,
+                  "x": -726.5,
+                  "y": -319.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2264,7 +2453,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0171": {
                 "id": "attr_0171",
@@ -2272,8 +2463,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0169",
                 "bounds": {
-                  "x": -722.5,
-                  "y": -253.5,
+                  "x": -726.5,
+                  "y": -294.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2284,7 +2475,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0172": {
                 "id": "attr_0172",
@@ -2292,8 +2485,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0169",
                 "bounds": {
-                  "x": -722.5,
-                  "y": -228.5,
+                  "x": -726.5,
+                  "y": -269.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2304,7 +2497,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0173": {
                 "id": "attr_0173",
@@ -2312,8 +2507,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0169",
                 "bounds": {
-                  "x": -722.5,
-                  "y": -203.5,
+                  "x": -726.5,
+                  "y": -244.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2324,7 +2519,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0174": {
                 "id": "class_0174",
@@ -2332,11 +2529,12 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -409,
-                  "y": -319,
+                  "x": -413,
+                  "y": -360,
                   "width": 240,
                   "height": 90
                 },
+                "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"10\" y=\"20\" width=\"44\" height=\"24\" rx=\"12\" fill=\"#43A047\"    fill-opacity=\"0.18\"/><path d=\"M16 20v-6M48 20v-6\"/><path d=\"M22 32c0-3 2-3 2-6c0 3-2 3-2 6M32 32c0-3 2-3 2-6c0 3-2 3-2 6M42 32c0-3   2-3 2-6c0 3-2 3-2 6\"/><path d=\"M22 50l-2 6h4z\" fill=\"#2196F3\"/><path d=\"M32 50l-2 6h4z\" fill=\"#2196F3\"/><path d=\"M42 50l-2 6h4z\"    fill=\"#2196F3\"/></svg>",
                 "attributes": [
                   "attr_0175",
                   "attr_0176"
@@ -2349,8 +2547,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0174",
                 "bounds": {
-                  "x": -408.5,
-                  "y": -278.5,
+                  "x": -412.5,
+                  "y": -319.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2361,7 +2559,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0176": {
                 "id": "attr_0176",
@@ -2369,8 +2569,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0174",
                 "bounds": {
-                  "x": -408.5,
-                  "y": -253.5,
+                  "x": -412.5,
+                  "y": -294.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2381,7 +2581,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0177": {
                 "id": "class_0177",
@@ -2389,8 +2591,8 @@
                 "type": "Enumeration",
                 "owner": null,
                 "bounds": {
-                  "x": -2087,
-                  "y": -1793,
+                  "x": 326,
+                  "y": -1216,
                   "width": 240,
                   "height": 175
                 },
@@ -2409,8 +2611,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0177",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1742.5,
+                  "x": 326.5,
+                  "y": -1165.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2421,7 +2623,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0179": {
                 "id": "attr_0179",
@@ -2429,8 +2633,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0177",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1717.5,
+                  "x": 326.5,
+                  "y": -1140.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2441,7 +2645,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0180": {
                 "id": "attr_0180",
@@ -2449,8 +2655,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0177",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1692.5,
+                  "x": 326.5,
+                  "y": -1115.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2461,7 +2667,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0181": {
                 "id": "attr_0181",
@@ -2469,8 +2677,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0177",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1667.5,
+                  "x": 326.5,
+                  "y": -1090.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2481,7 +2689,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0182": {
                 "id": "attr_0182",
@@ -2489,8 +2699,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0177",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1642.5,
+                  "x": 326.5,
+                  "y": -1065.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2501,7 +2711,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0183": {
                 "id": "class_0183",
@@ -2509,8 +2721,8 @@
                 "type": "Enumeration",
                 "owner": null,
                 "bounds": {
-                  "x": -2087,
-                  "y": -1584,
+                  "x": 321,
+                  "y": -994,
                   "width": 240,
                   "height": 175
                 },
@@ -2529,8 +2741,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0183",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1533.5,
+                  "x": 321.5,
+                  "y": -943.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2541,7 +2753,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0185": {
                 "id": "attr_0185",
@@ -2549,8 +2763,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0183",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1508.5,
+                  "x": 321.5,
+                  "y": -918.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2561,7 +2775,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0186": {
                 "id": "attr_0186",
@@ -2569,8 +2785,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0183",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1483.5,
+                  "x": 321.5,
+                  "y": -893.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2581,7 +2797,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0187": {
                 "id": "attr_0187",
@@ -2589,8 +2807,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0183",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1458.5,
+                  "x": 321.5,
+                  "y": -868.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2601,7 +2819,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0188": {
                 "id": "attr_0188",
@@ -2609,8 +2829,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0183",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1433.5,
+                  "x": 321.5,
+                  "y": -843.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2621,7 +2841,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0189": {
                 "id": "class_0189",
@@ -2629,8 +2851,8 @@
                 "type": "Enumeration",
                 "owner": null,
                 "bounds": {
-                  "x": -2086,
-                  "y": -1012,
+                  "x": 354,
+                  "y": -758,
                   "width": 240,
                   "height": 100
                 },
@@ -2646,8 +2868,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0189",
                 "bounds": {
-                  "x": -2085.5,
-                  "y": -961.5,
+                  "x": 354.5,
+                  "y": -707.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2658,7 +2880,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0191": {
                 "id": "attr_0191",
@@ -2666,8 +2890,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0189",
                 "bounds": {
-                  "x": -2085.5,
-                  "y": -936.5,
+                  "x": 354.5,
+                  "y": -682.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2678,7 +2902,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0192": {
                 "id": "class_0192",
@@ -2686,8 +2912,8 @@
                 "type": "Enumeration",
                 "owner": null,
                 "bounds": {
-                  "x": -2087,
-                  "y": -1302,
+                  "x": 341,
+                  "y": -1718,
                   "width": 240,
                   "height": 250
                 },
@@ -2709,8 +2935,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1251.5,
+                  "x": 341.5,
+                  "y": -1667.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2721,7 +2947,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0194": {
                 "id": "attr_0194",
@@ -2729,8 +2957,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1226.5,
+                  "x": 341.5,
+                  "y": -1642.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2741,7 +2969,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0195": {
                 "id": "attr_0195",
@@ -2749,8 +2979,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1201.5,
+                  "x": 341.5,
+                  "y": -1617.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2761,7 +2991,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0196": {
                 "id": "attr_0196",
@@ -2769,8 +3001,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1176.5,
+                  "x": 341.5,
+                  "y": -1592.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2781,7 +3013,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0197": {
                 "id": "attr_0197",
@@ -2789,8 +3023,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1151.5,
+                  "x": 341.5,
+                  "y": -1567.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2801,7 +3035,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0198": {
                 "id": "attr_0198",
@@ -2809,8 +3045,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1126.5,
+                  "x": 341.5,
+                  "y": -1542.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2821,7 +3057,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0199": {
                 "id": "attr_0199",
@@ -2829,8 +3067,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1101.5,
+                  "x": 341.5,
+                  "y": -1517.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2841,7 +3079,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0200": {
                 "id": "attr_0200",
@@ -2849,8 +3089,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0192",
                 "bounds": {
-                  "x": -2086.5,
-                  "y": -1076.5,
+                  "x": 341.5,
+                  "y": -1492.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2861,7 +3101,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0201": {
                 "id": "class_0201",
@@ -2900,7 +3142,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0203": {
                 "id": "attr_0203",
@@ -2920,7 +3164,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0204": {
                 "id": "attr_0204",
@@ -2940,7 +3186,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0205": {
                 "id": "attr_0205",
@@ -2960,7 +3208,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "class_0206": {
                 "id": "class_0206",
@@ -3000,7 +3250,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0208": {
                 "id": "attr_0208",
@@ -3020,7 +3272,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0209": {
                 "id": "attr_0209",
@@ -3040,7 +3294,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0210": {
                 "id": "attr_0210",
@@ -3060,7 +3316,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               },
               "attr_0211": {
                 "id": "attr_0211",
@@ -3080,7 +3338,9 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
               }
             },
             "relationships": {
@@ -3090,26 +3350,18 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1599.3999633789062,
-                  "width": 389.0999517440796,
-                  "height": 222.99996376037598
+                  "x": -1813.9000244140625,
+                  "y": -1219.3999633789062,
+                  "width": 18.899999618530273,
+                  "height": 174.39996337890625
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 213.39996337890625
+                    "y": 165.39996337890625
                   },
                   {
                     "x": 5,
-                    "y": 106.69998168945312
-                  },
-                  {
-                    "x": 375.199951171875,
-                    "y": 106.69998168945312
-                  },
-                  {
-                    "x": 375.199951171875,
                     "y": 0
                   }
                 ],
@@ -3145,15 +3397,15 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1314.4000244140625,
-                  "y": -1599.3999633789062,
-                  "width": 18.90000057220459,
-                  "height": 153.99996376037598
+                  "x": -1983.9000244140625,
+                  "y": -1219.3999633789062,
+                  "width": 18.899999618530273,
+                  "height": 166.39996337890625
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 144.39996337890625
+                    "y": 157.39996337890625
                   },
                   {
                     "x": 5,
@@ -3192,15 +3444,15 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1729,
-                  "y": -1336,
-                  "width": 18.90000057220459,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 18.899999618530273,
+                  "height": 251
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 615
+                    "y": 242
                   },
                   {
                     "x": 5,
@@ -3239,23 +3491,23 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1336,
-                  "width": 340.9000005722046,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 1628.8999996185303,
+                  "height": 250
                 },
                 "path": [
                   {
-                    "x": 327,
-                    "y": 615
+                    "x": 1615,
+                    "y": 241
                   },
                   {
-                    "x": 327,
-                    "y": 307.5
+                    "x": 1615,
+                    "y": 120.5
                   },
                   {
                     "x": 5,
-                    "y": 307.5
+                    "y": 120.5
                   },
                   {
                     "x": 5,
@@ -3294,23 +3546,23 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1336,
-                  "width": 660.9000005722046,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 658.8999996185303,
+                  "height": 251
                 },
                 "path": [
                   {
-                    "x": 647,
-                    "y": 615
+                    "x": 645,
+                    "y": 242
                   },
                   {
-                    "x": 647,
-                    "y": 307.5
+                    "x": 645,
+                    "y": 121
                   },
                   {
                     "x": 5,
-                    "y": 307.5
+                    "y": 121
                   },
                   {
                     "x": 5,
@@ -3349,23 +3601,23 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1336,
-                  "width": 980.9000005722046,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 978.8999996185303,
+                  "height": 251
                 },
                 "path": [
                   {
-                    "x": 967,
-                    "y": 615
+                    "x": 965,
+                    "y": 242
                   },
                   {
-                    "x": 967,
-                    "y": 307.5
+                    "x": 965,
+                    "y": 121
                   },
                   {
                     "x": 5,
-                    "y": 307.5
+                    "y": 121
                   },
                   {
                     "x": 5,
@@ -3404,23 +3656,23 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1336,
-                  "width": 1300.9000005722046,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 1298.8999996185303,
+                  "height": 251
                 },
                 "path": [
                   {
-                    "x": 1287,
-                    "y": 615
+                    "x": 1285,
+                    "y": 242
                   },
                   {
-                    "x": 1287,
-                    "y": 307.5
+                    "x": 1285,
+                    "y": 121
                   },
                   {
                     "x": 5,
-                    "y": 307.5
+                    "y": 121
                   },
                   {
                     "x": 5,
@@ -3459,23 +3711,23 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1336,
-                  "width": 1620.9000005722046,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 334.8999996185303,
+                  "height": 250
                 },
                 "path": [
                   {
-                    "x": 1607,
-                    "y": 615
+                    "x": 321,
+                    "y": 241
                   },
                   {
-                    "x": 1607,
-                    "y": 307.5
+                    "x": 321,
+                    "y": 120.5
                   },
                   {
                     "x": 5,
-                    "y": 307.5
+                    "y": 120.5
                   },
                   {
                     "x": 5,
@@ -3514,23 +3766,23 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1730,
-                  "y": -1336,
-                  "width": 1940.9000005722046,
-                  "height": 624.6000003814697
+                  "x": -1732,
+                  "y": -1004,
+                  "width": 1938.8999996185303,
+                  "height": 251
                 },
                 "path": [
                   {
-                    "x": 1927,
-                    "y": 615
+                    "x": 1925,
+                    "y": 242
                   },
                   {
-                    "x": 1927,
-                    "y": 307.5
+                    "x": 1925,
+                    "y": 121
                   },
                   {
                     "x": 5,
-                    "y": 307.5
+                    "y": 121
                   },
                   {
                     "x": 5,
@@ -3569,26 +3821,26 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -2012,
-                  "y": -446,
-                  "width": 302.9000005722046,
-                  "height": 179.60000038146973
+                  "x": -1732,
+                  "y": -487,
+                  "width": 290.8999996185303,
+                  "height": 173
                 },
                 "path": [
                   {
-                    "x": 5,
-                    "y": 170
+                    "x": 277,
+                    "y": 164
+                  },
+                  {
+                    "x": 277,
+                    "y": 82
                   },
                   {
                     "x": 5,
-                    "y": 85
+                    "y": 82
                   },
                   {
-                    "x": 289,
-                    "y": 85
-                  },
-                  {
-                    "x": 289,
+                    "x": 5,
                     "y": 0
                   }
                 ],
@@ -3624,10 +3876,10 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1727,
-                  "y": -446,
-                  "width": 18.90000057220459,
-                  "height": 172.60000038146973
+                  "x": -1731,
+                  "y": -487,
+                  "width": 18.899999618530273,
+                  "height": 172
                 },
                 "path": [
                   {
@@ -3671,26 +3923,26 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1728,
-                  "y": -446,
-                  "width": 394.9000005722046,
-                  "height": 177.60000038146973
+                  "x": -2011,
+                  "y": -487,
+                  "width": 297.8999996185303,
+                  "height": 178
                 },
                 "path": [
                   {
-                    "x": 381,
-                    "y": 168
-                  },
-                  {
-                    "x": 381,
-                    "y": 84
+                    "x": 5,
+                    "y": 169
                   },
                   {
                     "x": 5,
-                    "y": 84
+                    "y": 84.5
                   },
                   {
-                    "x": 5,
+                    "x": 284,
+                    "y": 84.5
+                  },
+                  {
+                    "x": 284,
                     "y": 0
                   }
                 ],
@@ -3726,10 +3978,10 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -528,
-                  "y": -621,
-                  "width": 18.90000057220459,
-                  "height": 311.6000003814697
+                  "x": -532,
+                  "y": -662,
+                  "width": 18.899999618530273,
+                  "height": 311
                 },
                 "path": [
                   {
@@ -3773,10 +4025,10 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -371,
-                  "y": -621,
-                  "width": 18.90000057220459,
-                  "height": 311.6000003814697
+                  "x": -375,
+                  "y": -662,
+                  "width": 18.899999618530273,
+                  "height": 311
                 },
                 "path": [
                   {
@@ -3820,23 +4072,15 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1269,
-                  "y": -1355,
-                  "width": 283.9000005722046,
-                  "height": 166.60000038146973
+                  "x": -2070.5,
+                  "y": -962,
+                  "width": 18.899999618530273,
+                  "height": 183
                 },
                 "path": [
                   {
-                    "x": 270,
-                    "y": 157
-                  },
-                  {
-                    "x": 270,
-                    "y": 78.5
-                  },
-                  {
                     "x": 5,
-                    "y": 78.5
+                    "y": 174
                   },
                   {
                     "x": 5,
@@ -3875,26 +4119,26 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1535,
-                  "y": -1355,
-                  "width": 284.9000005722046,
-                  "height": 166.60000038146973
+                  "x": -2600,
+                  "y": -962,
+                  "width": 546.8999996185303,
+                  "height": 183
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 157
+                    "y": 174
                   },
                   {
                     "x": 5,
-                    "y": 78.5
+                    "y": 87
                   },
                   {
-                    "x": 271,
-                    "y": 78.5
+                    "x": 533,
+                    "y": 87
                   },
                   {
-                    "x": 271,
+                    "x": 533,
                     "y": 0
                   }
                 ],
@@ -3930,18 +4174,26 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -1269,
-                  "y": -1355,
-                  "width": 18.90000057220459,
-                  "height": 162.60000038146973
+                  "x": -2334,
+                  "y": -962,
+                  "width": 280.8999996185303,
+                  "height": 179
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 153
+                    "y": 170
                   },
                   {
                     "x": 5,
+                    "y": 85
+                  },
+                  {
+                    "x": 267,
+                    "y": 85
+                  },
+                  {
+                    "x": 267,
                     "y": 0
                   }
                 ],
@@ -3977,27 +4229,27 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -743,
-                  "y": -1266,
-                  "width": 906.6999273300171,
-                  "height": 142.00018310546875
+                  "x": -931,
+                  "y": -1039.9998168945312,
+                  "width": 817.6999263763428,
+                  "height": 117.99981689453125
                 },
                 "path": [
                   {
-                    "x": 892.7999267578125,
-                    "y": 102.00018310546875
-                  },
-                  {
-                    "x": 892.7999267578125,
-                    "y": 142.00018310546875
-                  },
-                  {
-                    "x": 5,
-                    "y": 142.00018310546875
-                  },
-                  {
-                    "x": 5,
+                    "x": 803.7999267578125,
                     "y": 0
+                  },
+                  {
+                    "x": 803.7999267578125,
+                    "y": 99.99981689453125
+                  },
+                  {
+                    "x": 5,
+                    "y": 99.99981689453125
+                  },
+                  {
+                    "x": 5,
+                    "y": 59.99981689453125
                   }
                 ],
                 "source": {
@@ -4032,27 +4284,27 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -743,
-                  "y": -1266,
-                  "width": 557.9000005722046,
-                  "height": 82
+                  "x": -931,
+                  "y": -1001,
+                  "width": 407.8999996185303,
+                  "height": 79
                 },
                 "path": [
                   {
-                    "x": 544,
-                    "y": 42
-                  },
-                  {
-                    "x": 544,
-                    "y": 82
-                  },
-                  {
-                    "x": 5,
-                    "y": 82
-                  },
-                  {
-                    "x": 5,
+                    "x": 394,
                     "y": 0
+                  },
+                  {
+                    "x": 394,
+                    "y": 61
+                  },
+                  {
+                    "x": 5,
+                    "y": 61
+                  },
+                  {
+                    "x": 5,
+                    "y": 21
                   }
                 ],
                 "source": {
@@ -4087,10 +4339,10 @@
                 "type": "ClassBidirectional",
                 "owner": null,
                 "bounds": {
-                  "x": -1234.800048828125,
-                  "y": -1656.1999816894531,
-                  "width": 266.800048828125,
-                  "height": 48.60000038146973
+                  "x": -1770.800048828125,
+                  "y": -1329.3999633789062,
+                  "width": 337.0333819389343,
+                  "height": 222.39996337890625
                 },
                 "path": [
                   {
@@ -4098,8 +4350,12 @@
                     "y": 10
                   },
                   {
-                    "x": 266.800048828125,
+                    "x": 325.800048828125,
                     "y": 10
+                  },
+                  {
+                    "x": 325.800048828125,
+                    "y": 213.39996337890625
                   }
                 ],
                 "source": {
@@ -4115,7 +4371,7 @@
                   }
                 },
                 "target": {
-                  "direction": "Left",
+                  "direction": "Topleft",
                   "element": "class_0086",
                   "multiplicity": "*",
                   "role": "",
@@ -4134,19 +4390,27 @@
                 "type": "ClassBidirectional",
                 "owner": null,
                 "bounds": {
-                  "x": -875.7218780517578,
-                  "y": -1553,
-                  "width": 111.91094017028809,
-                  "height": 196.60000038146973
+                  "x": -1407.3833312988281,
+                  "y": -1156,
+                  "width": 570.4166641235352,
+                  "height": 85
                 },
                 "path": [
                   {
-                    "x": 82.72187805175781,
-                    "y": 187
+                    "x": 541.3833312988281,
+                    "y": 76
                   },
                   {
-                    "x": 82.72187805175781,
+                    "x": 541.3833312988281,
                     "y": 0
+                  },
+                  {
+                    "x": 82.38333129882812,
+                    "y": 0
+                  },
+                  {
+                    "x": 82.38333129882812,
+                    "y": 40
                   }
                 ],
                 "source": {
@@ -4162,7 +4426,7 @@
                   }
                 },
                 "target": {
-                  "direction": "Bottomright",
+                  "direction": "Topright",
                   "element": "class_0086",
                   "multiplicity": "1",
                   "role": "sourcePort",
@@ -4181,23 +4445,19 @@
                 "type": "ClassBidirectional",
                 "owner": null,
                 "bounds": {
-                  "x": -983.6125030517578,
-                  "y": -1553,
-                  "width": 125.61250305175781,
-                  "height": 250.60000038146973
+                  "x": -1265,
+                  "y": -1040,
+                  "width": 219,
+                  "height": 48
                 },
                 "path": [
                   {
-                    "x": 125.61250305175781,
-                    "y": 212
+                    "x": 219,
+                    "y": 10
                   },
                   {
-                    "x": 75.61250305175781,
-                    "y": 212
-                  },
-                  {
-                    "x": 75.61250305175781,
-                    "y": 0
+                    "x": 0,
+                    "y": 10
                   }
                 ],
                 "source": {
@@ -4213,7 +4473,7 @@
                   }
                 },
                 "target": {
-                  "direction": "Bottomleft",
+                  "direction": "Downright",
                   "element": "class_0086",
                   "multiplicity": "1",
                   "role": "targetPort",
@@ -4232,18 +4492,26 @@
                 "type": "ClassBidirectional",
                 "owner": null,
                 "bounds": {
-                  "x": 140.20001220703125,
+                  "x": -192.2000732421875,
                   "y": -1538.2000122070312,
-                  "width": 36.6875,
-                  "height": 143.80019569396973
+                  "width": 344.0335040092468,
+                  "height": 267.2001953125
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 134.2001953125
+                    "y": 258.2001953125
                   },
                   {
                     "x": 5,
+                    "y": 129.10009765625
+                  },
+                  {
+                    "x": 332.8001708984375,
+                    "y": 129.10009765625
+                  },
+                  {
+                    "x": 332.8001708984375,
                     "y": 0
                   }
                 ],
@@ -4262,7 +4530,7 @@
                 "target": {
                   "direction": "Down",
                   "element": "class_0083",
-                  "multiplicity": "1..*",
+                  "multiplicity": "*",
                   "role": "",
                   "bounds": {
                     "x": 0,
@@ -4282,7 +4550,7 @@
                   "x": -341.4000244140625,
                   "y": -1593.2000122070312,
                   "width": 362.0001220703125,
-                  "height": 48.60000038146973
+                  "height": 48
                 },
                 "path": [
                   {
@@ -4323,7 +4591,7 @@
             },
             "assessments": {}
           },
-          "lastUpdate": "2026-04-28T23:30:11.238Z"
+          "lastUpdate": "2026-05-07T14:26:39.038Z"
         }
       ],
       "PlatformCustomizationDiagram": [
@@ -4340,12 +4608,14 @@
                 "isConnectionClass": true
               },
               "MaterialStream": {
-                "isConnectionClass": true
+                "isConnectionClass": true,
+                "edgeColor": "#0ea5e9"
               },
               "EnergyStream": {
                 "isConnectionClass": true,
                 "lineWidth": 3,
-                "targetArrowStyle": "filled_triangle"
+                "targetArrowStyle": "filled_triangle",
+                "edgeColor": "#10b981"
               }
             },
             "associationOverrides": {
@@ -4354,11 +4624,15 @@
               },
               "target": {
                 "isTargetEndpoint": true
+              },
+              "chemical_fraction": {
+                "lineStyle": "solid",
+                "lineRouting": "step"
               }
             },
             "version": "2.0.0"
           },
-          "lastUpdate": "2026-04-28T23:29:43.397Z"
+          "lastUpdate": "2026-05-05T11:24:04.548Z"
         }
       ]
     },
@@ -4368,6 +4642,6 @@
       "collaborationEnabled": false
     }
   },
-  "exportedAt": "2026-04-28T23:30:12.850Z",
+  "exportedAt": "2026-05-07T14:26:53.542Z",
   "version": "2.0.0"
 }

@@ -26,9 +26,11 @@ downstream tool define semantics for fewer node shapes.
   # c_norm.ast is now an `or` of `(not self.is_active)` and the original RHS.
 
 The driver runs each rule in a fixed order and walks the AST in
-post-order until no rule applies. Termination is guaranteed by the
-lexicographic measure ⟨#sugar-operators, AST size, #negations⟩, which
-every rule strictly decreases.
+post-order until no rule applies. Each rule is designed to strictly
+decrease a lexicographic measure ⟨#sugar-operators, AST size, #negations⟩,
+so the pipeline reaches a fixpoint in a bounded number of iterations. A
+``max_iterations`` guard surfaces a developer bug (a rule that violates
+the measure) instead of looping forever.
 
 The input is not mutated: ``normalize`` clones the AST internally before
 rewriting.

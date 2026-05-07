@@ -37,6 +37,15 @@ Basic usage
 If ``context_class`` is omitted, the class is parsed from the ``context X
 inv|pre|post|init`` header and resolved against ``model.types``.
 
+.. note::
+
+  The auto-detect only matches the simple ``context Class inv|pre|post|init``
+  shape (used by invariants). Preconditions, postconditions, and init
+  constraints carry the longer ``context Class::method(p: Type) pre|post:``
+  or ``context Class::attribute : Type init:`` headers — for those you must
+  pass ``context_class`` explicitly. The supported shapes are summarized in
+  :doc:`../ocl`.
+
 The ``expression`` / ``ast`` split
 ----------------------------------
 
@@ -92,9 +101,15 @@ first-class :attr:`~besser.BUML.metamodel.structural.Method.pre` and
       type=IntegerType,
   )
 
-  pre  = parse_ocl("context Account inv: self.is_active",    model, context_class=account)
-  post = parse_ocl("context Account inv: self.balance >= 0", model, context_class=account)
-  pre.name, post.name = "deposit_pre_active", "deposit_post_nonneg"
+  pre  = parse_ocl(
+      "context Account::deposit(amount: Integer) pre: self.is_active and amount > 0",
+      model, context_class=account,
+  )
+  post = parse_ocl(
+      "context Account::deposit(amount: Integer) post: self.balance >= 0",
+      model, context_class=account,
+  )
+  pre.name, post.name = "deposit_pre_active_and_positive", "deposit_post_nonneg"
 
   deposit.add_pre(pre)
   deposit.add_post(post)

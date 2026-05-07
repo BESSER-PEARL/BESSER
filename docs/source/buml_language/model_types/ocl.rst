@@ -15,20 +15,54 @@ for expression according to the OCL metamodel shown below.
 
   The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
 
-The BOCL supports invariants, initialisation constraints, preconditions and postconditions.
-You can define OCL constraints for structural models using the web modeling editor such as:
+BOCL supports four constraint kinds. Each has its own header shape — the
+parser routes on the keyword that follows ``context``:
 
-.. code-block:: python
-  :linenos:
+.. list-table::
+  :header-rows: 1
+  :widths: 12 88
 
-  context library inv inv1: self.books>0
+  * - Kind
+    - Header form (and a one-line example)
+  * - ``inv``
+    - ``context Class inv [name]: expression``
+      — e.g. ``context Library inv at_least_one_book: self.books->size() > 0``
+  * - ``pre``
+    - ``context Class::method(p: Type) pre: expression``
+      — e.g. ``context Account::deposit(amount: Integer) pre: amount > 0``
+  * - ``post``
+    - ``context Class::method(p: Type) post: expression``
+      — e.g. ``context Account::deposit(amount: Integer) post: self.balance >= 0``
+  * - ``init``
+    - ``context Class::attribute : Type init: expression``
+      — e.g. ``context Account::balance : Integer init: 0``
+
+Invariants attach to the :class:`DomainModel`'s constraint set. Preconditions
+and postconditions attach to a specific :class:`Method` via ``add_pre`` /
+``add_post`` (see below). Initialisation constraints attach to a specific
+attribute.
 
 .. note::
 
   B-OCL Interpreter is available at https://github.com/BESSER-PEARL/B-OCL-Interpreter. With this interpreter you can validate your OCL constraints defined on B-UML models.
 
-Anchoring preconditions and postconditions on a method
-------------------------------------------------------
+Authoring constraints in the Web Modeling Editor
+------------------------------------------------
+
+Inside the editor's OCL constraint box, type the **complete** BOCL block —
+header plus body. The editor renders an italic stereotype badge above the
+body derived from the header keyword:
+
+* ``«inv»`` — invariant
+* ``«pre» <method-name>`` — precondition (the box draws a link to the method it constrains)
+* ``«post» <method-name>`` — postcondition
+
+The optional **description** field next to the textbox accepts a plain-language
+explanation; the validator surfaces that text as the violation reason instead
+of the raw OCL when the constraint fails.
+
+Anchoring preconditions and postconditions on a method (Python API)
+-------------------------------------------------------------------
 
 Preconditions and postconditions are first-class fields on :class:`Method` —
 ``method.pre`` and ``method.post``. Use ``add_pre`` / ``add_post`` to attach
@@ -54,12 +88,24 @@ naming conventions:
       type=IntegerType,
   )
 
-  pre  = parse_ocl("context Account inv: self.is_active",    model, context_class=account)
-  post = parse_ocl("context Account inv: self.balance >= 0", model, context_class=account)
-  pre.name, post.name = "deposit_pre_active", "deposit_post_nonneg"
+  pre  = parse_ocl(
+      "context Account::deposit(amount: Integer) pre: self.is_active and amount > 0",
+      model, context_class=account,
+  )
+  post = parse_ocl(
+      "context Account::deposit(amount: Integer) post: self.balance >= 0",
+      model, context_class=account,
+  )
+  pre.name, post.name = "deposit_pre_active_and_positive", "deposit_post_nonneg"
 
   deposit.add_pre(pre)
   deposit.add_post(post)
+
+.. note::
+
+  ``parse_ocl``'s auto-detect regex only matches the simple ``context Class
+  inv|pre|post|init`` shape, not ``Class::method(...)``, so when parsing pre /
+  post / init you must pass ``context_class`` explicitly (as above).
 
 
 Working with parsed constraints

@@ -63,15 +63,26 @@ Method contracts are anchored on the :class:`Method` itself via the
 
 .. code-block:: python
 
-  pre  = parse_ocl("context Account inv: self.is_active",    model, context_class=account)
-  post = parse_ocl("context Account inv: self.balance >= 0", model, context_class=account)
-  pre.name, post.name = "deposit_pre_active", "deposit_post_nonneg"
+  pre  = parse_ocl(
+      "context Account::deposit(amount: Integer) pre: self.is_active and amount > 0",
+      model, context_class=account,
+  )
+  post = parse_ocl(
+      "context Account::deposit(amount: Integer) post: self.balance >= 0",
+      model, context_class=account,
+  )
+  pre.name, post.name = "deposit_pre_active_and_positive", "deposit_post_nonneg"
 
   deposit.add_pre(pre)
   deposit.add_post(post)
 
-  [c.name for c in deposit.pre]   # ['deposit_pre_active']
+  [c.name for c in deposit.pre]   # ['deposit_pre_active_and_positive']
   [c.name for c in deposit.post]  # ['deposit_post_nonneg']
+
+The full BOCL header (``context Class::method(params) pre|post:``) is required
+when calling ``parse_ocl`` directly with a precondition or postcondition —
+``context_class`` must also be passed explicitly because the parser's
+auto-detect regex only handles the simpler invariant header shape.
 
 ``add_pre`` / ``add_post`` raise ``ValueError`` if a precondition or
 postcondition with the same name already exists on the method.

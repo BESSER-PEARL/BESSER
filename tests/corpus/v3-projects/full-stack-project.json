@@ -1,0 +1,352 @@
+{
+  "id": "proj-full-stack",
+  "type": "Project",
+  "schemaVersion": 4,
+  "name": "WebApp Full Stack",
+  "description": "Realistic multi-diagram project: ClassDiagram (backend), ObjectDiagram (test data), GUINoCodeDiagram (frontend), Quantum (untouched). Cross-references via per-diagram references.",
+  "owner": "dave",
+  "createdAt": "2025-06-01T08:00:00.000Z",
+  "currentDiagramType": "ClassDiagram",
+  "currentDiagramIndices": {
+    "ClassDiagram": 0,
+    "ObjectDiagram": 0,
+    "StateMachineDiagram": 0,
+    "AgentDiagram": 0,
+    "UserDiagram": 0,
+    "GUINoCodeDiagram": 0,
+    "QuantumCircuitDiagram": 0,
+    "NNDiagram": 0
+  },
+  "diagrams": {
+    "ClassDiagram": [
+      {
+        "id": "diag-class-2",
+        "title": "Backend Domain",
+        "lastUpdate": "2025-10-08T13:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ClassDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "node-User": {
+              "id": "node-User",
+              "name": "User",
+              "type": "Class",
+              "owner": null,
+              "bounds": { "x": 100, "y": 100, "width": 200, "height": 80 },
+              "attributes": ["attr-User-id", "attr-User-email"],
+              "methods": []
+            },
+            "attr-User-id": {
+              "id": "attr-User-id",
+              "name": "id",
+              "type": "ClassAttribute",
+              "owner": "node-User",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "int",
+              "isId": true,
+              "isOptional": false,
+              "isDerived": false,
+              "isExternalId": false
+            },
+            "attr-User-email": {
+              "id": "attr-User-email",
+              "name": "email",
+              "type": "ClassAttribute",
+              "owner": "node-User",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "str",
+              "isId": false,
+              "isOptional": false,
+              "isDerived": false,
+              "isExternalId": false
+            },
+            "node-Order": {
+              "id": "node-Order",
+              "name": "Order",
+              "type": "Class",
+              "owner": null,
+              "bounds": { "x": 400, "y": 100, "width": 200, "height": 80 },
+              "attributes": ["attr-Order-total"],
+              "methods": []
+            },
+            "attr-Order-total": {
+              "id": "attr-Order-total",
+              "name": "total",
+              "type": "ClassAttribute",
+              "owner": "node-Order",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "float",
+              "isId": false,
+              "isOptional": false,
+              "isDerived": false,
+              "isExternalId": false
+            }
+          },
+          "relationships": {
+            "rel-user-order": {
+              "id": "rel-user-order",
+              "name": "places",
+              "type": "ClassBidirectional",
+              "owner": null,
+              "bounds": { "x": 300, "y": 130, "width": 100, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 100, "y": 0 }],
+              "source": { "element": "node-User", "direction": "Right", "multiplicity": "1" },
+              "target": { "element": "node-Order", "direction": "Left", "multiplicity": "0..*" }
+            }
+          },
+          "assessments": {}
+        }
+      }
+    ],
+    "ObjectDiagram": [
+      {
+        "id": "diag-obj-1",
+        "title": "Sample Data",
+        "lastUpdate": "2025-10-08T13:00:00.000Z",
+        "references": { "ClassDiagram": "diag-class-2" },
+        "model": {
+          "version": "3.0.0",
+          "type": "ObjectDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "obj-rex": {
+              "id": "obj-rex",
+              "name": "rex: Dog",
+              "type": "ObjectName",
+              "owner": null,
+              "bounds": { "x": 100, "y": 100, "width": 200, "height": 100 },
+              "attributes": ["attr-rex-name"],
+              "methods": [],
+              "classId": "node-Dog",
+              "className": "Dog"
+            },
+            "attr-rex-name": {
+              "id": "attr-rex-name",
+              "name": "name = Rex",
+              "type": "ObjectAttribute",
+              "owner": "obj-rex",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "str"
+            },
+            "obj-alice": {
+              "id": "obj-alice",
+              "name": "alice: Owner",
+              "type": "ObjectName",
+              "owner": null,
+              "bounds": { "x": 400, "y": 100, "width": 200, "height": 80 },
+              "attributes": [],
+              "methods": [],
+              "classId": "node-Owner"
+            }
+          },
+          "relationships": {
+            "link-1": {
+              "id": "link-1",
+              "name": "owns",
+              "type": "ObjectLink",
+              "owner": null,
+              "bounds": { "x": 250, "y": 130, "width": 0, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 100, "y": 0 }],
+              "source": { "element": "obj-alice", "direction": "Left" },
+              "target": { "element": "obj-rex", "direction": "Right" }
+            }
+          },
+          "assessments": {}
+        }
+      }
+    ],
+    "StateMachineDiagram": [
+      {
+        "id": "diag-sm-empty",
+        "title": "State Machine Diagram",
+        "lastUpdate": "2025-06-01T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "StateMachineDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "AgentDiagram": [
+      {
+        "id": "diag-ag-empty",
+        "title": "Agent Diagram",
+        "lastUpdate": "2025-06-01T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "AgentDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "UserDiagram": [
+      {
+        "id": "diag-usr-1",
+        "title": "Personas",
+        "lastUpdate": "2025-09-01T11:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "UserDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "u-Buyer": {
+              "id": "u-Buyer",
+              "name": "Buyer",
+              "type": "UserModelName",
+              "owner": null,
+              "bounds": { "x": 100, "y": 100, "width": 200, "height": 100 },
+              "attributes": ["a-Buyer-budget"],
+              "methods": []
+            },
+            "a-Buyer-budget": {
+              "id": "a-Buyer-budget",
+              "name": "budget",
+              "type": "UserModelAttribute",
+              "owner": "u-Buyer",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 }
+            }
+          },
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "GUINoCodeDiagram": [
+      {
+        "id": "diag-gui-1",
+        "title": "Storefront UI",
+        "lastUpdate": "2025-10-09T16:00:00.000Z",
+        "references": { "ClassDiagram": "diag-class-2" },
+        "model": {
+          "pages": [
+            {
+              "name": "Home",
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "stylable": ["background"],
+                    "components": [
+                      { "type": "text", "content": "Welcome to the store" },
+                      { "type": "button", "content": "Buy" }
+                    ],
+                    "head": { "type": "head" },
+                    "docEl": { "tagName": "html" }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Cart",
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "components": [{ "type": "text", "content": "Cart" }],
+                    "head": { "type": "head" },
+                    "docEl": { "tagName": "html" }
+                  }
+                }
+              ]
+            }
+          ],
+          "styles": [{ "selectors": [".btn"], "style": { "background-color": "blue" } }],
+          "assets": [],
+          "symbols": [],
+          "version": "0.21.13"
+        }
+      }
+    ],
+    "QuantumCircuitDiagram": [
+      {
+        "id": "diag-q-1",
+        "title": "Bell + Measurement",
+        "lastUpdate": "2025-09-30T16:00:00.000Z",
+        "model": {
+          "cols": [["H", 1], ["•", "X"], ["Measure", "Measure"]],
+          "gates": [],
+          "gateMetadata": { "0:0": { "label": "Hadamard" } },
+          "initialStates": ["0", "0"],
+          "version": "1.0.0"
+        }
+      }
+    ],
+    "NNDiagram": [
+      {
+        "id": "diag-nn-1",
+        "title": "Tiny MLP",
+        "lastUpdate": "2025-09-15T10:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "NNDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "layer-Linear-1": {
+              "id": "layer-Linear-1",
+              "name": "fc1",
+              "type": "NNLinear",
+              "owner": null,
+              "bounds": { "x": 100, "y": 100, "width": 200, "height": 80 },
+              "attributes": [],
+              "methods": []
+            },
+            "layer-Linear-2": {
+              "id": "layer-Linear-2",
+              "name": "fc2",
+              "type": "NNLinear",
+              "owner": null,
+              "bounds": { "x": 400, "y": 100, "width": 200, "height": 80 },
+              "attributes": [],
+              "methods": []
+            }
+          },
+          "relationships": {
+            "edge-1": {
+              "id": "edge-1",
+              "name": "",
+              "type": "NNTensorFlow",
+              "owner": null,
+              "bounds": { "x": 300, "y": 130, "width": 100, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 100, "y": 0 }],
+              "source": { "element": "layer-Linear-1", "direction": "Right" },
+              "target": { "element": "layer-Linear-2", "direction": "Left" }
+            }
+          },
+          "assessments": {}
+        }
+      }
+    ]
+  },
+  "settings": {
+    "defaultDiagramType": "ClassDiagram",
+    "autoSave": true,
+    "collaborationEnabled": false,
+    "perspectives": {
+      "ClassDiagram": true,
+      "ObjectDiagram": true,
+      "StateMachineDiagram": true,
+      "AgentDiagram": true,
+      "UserDiagram": true,
+      "GUINoCodeDiagram": true,
+      "QuantumCircuitDiagram": true,
+      "NNDiagram": true
+    }
+  }
+}

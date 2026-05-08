@@ -1,0 +1,283 @@
+{
+  "id": "proj-sm-machine",
+  "type": "Project",
+  "schemaVersion": 4,
+  "name": "Door Controller (state machine)",
+  "description": "StateMachineDiagram with State (with body+fallback), code block, fork, merge, action node, and 3 transitions.",
+  "owner": "bob",
+  "createdAt": "2025-08-20T09:00:00.000Z",
+  "currentDiagramType": "StateMachineDiagram",
+  "currentDiagramIndices": {
+    "ClassDiagram": 0,
+    "ObjectDiagram": 0,
+    "StateMachineDiagram": 0,
+    "AgentDiagram": 0,
+    "UserDiagram": 0,
+    "GUINoCodeDiagram": 0,
+    "QuantumCircuitDiagram": 0,
+    "NNDiagram": 0
+  },
+  "diagrams": {
+    "ClassDiagram": [
+      {
+        "id": "diag-class-empty",
+        "title": "Class Diagram",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ClassDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "ObjectDiagram": [
+      {
+        "id": "diag-obj-empty",
+        "title": "Object Diagram",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ObjectDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "StateMachineDiagram": [
+      {
+        "id": "diag-sm-1",
+        "title": "Door Controller",
+        "lastUpdate": "2025-09-30T11:45:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "StateMachineDiagram",
+          "size": { "width": 1200, "height": 800 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "init-1": {
+              "id": "init-1",
+              "name": "",
+              "type": "StateInitialNode",
+              "owner": null,
+              "bounds": { "x": 60, "y": 60, "width": 45, "height": 45 }
+            },
+            "state-Idle": {
+              "id": "state-Idle",
+              "name": "Idle",
+              "type": "State",
+              "owner": null,
+              "bounds": { "x": 160, "y": 50, "width": 200, "height": 80 },
+              "italic": false,
+              "underline": false,
+              "stereotype": null,
+              "deviderPosition": 80,
+              "hasBody": false,
+              "hasFallbackBody": false
+            },
+            "state-Working": {
+              "id": "state-Working",
+              "name": "Working",
+              "type": "State",
+              "owner": null,
+              "bounds": { "x": 420, "y": 50, "width": 240, "height": 160 },
+              "italic": false,
+              "underline": false,
+              "stereotype": "active",
+              "deviderPosition": 110,
+              "hasBody": true,
+              "hasFallbackBody": true
+            },
+            "body-Working-1": {
+              "id": "body-Working-1",
+              "name": "entry / startMotor()",
+              "type": "StateBody",
+              "owner": "state-Working",
+              "bounds": { "x": 420, "y": 100, "width": 240, "height": 30 }
+            },
+            "fallback-Working-1": {
+              "id": "fallback-Working-1",
+              "name": "fallback / safeStop()",
+              "type": "StateFallbackBody",
+              "owner": "state-Working",
+              "bounds": { "x": 420, "y": 160, "width": 240, "height": 30 }
+            },
+            "code-Working-1": {
+              "id": "code-Working-1",
+              "name": "snippet",
+              "type": "StateCodeBlock",
+              "owner": null,
+              "bounds": { "x": 700, "y": 50, "width": 200, "height": 150 },
+              "code": "def monitor():\n    while True:\n        check()",
+              "language": "python"
+            },
+            "state-Done": {
+              "id": "state-Done",
+              "name": "Done",
+              "type": "State",
+              "owner": null,
+              "bounds": { "x": 920, "y": 50, "width": 200, "height": 80 },
+              "italic": false,
+              "underline": false,
+              "stereotype": null,
+              "deviderPosition": 80,
+              "hasBody": false,
+              "hasFallbackBody": false
+            },
+            "fork-1": {
+              "id": "fork-1",
+              "name": "",
+              "type": "StateForkNode",
+              "owner": null,
+              "bounds": { "x": 360, "y": 240, "width": 20, "height": 100 }
+            },
+            "merge-1": {
+              "id": "merge-1",
+              "name": "decision",
+              "type": "StateMergeNode",
+              "owner": null,
+              "bounds": { "x": 600, "y": 280, "width": 80, "height": 80 }
+            },
+            "action-1": {
+              "id": "action-1",
+              "name": "log",
+              "type": "StateActionNode",
+              "owner": null,
+              "bounds": { "x": 800, "y": 290, "width": 120, "height": 60 }
+            }
+          },
+          "relationships": {
+            "trans-init-idle": {
+              "id": "trans-init-idle",
+              "name": "",
+              "type": "StateTransition",
+              "owner": null,
+              "bounds": { "x": 100, "y": 80, "width": 60, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 60, "y": 0 }],
+              "source": { "element": "init-1", "direction": "Right" },
+              "target": { "element": "state-Idle", "direction": "Left" }
+            },
+            "trans-idle-working": {
+              "id": "trans-idle-working",
+              "name": "open",
+              "type": "StateTransition",
+              "owner": null,
+              "bounds": { "x": 360, "y": 80, "width": 60, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 60, "y": 0 }],
+              "source": { "element": "state-Idle", "direction": "Right" },
+              "target": { "element": "state-Working", "direction": "Left" }
+            },
+            "trans-working-done": {
+              "id": "trans-working-done",
+              "name": "close",
+              "type": "StateTransition",
+              "owner": null,
+              "bounds": { "x": 660, "y": 80, "width": 260, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 260, "y": 0 }],
+              "source": { "element": "state-Working", "direction": "Right" },
+              "target": { "element": "state-Done", "direction": "Left" }
+            }
+          },
+          "assessments": {}
+        }
+      }
+    ],
+    "AgentDiagram": [
+      {
+        "id": "diag-ag-empty",
+        "title": "Agent Diagram",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "AgentDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "UserDiagram": [
+      {
+        "id": "diag-usr-empty",
+        "title": "User Diagram",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "UserDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "GUINoCodeDiagram": [
+      {
+        "id": "diag-gui-default",
+        "title": "GUI Diagram",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "pages": [],
+          "styles": [],
+          "assets": [],
+          "symbols": [],
+          "version": "0.21.13"
+        }
+      }
+    ],
+    "QuantumCircuitDiagram": [
+      {
+        "id": "diag-q-default",
+        "title": "Quantum Circuit",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "cols": [["H", 1, 1], [1, "X", 1]],
+          "gates": [],
+          "gateMetadata": {},
+          "initialStates": ["0", "0", "0"],
+          "version": "1.0.0"
+        }
+      }
+    ],
+    "NNDiagram": [
+      {
+        "id": "diag-nn-empty",
+        "title": "NN Diagram",
+        "lastUpdate": "2025-08-20T09:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "NNDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ]
+  },
+  "settings": {
+    "defaultDiagramType": "StateMachineDiagram",
+    "autoSave": true,
+    "collaborationEnabled": false,
+    "perspectives": {
+      "ClassDiagram": true,
+      "ObjectDiagram": true,
+      "StateMachineDiagram": true,
+      "AgentDiagram": true,
+      "UserDiagram": true,
+      "GUINoCodeDiagram": true,
+      "QuantumCircuitDiagram": true,
+      "NNDiagram": true
+    }
+  }
+}

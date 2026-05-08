@@ -1,0 +1,320 @@
+{
+  "id": "proj-class-only",
+  "type": "Project",
+  "schemaVersion": 4,
+  "name": "Library Domain (class-only)",
+  "description": "Pure ClassDiagram project: 4 classes, 1 OCL constraint, 2 edges (inheritance, bidirectional assoc).",
+  "owner": "alice",
+  "createdAt": "2025-09-12T08:00:00.000Z",
+  "currentDiagramType": "ClassDiagram",
+  "currentDiagramIndices": {
+    "ClassDiagram": 0,
+    "ObjectDiagram": 0,
+    "StateMachineDiagram": 0,
+    "AgentDiagram": 0,
+    "UserDiagram": 0,
+    "GUINoCodeDiagram": 0,
+    "QuantumCircuitDiagram": 0,
+    "NNDiagram": 0
+  },
+  "diagrams": {
+    "ClassDiagram": [
+      {
+        "id": "diag-class-1",
+        "title": "Library Domain",
+        "lastUpdate": "2025-10-01T08:30:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ClassDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "node-Animal": {
+              "id": "node-Animal",
+              "name": "Animal",
+              "type": "AbstractClass",
+              "owner": null,
+              "bounds": { "x": 100, "y": 100, "width": 200, "height": 100 },
+              "attributes": ["attr-Animal-id", "attr-Animal-name"],
+              "methods": ["method-Animal-speak"]
+            },
+            "attr-Animal-id": {
+              "id": "attr-Animal-id",
+              "name": "id",
+              "type": "ClassAttribute",
+              "owner": "node-Animal",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "int",
+              "isId": true,
+              "isOptional": false,
+              "isDerived": false,
+              "isExternalId": false
+            },
+            "attr-Animal-name": {
+              "id": "attr-Animal-name",
+              "name": "name",
+              "type": "ClassAttribute",
+              "owner": "node-Animal",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "str",
+              "isId": false,
+              "isOptional": false,
+              "isDerived": false,
+              "isExternalId": false,
+              "defaultValue": "anon"
+            },
+            "method-Animal-speak": {
+              "id": "method-Animal-speak",
+              "name": "speak()",
+              "type": "ClassMethod",
+              "owner": "node-Animal",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "code",
+              "code": "def speak(self):\n    pass\n",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            "node-Dog": {
+              "id": "node-Dog",
+              "name": "Dog",
+              "type": "Class",
+              "owner": null,
+              "bounds": { "x": 400, "y": 100, "width": 200, "height": 80 },
+              "attributes": ["attr-Dog-breed"],
+              "methods": []
+            },
+            "attr-Dog-breed": {
+              "id": "attr-Dog-breed",
+              "name": "breed",
+              "type": "ClassAttribute",
+              "owner": "node-Dog",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "private",
+              "attributeType": "str",
+              "isId": false,
+              "isOptional": true,
+              "isDerived": false,
+              "isExternalId": false
+            },
+            "node-Owner": {
+              "id": "node-Owner",
+              "name": "Owner",
+              "type": "Class",
+              "owner": null,
+              "bounds": { "x": 400, "y": 250, "width": 200, "height": 80 },
+              "attributes": ["attr-Owner-name"],
+              "methods": []
+            },
+            "attr-Owner-name": {
+              "id": "attr-Owner-name",
+              "name": "name",
+              "type": "ClassAttribute",
+              "owner": "node-Owner",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "visibility": "public",
+              "attributeType": "str",
+              "isId": false,
+              "isOptional": false,
+              "isDerived": false,
+              "isExternalId": false
+            },
+            "node-Pet": {
+              "id": "node-Pet",
+              "name": "Pet",
+              "type": "Interface",
+              "owner": null,
+              "bounds": { "x": 100, "y": 250, "width": 200, "height": 60 },
+              "attributes": [],
+              "methods": []
+            },
+            "ocl-Animal-1": {
+              "id": "ocl-Animal-1",
+              "name": "nameNotEmpty",
+              "type": "ClassOCLConstraint",
+              "owner": "node-Animal",
+              "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+              "expression": "context Animal inv: name->size() > 0"
+            }
+          },
+          "relationships": {
+            "rel-inh-1": {
+              "id": "rel-inh-1",
+              "name": "",
+              "type": "ClassInheritance",
+              "owner": null,
+              "bounds": { "x": 200, "y": 200, "width": 0, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 100, "y": 0 }],
+              "source": { "element": "node-Dog", "direction": "Up" },
+              "target": { "element": "node-Animal", "direction": "Down" }
+            },
+            "rel-assoc-1": {
+              "id": "rel-assoc-1",
+              "name": "owns",
+              "type": "ClassBidirectional",
+              "owner": null,
+              "bounds": { "x": 350, "y": 150, "width": 0, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 50, "y": 0 }],
+              "source": {
+                "element": "node-Owner",
+                "direction": "Left",
+                "role": "owner",
+                "multiplicity": "1"
+              },
+              "target": {
+                "element": "node-Dog",
+                "direction": "Right",
+                "role": "pet",
+                "multiplicity": "0..*"
+              }
+            }
+          },
+          "assessments": {}
+        }
+      }
+    ],
+    "ObjectDiagram": [
+      {
+        "id": "diag-obj-empty",
+        "title": "Object Diagram",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ObjectDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "StateMachineDiagram": [
+      {
+        "id": "diag-sm-empty",
+        "title": "State Machine Diagram",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "StateMachineDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "AgentDiagram": [
+      {
+        "id": "diag-ag-empty",
+        "title": "Agent Diagram",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "AgentDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "UserDiagram": [
+      {
+        "id": "diag-usr-empty",
+        "title": "User Diagram",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "UserDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "GUINoCodeDiagram": [
+      {
+        "id": "diag-gui-default",
+        "title": "GUI Diagram",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "pages": [
+            {
+              "name": "Home",
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "stylable": ["background", "background-color"],
+                    "components": [],
+                    "head": { "type": "head" },
+                    "docEl": { "tagName": "html" }
+                  }
+                }
+              ]
+            }
+          ],
+          "styles": [],
+          "assets": [],
+          "symbols": [],
+          "version": "0.21.13"
+        }
+      }
+    ],
+    "QuantumCircuitDiagram": [
+      {
+        "id": "diag-q-default",
+        "title": "Quantum Circuit",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "cols": [],
+          "gates": [],
+          "gateMetadata": {},
+          "initialStates": [],
+          "version": "1.0.0"
+        }
+      }
+    ],
+    "NNDiagram": [
+      {
+        "id": "diag-nn-empty",
+        "title": "NN Diagram",
+        "lastUpdate": "2025-09-12T08:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "NNDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ]
+  },
+  "settings": {
+    "defaultDiagramType": "ClassDiagram",
+    "autoSave": true,
+    "collaborationEnabled": false,
+    "perspectives": {
+      "ClassDiagram": true,
+      "ObjectDiagram": true,
+      "StateMachineDiagram": true,
+      "AgentDiagram": true,
+      "UserDiagram": true,
+      "GUINoCodeDiagram": true,
+      "QuantumCircuitDiagram": true,
+      "NNDiagram": true
+    }
+  }
+}

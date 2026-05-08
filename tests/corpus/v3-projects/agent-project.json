@@ -1,0 +1,242 @@
+{
+  "id": "proj-agent",
+  "type": "Project",
+  "schemaVersion": 4,
+  "name": "Support Bot (agent)",
+  "description": "AgentDiagram with state, intent, intent body, fallback, and a transition. Plus a non-empty Quantum diagram (must pass through unchanged).",
+  "owner": "carol",
+  "createdAt": "2025-07-15T14:00:00.000Z",
+  "currentDiagramType": "AgentDiagram",
+  "currentDiagramIndices": {
+    "ClassDiagram": 0,
+    "ObjectDiagram": 0,
+    "StateMachineDiagram": 0,
+    "AgentDiagram": 0,
+    "UserDiagram": 0,
+    "GUINoCodeDiagram": 0,
+    "QuantumCircuitDiagram": 0,
+    "NNDiagram": 0
+  },
+  "diagrams": {
+    "ClassDiagram": [
+      {
+        "id": "diag-class-empty",
+        "title": "Class Diagram",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ClassDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "ObjectDiagram": [
+      {
+        "id": "diag-obj-empty",
+        "title": "Object Diagram",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "ObjectDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "StateMachineDiagram": [
+      {
+        "id": "diag-sm-empty",
+        "title": "State Machine Diagram",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "StateMachineDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "AgentDiagram": [
+      {
+        "id": "diag-ag-1",
+        "title": "Support Bot",
+        "lastUpdate": "2025-10-04T10:20:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "AgentDiagram",
+          "size": { "width": 1400, "height": 900 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {
+            "init-1": {
+              "id": "init-1",
+              "name": "",
+              "type": "StateInitialNode",
+              "owner": null,
+              "bounds": { "x": 60, "y": 60, "width": 45, "height": 45 }
+            },
+            "as-Greet": {
+              "id": "as-Greet",
+              "name": "Greet",
+              "type": "AgentState",
+              "owner": null,
+              "bounds": { "x": 160, "y": 50, "width": 240, "height": 120 },
+              "italic": false,
+              "underline": false,
+              "stereotype": null,
+              "replyType": "text"
+            },
+            "asb-Greet-1": {
+              "id": "asb-Greet-1",
+              "name": "Hello there!",
+              "type": "AgentStateBody",
+              "owner": "as-Greet",
+              "bounds": { "x": 160, "y": 90, "width": 240, "height": 30 },
+              "replyType": "text"
+            },
+            "asfb-Greet-1": {
+              "id": "asfb-Greet-1",
+              "name": "(fallback) sorry I missed that",
+              "type": "AgentStateFallbackBody",
+              "owner": "as-Greet",
+              "bounds": { "x": 160, "y": 120, "width": 240, "height": 30 },
+              "replyType": "text"
+            },
+            "ai-Greeting": {
+              "id": "ai-Greeting",
+              "name": "Greeting",
+              "type": "AgentIntent",
+              "owner": null,
+              "bounds": { "x": 60, "y": 250, "width": 280, "height": 160 },
+              "intent_description": "User says hello.",
+              "italic": false,
+              "underline": false,
+              "stereotype": null
+            },
+            "aib-Greeting-1": {
+              "id": "aib-Greeting-1",
+              "name": "hello",
+              "type": "AgentIntentBody",
+              "owner": "ai-Greeting",
+              "bounds": { "x": 60, "y": 290, "width": 280, "height": 30 }
+            }
+          },
+          "relationships": {
+            "trans-init-greet": {
+              "id": "trans-init-greet",
+              "name": "",
+              "type": "StateTransition",
+              "owner": null,
+              "bounds": { "x": 100, "y": 80, "width": 60, "height": 0 },
+              "path": [{ "x": 0, "y": 0 }, { "x": 60, "y": 0 }],
+              "source": { "element": "init-1", "direction": "Right" },
+              "target": { "element": "as-Greet", "direction": "Left" }
+            }
+          },
+          "assessments": {}
+        }
+      }
+    ],
+    "UserDiagram": [
+      {
+        "id": "diag-usr-empty",
+        "title": "User Diagram",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "UserDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ],
+    "GUINoCodeDiagram": [
+      {
+        "id": "diag-gui-default",
+        "title": "GUI Diagram",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "pages": [
+            {
+              "name": "Home",
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "stylable": ["background"],
+                    "components": [
+                      { "type": "text", "content": "Welcome" }
+                    ],
+                    "head": { "type": "head" },
+                    "docEl": { "tagName": "html" }
+                  }
+                }
+              ]
+            }
+          ],
+          "styles": [{ "selectors": [".btn"], "style": { "color": "red" } }],
+          "assets": [],
+          "symbols": [],
+          "version": "0.21.13"
+        }
+      }
+    ],
+    "QuantumCircuitDiagram": [
+      {
+        "id": "diag-q-bell",
+        "title": "Bell Pair",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "cols": [["H", 1], ["•", "X"]],
+          "gates": [],
+          "gateMetadata": {},
+          "initialStates": ["0", "0"],
+          "version": "1.0.0"
+        }
+      }
+    ],
+    "NNDiagram": [
+      {
+        "id": "diag-nn-empty",
+        "title": "NN Diagram",
+        "lastUpdate": "2025-07-15T14:00:00.000Z",
+        "model": {
+          "version": "3.0.0",
+          "type": "NNDiagram",
+          "size": { "width": 800, "height": 600 },
+          "interactive": { "elements": {}, "relationships": {} },
+          "elements": {},
+          "relationships": {},
+          "assessments": {}
+        }
+      }
+    ]
+  },
+  "settings": {
+    "defaultDiagramType": "AgentDiagram",
+    "autoSave": true,
+    "collaborationEnabled": false,
+    "perspectives": {
+      "ClassDiagram": true,
+      "ObjectDiagram": true,
+      "StateMachineDiagram": true,
+      "AgentDiagram": true,
+      "UserDiagram": true,
+      "GUINoCodeDiagram": true,
+      "QuantumCircuitDiagram": true,
+      "NNDiagram": true
+    }
+  }
+}

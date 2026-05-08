@@ -2,11 +2,21 @@
 Tests for OCL invariant / precondition / postcondition handling in the
 WME class diagram converter pipeline.
 
-The canonical wire shape is full OCL text in each ``ClassOCLConstraint``
-element's ``constraint`` field — e.g.
+The canonical v4 wire shape inlines OCL constraints as rows in the
+owning class node's ``data.oclConstraints`` array — e.g.
 
-    context Book inv pages_positive: self.pages > 0
-    context Book::decrease_stock(qty: int) pre: qty > 0
+    {
+      "id": "n-account",
+      "type": "class",
+      "data": {
+        "name": "Account",
+        "oclConstraints": [
+          {"id": "ocl-inv", "name": "positive",
+           "expression": "context Account inv positive: self.balance >= 0"},
+          ...
+        ]
+      }
+    }
 
 Tests cover:
   * ``parse_constraint_text`` returning the right routing kind plus the
@@ -15,8 +25,8 @@ Tests cover:
     ``domain_model.constraints`` (invariants) or to ``Method.pre`` /
     ``Method.post`` lists (pre/post) via Class::method name lookup.
   * Skip-with-warning behaviour on malformed OCL or unresolved methods.
-  * Back-compat ingest for body-only JSON files produced by an earlier
-    intermediate iteration (kind / targetMethodId / constraintName).
+  * Back-compat ingest for body-only constraint rows (kind /
+    targetMethodId / constraintName) still produced by older clients.
   * Round-trip stability of the canonical full-text shape.
 """
 
@@ -37,6 +47,44 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )
+
+
+# ---------------------------------------------------------------------------
+# v4 helpers (local — keep this module self-contained)
+# ---------------------------------------------------------------------------
+
+def _class_node_by_name(model_payload, class_name):
+    """Return the v4 class node matching ``class_name``."""
+    for n in model_payload.get("nodes") or []:
+        if n.get("type") == "class" and (n.get("data") or {}).get("name") == class_name:
+            return n
+    return None
+
+
+def _ocl_rows(payload, class_name):
+    """Return the ``data.oclConstraints`` rows for the given class.
+
+    Accepts either the top-level ``{title, model}`` envelope or the bare
+    converter output ``{nodes, edges, ...}``.
+    """
+    model = payload.get("model") if "model" in payload else payload
+    node = _class_node_by_name(model, class_name)
+    if not node:
+        return []
+    return list((node.get("data") or {}).get("oclConstraints") or [])
+
+
+def _all_ocl_rows(payload):
+    """Yield every ``oclConstraint`` row from every class in ``payload``."""
+    model = payload.get("model") if "model" in payload else payload
+    out = []
+    for n in model.get("nodes") or []:
+        if n.get("type") != "class":
+            continue
+        data = n.get("data") or {}
+        for row in data.get("oclConstraints") or []:
+            out.append((data.get("name"), row))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -61,55 +109,58 @@ def banking_model():
 
 @pytest.fixture
 def account_diagram_json():
-    """A class-diagram JSON whose OCL boxes carry full-text constraints."""
+    """A v4 class diagram whose Account node carries inlined OCL rows.
+
+    Three constraint rows: an invariant, a precondition and a postcondition,
+    all anchored on the same ``Account`` class node.
+    """
     return {
         "title": "BankingTest",
         "model": {
-            "elements": {
-                "cls-Account": {
-                    "id": "cls-Account", "name": "Account", "type": "Class",
-                    "attributes": ["attr-balance", "attr-active"],
-                    "methods": ["m-deposit"],
-                    "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {
+                    "id": "n-account",
+                    "type": "class",
+                    "position": {"x": 0, "y": 0},
+                    "width": 160, "height": 100,
+                    "measured": {"width": 160, "height": 100},
+                    "data": {
+                        "name": "Account",
+                        "stereotype": None,
+                        "attributes": [
+                            {"id": "a-balance", "name": "balance",
+                             "attributeType": "int", "visibility": "public"},
+                            {"id": "a-active", "name": "is_active",
+                             "attributeType": "bool", "visibility": "public"},
+                        ],
+                        "methods": [
+                            {"id": "m-deposit", "name": "+ deposit(amount: int): int"},
+                        ],
+                        "oclConstraints": [
+                            {"id": "ocl-inv", "name": "positive",
+                             "expression": "context Account inv positive: self.balance >= 0"},
+                            {"id": "ocl-pre", "name": "amt_pos",
+                             "expression": "context Account::deposit(amount: int) pre: amount > 0"},
+                            {"id": "ocl-post", "name": "balance_nn",
+                             "expression": "context Account::deposit(amount: int) post: self.balance >= 0"},
+                        ],
+                    },
                 },
-                "attr-balance": {
-                    "id": "attr-balance", "name": "balance",
-                    "visibility": "public", "attributeType": "int",
-                },
-                "attr-active": {
-                    "id": "attr-active", "name": "is_active",
-                    "visibility": "public", "attributeType": "bool",
-                },
-                "m-deposit": {
-                    "id": "m-deposit", "name": "+ deposit(amount: int): int",
-                    "type": "ClassMethod", "owner": "cls-Account",
-                },
-                "ocl-inv": {
-                    "id": "ocl-inv", "type": "ClassOCLConstraint",
-                    "constraint": "context Account inv positive: self.balance >= 0",
-                },
-                "ocl-pre": {
-                    "id": "ocl-pre", "type": "ClassOCLConstraint",
-                    "constraint": "context Account::deposit(amount: int) pre: amount > 0",
-                },
-                "ocl-post": {
-                    "id": "ocl-post", "type": "ClassOCLConstraint",
-                    "constraint": "context Account::deposit(amount: int) post: self.balance >= 0",
-                },
-            },
-            "relationships": {
-                "r-inv":  {"id": "r-inv",  "type": "ClassOCLLink",
-                            "source": {"element": "ocl-inv"},
-                            "target": {"element": "cls-Account"}},
-                "r-pre":  {"id": "r-pre",  "type": "ClassOCLLink",
-                            "source": {"element": "ocl-pre"},
-                            "target": {"element": "cls-Account"}},
-                "r-post": {"id": "r-post", "type": "ClassOCLLink",
-                            "source": {"element": "ocl-post"},
-                            "target": {"element": "cls-Account"}},
-            },
+            ],
+            "edges": [],
         },
     }
+
+
+def _ocl_row_by_id(diagram_json, ocl_id):
+    """Return the inlined OCL row with the given id (for in-place mutation)."""
+    for n in diagram_json["model"]["nodes"]:
+        for row in (n.get("data") or {}).get("oclConstraints") or []:
+            if row.get("id") == ocl_id:
+                return row
+    raise KeyError(ocl_id)
 
 
 # ---------------------------------------------------------------------------
@@ -123,10 +174,7 @@ def test_parse_constraint_text_invariant_extracts_name(banking_model):
     )
     assert kind == "invariant"
     assert isinstance(c, OCLConstraint)
-    assert c.name == "positive"        # user-typed name preserved
-    # ``expression`` carries the full canonical OCL text (set by
-    # ``parse_constraint_text``) so downstream consumers — validator,
-    # BUML emitter, BOCL evaluator — don't need to reconstruct it.
+    assert c.name == "positive"
     assert c.expression == "context Account inv positive: self.balance >= 0"
     assert c.context is account
     assert class_name == "Account"
@@ -183,7 +231,6 @@ def test_invariant_routed_to_domain_model_constraints(account_diagram_json):
     assert invariants == ["positive"]
     inv = next(iter(dm.constraints))
     assert isinstance(inv, OCLConstraint)
-    # ``expression`` carries the full canonical text post-consolidation.
     assert inv.expression == "context Account inv positive: self.balance >= 0"
 
 
@@ -207,8 +254,9 @@ def test_postcondition_routed_to_method_post(account_diagram_json):
 
 def test_unknown_method_in_pre_skipped_with_warning(account_diagram_json):
     """Pre/post pointing at a method the class doesn't have → warning + skip."""
-    elems = account_diagram_json["model"]["elements"]
-    elems["ocl-pre"]["constraint"] = "context Account::missing(amount: int) pre: amount > 0"
+    _ocl_row_by_id(account_diagram_json, "ocl-pre")["expression"] = (
+        "context Account::missing(amount: int) pre: amount > 0"
+    )
     dm = process_class_diagram(account_diagram_json)
     account = next(c for c in dm.types if c.name == "Account")
     deposit = next(m for m in account.methods if m.name == "deposit")
@@ -218,8 +266,9 @@ def test_unknown_method_in_pre_skipped_with_warning(account_diagram_json):
 
 def test_invalid_ocl_skipped_with_warning(account_diagram_json):
     """Malformed OCL must not abort the conversion — other constraints must still load."""
-    elems = account_diagram_json["model"]["elements"]
-    elems["ocl-inv"]["constraint"] = "context Account inv broken: self."
+    _ocl_row_by_id(account_diagram_json, "ocl-inv")["expression"] = (
+        "context Account inv broken: self."
+    )
     dm = process_class_diagram(account_diagram_json)
     # Invariant got dropped; pre/post still parse.
     assert all(c.name != "positive" for c in dm.constraints)
@@ -232,18 +281,20 @@ def test_invalid_ocl_skipped_with_warning(account_diagram_json):
 
 
 def test_multi_block_textarea_parses_each_block_independently(banking_model, account_diagram_json):
-    """A single OCL box may hold multiple constraints separated by `context` boundaries."""
-    elems = account_diagram_json["model"]["elements"]
-    # Drop the per-kind boxes; replace with one box that holds everything.
-    for k in ("ocl-pre", "ocl-post"):
-        del elems[k]
-    rels = account_diagram_json["model"]["relationships"]
-    for k in ("r-pre", "r-post"):
-        del rels[k]
-    elems["ocl-inv"]["constraint"] = (
-        "context Account inv positive: self.balance >= 0\n"
-        "context Account inv active: self.is_active"
-    )
+    """A single OCL row may hold multiple constraints separated by `context` boundaries."""
+    # Replace the three constraint rows with a single invariant box that
+    # holds two ``context`` blocks back-to-back.
+    account_node = _class_node_by_name(account_diagram_json["model"], "Account")
+    account_node["data"]["oclConstraints"] = [
+        {
+            "id": "ocl-multi",
+            "name": "multi",
+            "expression": (
+                "context Account inv positive: self.balance >= 0\n"
+                "context Account inv active: self.is_active"
+            ),
+        },
+    ]
 
     dm = process_class_diagram(account_diagram_json)
     invariants = sorted(c.name for c in dm.constraints)
@@ -251,44 +302,47 @@ def test_multi_block_textarea_parses_each_block_independently(banking_model, acc
 
 
 # ---------------------------------------------------------------------------
-# Back-compat shim — body-only legacy JSON files
+# Back-compat shim — body-only legacy rows
 # ---------------------------------------------------------------------------
 
 def test_body_only_legacy_files_still_load():
-    """Body-only ``ClassOCLConstraint`` boxes (kind + constraintName + targetMethodId)
+    """Body-only inlined OCL rows (kind + constraintName + targetMethodId)
     are lifted to full text by the back-compat shim before parsing.
     """
     legacy = {
         "title": "Legacy",
         "model": {
-            "elements": {
-                "cls-Account": {"id": "cls-Account", "name": "Account", "type": "Class",
-                                 "attributes": ["a-balance"], "methods": ["m-deposit"]},
-                "a-balance": {"id": "a-balance", "name": "balance",
-                              "visibility": "public", "attributeType": "int"},
-                "m-deposit": {"id": "m-deposit", "name": "+ deposit(amount: int): int",
-                               "type": "ClassMethod", "owner": "cls-Account"},
-                "ocl-inv": {
-                    "id": "ocl-inv", "type": "ClassOCLConstraint",
-                    "constraint": "self.balance >= 0",
-                    "kind": "invariant", "constraintName": "positive",
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {
+                    "id": "n-account", "type": "class",
+                    "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                    "measured": {"width": 160, "height": 100},
+                    "data": {
+                        "name": "Account", "stereotype": None,
+                        "attributes": [
+                            {"id": "a-balance", "name": "balance",
+                             "attributeType": "int", "visibility": "public"},
+                        ],
+                        "methods": [
+                            {"id": "m-deposit", "name": "+ deposit(amount: int): int"},
+                        ],
+                        "oclConstraints": [
+                            {"id": "ocl-inv",
+                             "expression": "self.balance >= 0",
+                             "kind": "invariant",
+                             "constraintName": "positive"},
+                            {"id": "ocl-pre",
+                             "expression": "amount > 0",
+                             "kind": "precondition",
+                             "targetMethodId": "m-deposit",
+                             "constraintName": "amt_pos"},
+                        ],
+                    },
                 },
-                "ocl-pre": {
-                    "id": "ocl-pre", "type": "ClassOCLConstraint",
-                    "constraint": "amount > 0",
-                    "kind": "precondition",
-                    "targetMethodId": "m-deposit",
-                    "constraintName": "amt_pos",
-                },
-            },
-            "relationships": {
-                "r-inv": {"id": "r-inv", "type": "ClassOCLLink",
-                           "source": {"element": "ocl-inv"},
-                           "target": {"element": "cls-Account"}},
-                "r-pre": {"id": "r-pre", "type": "ClassOCLLink",
-                           "source": {"element": "ocl-pre"},
-                           "target": {"element": "cls-Account"}},
-            },
+            ],
+            "edges": [],
         },
     }
     dm = process_class_diagram(legacy)
@@ -309,24 +363,30 @@ def test_body_only_legacy_orphan_method_skipped_with_warning():
     legacy = {
         "title": "Legacy",
         "model": {
-            "elements": {
-                "cls-Account": {"id": "cls-Account", "name": "Account", "type": "Class",
-                                 "attributes": [], "methods": ["m-deposit"]},
-                "m-deposit": {"id": "m-deposit", "name": "+ deposit(amount: int): int",
-                               "type": "ClassMethod", "owner": "cls-Account"},
-                "ocl-pre": {
-                    "id": "ocl-pre", "type": "ClassOCLConstraint",
-                    "constraint": "amount > 0",
-                    "kind": "precondition",
-                    "targetMethodId": "missing",  # not a real method element
-                    "constraintName": "amt_pos",
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {
+                    "id": "n-account", "type": "class",
+                    "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                    "measured": {"width": 160, "height": 100},
+                    "data": {
+                        "name": "Account", "stereotype": None,
+                        "attributes": [],
+                        "methods": [
+                            {"id": "m-deposit", "name": "+ deposit(amount: int): int"},
+                        ],
+                        "oclConstraints": [
+                            {"id": "ocl-pre",
+                             "expression": "amount > 0",
+                             "kind": "precondition",
+                             "targetMethodId": "missing",  # not a real method
+                             "constraintName": "amt_pos"},
+                        ],
+                    },
                 },
-            },
-            "relationships": {
-                "r-pre": {"id": "r-pre", "type": "ClassOCLLink",
-                           "source": {"element": "ocl-pre"},
-                           "target": {"element": "cls-Account"}},
-            },
+            ],
+            "edges": [],
         },
     }
     dm = process_class_diagram(legacy)
@@ -340,68 +400,49 @@ def test_body_only_legacy_orphan_method_skipped_with_warning():
 # Round-trip stability — full-text canonical
 # ---------------------------------------------------------------------------
 
-def _summarize_ocl(json_out):
-    elements = json_out.get("elements") or json_out["model"]["elements"]
-    boxes = sorted(
-        (e for e in elements.values() if e.get("type") == "ClassOCLConstraint"),
-        key=lambda e: e.get("constraint", ""),
+def _summarize_ocl(payload):
+    """Sorted (expression, description) pairs for every OCL row in the payload."""
+    rows = _all_ocl_rows(payload)
+    return sorted(
+        (row.get("expression"), row.get("description"))
+        for _cls, row in rows
     )
-    return [(e.get("constraint"), e.get("description")) for e in boxes]
 
 
-def _summarize_links(json_out):
-    """Aggregate ClassOCLLink wiring (which class each box anchors to).
-
-    Element/relationship ids are minted fresh on every emit, so we can't
-    compare them directly; instead we resolve each link to the *names* of
-    its endpoints' types (constraint text + class name) which are stable.
-    """
-    elements = json_out.get("elements") or json_out["model"]["elements"]
-    relationships = json_out.get("relationships") or json_out["model"]["relationships"]
-    pairs = []
-    for rel in relationships.values():
-        if rel.get("type") != "ClassOCLLink":
-            continue
-        src = elements.get(rel["source"]["element"], {})
-        tgt = elements.get(rel["target"]["element"], {})
-        # The OCL box can be on either end; normalize.
-        if src.get("type") == "ClassOCLConstraint":
-            pairs.append((src.get("constraint", ""), tgt.get("name", "")))
-        else:
-            pairs.append((tgt.get("constraint", ""), src.get("name", "")))
-    return sorted(pairs)
+def _summarize_anchors(payload):
+    """Sorted (expression, anchoring-class-name) pairs for every OCL row."""
+    rows = _all_ocl_rows(payload)
+    return sorted(
+        (row.get("expression"), cls_name)
+        for cls_name, row in rows
+    )
 
 
 def test_round_trip_full_mix_is_byte_stable(account_diagram_json):
-    """JSON -> BUML -> JSON -> BUML -> JSON: OCL boxes + their wiring survive."""
+    """JSON -> BUML -> JSON -> BUML -> JSON: OCL rows + their anchoring survive."""
     dm1 = process_class_diagram(account_diagram_json)
     out1 = class_buml_to_json(dm1)
 
     dm2 = process_class_diagram({"title": "BankingTest", "model": out1})
     out2 = class_buml_to_json(dm2)
 
-    # Constraint text + description per box is stable (catches name-churn
-    # on auto-generated invariant names and box-splitting on description).
+    # Constraint text + description per row is stable.
     assert _summarize_ocl(out1) == _summarize_ocl(out2)
-    # Box → class anchoring is stable (catches a missing pre/post emit
-    # path that would silently drop the link on the second cycle).
-    assert _summarize_links(out1) == _summarize_links(out2)
-    # Same number of OCL elements and links on both cycles.
-    assert sum(1 for e in out1["elements"].values() if e.get("type") == "ClassOCLConstraint") \
-        == sum(1 for e in out2["elements"].values() if e.get("type") == "ClassOCLConstraint")
+    # Row -> class anchoring is stable.
+    assert _summarize_anchors(out1) == _summarize_anchors(out2)
+    # Same number of OCL rows on both cycles.
+    assert len(_all_ocl_rows(out1)) == len(_all_ocl_rows(out2))
 
 
 def test_emitted_ocl_boxes_carry_no_legacy_metadata(account_diagram_json):
     """The new shape strips kind / targetMethodId / constraintName on emit."""
     dm = process_class_diagram(account_diagram_json)
     out = class_buml_to_json(dm)
-    for e in out["elements"].values():
-        if e.get("type") != "ClassOCLConstraint":
-            continue
-        assert "kind" not in e
-        assert "targetMethodId" not in e
-        assert "constraintName" not in e
-        assert e["constraint"].lstrip().lower().startswith("context")
+    for _cls, row in _all_ocl_rows(out):
+        assert "kind" not in row
+        assert "targetMethodId" not in row
+        assert "constraintName" not in row
+        assert (row.get("expression") or "").lstrip().lower().startswith("context")
 
 
 def test_legacy_body_only_normalized_to_full_text_on_emit():
@@ -409,74 +450,79 @@ def test_legacy_body_only_normalized_to_full_text_on_emit():
     legacy = {
         "title": "Legacy",
         "model": {
-            "elements": {
-                "cls-Account": {"id": "cls-Account", "name": "Account", "type": "Class",
-                                 "attributes": ["a-balance"], "methods": []},
-                "a-balance": {"id": "a-balance", "name": "balance",
-                              "visibility": "public", "attributeType": "int"},
-                "ocl-inv": {
-                    "id": "ocl-inv", "type": "ClassOCLConstraint",
-                    "constraint": "self.balance >= 0",
-                    "kind": "invariant", "constraintName": "positive",
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {
+                    "id": "n-account", "type": "class",
+                    "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                    "measured": {"width": 160, "height": 100},
+                    "data": {
+                        "name": "Account", "stereotype": None,
+                        "attributes": [
+                            {"id": "a-balance", "name": "balance",
+                             "attributeType": "int", "visibility": "public"},
+                        ],
+                        "methods": [],
+                        "oclConstraints": [
+                            {"id": "ocl-inv",
+                             "expression": "self.balance >= 0",
+                             "kind": "invariant",
+                             "constraintName": "positive"},
+                        ],
+                    },
                 },
-            },
-            "relationships": {
-                "r-inv": {"id": "r-inv", "type": "ClassOCLLink",
-                           "source": {"element": "ocl-inv"},
-                           "target": {"element": "cls-Account"}},
-            },
+            ],
+            "edges": [],
         },
     }
     dm = process_class_diagram(legacy)
     out = class_buml_to_json(dm)
-    ocl = next(e for e in out["elements"].values() if e.get("type") == "ClassOCLConstraint")
-    assert ocl["constraint"] == "context Account inv positive: self.balance >= 0"
+    rows = _all_ocl_rows(out)
+    assert len(rows) == 1
+    assert rows[0][1]["expression"] == "context Account inv positive: self.balance >= 0"
 
 
 # ---------------------------------------------------------------------------
-# Duplicate constraint names across boxes
+# Duplicate constraint names across rows
 # ---------------------------------------------------------------------------
 
 def test_duplicate_constraint_name_across_boxes_does_not_crash():
-    """Two ``ClassOCLConstraint`` boxes that parse to the same constraint
-    name must not crash the conversion.
+    """Two ``oclConstraints`` rows that parse to the same constraint name
+    must not crash the conversion.
 
     ``DomainModel.constraints`` rejects duplicate names with a
     ``ValueError``; ``_process_constraints`` de-dups by name before
     assigning, keeping the first occurrence and emitting a warning for
     each subsequent collision rather than letting the setter raise.
-
-    Discovered by the 2000-constraint stress test (PR #529 review).
     """
     diagram = {
         "title": "DupNames",
         "model": {
-            "elements": {
-                "cls-Account": {
-                    "id": "cls-Account", "name": "Account", "type": "Class",
-                    "attributes": ["a-balance"], "methods": [],
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {
+                    "id": "n-account", "type": "class",
+                    "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                    "measured": {"width": 160, "height": 100},
+                    "data": {
+                        "name": "Account", "stereotype": None,
+                        "attributes": [
+                            {"id": "a-balance", "name": "balance",
+                             "attributeType": "int", "visibility": "public"},
+                        ],
+                        "methods": [],
+                        "oclConstraints": [
+                            {"id": "ocl-1", "name": "dup",
+                             "expression": "context Account inv dup: self.balance > 0"},
+                            {"id": "ocl-2", "name": "dup",
+                             "expression": "context Account inv dup: self.balance >= 0"},
+                        ],
+                    },
                 },
-                "a-balance": {
-                    "id": "a-balance", "name": "balance",
-                    "visibility": "public", "attributeType": "int",
-                },
-                "ocl-1": {
-                    "id": "ocl-1", "type": "ClassOCLConstraint",
-                    "constraint": "context Account inv dup: self.balance > 0",
-                },
-                "ocl-2": {
-                    "id": "ocl-2", "type": "ClassOCLConstraint",
-                    "constraint": "context Account inv dup: self.balance >= 0",
-                },
-            },
-            "relationships": {
-                "r1": {"id": "r1", "type": "ClassOCLLink",
-                       "source": {"element": "ocl-1"},
-                       "target": {"element": "cls-Account"}},
-                "r2": {"id": "r2", "type": "ClassOCLLink",
-                       "source": {"element": "ocl-2"},
-                       "target": {"element": "cls-Account"}},
-            },
+            ],
+            "edges": [],
         },
     }
     dm = process_class_diagram(diagram)  # must not raise

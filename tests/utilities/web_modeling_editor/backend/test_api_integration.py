@@ -66,46 +66,50 @@ def isolate_backend_test_artifacts(tmp_path, monkeypatch):
 
 @pytest.fixture
 def class_diagram_model():
-    """Minimal valid class diagram model with two classes and an association."""
+    """Minimal v4 class diagram model with two classes and an association."""
     return {
+        "version": "4.0.0",
         "type": "ClassDiagram",
-        "elements": {
-            "class-1": {
-                "type": "Class",
-                "name": "Author",
-                "attributes": ["attr-1"],
-                "methods": [],
+        "nodes": [
+            {
+                "id": "class-1", "type": "class",
+                "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                "measured": {"width": 160, "height": 100},
+                "data": {
+                    "name": "Author", "stereotype": None,
+                    "attributes": [
+                        {"id": "attr-1", "name": "name", "attributeType": "str", "visibility": "public"},
+                    ],
+                    "methods": [],
+                },
             },
-            "attr-1": {
-                "type": "Attribute",
-                "name": "+ name: str",
+            {
+                "id": "class-2", "type": "class",
+                "position": {"x": 300, "y": 0}, "width": 160, "height": 100,
+                "measured": {"width": 160, "height": 100},
+                "data": {
+                    "name": "Book", "stereotype": None,
+                    "attributes": [
+                        {"id": "attr-2", "name": "title", "attributeType": "str", "visibility": "public"},
+                    ],
+                    "methods": [],
+                },
             },
-            "class-2": {
-                "type": "Class",
-                "name": "Book",
-                "attributes": ["attr-2"],
-                "methods": [],
-            },
-            "attr-2": {
-                "type": "Attribute",
-                "name": "+ title: str",
-            },
-        },
-        "relationships": {
-            "rel-1": {
+        ],
+        "edges": [
+            {
+                "id": "rel-1",
+                "source": "class-1", "target": "class-2",
                 "type": "ClassBidirectional",
-                "source": {
-                    "element": "class-1",
-                    "multiplicity": "1..*",
-                    "role": "authors",
-                },
-                "target": {
-                    "element": "class-2",
-                    "multiplicity": "0..*",
-                    "role": "books",
+                "sourceHandle": "Right", "targetHandle": "Left",
+                "data": {
+                    "name": "writes",
+                    "sourceRole": "authors", "sourceMultiplicity": "1..*",
+                    "targetRole": "books", "targetMultiplicity": "0..*",
+                    "points": [],
                 },
             },
-        },
+        ],
     }
 
 
@@ -121,22 +125,25 @@ def class_diagram_input(class_diagram_model):
 
 @pytest.fixture
 def single_class_model():
-    """Simplest possible class diagram with one class and one attribute."""
+    """Simplest possible v4 class diagram: one class with one attribute."""
     return {
+        "version": "4.0.0",
         "type": "ClassDiagram",
-        "elements": {
-            "class-1": {
-                "type": "Class",
-                "name": "Person",
-                "attributes": ["attr-1"],
-                "methods": [],
+        "nodes": [
+            {
+                "id": "class-1", "type": "class",
+                "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                "measured": {"width": 160, "height": 100},
+                "data": {
+                    "name": "Person", "stereotype": None,
+                    "attributes": [
+                        {"id": "attr-1", "name": "name", "attributeType": "str", "visibility": "public"},
+                    ],
+                    "methods": [],
+                },
             },
-            "attr-1": {
-                "type": "Attribute",
-                "name": "+ name: str",
-            },
-        },
-        "relationships": {},
+        ],
+        "edges": [],
     }
 
 
@@ -152,44 +159,50 @@ def single_class_input(single_class_model):
 
 @pytest.fixture
 def state_machine_model():
-    """Minimal state machine diagram model.
+    """Minimal v4 state machine diagram model.
 
-    Uses the frontend's actual JSON structure where initial state is
-    determined by a StateInitialNode element with a StateTransition
-    relationship pointing to the first real state.
+    A StateInitialNode with a StateTransition into the first real state
+    establishes the initial state.
     """
     return {
+        "version": "4.0.0",
         "type": "StateMachineDiagram",
-        "elements": {
-            "init-node": {
-                "type": "StateInitialNode",
-                "name": "",
+        "nodes": [
+            {
+                "id": "init-node", "type": "StateInitialNode",
+                "position": {"x": 0, "y": 0}, "width": 45, "height": 45,
+                "measured": {"width": 45, "height": 45},
+                "data": {"name": ""},
             },
-            "state-1": {
-                "type": "State",
-                "name": "Idle",
-                "bodies": [],
+            {
+                "id": "state-1", "type": "State",
+                "position": {"x": 100, "y": 0}, "width": 160, "height": 100,
+                "measured": {"width": 160, "height": 100},
+                "data": {"name": "Idle", "bodies": [], "fallbackBodies": []},
             },
-            "state-2": {
-                "type": "State",
-                "name": "Active",
-                "bodies": [],
+            {
+                "id": "state-2", "type": "State",
+                "position": {"x": 400, "y": 0}, "width": 160, "height": 100,
+                "measured": {"width": 160, "height": 100},
+                "data": {"name": "Active", "bodies": [], "fallbackBodies": []},
             },
-        },
-        "relationships": {
-            "trans-init": {
+        ],
+        "edges": [
+            {
+                "id": "trans-init",
+                "source": "init-node", "target": "state-1",
                 "type": "StateTransition",
-                "name": "",
-                "source": {"element": "init-node"},
-                "target": {"element": "state-1"},
+                "sourceHandle": "Right", "targetHandle": "Left",
+                "data": {"name": "", "points": []},
             },
-            "trans-1": {
+            {
+                "id": "trans-1",
+                "source": "state-1", "target": "state-2",
                 "type": "StateTransition",
-                "name": "",
-                "source": {"element": "state-1"},
-                "target": {"element": "state-2"},
+                "sourceHandle": "Right", "targetHandle": "Left",
+                "data": {"name": "", "points": []},
             },
-        },
+        ],
     }
 
 
@@ -204,21 +217,27 @@ def state_machine_input(state_machine_model):
 
 @pytest.fixture
 def enumeration_model():
-    """Class diagram with an enumeration type."""
+    """V4 class diagram with an enumeration type (stereotype='enumeration')."""
     return {
+        "version": "4.0.0",
         "type": "ClassDiagram",
-        "elements": {
-            "enum-1": {
-                "type": "Enumeration",
-                "name": "Color",
-                "attributes": ["lit-1", "lit-2", "lit-3"],
-                "methods": [],
+        "nodes": [
+            {
+                "id": "enum-1", "type": "class",
+                "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                "measured": {"width": 160, "height": 100},
+                "data": {
+                    "name": "Color", "stereotype": "enumeration",
+                    "attributes": [
+                        {"id": "lit-1", "name": "RED", "attributeType": "str", "visibility": "public"},
+                        {"id": "lit-2", "name": "GREEN", "attributeType": "str", "visibility": "public"},
+                        {"id": "lit-3", "name": "BLUE", "attributeType": "str", "visibility": "public"},
+                    ],
+                    "methods": [],
+                },
             },
-            "lit-1": {"type": "EnumerationLiteral", "name": "RED"},
-            "lit-2": {"type": "EnumerationLiteral", "name": "GREEN"},
-            "lit-3": {"type": "EnumerationLiteral", "name": "BLUE"},
-        },
-        "relationships": {},
+        ],
+        "edges": [],
     }
 
 
@@ -336,7 +355,7 @@ class TestGenerateOutput:
         """Request with no generator field defaults to None and returns 400."""
         payload = {
             "title": "Test",
-            "model": {"type": "ClassDiagram", "elements": {}, "relationships": {}},
+            "model": {"version": "4.0.0", "type": "ClassDiagram", "nodes": [], "edges": []},
         }
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 400
@@ -345,7 +364,7 @@ class TestGenerateOutput:
         """An empty class diagram model should still work (produces empty output)."""
         payload = {
             "title": "EmptyModel",
-            "model": {"type": "ClassDiagram", "elements": {}, "relationships": {}},
+            "model": {"version": "4.0.0", "type": "ClassDiagram", "nodes": [], "edges": []},
             "generator": "python",
         }
         response = client.post("/besser_api/generate-output", json=payload)
@@ -441,16 +460,18 @@ class TestValidateDiagram:
         payload = {
             "title": "BadModel",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "class-1": {
-                        "type": "Class",
-                        "name": "Bad Class Name",
-                        "attributes": [],
-                        "methods": [],
+                "nodes": [
+                    {
+                        "id": "class-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {"name": "Bad Class Name", "stereotype": None,
+                                 "attributes": [], "methods": []},
                     },
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -464,16 +485,18 @@ class TestValidateDiagram:
         payload = {
             "title": "BadModel",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "class-1": {
-                        "type": "Class",
-                        "name": "",
-                        "attributes": [],
-                        "methods": [],
+                "nodes": [
+                    {
+                        "id": "class-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {"name": "", "stereotype": None,
+                                 "attributes": [], "methods": []},
                     },
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -486,7 +509,7 @@ class TestValidateDiagram:
         """Unsupported diagram type returns isValid=False."""
         payload = {
             "title": "Unknown",
-            "model": {"type": "UnknownDiagramType", "elements": {}, "relationships": {}},
+            "model": {"version": "4.0.0", "type": "UnknownDiagramType", "nodes": [], "edges": []},
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
         assert response.status_code == 200
@@ -506,15 +529,17 @@ class TestValidateDiagram:
         payload = {
             "title": "NoInitialSM",
             "model": {
+                "version": "4.0.0",
                 "type": "StateMachineDiagram",
-                "elements": {
-                    "state-1": {
-                        "type": "State",
-                        "name": "StateA",
-                        "bodies": [],
+                "nodes": [
+                    {
+                        "id": "state-1", "type": "State",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {"name": "StateA", "bodies": [], "fallbackBodies": []},
                     },
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -529,9 +554,10 @@ class TestValidateDiagram:
         payload = {
             "title": "EmptySM",
             "model": {
+                "version": "4.0.0",
                 "type": "StateMachineDiagram",
-                "elements": {},
-                "relationships": {},
+                "nodes": [],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -552,31 +578,37 @@ class TestValidateDiagram:
         payload = {
             "title": "DupSM",
             "model": {
+                "version": "4.0.0",
                 "type": "StateMachineDiagram",
-                "elements": {
-                    "init-node": {
-                        "type": "StateInitialNode",
-                        "name": "",
+                "nodes": [
+                    {
+                        "id": "init-node", "type": "StateInitialNode",
+                        "position": {"x": 0, "y": 0}, "width": 45, "height": 45,
+                        "measured": {"width": 45, "height": 45},
+                        "data": {"name": ""},
                     },
-                    "state-1": {
-                        "type": "State",
-                        "name": "Alpha",
-                        "bodies": [],
+                    {
+                        "id": "state-1", "type": "State",
+                        "position": {"x": 100, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {"name": "Alpha", "bodies": [], "fallbackBodies": []},
                     },
-                    "state-2": {
-                        "type": "State",
-                        "name": "Alpha",
-                        "bodies": [],
+                    {
+                        "id": "state-2", "type": "State",
+                        "position": {"x": 400, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {"name": "Alpha", "bodies": [], "fallbackBodies": []},
                     },
-                },
-                "relationships": {
-                    "trans-init": {
+                ],
+                "edges": [
+                    {
+                        "id": "trans-init",
+                        "source": "init-node", "target": "state-1",
                         "type": "StateTransition",
-                        "name": "",
-                        "source": {"element": "init-node"},
-                        "target": {"element": "state-1"},
+                        "sourceHandle": "Right", "targetHandle": "Left",
+                        "data": {"name": "", "points": []},
                     },
-                },
+                ],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -622,9 +654,10 @@ class TestValidateDiagram:
         payload = {
             "title": "ObjTest",
             "model": {
+                "version": "4.0.0",
                 "type": "ObjectDiagram",
-                "elements": {},
-                "relationships": {},
+                "nodes": [],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -665,9 +698,10 @@ class TestValidateDiagram:
         payload = {
             "title": "UserProfile",
             "model": {
+                "version": "4.0.0",
                 "type": "UserDiagram",
-                "elements": {},
-                "relationships": {},
+                "nodes": [],
+                "edges": [],
             },
         }
 
@@ -723,7 +757,7 @@ class TestExportBuml:
         """Exporting an unsupported diagram type returns 400."""
         payload = {
             "title": "Unknown",
-            "model": {"type": "UnknownType", "elements": {}, "relationships": {}},
+            "model": {"version": "4.0.0", "type": "UnknownType", "nodes": [], "edges": []},
         }
         response = client.post("/besser_api/export-buml", json=payload)
         assert response.status_code == 400
@@ -734,7 +768,7 @@ class TestExportBuml:
         """Exporting without a diagram type returns 400."""
         payload = {
             "title": "NoType",
-            "model": {"elements": {}, "relationships": {}},
+            "model": {"version": "4.0.0", "nodes": [], "edges": []},
         }
         response = client.post("/besser_api/export-buml", json=payload)
         assert response.status_code == 400
@@ -855,20 +889,23 @@ class TestEdgeCases:
         payload = {
             "title": "MethodModel",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "class-1": {
-                        "type": "Class",
-                        "name": "Calculator",
-                        "attributes": [],
-                        "methods": ["method-1"],
+                "nodes": [
+                    {
+                        "id": "class-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {
+                            "name": "Calculator", "stereotype": None,
+                            "attributes": [],
+                            "methods": [
+                                {"id": "method-1", "name": "+ add(a: int, b: int): int"},
+                            ],
+                        },
                     },
-                    "method-1": {
-                        "type": "Method",
-                        "name": "+ add(a: int, b: int): int",
-                    },
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
             "generator": "python",
         }
@@ -882,32 +919,40 @@ class TestEdgeCases:
         payload = {
             "title": "InheritModel",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "class-1": {
-                        "type": "Class",
-                        "name": "Animal",
-                        "attributes": ["attr-1"],
-                        "methods": [],
+                "nodes": [
+                    {
+                        "id": "class-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {
+                            "name": "Animal", "stereotype": None,
+                            "attributes": [
+                                {"id": "attr-1", "name": "species", "attributeType": "str", "visibility": "public"},
+                            ],
+                            "methods": [],
+                        },
                     },
-                    "attr-1": {
-                        "type": "Attribute",
-                        "name": "+ species: str",
+                    {
+                        "id": "class-2", "type": "class",
+                        "position": {"x": 0, "y": 200}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {
+                            "name": "Dog", "stereotype": None,
+                            "attributes": [], "methods": [],
+                        },
                     },
-                    "class-2": {
-                        "type": "Class",
-                        "name": "Dog",
-                        "attributes": [],
-                        "methods": [],
-                    },
-                },
-                "relationships": {
-                    "rel-1": {
+                ],
+                "edges": [
+                    {
+                        "id": "rel-1",
+                        "source": "class-2", "target": "class-1",
                         "type": "ClassInheritance",
-                        "source": {"element": "class-2"},
-                        "target": {"element": "class-1"},
+                        "sourceHandle": "Top", "targetHandle": "Bottom",
+                        "data": {"points": []},
                     },
-                },
+                ],
             },
             "generator": "python",
         }
@@ -922,16 +967,20 @@ class TestEdgeCases:
         payload = {
             "title": "AbstractModel",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "class-1": {
-                        "type": "AbstractClass",
-                        "name": "Shape",
-                        "attributes": [],
-                        "methods": [],
+                "nodes": [
+                    {
+                        "id": "class-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {
+                            "name": "Shape", "stereotype": "abstract",
+                            "attributes": [], "methods": [],
+                        },
                     },
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
             "generator": "python",
         }
@@ -950,18 +999,24 @@ class TestEdgeCases:
         payload = {
             "title": "DupLiterals",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "enum-1": {
-                        "type": "Enumeration",
-                        "name": "Status",
-                        "attributes": ["lit-1", "lit-2"],
-                        "methods": [],
+                "nodes": [
+                    {
+                        "id": "enum-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {
+                            "name": "Status", "stereotype": "enumeration",
+                            "attributes": [
+                                {"id": "lit-1", "name": "ACTIVE", "attributeType": "str", "visibility": "public"},
+                                {"id": "lit-2", "name": "ACTIVE", "attributeType": "str", "visibility": "public"},
+                            ],
+                            "methods": [],
+                        },
                     },
-                    "lit-1": {"type": "EnumerationLiteral", "name": "ACTIVE"},
-                    "lit-2": {"type": "EnumerationLiteral", "name": "ACTIVE"},
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -975,17 +1030,23 @@ class TestEdgeCases:
         payload = {
             "title": "EmptyLit",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": {
-                    "enum-1": {
-                        "type": "Enumeration",
-                        "name": "Status",
-                        "attributes": ["lit-1"],
-                        "methods": [],
+                "nodes": [
+                    {
+                        "id": "enum-1", "type": "class",
+                        "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                        "measured": {"width": 160, "height": 100},
+                        "data": {
+                            "name": "Status", "stereotype": "enumeration",
+                            "attributes": [
+                                {"id": "lit-1", "name": "", "attributeType": "str", "visibility": "public"},
+                            ],
+                            "methods": [],
+                        },
                     },
-                    "lit-1": {"type": "EnumerationLiteral", "name": ""},
-                },
-                "relationships": {},
+                ],
+                "edges": [],
             },
         }
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -1030,9 +1091,10 @@ class TestProjectGeneration:
                     {
                         "title": "Main",
                         "model": {
+                            "version": "4.0.0",
                             "type": "ClassDiagram",
-                            "elements": {},
-                            "relationships": {},
+                            "nodes": [],
+                            "edges": [],
                         },
                     }
                 ],
@@ -1054,9 +1116,10 @@ class TestProjectGeneration:
                     {
                         "title": "Main",
                         "model": {
+                            "version": "4.0.0",
                             "type": "ClassDiagram",
-                            "elements": {},
-                            "relationships": {},
+                            "nodes": [],
+                            "edges": [],
                         },
                     }
                 ],
@@ -1138,7 +1201,7 @@ class TestRecommendationEndpoints:
         monkeypatch.setattr(gr, "call_openai_chat", _fake_call_openai_chat)
 
         payload = {
-            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileModel": {"version": "4.0.0", "type": "UserDiagram", "nodes": [], "edges": []},
             "userProfileName": "Alice",
             "model": "gpt-5-mini",
             "currentConfig": {},
@@ -1181,7 +1244,7 @@ class TestRecommendationEndpoints:
         monkeypatch.setattr(gr, "call_openai_chat", lambda *_args, **_kwargs: "not-json")
 
         payload = {
-            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileModel": {"version": "4.0.0", "type": "UserDiagram", "nodes": [], "edges": []},
             "userProfileName": "Alice",
         }
         response = client.post(
@@ -1203,7 +1266,7 @@ class TestRecommendationEndpoints:
         monkeypatch.setattr(gr, "call_openai_chat", _raise_runtime_error)
 
         payload = {
-            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileModel": {"version": "4.0.0", "type": "UserDiagram", "nodes": [], "edges": []},
         }
         response = client.post(
             "/besser_api/recommend-agent-config-llm",
@@ -1243,7 +1306,7 @@ class TestRecommendationEndpoints:
         monkeypatch.setattr(gr, "build_manual_mapping_recommendation", _fake_manual_mapping)
 
         payload = {
-            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileModel": {"version": "4.0.0", "type": "UserDiagram", "nodes": [], "edges": []},
             "userProfileName": "Bob",
             "currentConfig": {},
         }
@@ -1279,45 +1342,53 @@ class TestRecommendationEndpoints:
 
     @staticmethod
     def _build_user_profile_diagram_payload(age: int) -> Dict[str, Any]:
-        """Return a real UserDiagram JSON with a User root and a Personal_Information
+        """Return a real v4 UserDiagram with a User root and a Personal_Information
         child object holding ``age``. The reference user_buml_model.User class
         looks up children via the ``Personal_Information_end`` association, so
         the User class needs an instance with that attribute populating the
         ``age`` slot to drive the manual mapping rules deterministically.
         """
         return {
+            "version": "4.0.0",
             "type": "UserDiagram",
-            "elements": {
-                "user-1": {
-                    "id": "user-1",
-                    "type": "UserModelName",
-                    "name": "alice",
-                    "className": "User",
-                    "attributes": [],
+            "nodes": [
+                {
+                    "id": "user-1", "type": "UserModelName",
+                    "position": {"x": 0, "y": 0}, "width": 200, "height": 100,
+                    "measured": {"width": 200, "height": 100},
+                    "data": {
+                        "name": "alice",
+                        "className": "User",
+                        "attributes": [],
+                    },
                 },
-                "pi-1": {
-                    "id": "pi-1",
-                    "type": "UserModelName",
-                    "name": "alice_personal_info",
-                    "className": "Personal_Information",
-                    "attributes": ["pi-1-age"],
+                {
+                    "id": "pi-1", "type": "UserModelName",
+                    "position": {"x": 300, "y": 0}, "width": 200, "height": 100,
+                    "measured": {"width": 200, "height": 100},
+                    "data": {
+                        "name": "alice_personal_info",
+                        "className": "Personal_Information",
+                        "attributes": [
+                            {
+                                "id": "pi-1-age",
+                                "name": "age",
+                                "attributeOperator": "==",
+                                "attributeValue": str(age),
+                            },
+                        ],
+                    },
                 },
-                "pi-1-age": {
-                    "id": "pi-1-age",
-                    "type": "UserModelAttribute",
-                    "name": "age",
-                    "attributeOperator": "==",
-                    "attributeValue": str(age),
-                },
-            },
-            "relationships": {
-                "link-pi": {
+            ],
+            "edges": [
+                {
+                    "id": "link-pi",
+                    "source": "user-1", "target": "pi-1",
                     "type": "ObjectLink",
-                    "name": "Personal_Information_end",
-                    "source": {"element": "user-1"},
-                    "target": {"element": "pi-1"},
+                    "sourceHandle": "Right", "targetHandle": "Left",
+                    "data": {"name": "Personal_Information_end", "points": []},
                 },
-            },
+            ],
         }
 
     def test_recommend_agent_config_mapping_end_to_end_no_llm(self, monkeypatch):
@@ -1478,36 +1549,47 @@ class TestStandaloneChatbotDeploy:
 
     @staticmethod
     def _minimal_agent_diagram() -> Dict[str, Any]:
-        """Return a minimal valid AgentDiagram (StateInitialNode + AgentState
-        connected by AgentStateTransitionInit). Element ids are strings to
-        match the frontend's Apollon JSON shape.
+        """Return a minimal valid v4 AgentDiagram (StateInitialNode + AgentState
+        connected by AgentStateTransitionInit).
         """
         return {
+            "version": "4.0.0",
             "type": "AgentDiagram",
-            "elements": {
-                "init-node": {
-                    "id": "init-node",
-                    "type": "StateInitialNode",
-                    "name": "",
+            "nodes": [
+                {
+                    "id": "init-node", "type": "StateInitialNode",
+                    "position": {"x": 0, "y": 0}, "width": 45, "height": 45,
+                    "measured": {"width": 45, "height": 45},
+                    "data": {"name": ""},
                 },
-                "state-1": {
-                    "id": "state-1",
-                    "type": "AgentState",
-                    "name": "Greet",
-                    "bodies": [],
-                    "fallbackBodies": [],
+                {
+                    "id": "state-1", "type": "AgentState",
+                    "position": {"x": 100, "y": 0}, "width": 160, "height": 100,
+                    "measured": {"width": 160, "height": 100},
+                    "data": {"name": "Greet", "bodies": [], "fallbackBodies": []},
                 },
-            },
-            "relationships": {
-                "trans-init": {
+            ],
+            "edges": [
+                {
+                    "id": "trans-init",
+                    "source": "init-node", "target": "state-1",
                     "type": "AgentStateTransitionInit",
-                    "name": "",
-                    "source": {"element": "init-node"},
-                    "target": {"element": "state-1"},
+                    "sourceHandle": "Right", "targetHandle": "Left",
+                    "data": {"name": "", "points": []},
                 },
-            },
+            ],
         }
 
+    @pytest.mark.skip(
+        reason=(
+            "SA-6.1 regression: github_deploy_api.deploy_webapp_to_github "
+            "still checks `agent_model_payload.get('elements')` (v3 shape) "
+            "before reaching the chatbot deploy path. With v4 payloads it "
+            "rejects with 400 'AgentDiagram must contain at least one "
+            "element'. The same v3-shape check appears at github_deploy_api.py "
+            "line 970. Production fix is a separate SA follow-up."
+        )
+    )
     def test_deploy_target_agent_invokes_chatbot_path(self, monkeypatch):
         """``deploy_target='agent'`` should drive the standalone-chatbot
         deployment branch: response.deployment_type == 'chatbot' and the

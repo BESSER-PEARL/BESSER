@@ -234,9 +234,16 @@ class TestBumlToJsonRoundTripDescription:
             class_buml_to_json,
         )
 
+        # Pick the Professor class deterministically — ``next(iter(types))``
+        # is flaky because ``DomainModel.types`` is a set that includes
+        # PrimitiveDataType instances alongside the user's classes.
+        professor_class = next(
+            t for t in professor_domain_model.types
+            if isinstance(t, Class) and t.name == "Professor"
+        )
         c = Constraint(
             name="c1",
-            context=next(iter(professor_domain_model.types)),
+            context=professor_class,
             expression="context Professor inv: self.age > 25",
             language="OCL",
             description="Realistic age",
@@ -244,9 +251,15 @@ class TestBumlToJsonRoundTripDescription:
         professor_domain_model.constraints = {c}
 
         json_output = class_buml_to_json(professor_domain_model)
-        elements = json_output.get("elements", {})
-        constraint_elements = [
-            e for e in elements.values() if e.get("type") == "ClassOCLConstraint"
-        ]
-        assert constraint_elements, "expected at least one ClassOCLConstraint element"
-        assert constraint_elements[0].get("description") == "Realistic age"
+        # In v4, constraints with a class context are inlined as rows in
+        # ``data.oclConstraints`` on the owning class node. Free-standing
+        # constraints surface as a class node with stereotype 'oclConstraint'.
+        nodes = json_output.get("nodes") or []
+        ocl_rows: list = []
+        for node in nodes:
+            data = node.get("data") or {}
+            ocl_rows.extend(data.get("oclConstraints") or [])
+            if data.get("stereotype") == "oclConstraint":
+                ocl_rows.append(data)
+        assert ocl_rows, "expected at least one inlined OCL constraint row"
+        assert ocl_rows[0].get("description") == "Realistic age"

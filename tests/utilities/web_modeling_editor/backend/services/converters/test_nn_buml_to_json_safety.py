@@ -39,11 +39,11 @@ main_nn.add_configuration(config)
 def test_legitimate_nn_buml_parses():
     out = nn_buml_to_json(LEGITIMATE_BUML)
     assert out['type'] == 'NNDiagram'
-    # Each layer plus the main container emits one element; count >=4
-    layer_types = {el['type'] for el in out['elements'].values()}
-    assert 'Conv2DLayer' in layer_types
-    assert 'LinearLayer' in layer_types
-    assert 'FlattenLayer' in layer_types
+    # Each layer plus the main container emits one node in v4.
+    node_types = {n['type'] for n in out['nodes']}
+    assert 'Conv2DLayer' in node_types
+    assert 'LinearLayer' in node_types
+    assert 'FlattenLayer' in node_types
 
 
 def test_import_system_call_rejected():
@@ -170,7 +170,7 @@ a.add_sub_nn(b)
     out = nn_buml_to_json(buml)
     assert out['type'] == 'NNDiagram'
     # Three containers emitted (root + 2 sub-NNs)
-    containers = [e for e in out['elements'].values() if e.get('type') == 'NNContainer']
+    containers = [n for n in out['nodes'] if n.get('type') == 'NNContainer']
     assert len(containers) == 3
 
 
@@ -199,8 +199,8 @@ def test_builder_output_roundtrips_through_ast_parser(tmp_path):
 
     out = nn_buml_to_json(code)
     assert out["type"] == "NNDiagram"
-    element_types = {el["type"] for el in out["elements"].values()}
-    assert "Conv2DLayer" in element_types
-    assert "LinearLayer" in element_types
-    assert "FlattenLayer" in element_types
-    assert "Configuration" in element_types
+    node_types = {n["type"] for n in out["nodes"]}
+    assert "Conv2DLayer" in node_types
+    assert "LinearLayer" in node_types
+    assert "FlattenLayer" in node_types
+    assert "Configuration" in node_types

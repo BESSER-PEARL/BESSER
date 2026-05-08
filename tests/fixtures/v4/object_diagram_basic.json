@@ -1,0 +1,54 @@
+{
+  "title": "LibraryInstances",
+  "model": {
+    "version": "4.0.0",
+    "id": "od-1",
+    "title": "LibraryInstances",
+    "type": "ObjectDiagram",
+    "size": {"width": 1000, "height": 600},
+    "nodes": [
+      {
+        "id": "n-mybook",
+        "type": "objectName",
+        "position": {"x": 0, "y": 0},
+        "width": 200, "height": 100,
+        "measured": {"width": 200, "height": 100},
+        "data": {
+          "name": "myBook : Book",
+          "classId": "n-book",
+          "attributes": [
+            {"id": "n-mybook-a-title", "name": "title = \"1984\""},
+            {"id": "n-mybook-a-pages", "name": "pages = 328"}
+          ],
+          "methods": []
+        }
+      }
+    ],
+    "edges": [],
+    "interactive": {"elements": {}, "relationships": {}},
+    "assessments": {},
+    "referenceDiagramData": {
+      "version": "4.0.0",
+      "type": "ClassDiagram",
+      "nodes": [
+        {
+          "id": "n-book",
+          "type": "class",
+          "position": {"x": 0, "y": 0},
+          "width": 200, "height": 120,
+          "measured": {"width": 200, "height": 120},
+          "data": {
+            "name": "Book",
+            "stereotype": null,
+            "attributes": [
+              {"id": "n-book-a-title", "name": "title", "attributeType": "str", "visibility": "public"},
+              {"id": "n-book-a-pages", "name": "pages", "attributeType": "int", "visibility": "public"}
+            ],
+            "methods": []
+          }
+        }
+      ],
+      "edges": []
+    }
+  }
+}

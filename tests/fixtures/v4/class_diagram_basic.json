@@ -1,0 +1,84 @@
+{
+  "title": "Library",
+  "model": {
+    "version": "4.0.0",
+    "id": "cd-1",
+    "title": "Library",
+    "type": "ClassDiagram",
+    "size": {"width": 1200, "height": 800},
+    "nodes": [
+      {
+        "id": "n-book",
+        "type": "class",
+        "position": {"x": 0, "y": 0},
+        "width": 200,
+        "height": 140,
+        "measured": {"width": 200, "height": 140},
+        "data": {
+          "name": "Book",
+          "stereotype": null,
+          "attributes": [
+            {"id": "n-book-a-title", "name": "title", "attributeType": "str", "visibility": "public", "isOptional": false, "isId": true, "isExternalId": false, "isDerived": false},
+            {"id": "n-book-a-pages", "name": "pages", "attributeType": "int", "visibility": "public", "isOptional": false, "isId": false, "isExternalId": false, "isDerived": false}
+          ],
+          "methods": [
+            {"id": "n-book-m-summary", "name": "+ summary(): str", "visibility": "public", "attributeType": "any"}
+          ]
+        }
+      },
+      {
+        "id": "n-author",
+        "type": "class",
+        "position": {"x": 400, "y": 0},
+        "width": 200,
+        "height": 120,
+        "measured": {"width": 200, "height": 120},
+        "data": {
+          "name": "Author",
+          "stereotype": null,
+          "attributes": [
+            {"id": "n-author-a-name", "name": "name", "attributeType": "str", "visibility": "public", "isOptional": false, "isId": false, "isExternalId": false, "isDerived": false}
+          ],
+          "methods": []
+        }
+      },
+      {
+        "id": "n-genre",
+        "type": "class",
+        "position": {"x": 0, "y": 300},
+        "width": 200,
+        "height": 100,
+        "measured": {"width": 200, "height": 100},
+        "data": {
+          "name": "Genre",
+          "stereotype": "enumeration",
+          "attributes": [
+            {"id": "n-genre-l-fiction", "name": "FICTION", "attributeType": "str", "visibility": "public"},
+            {"id": "n-genre-l-nonfiction", "name": "NONFICTION", "attributeType": "str", "visibility": "public"}
+          ],
+          "methods": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-book-author",
+        "source": "n-book",
+        "target": "n-author",
+        "type": "ClassBidirectional",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {
+          "name": "wrote",
+          "sourceRole": "book",
+          "sourceMultiplicity": "1..*",
+          "targetRole": "author",
+          "targetMultiplicity": "1..1",
+          "points": []
+        }
+      }
+    ],
+    "interactive": {"elements": {}, "relationships": {}},
+    "assessments": {}
+  }
+}

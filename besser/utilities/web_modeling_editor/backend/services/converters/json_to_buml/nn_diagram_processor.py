@@ -500,8 +500,22 @@ def process_nn_diagram(json_data):
 
     title = sanitize_name(title)
 
-    elements = model_data.get('elements', {})
-    relationships = model_data.get('relationships', {})
+    # v4: ``{nodes, edges}`` collapses each layer's attribute children
+    # into ``data.attributes: dict``. Re-expand them via the shape
+    # normalizer so the existing layer/attribute walking logic in this
+    # processor works unchanged.
+    if isinstance(model_data, dict) and (
+        model_data.get('nodes') is not None or model_data.get('edges') is not None
+    ):
+        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+            v4_to_v3_model,
+        )
+        v3_model = v4_to_v3_model(model_data, diagram_type='NeuralNetworkDiagram')
+        elements = v3_model.get('elements', {})
+        relationships = v3_model.get('relationships', {})
+    else:
+        elements = model_data.get('elements', {})
+        relationships = model_data.get('relationships', {})
 
     # Step 1: Identify all NNContainers and their names
     containers = {}  # container_id -> container_name

@@ -41,7 +41,21 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 # ---------------------------------------------------------------------------
 
 def _resolve_elements(json_data):
-    """Resolve the elements dict from either input format (model.elements) or output format (elements)."""
+    """Resolve elements/nodes from any shape (v3 elements or v4 nodes).
+
+    v4 output: ``{nodes: [...], edges: [...]}``. The legacy assertions
+    in this module are written against a dict-keyed-by-id; recompose
+    that view from a v4 node list. Class member rows that v4 collapses
+    onto ``data.attributes`` / ``data.methods`` are re-expanded as
+    pseudo-elements with their preserved ids so existing assertions
+    still find ``ClassAttribute`` / ``ClassMethod`` typed elements.
+    """
+    # v4 top-level
+    nodes = json_data.get("nodes")
+    if nodes is None:
+        nodes = (json_data.get("model") or {}).get("nodes")
+    if isinstance(nodes, list):
+        return _explode_v4_nodes_to_v3_dict(nodes)
     elements = json_data.get("elements", {})
     if not elements:
         elements = (json_data.get("model") or {}).get("elements", {})
@@ -49,11 +63,184 @@ def _resolve_elements(json_data):
 
 
 def _resolve_relationships(json_data):
-    """Resolve the relationships dict from either input format (model.relationships) or output format (relationships)."""
+    """Resolve relationships/edges from any shape (v3 rels or v4 edges)."""
+    edges = json_data.get("edges")
+    if edges is None:
+        edges = (json_data.get("model") or {}).get("edges")
+    if isinstance(edges, list):
+        return _v4_edges_to_v3_dict(edges)
     rels = json_data.get("relationships", {})
     if not rels:
         rels = (json_data.get("model") or {}).get("relationships", {})
     return rels
+
+
+def _explode_v4_nodes_to_v3_dict(nodes):
+    """Expand a v4 node list into a v3-style ``{id: element}`` dict.
+
+    Class / object / state nodes whose member rows live on ``data``
+    are re-expanded into separate ``ClassAttribute`` / ``ClassMethod``
+    / ``StateBody`` / ... pseudo-elements so legacy tests find them.
+    """
+    out: dict = {}
+    for node in nodes:
+        node_id = node.get("id")
+        node_type = node.get("type") or ""
+        data = node.get("data") or {}
+        primary_type = node_type
+        stereotype = (data.get("stereotype") or "").strip().lower()
+        if node_type == "class":
+            primary_type = {
+                "abstract": "AbstractClass",
+                "interface": "Interface",
+                "enumeration": "Enumeration",
+            }.get(stereotype, "Class")
+        elif node_type == "package":
+            primary_type = "Package"
+        elif node_type == "objectName":
+            primary_type = "ObjectName"
+        attribute_ids: list = []
+        method_ids: list = []
+        body_ids: list = []
+        fallback_ids: list = []
+        # NN diagrams store attributes as a dict on the layer node;
+        # everything else uses a list of attribute rows.
+        attrs_field = data.get("attributes")
+        attrs_list = attrs_field if isinstance(attrs_field, list) else []
+        for attr in attrs_list:
+            aid = attr.get("id") or f"{node_id}__a__{attr.get('name','')}"
+            out[aid] = {
+                "id": aid,
+                "name": attr.get("name", ""),
+                "type": "ClassAttribute" if primary_type != "ObjectName" else "ObjectAttribute",
+                "owner": node_id,
+                "visibility": attr.get("visibility", "public"),
+                "attributeType": attr.get("attributeType", "str"),
+            }
+            attribute_ids.append(aid)
+        for m in data.get("methods") or []:
+            mid = m.get("id") or f"{node_id}__m__{m.get('name','')}"
+            ent = {
+                "id": mid,
+                "name": m.get("name", ""),
+                "type": "ClassMethod" if primary_type != "ObjectName" else "ObjectMethod",
+                "owner": node_id,
+            }
+            for k in ("code", "implementationType", "stateMachineId", "quantumCircuitId"):
+                if m.get(k) is not None:
+                    ent[k] = m[k]
+            out[mid] = ent
+            method_ids.append(mid)
+        for b in data.get("bodies") or []:
+            bid = b.get("id") or f"{node_id}__b__{b.get('name','')}"
+            ent = {"id": bid, "name": b.get("name", ""), "type": "StateBody", "owner": node_id}
+            if node_type == "AgentState":
+                ent["type"] = "AgentStateBody"
+            elif node_type == "AgentIntent":
+                ent["type"] = "AgentIntentBody"
+            out[bid] = ent
+            body_ids.append(bid)
+        for b in data.get("fallbackBodies") or []:
+            bid = b.get("id") or f"{node_id}__fb__{b.get('name','')}"
+            ent = {
+                "id": bid, "name": b.get("name", ""),
+                "type": "AgentStateFallbackBody" if node_type == "AgentState" else "StateFallbackBody",
+                "owner": node_id,
+            }
+            out[bid] = ent
+            fallback_ids.append(bid)
+        for ocl in data.get("oclConstraints") or []:
+            ocl_id = ocl.get("id") or f"{node_id}__ocl__{ocl.get('name','')}"
+            out[ocl_id] = {
+                "id": ocl_id,
+                "type": "ClassOCLConstraint",
+                "name": ocl.get("name", ""),
+                "owner": node_id,
+                "constraint": ocl.get("expression", ""),
+                **({"description": ocl["description"]} if ocl.get("description") else {}),
+            }
+        # NN attribute dict re-expansion.
+        if isinstance(data.get("attributes"), dict):
+            for k, v in data["attributes"].items():
+                aid = f"{node_id}__nnattr__{k}"
+                out[aid] = {
+                    "id": aid, "name": k, "type": f"{k}Attribute",
+                    "owner": node_id, "value": v,
+                    "attributeName": k,
+                }
+                attribute_ids.append(aid)
+        primary: dict = {
+            "id": node_id,
+            "type": primary_type,
+            "name": data.get("name", ""),
+            "owner": node.get("parentId"),
+            "bounds": {
+                "x": (node.get("position") or {}).get("x", 0),
+                "y": (node.get("position") or {}).get("y", 0),
+                "width": node.get("width", 0),
+                "height": node.get("height", 0),
+            },
+        }
+        if attribute_ids:
+            primary["attributes"] = attribute_ids
+        if method_ids:
+            primary["methods"] = method_ids
+        if body_ids:
+            primary["bodies"] = body_ids
+        if fallback_ids:
+            primary["fallbackBodies"] = fallback_ids
+        for k in (
+            "description", "uri", "icon", "code", "language",
+            "intent_description", "replyType",
+            "ragDatabaseName", "dbSelectionType", "dbCustomName",
+            "dbQueryMode", "dbOperation", "dbSqlQuery",
+            "constraint", "kind", "constraintName", "targetMethodId",
+            "associationId", "classId", "referenceTarget",
+        ):
+            if data.get(k) is not None:
+                primary[k] = data[k]
+        out[node_id] = primary
+    return out
+
+
+def _v4_edges_to_v3_dict(edges):
+    out: dict = {}
+    for e in edges:
+        eid = e.get("id")
+        d = e.get("data") or {}
+        rel = {
+            "id": eid,
+            "type": e.get("type"),
+            "name": d.get("name", ""),
+            "source": {
+                "element": e.get("source"),
+                "direction": e.get("sourceHandle", "Right"),
+            },
+            "target": {
+                "element": e.get("target"),
+                "direction": e.get("targetHandle", "Left"),
+            },
+            "path": d.get("points", []),
+        }
+        for k in ("sourceRole", "sourceMultiplicity"):
+            if d.get(k) is not None:
+                rel["source"][k.replace("source", "").lower() if k != "sourceRole" else "role"] = d[k]
+        if d.get("sourceMultiplicity") is not None:
+            rel["source"]["multiplicity"] = d["sourceMultiplicity"]
+        if d.get("sourceRole") is not None:
+            rel["source"]["role"] = d["sourceRole"]
+        if d.get("targetRole") is not None:
+            rel["target"]["role"] = d["targetRole"]
+        if d.get("targetMultiplicity") is not None:
+            rel["target"]["multiplicity"] = d["targetMultiplicity"]
+        for k in (
+            "associationId", "guard", "params",
+            "transitionType", "predefined", "custom",
+        ):
+            if d.get(k) is not None:
+                rel[k] = d[k]
+        out[eid] = rel
+    return out
 
 
 def _extract_elements_by_type(json_result, element_type):

@@ -1,0 +1,63 @@
+{
+  "title": "GreetBot",
+  "model": {
+    "version": "4.0.0",
+    "id": "agent-1",
+    "title": "GreetBot",
+    "type": "AgentDiagram",
+    "size": {"width": 1200, "height": 600},
+    "nodes": [
+      {
+        "id": "n-init",
+        "type": "StateInitialNode",
+        "position": {"x": 0, "y": 0},
+        "width": 45, "height": 45,
+        "measured": {"width": 45, "height": 45},
+        "data": {"name": ""}
+      },
+      {
+        "id": "n-greeting",
+        "type": "AgentState",
+        "position": {"x": 100, "y": 0},
+        "width": 160, "height": 100,
+        "measured": {"width": 160, "height": 100},
+        "data": {
+          "name": "Greeting",
+          "replyType": "text",
+          "bodies": [
+            {"id": "n-greeting-b-1", "name": "Hello!", "replyType": "text"}
+          ],
+          "fallbackBodies": []
+        }
+      },
+      {
+        "id": "n-intent-greet",
+        "type": "AgentIntent",
+        "position": {"x": -200, "y": 200},
+        "width": 200, "height": 100,
+        "measured": {"width": 200, "height": 100},
+        "data": {
+          "name": "greet",
+          "intent_description": "Greeting intent",
+          "bodies": [
+            {"id": "n-intent-greet-t-1", "name": "hi"},
+            {"id": "n-intent-greet-t-2", "name": "hello"}
+          ]
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-init",
+        "source": "n-init",
+        "target": "n-greeting",
+        "type": "AgentStateTransitionInit",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {"points": []}
+      }
+    ],
+    "interactive": {"elements": {}, "relationships": {}},
+    "assessments": {}
+  }
+}

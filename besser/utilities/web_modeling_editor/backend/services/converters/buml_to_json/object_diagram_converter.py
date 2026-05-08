@@ -439,7 +439,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
 
                 comment_y += 130
 
-        return {
+        v3_result = {
             "version": "3.0.0",
             "type": "ObjectDiagram",
             "size": default_size,
@@ -447,8 +447,14 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
             "elements": elements,
             "relationships": relationships,
             "assessments": {},
-            "referenceDiagramData": reference_diagram_json
+            "referenceDiagramData": reference_diagram_json,
         }
+        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+            v3_to_v4_model,
+        )
+        v4_result = v3_to_v4_model(v3_result, diagram_type="ObjectDiagram", title="")
+        v4_result["referenceDiagramData"] = reference_diagram_json
+        return v4_result
 
     except Exception as e:
         logger.error("Error parsing object BUML content: %s", e, exc_info=True)

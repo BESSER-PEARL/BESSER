@@ -110,13 +110,31 @@ def process_object_diagram(json_data, domain_model):
         title = title.replace(' ', '_')
 
     object_model = ObjectModel(title)
-    # Get elements, relationships, and reference data from the JSON payload
-    model_data = json_data.get('model', {})
-    elements = model_data.get('elements', {})
-    relationships = model_data.get('relationships', {})
-    reference_data = model_data.get('referenceDiagramData', {})
+    # v4 wire shape: convert ``{nodes, edges}`` to a v3-shaped intermediate
+    # so the per-pass helpers walk a stable layout.  See
+    # ``docs/source/migrations/uml-v4-shape.md`` for the contract.
+    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+        v4_to_v3_model,
+    )
+    model_data = json_data.get('model', {}) or {}
+    if model_data.get('nodes') is not None or model_data.get('edges') is not None:
+        v3_model = v4_to_v3_model(model_data, diagram_type='ObjectDiagram')
+        elements = v3_model.get('elements', {})
+        relationships = v3_model.get('relationships', {})
+    else:
+        elements = model_data.get('elements', {})
+        relationships = model_data.get('relationships', {})
 
-    # If elements is empty, try the nested structure some exporters use
+    reference_data = model_data.get('referenceDiagramData', {})
+    # Reference data may itself arrive in v4 shape; normalise it too so
+    # the link-resolution code below can read ``elements`` / ``relationships``
+    # uniformly.
+    if isinstance(reference_data, dict) and (
+        reference_data.get('nodes') is not None or reference_data.get('edges') is not None
+    ):
+        reference_data = v4_to_v3_model(reference_data, diagram_type='ClassDiagram')
+
+    # Some legacy fixtures stash elements one level deeper.
     if not elements and isinstance(model_data.get('model'), dict):
         nested_model = model_data.get('model')
         elements = nested_model.get('elements', {})
@@ -327,8 +345,16 @@ def process_object_diagram(json_data, domain_model):
 
                 # If not found by direct ID lookup, try the reference diagram approach
                 if not association_obj:
-                    # Look for the association by ID in the reference diagram data
+                    # Look for the association by ID in the reference diagram data.
+                    # Reference data may be v4-shaped — normalise to v3 first.
                     reference_data = json_data.get('model', {}).get('referenceDiagramData', {})
+                    if isinstance(reference_data, dict) and (
+                        reference_data.get('nodes') is not None or reference_data.get('edges') is not None
+                    ):
+                        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+                            v4_to_v3_model as _v4_to_v3,
+                        )
+                        reference_data = _v4_to_v3(reference_data, diagram_type='ClassDiagram')
                     if reference_data:
                         reference_relationships = reference_data.get('relationships', {})
                         assoc_element = reference_relationships.get(association_id)

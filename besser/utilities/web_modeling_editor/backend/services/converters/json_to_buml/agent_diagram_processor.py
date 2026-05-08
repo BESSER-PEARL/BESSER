@@ -126,6 +126,102 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
     return body
 
 
+def _normalise_agent_transitions(relationships: dict) -> dict:
+    """Collapse legacy AgentStateTransition shapes to the canonical v4 form.
+
+    The v4 canonical shape:
+        transitionType: 'predefined' | 'custom'
+        predefined: { predefinedType, intentName?, fileType?, conditionValue? }
+        custom: { event, condition: string[] }
+
+    Five legacy shapes are accepted (see uml-v4-shape.md). Fallthrough
+    order:
+      1. transitionType=='custom' OR legacy condition=='custom_transition'
+         OR custom.event/condition non-empty -> emit canonical custom block.
+      2. Otherwise emit canonical predefined block.
+    """
+    out: dict = {}
+    for rid, rel in relationships.items():
+        if rel.get("type") != "AgentStateTransition":
+            out[rid] = rel
+            continue
+        nrel = dict(rel)
+        predefined = nrel.get("predefined") or {}
+        custom = nrel.get("custom") or {}
+
+        # Detect custom path
+        is_custom = (
+            nrel.get("transitionType") == "custom"
+            or nrel.get("condition") == "custom_transition"
+            or (isinstance(custom.get("event"), str) and custom.get("event"))
+            or (isinstance(custom.get("condition"), list) and any(
+                isinstance(c, str) and c.strip() for c in custom["condition"]
+            ))
+            or (isinstance(nrel.get("conditionValue"), dict) and (
+                nrel["conditionValue"].get("events") or nrel["conditionValue"].get("conditions")
+            ))
+        )
+
+        if is_custom:
+            event = (
+                custom.get("event")
+                or nrel.get("event")
+                or nrel.get("customEvent")
+                or "None"
+            )
+            cond = custom.get("condition")
+            if not isinstance(cond, list):
+                cond = nrel.get("customConditions")
+            if not isinstance(cond, list):
+                # Legacy nested "conditionValue.events"/"conditions"
+                cv = nrel.get("conditionValue")
+                if isinstance(cv, dict):
+                    events = cv.get("events") or []
+                    if isinstance(events, list) and events and not custom.get("event"):
+                        event = events[0]
+                    cond = cv.get("conditions") or []
+            if not isinstance(cond, list):
+                cond = []
+            nrel["transitionType"] = "custom"
+            nrel["custom"] = {"event": event, "condition": cond}
+            nrel.pop("predefined", None)
+        else:
+            predefined_type = (
+                predefined.get("predefinedType")
+                or nrel.get("predefinedType")
+                or (nrel.get("condition") if isinstance(nrel.get("condition"), str) else None)
+                or "when_intent_matched"
+            )
+            block: dict = {"predefinedType": predefined_type}
+            intent_name = (
+                predefined.get("intentName")
+                or nrel.get("intentName")
+            )
+            if intent_name is not None:
+                block["intentName"] = intent_name
+            file_type = predefined.get("fileType") or nrel.get("fileType")
+            if file_type is not None:
+                block["fileType"] = file_type
+            cv = predefined.get("conditionValue")
+            if cv is None:
+                # Legacy flat variable-operation fields
+                if nrel.get("variable") is not None or nrel.get("operator") is not None:
+                    cv = {
+                        "variable": nrel.get("variable", ""),
+                        "operator": nrel.get("operator", ""),
+                        "targetValue": nrel.get("targetValue", ""),
+                    }
+                else:
+                    cv = nrel.get("conditionValue")
+            if cv is not None:
+                block["conditionValue"] = cv
+            nrel["transitionType"] = "predefined"
+            nrel["predefined"] = block
+            nrel.pop("custom", None)
+        out[rid] = nrel
+    return out
+
+
 def process_agent_diagram(json_data):
     # Extract language from config if present
     config = json_data.get('config') or {}
@@ -196,10 +292,27 @@ def process_agent_diagram(json_data):
     agent.add_property(ConfigProperty('nlp', 'nlp.hf.api_key', 'YOUR-API-KEY'))
     agent.add_property(ConfigProperty('nlp', 'nlp.replicate.api_key', 'YOUR-API-KEY'))
 
-    # Get elements and relationships from the JSON data
+    # v4: translate ``{nodes, edges}`` into the v3-shaped intermediate
+    # the rest of this function walks. v3 raw shape is also accepted.
     model_data = json_data.get('model') or {}
-    elements = model_data.get('elements') or {}
-    relationships = model_data.get('relationships') or {}
+    if model_data.get('nodes') is not None or model_data.get('edges') is not None:
+        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+            v4_to_v3_model,
+        )
+        v3_model = v4_to_v3_model(model_data, diagram_type='AgentDiagram')
+        elements = v3_model.get('elements') or {}
+        relationships = v3_model.get('relationships') or {}
+    else:
+        elements = model_data.get('elements') or {}
+        relationships = model_data.get('relationships') or {}
+
+    # Normalise legacy AgentStateTransition shapes to the canonical v4
+    # form (transitionType + predefined/custom blocks). The downstream
+    # routing logic only inspects the canonical fields, so this is the
+    # one place where legacy fallthrough lives.  See
+    # ``docs/source/migrations/uml-v4-shape.md`` "Legacy
+    # AgentStateTransition shapes" for the exhaustive list.
+    relationships = _normalise_agent_transitions(relationships)
 
     # Track states and bodies for later reference
     states_by_id = {}

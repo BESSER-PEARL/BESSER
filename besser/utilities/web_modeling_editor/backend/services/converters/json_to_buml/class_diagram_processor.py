@@ -876,15 +876,35 @@ def _process_constraints(
 
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
-    """Process Class Diagram specific elements."""
+    """Process Class Diagram specific elements.
+
+    Accepts the v4 wire shape (``model.nodes`` / ``model.edges``); the
+    v3 ``elements`` / ``relationships`` shape is no longer accepted at
+    the public boundary. See ``docs/source/migrations/uml-v4-shape.md``
+    for the canonical spec.
+    """
     title = json_data.get('title', '')
     if ' ' in title:
         title = title.replace(' ', '_')
 
     domain_model = DomainModel(title)
-    # Get elements and OCL constraints from the JSON data
-    elements = (json_data.get('model') or {}).get('elements', {})
-    relationships = (json_data.get('model') or {}).get('relationships', {})
+    # v4: translate ``{nodes, edges}`` to the v3 ``{elements,
+    # relationships}`` shape that the per-pass helpers walk. The helpers
+    # operate on a stable internal representation; the v4 input shape
+    # only affects parsing. The v3 raw shape is also accepted as input
+    # for the duration of the migration so existing fixtures keep
+    # round-tripping.
+    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+        v4_to_v3_model,
+    )
+    model_payload = json_data.get('model') or {}
+    if model_payload.get('nodes') is not None or model_payload.get('edges') is not None:
+        v3_model = v4_to_v3_model(model_payload, diagram_type='ClassDiagram')
+        elements = v3_model.get('elements', {})
+        relationships = v3_model.get('relationships', {})
+    else:
+        elements = model_payload.get('elements', {})
+        relationships = model_payload.get('relationships', {})
 
     # Collect layout positions from the original JSON for round-trip fidelity.
     # Keyed by element name (for classes/enums) or composite key (for relationships).

@@ -595,7 +595,7 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
         test_id = _emit_dataset(nn_model.test_data, 'TestDataset', ds_x, ds_y, elements)
         _emit_container_link('NNAssociation', test_id, main_container_id, relationships)
 
-    return {
+    v3_result = {
         'version': '3.0.0',
         'type': 'NNDiagram',
         'size': {'width': 1520, 'height': 800},
@@ -604,6 +604,10 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
         'relationships': relationships,
         'assessments': {},
     }
+    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+        v3_to_v4_model,
+    )
+    return v3_to_v4_model(v3_result, diagram_type='NNDiagram', title='')
 
 
 def _nn_add_method_whitelist():

@@ -1,0 +1,58 @@
+{
+  "title": "TrafficLight",
+  "model": {
+    "version": "4.0.0",
+    "id": "sm-1",
+    "title": "TrafficLight",
+    "type": "StateMachineDiagram",
+    "size": {"width": 1200, "height": 600},
+    "nodes": [
+      {
+        "id": "n-init",
+        "type": "StateInitialNode",
+        "position": {"x": 0, "y": 0},
+        "width": 45, "height": 45,
+        "measured": {"width": 45, "height": 45},
+        "data": {"name": ""}
+      },
+      {
+        "id": "n-red",
+        "type": "State",
+        "position": {"x": 100, "y": 0},
+        "width": 160, "height": 100,
+        "measured": {"width": 160, "height": 100},
+        "data": {"name": "Red", "bodies": [], "fallbackBodies": []}
+      },
+      {
+        "id": "n-green",
+        "type": "State",
+        "position": {"x": 400, "y": 0},
+        "width": 160, "height": 100,
+        "measured": {"width": 160, "height": 100},
+        "data": {"name": "Green", "bodies": [], "fallbackBodies": []}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-init",
+        "source": "n-init",
+        "target": "n-red",
+        "type": "StateTransition",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {"name": "", "points": []}
+      },
+      {
+        "id": "e-red-green",
+        "source": "n-red",
+        "target": "n-green",
+        "type": "StateTransition",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {"name": "go", "points": []}
+      }
+    ],
+    "interactive": {"elements": {}, "relationships": {}},
+    "assessments": {}
+  }
+}

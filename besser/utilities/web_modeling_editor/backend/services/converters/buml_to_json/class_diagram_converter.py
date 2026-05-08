@@ -776,7 +776,7 @@ def class_buml_to_json(domain_model):
             if not elem.get("quantumCircuitId"):
                 elem.pop("quantumCircuitId", None)
 
-    result = {
+    v3_result = {
         "version": "3.0.0",
         "type": "ClassDiagram",
         "size": default_size,
@@ -786,4 +786,12 @@ def class_buml_to_json(domain_model):
         "assessments": {},
     }
 
-    return result
+    # Lift v3-shaped output to the v4 ``{nodes, edges}`` wire shape.
+    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+        v3_to_v4_model,
+    )
+    return v3_to_v4_model(
+        v3_result,
+        diagram_type="ClassDiagram",
+        title=getattr(domain_model, "name", "") or "",
+    )

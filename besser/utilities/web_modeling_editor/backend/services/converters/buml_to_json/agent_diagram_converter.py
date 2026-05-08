@@ -1267,7 +1267,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                 comment_y += 130
 
-        return {
+        v3_result = {
             "version": "3.0.0",
             "type": "AgentDiagram",
             "size": default_size,
@@ -1276,10 +1276,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "relationships": relationships,
             "assessments": {},
         }
+        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+            v3_to_v4_model,
+        )
+        return v3_to_v4_model(v3_result, diagram_type="AgentDiagram", title="")
 
     except Exception:
         logger.exception("Error converting agent BUML to JSON; returning partial diagram")
-        return {
+        v3_result = {
             "version": "3.0.0",
             "type": "AgentDiagram",
             "size": default_size,
@@ -1288,3 +1292,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "relationships": relationships,
             "assessments": {},
         }
+        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+            v3_to_v4_model,
+        )
+        return v3_to_v4_model(v3_result, diagram_type="AgentDiagram", title="")

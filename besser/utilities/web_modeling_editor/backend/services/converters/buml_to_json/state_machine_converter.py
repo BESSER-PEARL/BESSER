@@ -445,7 +445,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
 
             comment_y += 130
 
-    return {
+    v3_result = {
         "version": "3.0.0",
         "type": "StateMachineDiagram",
         "size": default_size,
@@ -454,6 +454,13 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
         "relationships": relationships,
         "assessments": {},
     }
+    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+        v3_to_v4_model,
+    )
+    return v3_to_v4_model(
+        v3_result, diagram_type="StateMachineDiagram",
+        title=getattr(sm, "name", "") or "",
+    )
 
 
 def state_machine_to_json(content: str):
@@ -959,7 +966,7 @@ def state_machine_to_json(content: str):
 
             comment_y += 130
 
-    return {
+    v3_result = {
         "version": "3.0.0",
         "type": "StateMachineDiagram",
         "size": default_size,
@@ -968,3 +975,7 @@ def state_machine_to_json(content: str):
         "relationships": relationships,
         "assessments": {},
     }
+    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+        v3_to_v4_model,
+    )
+    return v3_to_v4_model(v3_result, diagram_type="StateMachineDiagram", title="")

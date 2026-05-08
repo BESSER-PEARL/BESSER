@@ -48,8 +48,19 @@ def process_state_machine(json_data):
     model_data = json_data.get('model')
     if not model_data:
         raise ConversionError("State machine JSON is missing the 'model' key.")
-    elements = model_data.get('elements') or {}
-    relationships = model_data.get('relationships') or {}
+    # v4: translate ``{nodes, edges}`` to a v3-shaped intermediate so the
+    # body / transition collection passes below stay unchanged. v3 raw
+    # input passes through unchanged.
+    if model_data.get('nodes') is not None or model_data.get('edges') is not None:
+        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
+            v4_to_v3_model,
+        )
+        v3_model = v4_to_v3_model(model_data, diagram_type='StateMachineDiagram')
+        elements = v3_model.get('elements') or {}
+        relationships = v3_model.get('relationships') or {}
+    else:
+        elements = model_data.get('elements') or {}
+        relationships = model_data.get('relationships') or {}
 
     # Track states by element ID for later reference
     states_by_id = {}  # element_id -> State object

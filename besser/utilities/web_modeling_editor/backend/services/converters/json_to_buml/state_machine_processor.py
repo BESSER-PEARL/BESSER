@@ -1,7 +1,8 @@
 """
-State machine processing for converting JSON to BUML format.
+State machine processing for converting v4 JSON to a BUML StateMachine.
 
-Returns a StateMachine metamodel instance (not a code string).
+Reads the v4 wire shape (``{nodes, edges}``) natively. See
+``docs/source/migrations/uml-v4-shape.md`` for the spec.
 """
 
 import logging
@@ -12,32 +13,26 @@ from besser.BUML.metamodel.state_machine.state_machine import (
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    node_data,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _sanitize_identifier(name: str) -> str:
-    """Sanitize a string to be a valid Python identifier.
-
-    Replaces any non-alphanumeric character (except underscore) with underscore,
-    and strips leading digits.
-    """
+    """Sanitize a string to be a valid Python identifier."""
     sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
     sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
     return sanitized or 'unnamed'
 
 
 def process_state_machine(json_data):
-    """Process State Machine Diagram specific elements and return a StateMachine instance.
+    """Process a v4 State Machine Diagram and return a ``StateMachine``.
 
     Args:
-        json_data: Dictionary containing the state machine diagram JSON data.
-
-    Returns:
-        StateMachine: A BUML StateMachine metamodel instance.
-
-    Raises:
-        ConversionError: If the JSON data is invalid or missing required fields.
+        json_data: Dictionary containing the state machine diagram JSON
+            in the v4 wire shape (``model.nodes`` / ``model.edges``).
     """
     sm_name = json_data.get("title", "Generated_State_Machine")
     if ' ' in sm_name:
@@ -48,264 +43,211 @@ def process_state_machine(json_data):
     model_data = json_data.get('model')
     if not model_data:
         raise ConversionError("State machine JSON is missing the 'model' key.")
-    # v4: translate ``{nodes, edges}`` to a v3-shaped intermediate so the
-    # body / transition collection passes below stay unchanged. v3 raw
-    # input passes through unchanged.
-    if model_data.get('nodes') is not None or model_data.get('edges') is not None:
-        from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
-            v4_to_v3_model,
-        )
-        v3_model = v4_to_v3_model(model_data, diagram_type='StateMachineDiagram')
-        elements = v3_model.get('elements') or {}
-        relationships = v3_model.get('relationships') or {}
-    else:
-        elements = model_data.get('elements') or {}
-        relationships = model_data.get('relationships') or {}
+    nodes = model_data.get('nodes') or []
+    edges = model_data.get('edges') or []
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
 
-    # Track states by element ID for later reference
-    states_by_id = {}  # element_id -> State object
+    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
+
+    states_by_id = {}  # node_id -> State
     body_names = set()
     event_names = set()
 
-    # Store comments for later processing
-    comment_elements = {}  # {comment_id: comment_text}
-    comment_links = {}  # {comment_id: [linked_element_ids]}
+    comment_nodes = {}  # comment_id -> text
+    comment_links = {}  # comment_id -> [linked_node_ids]
 
-    # Collect all body and event names first
-    for element_id, element in elements.items():
-        if element.get("type") == "Comments":
-            comment_text = element.get("name", "")
-            comment_elements[element_id] = comment_text
+    # First pass: collect body / fallback body names from State data, and
+    # comments.
+    for node in nodes:
+        node_type = node.get("type")
+        node_id = node.get("id")
+        data = node_data(node)
+        if node_type == "Comments":
+            comment_nodes[node_id] = data.get("name", "")
             continue
-        elif element.get("type") == "StateBody":
-            body_names.add(element.get("name"))
-        elif element.get("type") == "StateFallbackBody":
-            body_names.add(element.get("name"))
+        if node_type == "State":
+            for body in data.get("bodies") or []:
+                if body.get("name"):
+                    body_names.add(body["name"])
+            for body in data.get("fallbackBodies") or []:
+                if body.get("name"):
+                    body_names.add(body["name"])
 
-    # Collect guard condition names from transitions (for code-block backed guards)
     guard_names = set()
 
-    # Collect event names from transitions
-    for rel in relationships.values():
-        if rel.get("type") == "StateTransition" and rel.get("name"):
-            event_names.add(rel.get("name"))
-        if rel.get("type") == "StateTransition" and rel.get("guard"):
-            guard_value = rel["guard"]
-            # If the guard matches a code-block function name, record it
-            guard_names.add(guard_value)
-        elif rel.get("type") == "Link":
-            # Handle comment links
-            source_element_id = rel.get("source", {}).get("element")
-            target_element_id = rel.get("target", {}).get("element")
-
+    # Collect event names + guards from edges, and comment links.
+    for edge in edges:
+        edge_type = edge.get("type")
+        edge_data = edge.get("data") or {}
+        if edge_type == "StateTransition":
+            if edge_data.get("name"):
+                event_names.add(edge_data["name"])
+            if edge_data.get("guard"):
+                guard_names.add(edge_data["guard"])
+        elif edge_type == "Link":
+            source_id = edge.get("source")
+            target_id = edge.get("target")
             comment_id = None
-            target_id = None
+            target = None
+            if source_id in comment_nodes:
+                comment_id = source_id
+                target = target_id
+            elif target_id in comment_nodes:
+                comment_id = target_id
+                target = source_id
+            if comment_id and target:
+                comment_links.setdefault(comment_id, []).append(target)
 
-            if source_element_id in comment_elements:
-                comment_id = source_element_id
-                target_id = target_element_id
-            elif target_element_id in comment_elements:
-                comment_id = target_element_id
-                target_id = source_element_id
+    # Build Body / Event / Condition objects from StateCodeBlock nodes.
+    body_objects = {}
+    event_objects = {}
+    condition_objects = {}
+    for node in nodes:
+        if node.get("type") != "StateCodeBlock":
+            continue
+        data = node_data(node)
+        name = data.get("name") or ""
+        code_content = data.get("code", "") or ""
+        if not name:
+            function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+            if function_match:
+                name = function_match.group(1)
+        if not name:
+            continue
+        cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
+        if name in body_names:
+            body = Body(name=name, actions=[CustomCodeAction(source=cleaned_code)])
+            body_objects[name] = body
+        if name in event_names:
+            event = Event(name=name)
+            event._source_code = cleaned_code
+            event_objects[name] = event
+        if name in guard_names:
+            condition = Condition(name=name, source=cleaned_code)
+            condition_objects[name] = condition
 
-            if comment_id and target_id:
-                if comment_id not in comment_links:
-                    comment_links[comment_id] = []
-                comment_links[comment_id].append(target_id)
-
-    # Build Body, Event, and Condition objects from code blocks
-    body_objects = {}  # function name -> Body instance
-    event_objects = {}  # function name -> Event instance
-    condition_objects = {}  # function/guard name -> Condition instance
-
-
-    for element in elements.values():
-        if element.get("type") == "StateCodeBlock":
-            name = element.get("name", "")
-            code_content = element.get("code", "")
-
-            # If name is empty, try to extract function name from code content
-            if not name:
-                function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
-                if function_match:
-                    name = function_match.group(1)
-
-            if not name:
-                continue
-
-            # Clean up the code content by removing extra newlines
-            cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
-
-            if name in body_names:
-                # Create a Body with a CustomCodeAction containing the source code.
-                # We cannot pass a live callable here since we only have source text,
-                # so we use the actions-based constructor with CustomCodeAction.
-                body = Body(name=name, actions=[CustomCodeAction(source=cleaned_code)])
-                body_objects[name] = body
-
-
-            if name in event_names:
-                # The Event metamodel class only takes a name (no callable).
-                # The code content is stored separately on the code block element
-                # and will be preserved through round-trip via code blocks.
-                event = Event(name=name)
-                # Attach the source code for round-trip fidelity (not part of
-                # Event's formal metamodel, but needed for BUML export).
-                event._source_code = cleaned_code
-                event_objects[name] = event
-
-            if name in guard_names:
-                # Guard references a code block: create a Condition with source code
-                condition = Condition(name=name, source=cleaned_code)
-                condition_objects[name] = condition
-
-    # Determine which element IDs are initial states (targets of transitions from StateInitialNode)
-    # and which are final states (sources of transitions to StateFinalNode)
+    # Determine initial / final state ids from edges.
     initial_state_ids = set()
     final_state_ids = set()
-    for rel in relationships.values():
-        if rel.get("type") == "StateTransition":
-            source_id = rel.get("source", {}).get("element")
-            target_id = rel.get("target", {}).get("element")
-            if elements.get(source_id, {}).get("type") == "StateInitialNode":
-                initial_state_ids.add(target_id)
-            if elements.get(target_id, {}).get("type") == "StateFinalNode":
-                final_state_ids.add(source_id)
+    for edge in edges:
+        if edge.get("type") != "StateTransition":
+            continue
+        source_id = edge.get("source")
+        target_id = edge.get("target")
+        if (nodes_by_id.get(source_id) or {}).get("type") == "StateInitialNode":
+            initial_state_ids.add(target_id)
+        if (nodes_by_id.get(target_id) or {}).get("type") == "StateFinalNode":
+            final_state_ids.add(source_id)
 
-    # Create states - initial state(s) first to satisfy StateMachine ordering constraint
-    state_elements = [
-        (eid, elem) for eid, elem in elements.items()
-        if elem.get("type") == "State"
-    ]
+    # Create states; initial state(s) first to satisfy ordering constraint.
+    state_nodes = [n for n in nodes if n.get("type") == "State"]
+    state_nodes.sort(key=lambda n: n.get("id") not in initial_state_ids)
 
-    # Sort so initial states come first
-    state_elements.sort(key=lambda pair: pair[0] not in initial_state_ids)
-
-    for element_id, element in state_elements:
-        raw_name = element.get("name", "")
+    for node in state_nodes:
+        node_id = node.get("id")
+        data = node_data(node)
+        raw_name = data.get("name", "") or ""
         if not raw_name.strip():
-            logger.warning("State element '%s' has an empty name, using 'unnamed'.", element_id)
+            logger.warning("State node '%s' has an empty name, using 'unnamed'.", node_id)
             raw_name = "unnamed"
-
-        is_initial = element_id in initial_state_ids
-        is_final = element_id in final_state_ids
-
+        is_initial = node_id in initial_state_ids
+        is_final = node_id in final_state_ids
         try:
             state = sm.new_state(name=raw_name, initial=is_initial, final=is_final)
         except ValueError as e:
-            # Handle duplicate state names or other validation errors gracefully
             logger.warning("Could not create state '%s': %s", raw_name, e)
             continue
+        states_by_id[node_id] = state
 
-        states_by_id[element_id] = state
+    # Assign bodies / fallback bodies.
+    for node in state_nodes:
+        node_id = node.get("id")
+        state = states_by_id.get(node_id)
+        if not state:
+            continue
+        data = node_data(node)
+        for body in data.get("bodies") or []:
+            body_name = body.get("name")
+            if body_name in body_objects:
+                state.set_body(body=body_objects[body_name])
+        for body in data.get("fallbackBodies") or []:
+            body_name = body.get("name")
+            if body_name in body_objects:
+                state.set_fallback_body(body=body_objects[body_name])
 
-    # Assign bodies and fallback bodies to states
-    for element_id, element in elements.items():
-        if element.get("type") == "State":
-            state = states_by_id.get(element_id)
-            if not state:
-                continue
+    # Create transitions.
+    for edge in edges:
+        if edge.get("type") != "StateTransition":
+            continue
+        source_id = edge.get("source")
+        target_id = edge.get("target")
 
+        if (nodes_by_id.get(source_id) or {}).get("type") == "StateInitialNode":
+            continue
+        if (nodes_by_id.get(target_id) or {}).get("type") == "StateFinalNode":
+            continue
 
-            for body_id in element.get("bodies", []):
-                body_element = elements.get(body_id)
-                if body_element:
-                    body_name = body_element.get("name")
-                    if body_name in body_objects:
-                        state.set_body(body=body_objects[body_name])
+        source_state = states_by_id.get(source_id)
+        target_state = states_by_id.get(target_id)
+        if not source_state or not target_state:
+            logger.warning(
+                "Skipping transition: source '%s' or target '%s' state not found.",
+                source_id, target_id,
+            )
+            continue
 
-            for fallback_id in element.get("fallbackBodies", []):
-                fallback_element = elements.get(fallback_id)
-                if fallback_element:
-                    fallback_name = fallback_element.get("name")
-                    if fallback_name in body_objects:
-                        state.set_fallback_body(body=body_objects[fallback_name])
+        edge_data = edge.get("data") or {}
+        event_name = edge_data.get("name", "")
+        params = edge_data.get("params")
+        guard_expr = edge_data.get("guard", "")
 
-    # Create transitions
-    for relationship in relationships.values():
-        if relationship.get("type") == "StateTransition":
-            source_id = relationship.get("source", {}).get("element")
-            target_id = relationship.get("target", {}).get("element")
-
-            # Skip transitions from StateInitialNode or to StateFinalNode
-            if elements.get(source_id, {}).get("type") == "StateInitialNode":
-                continue
-            if elements.get(target_id, {}).get("type") == "StateFinalNode":
-                continue
-
-            source_state = states_by_id.get(source_id)
-            target_state = states_by_id.get(target_id)
-
-            if not source_state or not target_state:
-                logger.warning(
-                    "Skipping transition: source state '%s' or target state '%s' not found.",
-                    source_id, target_id
+        guard_condition = None
+        if guard_expr:
+            guard_condition = condition_objects.get(guard_expr)
+            if not guard_condition:
+                guard_condition = Condition(
+                    name=_sanitize_identifier(guard_expr),
+                    source=guard_expr,
                 )
-                continue
+                condition_objects[guard_expr] = guard_condition
 
-            event_name = relationship.get("name", "")
-            params = relationship.get("params")
-            guard_expr = relationship.get("guard", "")
+        if event_name:
+            event = event_objects.get(event_name)
+            if not event:
+                event = Event(name=event_name)
+                event_objects[event_name] = event
+            try:
+                builder = source_state.when_event(event)
+                if guard_condition:
+                    builder = builder.with_condition(guard_condition)
+                builder.go_to(target_state)
+            except ValueError as e:
+                logger.warning(
+                    "Could not create transition from '%s' to '%s': %s",
+                    source_state.name, target_state.name, e,
+                )
+            if params and source_state.transitions:
+                last_transition = source_state.transitions[-1]
+                last_transition._event_params = params
+        elif guard_condition:
+            try:
+                source_state.when_condition(guard_condition).go_to(target_state)
+            except ValueError as e:
+                logger.warning(
+                    "Could not create guard-only transition from '%s' to '%s': %s",
+                    source_state.name, target_state.name, e,
+                )
 
-            # Resolve guard into a Condition object if present
-            guard_condition = None
-            if guard_expr:
-                guard_condition = condition_objects.get(guard_expr)
-                if not guard_condition:
-                    # Guard is a plain expression string (not a code-block reference).
-                    # Create a Condition from the expression source directly.
-                    guard_condition = Condition(
-                        name=_sanitize_identifier(guard_expr),
-                        source=guard_expr,
-                    )
-                    condition_objects[guard_expr] = guard_condition
-
-            if event_name:
-                event = event_objects.get(event_name)
-                if not event:
-                    # Create a simple event if no code block was associated
-                    event = Event(name=event_name)
-                    event_objects[event_name] = event
-
-                # Build the transition, optionally attaching a guard condition
-                try:
-                    builder = source_state.when_event(event)
-                    if guard_condition:
-                        builder = builder.with_condition(guard_condition)
-                    builder.go_to(target_state)
-                except ValueError as e:
-                    logger.warning(
-                        "Could not create transition from '%s' to '%s': %s",
-                        source_state.name, target_state.name, e
-                    )
-
-                # Store event_params on the transition for round-trip fidelity.
-                # The metamodel Transition class does not have a formal event_params
-                # attribute, so we attach it as an informal attribute.
-                if params and source_state.transitions:
-                    last_transition = source_state.transitions[-1]
-                    last_transition._event_params = params
-
-            elif guard_condition:
-                # Transition with guard only (no event) -- use when_condition API
-                try:
-                    source_state.when_condition(guard_condition).go_to(target_state)
-                except ValueError as e:
-                    logger.warning(
-                        "Could not create guard-only transition from '%s' to '%s': %s",
-                        source_state.name, target_state.name, e
-                    )
-
-    # Process comments - apply as metadata
-    for comment_id, comment_text in comment_elements.items():
+    # Apply comments.
+    for comment_id, comment_text in comment_nodes.items():
         if comment_id in comment_links:
-            # Comment is linked to one or more elements
-            for linked_element_id in comment_links[comment_id]:
-                if linked_element_id in states_by_id:
-                    state = states_by_id[linked_element_id]
-                    state.metadata = Metadata(description=comment_text)
+            for linked_id in comment_links[comment_id]:
+                if linked_id in states_by_id:
+                    states_by_id[linked_id].metadata = Metadata(description=comment_text)
         else:
-            # Unlinked comment - add to StateMachine metadata
             sm.metadata = Metadata(description=comment_text)
 
     return sm

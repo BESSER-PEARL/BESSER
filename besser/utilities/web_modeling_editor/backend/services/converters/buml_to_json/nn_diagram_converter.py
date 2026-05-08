@@ -1,8 +1,9 @@
 """
-NN BUML → frontend JSON converter.
+NN BUML -> v4 JSON converter.
 
-Converts a BUML NN model into the element/relationship structure consumed
-by the web editor for NNDiagrams.
+Emits the v4 wire shape (``{nodes, edges}``) directly. Each layer's
+attributes collapse onto ``data.attributes: dict`` (snake_case keys per
+the spec at ``docs/source/migrations/uml-v4-shape.md``).
 """
 
 import ast
@@ -12,90 +13,56 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
+    make_node, make_edge,
+)
 
 
-# Stable namespace for uuid5-based element IDs. Using a fixed UUID here means
-# the same BUML NN model, converted twice, produces byte-identical JSON — which
-# makes round-trip snapshot tests reliable and helps downstream content-addressing.
 _NN_JSON_NAMESPACE = uuid.UUID('7a1a0c7e-0e9d-4e1c-a0e6-6e5b4e0c7e00')
 
-# Thread-local monotonically-increasing counter. Reset at the top of every
-# public conversion call (see nn_model_to_json). Thread-local so concurrent
-# requests in the FastAPI thread pool don't interleave counter states.
 _id_state = threading.local()
 
 
 def _reset_id_state() -> None:
-    """Reset the deterministic-ID counter for a fresh conversion."""
     _id_state.counter = 0
 
 
 def _new_id(hint: str = '') -> str:
-    """Return a deterministic UUID for the next element in the current conversion.
-
-    Sequence number is derived from a thread-local counter that ``nn_model_to_json``
-    resets. The optional ``hint`` (e.g. 'container', 'attr:name') is folded into
-    the uuid5 key so different call sites at the same counter position still
-    produce distinct IDs — and identical inputs produce identical IDs across runs.
-    """
     counter = getattr(_id_state, 'counter', 0)
     _id_state.counter = counter + 1
     key = f"{counter}:{hint}"
     return str(uuid.uuid5(_NN_JSON_NAMESPACE, key))
 
 
-# Metamodel class → (frontend parent type, attribute type suffix)
 _MODULE_TYPE_MAP = {
-    'Conv1D':          ('Conv1DLayer',              'Conv1D'),
-    'Conv2D':          ('Conv2DLayer',              'Conv2D'),
-    'Conv3D':          ('Conv3DLayer',              'Conv3D'),
-    'PoolingLayer':    ('PoolingLayer',             'Pooling'),
-    'SimpleRNNLayer':  ('RNNLayer',                 'RNN'),
-    'LSTMLayer':       ('LSTMLayer',                'LSTM'),
-    'GRULayer':        ('GRULayer',                 'GRU'),
-    'LinearLayer':     ('LinearLayer',              'Linear'),
-    'FlattenLayer':    ('FlattenLayer',             'Flatten'),
-    'EmbeddingLayer':  ('EmbeddingLayer',           'Embedding'),
-    'DropoutLayer':    ('DropoutLayer',             'Dropout'),
-    'LayerNormLayer':  ('LayerNormalizationLayer',  'LayerNorm'),
-    'BatchNormLayer':  ('BatchNormalizationLayer',  'BatchNorm'),
-    'TensorOp':        ('TensorOp',                 'TensorOp'),
+    'Conv1D':          'Conv1DLayer',
+    'Conv2D':          'Conv2DLayer',
+    'Conv3D':          'Conv3DLayer',
+    'PoolingLayer':    'PoolingLayer',
+    'SimpleRNNLayer':  'RNNLayer',
+    'LSTMLayer':       'LSTMLayer',
+    'GRULayer':        'GRULayer',
+    'LinearLayer':     'LinearLayer',
+    'FlattenLayer':    'FlattenLayer',
+    'EmbeddingLayer':  'EmbeddingLayer',
+    'DropoutLayer':    'DropoutLayer',
+    'LayerNormLayer':  'LayerNormalizationLayer',
+    'BatchNormLayer':  'BatchNormalizationLayer',
+    'TensorOp':        'TensorOp',
 }
 
 
 def _is_attr_set(obj, attr_name: str) -> bool:
-    """True when an attribute was explicitly toggled in the editor.
-
-    Delegates to the sidecar bookkeeping so the metamodel objects don't carry
-    editor-specific state.
-    """
     return is_explicit(obj, attr_name)
 
 
-def _attr_type_for(field: str, suffix: str) -> str:
-    """Build the attribute `type` used by the frontend (e.g. 'NameAttributeConv2D')."""
-    pascal = ''.join(part.capitalize() for part in field.split('_'))
-    return f"{pascal}Attribute{suffix}"
-
-
 def _fmt_value(value: Any) -> str:
-    """Convert a Python value to the string representation used in the JSON 'value' field.
-
-    Lists are formatted as ``[a, b, c]``; string items are kept bare (no quotes)
-    because the processor's parsers tolerate both ``[a, b]`` and ``['a', 'b']``
-    and downstream consumers expect the bare form. The one exception is items
-    containing ``,`` or ``]``, which would round-trip incorrectly — those are
-    rejected so we fail fast instead of silently truncating.
-    """
+    """Convert a Python value to the string representation used in v4 attributes."""
     if value is None:
         return ''
     if isinstance(value, bool):
         return 'true' if value else 'false'
     if isinstance(value, (list, tuple)):
-        # Tuples reach here when the metamodel setter accepted a tuple for
-        # a list-typed field (e.g. a hand-authored kernel_dim=(3, 3)). Treat
-        # them the same as lists so round-trip doesn't stringify the tuple
-        # syntax into something the processor can't re-parse cleanly.
         parts = []
         for v in value:
             formatted = _fmt_value(v)
@@ -109,38 +76,8 @@ def _fmt_value(value: Any) -> str:
     return str(value)
 
 
-def _make_attr(parent_id: str, field: str, value: Any, suffix: str,
-               bounds: Dict[str, int], attr_type_hint: str = 'str',
-               mandatory: bool = False) -> Dict[str, Any]:
-    """Build a single attribute element child dict."""
-    formatted = _fmt_value(value)
-    return {
-        'id': _new_id(),
-        'name': f'{field} = {formatted}',
-        'type': _attr_type_for(field, suffix),
-        'owner': parent_id,
-        'bounds': dict(bounds),
-        'code': '',
-        'visibility': 'public',
-        'attributeType': attr_type_hint,
-        'implementationType': 'none',
-        'stateMachineId': '',
-        'quantumCircuitId': '',
-        'isOptional': not mandatory,
-        'isDerived': False,
-        'attributeName': field,
-        'value': formatted,
-        'isMandatory': mandatory,
-    }
-
-
 def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
-    """
-    Return the list of (field_name, value, type_hint, mandatory) tuples to emit for a module.
-
-    Mirrors the builder's emission rules: only emits fields that are explicitly set
-    or diverge from defaults, so round-trip stays minimal.
-    """
+    """Return the list of (field_name, value, type_hint, mandatory) tuples for a module."""
     cls = type(module).__name__
     fields: List[Tuple[str, Any, str, bool]] = []
 
@@ -153,7 +90,6 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
         if module.stride_dim is not None:
             fields.append(('stride_dim', module.stride_dim, 'List', False))
         if _is_attr_set(module, 'padding_amount') or module.padding_amount:
-            # Emit when user explicitly set (even to 0) or when non-default.
             fields.append(('padding_amount', module.padding_amount, 'int', False))
         if _is_attr_set(module, 'padding_type') or (module.padding_type and module.padding_type != 'valid'):
             fields.append(('padding_type', module.padding_type, 'str', False))
@@ -163,8 +99,6 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
-        # permute_in/out are bools in the metamodel; gate by explicit-set so
-        # a user-toggled False also round-trips back to the editor.
         if _is_attr_set(module, 'permute_in'):
             fields.append(('permute_in', module.permute_in, 'bool', False))
         if _is_attr_set(module, 'permute_out'):
@@ -190,9 +124,6 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
-        # Pooling inherits permute_in / permute_out from Layer too (the
-        # processor reads them and the builder writes them). Mirror here so
-        # BUML→JSON preserves the user's choice on round-trip.
         if _is_attr_set(module, 'permute_in'):
             fields.append(('permute_in', module.permute_in, 'bool', False))
         if _is_attr_set(module, 'permute_out'):
@@ -347,191 +278,137 @@ def _dataset_fields(dataset: Dataset) -> List[Tuple[str, Any, str, bool]]:
     return fields
 
 
-def _emit_module(module, owner_id: str, x: int, y: int,
-                 elements: Dict[str, Dict[str, Any]]) -> str:
-    """Create a layer/tensor_op element (with its attribute children) inside a container."""
+def _attrs_dict(fields: List[Tuple[str, Any, str, bool]]) -> dict:
+    """Collapse the field list into the v4 ``data.attributes`` dict."""
+    out: dict = {}
+    for field_name, value, _hint, _mandatory in fields:
+        out[field_name] = _fmt_value(value)
+    return out
+
+
+def _emit_module_node(module, parent_id: str, x: int, y: int, nodes: list) -> str:
     cls = type(module).__name__
-    try:
-        parent_type, suffix = _MODULE_TYPE_MAP[cls]
-    except KeyError as exc:
+    parent_type = _MODULE_TYPE_MAP.get(cls)
+    if parent_type is None:
         raise ValueError(
-            f"Cannot emit module of type {cls!r}: no mapping to frontend "
-            f"element type. Add {cls!r} to _MODULE_TYPE_MAP."
-        ) from exc
-    element_id = _new_id()
-    attr_ids: List[str] = []
-
-    attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
-    for field, value, attr_type_hint, mandatory in _module_fields(module):
-        attr = _make_attr(element_id, field, value, suffix, attr_bounds,
-                          attr_type_hint=attr_type_hint, mandatory=mandatory)
-        elements[attr['id']] = attr
-        attr_ids.append(attr['id'])
-
-    elements[element_id] = {
-        'id': element_id,
-        'name': parent_type,
-        'type': parent_type,
-        'owner': owner_id,
-        'bounds': {'x': x, 'y': y, 'width': 110, 'height': 110},
-        'attributes': attr_ids,
-        'methods': [],
-    }
-    return element_id
+            f"Cannot emit module of type {cls!r}: no mapping to v4 node type."
+        )
+    node_id = _new_id()
+    attrs = _attrs_dict(_module_fields(module))
+    nodes.append(make_node(
+        node_id=node_id,
+        type_=parent_type,
+        data={"name": module.name, "attributes": attrs},
+        position={"x": x, "y": y},
+        parent_id=parent_id,
+        width=200,
+        height=120,
+    ))
+    return node_id
 
 
-def _emit_container(name: str, x: int, y: int, width: int, height: int,
-                    elements: Dict[str, Dict[str, Any]]) -> str:
+def _emit_container_node(name: str, x: int, y: int, width: int, height: int, nodes: list) -> str:
     container_id = _new_id()
-    elements[container_id] = {
-        'id': container_id,
-        'name': name,
-        'type': 'NNContainer',
-        'owner': None,
-        'bounds': {'x': x, 'y': y, 'width': width, 'height': height},
-    }
+    nodes.append(make_node(
+        node_id=container_id,
+        type_="NNContainer",
+        data={"name": name},
+        position={"x": x, "y": y},
+        width=width,
+        height=height,
+    ))
     return container_id
 
 
-def _emit_nn_reference(ref_name: str, owner_id: str, x: int, y: int,
-                       elements: Dict[str, Dict[str, Any]]) -> str:
+def _emit_nn_reference_node(ref_name: str, parent_id: str, x: int, y: int, nodes: list) -> str:
     ref_id = _new_id()
-    elements[ref_id] = {
-        'id': ref_id,
-        'name': ref_name,
-        'type': 'NNReference',
-        'owner': owner_id,
-        'bounds': {'x': x, 'y': y, 'width': 110, 'height': 110},
-        'referencedNN': ref_name,
-    }
+    nodes.append(make_node(
+        node_id=ref_id,
+        type_="NNReference",
+        data={"name": ref_name, "referenceTarget": ref_name},
+        position={"x": x, "y": y},
+        parent_id=parent_id,
+        width=110,
+        height=110,
+    ))
     return ref_id
 
 
-def _emit_nnnext(source_id: str, target_id: str,
-                 relationships: Dict[str, Dict[str, Any]]) -> None:
-    rel_id = _new_id()
-    relationships[rel_id] = {
-        'id': rel_id,
-        'name': 'next',
-        'type': 'NNNext',
-        'owner': None,
-        'bounds': {'x': 0, 'y': 0, 'width': 30, 'height': 31},
-        'path': [{'x': 0, 'y': 0}, {'x': 30, 'y': 0}],
-        'source': {'direction': 'Right', 'element': source_id, 'multiplicity': '', 'role': ''},
-        'target': {'direction': 'Left', 'element': target_id, 'multiplicity': '', 'role': ''},
-        'isManuallyLayouted': False,
-    }
+def _emit_nnnext(source_id: str, target_id: str, edges: list) -> None:
+    edges.append(make_edge(
+        edge_id=_new_id(),
+        source=source_id,
+        target=target_id,
+        type_="NNNext",
+        data={"name": "next", "points": []},
+    ))
 
 
-def _emit_container_link(rel_type: str, source_id: str, target_id: str,
-                         relationships: Dict[str, Dict[str, Any]]) -> None:
-    """Emit an NNComposition or NNAssociation edge from an unowned element to the main NN container.
-
-    Used to wire Configuration → container (composition) and Dataset →
-    container (association); without these the round-trip drops the
-    visual edges between the NN and its training/test data and config.
-    """
-    rel_id = _new_id()
-    relationships[rel_id] = {
-        'id': rel_id,
-        'name': '',
-        'type': rel_type,
-        'owner': None,
-        'bounds': {'x': 0, 'y': 0, 'width': 10, 'height': 100},
-        'path': [{'x': 5, 'y': 100}, {'x': 5, 'y': 0}],
-        'source': {'direction': 'Up', 'element': source_id, 'multiplicity': '', 'role': ''},
-        'target': {'direction': 'Down', 'element': target_id, 'multiplicity': '', 'role': ''},
-        'isManuallyLayouted': False,
-    }
+def _emit_container_link(rel_type: str, source_id: str, target_id: str, edges: list) -> None:
+    edges.append(make_edge(
+        edge_id=_new_id(),
+        source=source_id,
+        target=target_id,
+        type_=rel_type,
+        data={"points": []},
+        source_handle="Up",
+        target_handle="Down",
+    ))
 
 
-def _emit_configuration(config: Configuration, x: int, y: int,
-                        elements: Dict[str, Dict[str, Any]]) -> str:
-    element_id = _new_id()
-    attr_ids: List[str] = []
-    attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
-    for field, value, attr_type_hint, mandatory in _configuration_fields(config):
-        attr = _make_attr(element_id, field, value, 'Configuration', attr_bounds,
-                          attr_type_hint=attr_type_hint, mandatory=mandatory)
-        elements[attr['id']] = attr
-        attr_ids.append(attr['id'])
-    elements[element_id] = {
-        'id': element_id,
-        'name': 'Configuration',
-        'type': 'Configuration',
-        'owner': None,
-        'bounds': {'x': x, 'y': y, 'width': 160, 'height': 200},
-        'attributes': attr_ids,
-        'methods': [],
-    }
-    return element_id
+def _emit_configuration_node(config: Configuration, x: int, y: int, nodes: list) -> str:
+    node_id = _new_id()
+    attrs = _attrs_dict(_configuration_fields(config))
+    nodes.append(make_node(
+        node_id=node_id,
+        type_="Configuration",
+        data={"name": "Configuration", "attributes": attrs},
+        position={"x": x, "y": y},
+        width=160,
+        height=200,
+    ))
+    return node_id
 
 
-def _emit_dataset(dataset: Dataset, parent_type: str, x: int, y: int,
-                  elements: Dict[str, Dict[str, Any]]) -> str:
-    element_id = _new_id()
-    attr_ids: List[str] = []
-    attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
-    for field, value, attr_type_hint, mandatory in _dataset_fields(dataset):
-        attr = _make_attr(element_id, field, value, 'Dataset', attr_bounds,
-                          attr_type_hint=attr_type_hint, mandatory=mandatory)
-        elements[attr['id']] = attr
-        attr_ids.append(attr['id'])
-    elements[element_id] = {
-        'id': element_id,
-        'name': parent_type,
-        'type': parent_type,
-        'owner': None,
-        'bounds': {'x': x, 'y': y, 'width': 110, 'height': 110},
-        'attributes': attr_ids,
-        'methods': [],
-    }
-    return element_id
+def _emit_dataset_node(dataset: Dataset, parent_type: str, x: int, y: int, nodes: list) -> str:
+    node_id = _new_id()
+    attrs = _attrs_dict(_dataset_fields(dataset))
+    nodes.append(make_node(
+        node_id=node_id,
+        type_=parent_type,
+        data={"name": parent_type, "attributes": attrs},
+        position={"x": x, "y": y},
+        width=200,
+        height=120,
+    ))
+    return node_id
 
 
-def _emit_nn_container(nn: NN, y_base: int,
-                       elements: Dict[str, Dict[str, Any]],
-                       relationships: Dict[str, Dict[str, Any]],
+def _emit_nn_container(nn: NN, y_base: int, nodes: list, edges: list,
                        sub_nn_ids: Optional[Dict[int, str]] = None) -> str:
-    """
-    Emit a container holding the modules of a single NN.
-    Returns the container id. Lays out modules left-to-right with NNNext relationships.
-    """
     step = 140
     module_count = max(len(nn.modules), 1)
     width = 30 + module_count * step
     container_x = -width // 2
-    container_id = _emit_container(nn.name, container_x, y_base,
-                                    width=width, height=250, elements=elements)
+    container_id = _emit_container_node(nn.name, container_x, y_base, width, 250, nodes)
 
     prev_id: Optional[str] = None
     for i, module in enumerate(nn.modules):
         x = container_x + 20 + i * step
         y = y_base + 60
         module_type = type(module).__name__
-        # Pass sub_nn_ids through even when we recurse into a sub-NN's own
-        # container, so nested ``NN``-in-``modules`` entries route to
-        # _emit_nn_reference instead of _emit_module (which would KeyError
-        # on ``_MODULE_TYPE_MAP['NN']``). Keyed by id(module), not name —
-        # two sibling sub-NNs with identical display names are still distinct
-        # objects and must resolve to their own containers.
         if module_type == 'NN' and sub_nn_ids and id(module) in sub_nn_ids:
-            element_id = _emit_nn_reference(module.name, container_id, x, y, elements)
+            element_id = _emit_nn_reference_node(module.name, container_id, x, y, nodes)
         else:
-            element_id = _emit_module(module, container_id, x, y, elements)
+            element_id = _emit_module_node(module, container_id, x, y, nodes)
         if prev_id is not None:
-            _emit_nnnext(prev_id, element_id, relationships)
+            _emit_nnnext(prev_id, element_id, edges)
         prev_id = element_id
 
     return container_id
 
 
 def _collect_all_sub_nns(nn_model: NN) -> list:
-    """Return every transitively-reachable sub-NN in DFS post-order.
-
-    Ensures deeply nested NNReferences (A → B → C) resolve — each level gets
-    its own container emitted, not just the top-level sub_nns list.
-    """
     ordered: list = []
     seen: set = set()
 
@@ -548,75 +425,47 @@ def _collect_all_sub_nns(nn_model: NN) -> list:
 
 
 def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
-    """
-    Convert a BUML NN instance into a web-editor NNDiagram model dict
-    (the inner `model` payload).
-    """
-    # Deterministic IDs: reset the per-conversion counter so the same input
-    # produces the same JSON bytes on every call (helpful for round-trip tests
-    # and for diffing BUML-to-JSON output).
+    """Convert a BUML NN instance into the v4 NNDiagram model dict."""
     _reset_id_state()
-    elements: Dict[str, Dict[str, Any]] = {}
-    relationships: Dict[str, Dict[str, Any]] = {}
+    nodes: list = []
+    edges: list = []
 
-    # Emit every transitively-reachable sub-NN, not just the top-level list.
-    # The processor traverses NNReferences at any depth; we must emit a
-    # container for each one or the resulting NNReferences in deeper
-    # containers won't resolve on round-trip.
-    # Keyed by id(sub_nn) — two sibling sub-NNs with the same display name
-    # are still distinct objects; keying by name would let the second
-    # overwrite the first and silently reroute references (mirrors the
-    # iter-7 id-based bookkeeping in nn_model_builder).
     sub_nn_ids: Dict[int, str] = {}
     y_cursor = -700
     for sub_nn in _collect_all_sub_nns(nn_model):
-        # Build sub_nn_ids incrementally so a sub-NN's own container can
-        # reference deeper sub-NNs already emitted.
-        cid = _emit_nn_container(sub_nn, y_cursor, elements, relationships, sub_nn_ids=sub_nn_ids)
+        cid = _emit_nn_container(sub_nn, y_cursor, nodes, edges, sub_nn_ids=sub_nn_ids)
         sub_nn_ids[id(sub_nn)] = cid
         y_cursor += 300
 
-    # Main container
-    main_container_id = _emit_nn_container(nn_model, y_cursor, elements, relationships, sub_nn_ids=sub_nn_ids)
+    main_container_id = _emit_nn_container(nn_model, y_cursor, nodes, edges, sub_nn_ids=sub_nn_ids)
 
-    # Configuration (unowned, placed to the right) — composed into the main NN
     if nn_model.configuration is not None:
-        config_id = _emit_configuration(nn_model.configuration, x=700, y=y_cursor, elements=elements)
-        _emit_container_link('NNComposition', config_id, main_container_id, relationships)
+        config_id = _emit_configuration_node(nn_model.configuration, 700, y_cursor, nodes)
+        _emit_container_link('NNComposition', config_id, main_container_id, edges)
 
-    # Datasets (unowned, placed below) — associated with the main NN
     ds_x = -400
     ds_y = y_cursor + 350
     if getattr(nn_model, 'train_data', None) is not None:
-        train_id = _emit_dataset(nn_model.train_data, 'TrainingDataset', ds_x, ds_y, elements)
-        _emit_container_link('NNAssociation', train_id, main_container_id, relationships)
+        train_id = _emit_dataset_node(nn_model.train_data, 'TrainingDataset', ds_x, ds_y, nodes)
+        _emit_container_link('NNAssociation', train_id, main_container_id, edges)
         ds_x += 300
     if getattr(nn_model, 'test_data', None) is not None:
-        test_id = _emit_dataset(nn_model.test_data, 'TestDataset', ds_x, ds_y, elements)
-        _emit_container_link('NNAssociation', test_id, main_container_id, relationships)
+        test_id = _emit_dataset_node(nn_model.test_data, 'TestDataset', ds_x, ds_y, nodes)
+        _emit_container_link('NNAssociation', test_id, main_container_id, edges)
 
-    v3_result = {
-        'version': '3.0.0',
-        'type': 'NNDiagram',
-        'size': {'width': 1520, 'height': 800},
-        'interactive': {'elements': {}, 'relationships': {}},
-        'elements': elements,
-        'relationships': relationships,
-        'assessments': {},
+    return {
+        "version": "4.0.0",
+        "type": "NNDiagram",
+        "title": "",
+        "size": {"width": 1520, "height": 800},
+        "nodes": nodes,
+        "edges": edges,
+        "interactive": {"elements": {}, "relationships": {}},
+        "assessments": {},
     }
-    from besser.utilities.web_modeling_editor.backend.services.converters._shape_normalizer import (
-        v3_to_v4_model,
-    )
-    return v3_to_v4_model(v3_result, diagram_type='NNDiagram', title='')
 
 
 def _nn_add_method_whitelist():
-    """Instance methods callable at top level on an already-constructed value.
-
-    Kept narrow on purpose: only the add_* builder methods and a couple of
-    harmless configuration setters. Anything else (e.g. ``__class__``
-    traversals or ``os.system``) is rejected by the AST visitor.
-    """
     return {
         'add_layer', 'add_tensor_op', 'add_sub_nn',
         'add_configuration', 'add_train_data', 'add_test_data',
@@ -624,27 +473,7 @@ def _nn_add_method_whitelist():
 
 
 def _parse_nn_buml_ast(content: str, nn_module):
-    """Safely reconstruct an NN model from Python-looking BUML.
-
-    Replaces the previous ``exec()``-based parser with an ``ast.parse`` +
-    whitelist visitor. Only a handful of top-level statement shapes survive:
-
-    - ``import …`` / ``from … import …``      — skipped (metamodel names
-      are resolved from ``nn_module`` directly via the allowlist)
-    - ``name = <expr>``                       — simple-target assignment
-    - ``obj.add_*(…)``                        — builder method call
-
-    And only these expression shapes are evaluable: Constant, Name (bound
-    to a prior assignment OR to a whitelisted metamodel class), List /
-    Tuple / Dict of allowed expressions, unary minus, and Call where the
-    callable is a whitelisted class.
-
-    This stops the classic sandbox escape ``().__class__.__bases__[0]
-    .__subclasses__()`` because ``Attribute`` access on arbitrary values
-    is not evaluable — only the ``x.add_*(…)`` top-level method-call
-    pattern reaches ``getattr``, and the method name itself is
-    whitelisted.
-    """
+    """Safely reconstruct an NN model from Python-looking BUML."""
     allowed_classes = {
         name: getattr(nn_module, name)
         for name in dir(nn_module) if not name.startswith('_')
@@ -671,7 +500,6 @@ def _parse_nn_buml_ast(content: str, nn_module):
                     )
             return [_eval(e, env) for e in node.elts]
         if isinstance(node, ast.Dict):
-            # ``{**other}`` encodes as a Dict whose key is ``None``.
             for k in node.keys:
                 if k is None:
                     raise ValueError(
@@ -689,9 +517,6 @@ def _parse_nn_buml_ast(content: str, nn_module):
                     )
             return {_eval(e, env) for e in node.elts}
         if isinstance(node, ast.Call):
-            # Only allow calls whose callable is a whitelisted metamodel
-            # class — reject every attribute-based call (``foo.bar(…)``)
-            # except in the statement-level ``obj.add_*`` dispatcher below.
             if not isinstance(node.func, ast.Name):
                 raise ValueError(
                     "Only calls to whitelisted NN metamodel classes are "
@@ -703,21 +528,15 @@ def _parse_nn_buml_ast(content: str, nn_module):
                 raise ValueError(
                     f"Call to non-whitelisted class {node.func.id!r}"
                 )
-            # Reject ``*args`` / ``**kwargs`` splats explicitly so an obscure
-            # downstream "missing required argument" doesn't hide what the
-            # visitor is refusing. The previous silent-drop behavior meant
-            # ``Conv2D(**malicious_dict)`` produced a cryptic metamodel error.
             for a in node.args:
                 if isinstance(a, ast.Starred):
                     raise ValueError(
-                        "Positional *args unpacking is not supported in NN BUML; "
-                        "pass arguments explicitly."
+                        "Positional *args unpacking is not supported in NN BUML."
                     )
             for kw in node.keywords:
                 if kw.arg is None:
                     raise ValueError(
-                        "**kwargs unpacking is not supported in NN BUML; "
-                        "pass keyword arguments explicitly."
+                        "**kwargs unpacking is not supported in NN BUML."
                     )
             args = [_eval(a, env) for a in node.args]
             kwargs = {kw.arg: _eval(kw.value, env) for kw in node.keywords}
@@ -728,28 +547,20 @@ def _parse_nn_buml_ast(content: str, nn_module):
 
     def _run_stmt(stmt, env):
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
-            return  # silently skipped; all metamodel names are already in scope
+            return
         if isinstance(stmt, ast.Assign):
-            # Validate targets BEFORE evaluating value, so an attribute-target
-            # assignment (``obj.x = ...``) is rejected without running the
-            # right-hand side (which might construct an NN object with side
-            # effects).
             for target in stmt.targets:
                 if not isinstance(target, ast.Name):
                     raise ValueError(
-                        "Only simple-name assignment targets are allowed "
-                        "in NN BUML."
+                        "Only simple-name assignment targets are allowed in NN BUML."
                     )
             value = _eval(stmt.value, env)
             for target in stmt.targets:
                 env[target.id] = value
             return
         if isinstance(stmt, ast.Expr):
-            # Top-level expression — most commonly an ``obj.add_*(…)``
-            # builder call. Docstrings and other bare expressions are
-            # ignored.
             if isinstance(stmt.value, ast.Constant):
-                return  # docstring or stray literal
+                return
             if isinstance(stmt.value, ast.Call) and \
                     isinstance(stmt.value.func, ast.Attribute) and \
                     isinstance(stmt.value.func.value, ast.Name):
@@ -762,14 +573,12 @@ def _parse_nn_buml_ast(content: str, nn_module):
                 for a in stmt.value.args:
                     if isinstance(a, ast.Starred):
                         raise ValueError(
-                            "Positional *args unpacking is not supported in "
-                            "NN BUML add_* builder calls."
+                            "Positional *args unpacking is not supported in NN BUML add_* builder calls."
                         )
                 for kw in stmt.value.keywords:
                     if kw.arg is None:
                         raise ValueError(
-                            "**kwargs unpacking is not supported in NN BUML "
-                            "add_* builder calls."
+                            "**kwargs unpacking is not supported in NN BUML add_* builder calls."
                         )
                 target = _eval(stmt.value.func.value, env)
                 args = [_eval(a, env) for a in stmt.value.args]
@@ -797,12 +606,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
 
 
 def nn_buml_to_json(content: str) -> Dict[str, Any]:
-    """Convert an NN model Python section to the editor NNDiagram model dict.
-
-    Uses an ``ast.parse`` whitelist visitor rather than ``exec`` so that
-    uploaded BUML content cannot escape the sandbox (``().__class__.__bases__
-    .__subclasses__()``-style tricks) or run arbitrary system calls.
-    """
+    """Convert NN BUML Python source to the v4 NNDiagram model dict."""
     import besser.BUML.metamodel.nn as nn_module
 
     env = _parse_nn_buml_ast(content, nn_module)
@@ -811,11 +615,6 @@ def nn_buml_to_json(content: str) -> Dict[str, Any]:
     if not all_nns:
         raise ValueError("No NN instance found in the NN BUML content")
 
-    # Build the `referenced` set transitively — every NN that appears anywhere
-    # in any NN's sub_nns tree, not just direct children. Without this, a
-    # grandchild sub-NN bound to a local variable (``c = NN(...)`` inside a
-    # BUML file where only ``a.add_sub_nn(b); b.add_sub_nn(c)`` appears)
-    # would be counted as top-level and trigger the multi-top-level error.
     referenced: set = set()
     _walk_stack = list(all_nns)
     while _walk_stack:
@@ -827,8 +626,6 @@ def nn_buml_to_json(content: str) -> Dict[str, Any]:
             _walk_stack.append(sub)
     main_nns = [nn for nn in all_nns if id(nn) not in referenced]
     if len(main_nns) > 1:
-        # Symmetric with the processor (which already rejects this case);
-        # silently picking one of several top-level NNs is surprising.
         names = ', '.join(sorted(n.name for n in main_nns))
         raise ValueError(
             f"NN BUML contains {len(main_nns)} top-level NN instances "
@@ -836,8 +633,6 @@ def nn_buml_to_json(content: str) -> Dict[str, Any]:
             f"add_sub_nn(...) to mark them as sub-networks."
         )
     if not main_nns:
-        # Every NN is referenced by another → cyclic; the processor raises
-        # the same way, keep the messages aligned.
         raise ValueError(
             "NN BUML has no top-level NN: every NN instance is referenced "
             "as a sub-network by another. Remove one of the add_sub_nn "

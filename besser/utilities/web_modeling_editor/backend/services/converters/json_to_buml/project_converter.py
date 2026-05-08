@@ -41,15 +41,15 @@ def _is_valid_diagram(diag, diagram_type):
         cols = data.get("cols") if isinstance(data, dict) else getattr(model, "cols", None)
         return cols is not None  # Empty list is valid
 
-    # Standard element-based diagrams. Accept both the v3 ``elements``
-    # shape and the v4 ``nodes`` shape — see uml-v4-shape.md.
+    # Standard element-based diagrams accept the v4 ``nodes`` shape. The
+    # editor migrator at ``packages/library/lib/utils/versionConverter.ts``
+    # is the only place v3 is converted to v4 in the system; the backend
+    # never sees v3.
     if isinstance(data, dict):
-        if data.get("nodes"):
-            return True
-        elements = data.get("elements")
+        nodes = data.get("nodes")
     else:
-        elements = getattr(model, "nodes", None) or getattr(model, "elements", None)
-    return bool(elements)
+        nodes = getattr(model, "nodes", None)
+    return bool(nodes)
 
 
 def _collect_valid_diagrams(project):

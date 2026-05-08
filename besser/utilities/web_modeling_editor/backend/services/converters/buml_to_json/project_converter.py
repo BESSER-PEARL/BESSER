@@ -36,16 +36,11 @@ ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STAT
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
-    """
-    Create an empty model template for the specified diagram type.
+    """Create an empty model template for the given diagram type.
 
-    Args:
-        diagram_type: Type of diagram to create empty model for
-
-    Returns:
-        Dictionary representing empty model structure
+    Returns the v4 wire shape (``{nodes, edges}``) for Apollon-driven
+    diagrams; ``GUINoCodeDiagram`` keeps its bespoke shape.
     """
-    # GUINoCodeDiagram has a different structure with pages instead of elements
     if diagram_type == "GUINoCodeDiagram":
         return {
             "version": "3.0.0",
@@ -58,11 +53,11 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
         }
 
     return {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "type": diagram_type,
         "size": {"width": 1400, "height": 740},
-        "elements": {},
-        "relationships": {},
+        "nodes": [],
+        "edges": [],
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {}
     }

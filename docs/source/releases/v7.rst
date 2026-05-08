@@ -4,6 +4,10 @@ Version 7
 .. toctree::
    :maxdepth: 1
 
+   v7/v7.6.0
+   v7/v7.5.1
+   v7/v7.5.0
+   v7/v7.4.1
    v7/v7.4.0
    v7/v7.3.0
    v7/v7.2.0

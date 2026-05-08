@@ -1,0 +1,57 @@
+Version 7.4.1
+=============
+
+Patch release: **internal cleanup — drop the legacy ``packages/webapp`` and
+rename ``packages/webapp2`` to ``packages/webapp``** in the Web Modeling
+Editor frontend. No user-visible behavior changes, no API changes, no
+metamodel changes — this is a tidy-up that removes dead code and restores
+the canonical package name.
+
+Highlights
+----------
+
+- **Frontend monorepo simplification.** The legacy Webpack + Bootstrap
+  ``packages/webapp`` package — kept on disk "for reference only" since
+  the v7 redesign — is now removed. The active React + Vite + Radix UI app
+  that previously lived under ``packages/webapp2`` is renamed to
+  ``packages/webapp`` so the canonical workspace name reflects what users
+  actually run. Build artefacts now land in ``build/webapp/`` instead of
+  ``build/webapp2/``; the standalone ``packages/server`` reads from the
+  new path directly (the legacy fallback was deleted).
+- **Documentation sweep.** Every reference to ``webapp2`` across both
+  repositories is now ``webapp`` — frontend ``README.md``, ``CLAUDE.md``,
+  ``CONTRIBUTING.md``; the backend ``docs/source/contributing/`` RSTs;
+  and 15 frontend Sphinx RSTs (``overview/``, ``contributing/``,
+  ``editor/``, ``reference/``, ``webapp/``). Stale "this package is
+  deprecated and will be removed" warnings are gone too.
+- **Documentation polish (separate from the rename).** Tightened the
+  backend's ``README.md``, ``CONTRIBUTING.md``, ``DEVELOPMENT_SETUP.md``,
+  and ``CLAUDE.md`` in three small ways: the repository URL is now the
+  canonical Title-Case ``BESSER-Web-Modeling-Editor`` (GitHub still
+  redirects the old all-caps form, but the new form is what we ship);
+  the Node version requirement in the backend ``CONTRIBUTING.md`` is now
+  ``Node.js 20+`` to match the frontend repo's CI matrix; and
+  ``docker-compose`` (Compose v1 syntax) is replaced with the v2 form
+  ``docker compose`` in setup instructions.
+
+Compatibility
+-------------
+
+* No public API change. The published ``@besser/wme`` npm package
+  (the editor) is untouched; only the internal monorepo workspace name
+  changed.
+* No metamodel, generator, or backend API change.
+* Anyone who scripted ``npm run *:webapp2`` against this monorepo will
+  need to switch to ``npm run *:webapp``. ``npm run dev``, ``npm run
+  build``, ``npm run test``, and ``npm run lint`` continue to work
+  unchanged — they were already aliases that covered both names.
+
+Testing
+-------
+
+* Frontend: ``npm run build`` produces ``build/webapp/`` and
+  ``build/server/`` cleanly under the renamed workspace.
+* Frontend: 55 perspective unit tests (``project.test.ts``,
+  ``HiddenPerspectivesBanner.test.tsx``, ``ProjectSettingsPanel.test.tsx``,
+  ``WorkspaceSidebar.test.tsx``) green.
+* Backend: no Python code changed; the existing test suite still applies.

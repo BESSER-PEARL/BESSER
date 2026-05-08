@@ -79,6 +79,45 @@ The *Deploy chatbot* action reuses the same pipeline to push a standalone,
 Streamlit-based agent to a GitHub repository with a ready-to-use Render
 blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
 
+Neural Network Diagram
+----------------------
+
+The editor supports neural network architecture modeling through the *NN*
+diagram type. The underlying B-UML model captures layers, tensor operations,
+and training metadata in a form that the code generators use to produce
+runnable training code.
+
+- **Layers** cover the standard catalog (Conv1D/2D/3D, Pooling,
+  SimpleRNN/LSTM/GRU, Linear, Flatten, Embedding, Dropout, LayerNorm,
+  BatchNorm). Each layer carries the parameters needed to define it, such
+  as ``kernel_dim``, ``hidden_size`` or ``return_type``.
+- **Tensor operations** (``concatenate``, ``multiply``, ``matmultiply``,
+  ``reshape``, ``transpose``, ``permute``) compose layer outputs and are
+  placed inline with layers in the same container.
+- **NNContainer** holds the modules of a neural network. A diagram has one
+  top-level container and may include additional containers used as
+  sub-networks, linked into the main one via **NNReference** elements.
+- **NNNext** relationships order modules within a container, defining the
+  flow of data through the network.
+- **Training Dataset** and **Test Dataset** elements describe the data
+  feeding into the model: name, path, task type
+  (``binary``/``multi_class``/``regression``), and input format
+  (``csv``/``images``). When the input format is ``images``, an **Image**
+  element is attached to the dataset, holding the shape and an optional
+  normalization flag.
+- A **Configuration** element captures training hyperparameters: batch size,
+  epochs, learning rate, optimizer, loss function, metrics, plus optional
+  weight decay and momentum.
+
+The *Generate* menu offers four output variants: **PyTorch** or
+**TensorFlow**, each in **Subclassing** or **Sequential** form. Diagrams are
+checked against a set of metamodel rules (cross-reference integrity,
+identifier safety, numerical bounds, dataset consistency) and the
+**Validate** action surfaces any violations before code is generated. See
+:doc:`buml_language/model_types/nn` for the metamodel reference and
+:doc:`generators/pytorch` / :doc:`generators/tensorflow` for the generator
+details.
+
 Backend API Reference
 ---------------------
 

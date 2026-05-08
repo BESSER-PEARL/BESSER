@@ -145,6 +145,32 @@ SUMMARY: {'PASS': 17, 'FAIL': 0, 'SKIP': 2}
   JSON-to-BUML round trip is covered by
   `tests/utilities/web_modeling_editor/backend/test_v4_round_trip.py`.
 
+## Captured run log (sandbox, this branch)
+
+```
+[smoke] registry contains 19 generators
+[smoke] PASS  python         cat=object_oriented    size=     3043B files=   1  py=1/1
+[smoke] PASS  java           cat=object_oriented    size=     1264B files=   2  no .py files
+[smoke] PASS  pydantic       cat=object_oriented    size=      695B files=   1  py=1/1
+[smoke] SKIP  django         cat=web_framework      size=        0B files=   0  django-admin CLI not installed
+[smoke] PASS  backend        cat=web_framework      size=    27760B files=   4  py=3/3
+[smoke] PASS  web_app        cat=web_framework      size=   141573B files=  36  py=3/3
+[smoke] PASS  sqlalchemy     cat=database           size=     1666B files=   1  py=1/1
+[smoke] PASS  sql            cat=database           size=      284B files=   1  no .py files
+[smoke] PASS  jsonschema     cat=data_format        size=     2344B files=   1  no .py files
+[smoke] PASS  jsonobject     cat=object_model       size=      196B files=   1
+[smoke] PASS  agent          cat=ai_agent           size=     4557B files=   3  py=1/1
+[smoke] PASS  qiskit         cat=quantum            size=      880B files=   1  py=1/1
+[smoke] PASS  rdf            cat=data_format        size=     1096B files=   1  no .py files
+[smoke] PASS  rest_api       cat=web_framework      size=     5880B files=   3  py=2/2
+[smoke] PASS  react          cat=frontend           size=   114785B files=  29
+[smoke] PASS  flutter        cat=frontend           size=     8507B files=   2
+[smoke] SKIP  terraform      cat=deployment         size=        0B files=   0  no v4 deployment fixture (DeploymentModel + .conf required)
+[smoke] PASS  pytorch        cat=neural_network     size=      486B files=   1  py=1/1
+[smoke] PASS  tensorflow     cat=neural_network     size=      450B files=   1  py=1/1
+[smoke] SUMMARY: {'PASS': 17, 'FAIL': 0, 'SKIP': 2}
+```
+
 ## Next actions
 
 * Add a v4 quantum diagram fixture (`quantum_diagram_basic.json`) in a

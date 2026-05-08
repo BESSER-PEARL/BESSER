@@ -68,8 +68,8 @@
           "attributes": {
             "name": "l2",
             "pooling_type": "max",
-            "dimension": "2D",
-            "kernel_dim": "[2, 2]"
+            "kernel_dim": "[2, 2]",
+            "pooling.dimension": "2D"
           }
         },
         "parentId": "6feb868b-45bf-4c44-88ab-6af624191fa9"
@@ -117,8 +117,8 @@
           "attributes": {
             "name": "l4",
             "pooling_type": "max",
-            "dimension": "2D",
-            "kernel_dim": "[2, 2]"
+            "kernel_dim": "[2, 2]",
+            "pooling.dimension": "2D"
           }
         },
         "parentId": "6feb868b-45bf-4c44-88ab-6af624191fa9"

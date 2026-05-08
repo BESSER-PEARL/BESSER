@@ -150,9 +150,9 @@
                   "attributes": {
                     "name": "f2",
                     "pooling_type": "max",
-                    "dimension": "2D",
                     "kernel_dim": "[3, 3]",
-                    "stride_dim": "[2, 2]"
+                    "stride_dim": "[2, 2]",
+                    "pooling.dimension": "2D"
                   }
                 },
                 "parentId": "82874e6b-8bec-4e85-9e37-0c0c44910f7f"
@@ -201,9 +201,9 @@
                   "attributes": {
                     "name": "f4",
                     "pooling_type": "max",
-                    "dimension": "2D",
                     "kernel_dim": "[3, 3]",
-                    "stride_dim": "[2, 2]"
+                    "stride_dim": "[2, 2]",
+                    "pooling.dimension": "2D"
                   }
                 },
                 "parentId": "82874e6b-8bec-4e85-9e37-0c0c44910f7f"
@@ -304,9 +304,9 @@
                   "attributes": {
                     "name": "f8",
                     "pooling_type": "max",
-                    "dimension": "2D",
                     "kernel_dim": "[3, 3]",
-                    "stride_dim": "[2, 2]"
+                    "stride_dim": "[2, 2]",
+                    "pooling.dimension": "2D"
                   }
                 },
                 "parentId": "82874e6b-8bec-4e85-9e37-0c0c44910f7f"
@@ -497,8 +497,8 @@
                   "attributes": {
                     "name": "p1",
                     "pooling_type": "adaptive_average",
-                    "dimension": "2D",
-                    "output_dim": "[6, 6]"
+                    "output_dim": "[6, 6]",
+                    "pooling.dimension": "2D"
                   }
                 },
                 "parentId": "f27bd4bd-6984-4826-aa9a-00993403695f"

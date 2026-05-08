@@ -278,12 +278,29 @@ def _dataset_fields(dataset: Dataset) -> List[Tuple[str, Any, str, bool]]:
     return fields
 
 
-def _attrs_dict(fields: List[Tuple[str, Any, str, bool]]) -> dict:
-    """Collapse the field list into the v4 ``data.attributes`` dict."""
+def _attrs_dict(fields: List[Tuple[str, Any, str, bool]], layer_kind: str | None = None) -> dict:
+    """Collapse the field list into the v4 ``data.attributes`` dict.
+
+    Some attribute slugs collide across layer kinds (e.g. ``dimension`` lives
+    on both PoolingLayer and BatchNormalizationLayer with different semantics).
+    The frontend disambiguates via ``qualifySlug(layerKind, slug)``; mirror the
+    same prefix when emitting so v4 round-trips on both sides.
+    """
     out: dict = {}
+    prefix = _LAYER_KIND_PREFIX.get(layer_kind or '')
     for field_name, value, _hint, _mandatory in fields:
-        out[field_name] = _fmt_value(value)
+        key = f'{prefix}.{field_name}' if (prefix is not None and field_name in _COLLIDING_SLUGS) else field_name
+        out[key] = _fmt_value(value)
     return out
+
+
+# Keep in sync with json_to_buml/nn_diagram_processor.py and the frontend
+# qualifySlug() helper.
+_COLLIDING_SLUGS = frozenset({'dimension'})
+_LAYER_KIND_PREFIX = {
+    'PoolingLayer': 'pooling',
+    'BatchNormalizationLayer': 'batch_normalization',
+}
 
 
 def _emit_module_node(module, parent_id: str, x: int, y: int, nodes: list) -> str:
@@ -294,7 +311,7 @@ def _emit_module_node(module, parent_id: str, x: int, y: int, nodes: list) -> st
             f"Cannot emit module of type {cls!r}: no mapping to v4 node type."
         )
     node_id = _new_id()
-    attrs = _attrs_dict(_module_fields(module))
+    attrs = _attrs_dict(_module_fields(module), layer_kind=parent_type)
     nodes.append(make_node(
         node_id=node_id,
         type_=parent_type,

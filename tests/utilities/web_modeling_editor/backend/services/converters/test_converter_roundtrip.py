@@ -1477,15 +1477,19 @@ class TestNNDiagramRoundtrip:
         assert attrs.get("embedding_dim") == "64"
 
     def test_batchnorm_roundtrip(self):
+        # Input fixture uses the qualified slug per the v4 wire spec — the
+        # `dimension` key collides between PoolingLayer and
+        # BatchNormalizationLayer, so the frontend / backend disambiguate via
+        # `<layer_kind>.<slug>` (see _LAYER_KIND_PREFIX).
         payload = self._single_layer_json("BatchNormalizationLayer", {
-            "name": "bn", "num_features": "64", "dimension": "2D",
+            "name": "bn", "num_features": "64", "batch_normalization.dimension": "2D",
         })
         out = self._roundtrip(payload)
         bn = _nodes_by_type(out, "BatchNormalizationLayer")
         assert bn
         attrs = _nn_layer_attrs(bn[0])
         assert attrs.get("num_features") == "64"
-        assert attrs.get("dimension") == "2D"
+        assert attrs.get("batch_normalization.dimension") == "2D"
 
     def test_layernorm_roundtrip(self):
         payload = self._single_layer_json("LayerNormalizationLayer", {
@@ -1519,16 +1523,17 @@ class TestNNDiagramRoundtrip:
         assert attrs.get("out_channels") == "16"
 
     def test_pooling_roundtrip(self):
+        # `dimension` is qualified to disambiguate from BatchNormalization.
         payload = self._single_layer_json("PoolingLayer", {
             "name": "pool", "pooling_type": "max",
-            "dimension": "2D", "kernel_dim": "[2, 2]",
+            "pooling.dimension": "2D", "kernel_dim": "[2, 2]",
         })
         out = self._roundtrip(payload)
         pool = _nodes_by_type(out, "PoolingLayer")
         assert pool
         attrs = _nn_layer_attrs(pool[0])
         assert attrs.get("pooling_type") == "max"
-        assert attrs.get("dimension") == "2D"
+        assert attrs.get("pooling.dimension") == "2D"
         assert attrs.get("kernel_dim") == "[2, 2]"
 
     def test_simple_rnn_roundtrip(self):
@@ -1629,7 +1634,7 @@ class TestNNDiagramRoundtrip:
     def test_pooling_invalid_pooling_type_lists_allowed_values(self):
         payload = self._single_layer_json("PoolingLayer", {
             "name": "p", "pooling_type": "avg",  # legacy / typo
-            "dimension": "2D",
+            "pooling.dimension": "2D",
         })
         with pytest.raises(ValueError, match=r"Allowed values"):
             process_nn_diagram(payload)

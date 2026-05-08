@@ -195,8 +195,8 @@
                   "attributes": {
                     "name": "l4",
                     "pooling_type": "max",
-                    "dimension": "1D",
-                    "kernel_dim": "[2]"
+                    "kernel_dim": "[2]",
+                    "pooling.dimension": "1D"
                   }
                 },
                 "parentId": "01face79-fc65-4b0e-8ae7-73aff2392dd6"
@@ -316,8 +316,8 @@
                   "attributes": {
                     "name": "l6",
                     "pooling_type": "max",
-                    "dimension": "1D",
-                    "kernel_dim": "[2]"
+                    "kernel_dim": "[2]",
+                    "pooling.dimension": "1D"
                   }
                 },
                 "parentId": "01face79-fc65-4b0e-8ae7-73aff2392dd6"

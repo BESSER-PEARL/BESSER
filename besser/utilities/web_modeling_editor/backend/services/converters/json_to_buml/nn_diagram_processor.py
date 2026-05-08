@@ -72,7 +72,7 @@ _ATTR_KEY_TO_NAME = {
     'PermuteInAttribute': 'permute_in',
     'PermuteOutAttribute': 'permute_out',
     'PoolingTypeAttribute': 'pooling_type',
-    'DimensionAttribute': 'dimension',
+    'DimensionAttribute': 'dimension',  # see _LAYER_KIND_PREFIX for qualified-slug disambiguation
     'OutputDimAttribute': 'output_dim',
     'HiddenSizeAttribute': 'hidden_size',
     'InputSizeAttribute': 'input_size',
@@ -111,6 +111,17 @@ _ATTR_KEY_TO_NAME = {
 }
 
 
+# Some attribute slugs collide across layer kinds (e.g. `dimension` exists on
+# both PoolingLayer and BatchNormalizationLayer with different semantics).
+# The frontend disambiguates via `qualifySlug(layerKind, slug)` →
+# `<prefix>.<slug>`. Mirror the same mapping here so v4 inputs round-trip.
+_COLLIDING_SLUGS = frozenset({'dimension'})
+_LAYER_KIND_PREFIX = {
+    'PoolingLayer': 'pooling',
+    'BatchNormalizationLayer': 'batch_normalization',
+}
+
+
 def get_element_attribute(node: dict, attr_key: str, elements_or_default=None, default=None):
     """Read a layer attribute.
 
@@ -146,10 +157,14 @@ def get_element_attribute(node: dict, attr_key: str, elements_or_default=None, d
     attrs = data.get("attributes") or {}
     if not isinstance(attrs, dict):
         return elements_or_default if elements_or_default is not None else default
-    return attrs.get(
-        name,
-        elements_or_default if elements_or_default is not None else default,
-    )
+    fallback = elements_or_default if elements_or_default is not None else default
+    if name in _COLLIDING_SLUGS:
+        prefix = _LAYER_KIND_PREFIX.get((node or {}).get('type', ''))
+        if prefix is not None:
+            qualified = f'{prefix}.{name}'
+            if qualified in attrs:
+                return attrs[qualified]
+    return attrs.get(name, fallback)
 
 
 def parse_tuple_or_int(value, default=None):

@@ -25,6 +25,14 @@ from besser.BUML.notations.kg_to_buml.kg_to_object_diagram import (
     ObjectConversionResult,
     kg_to_object_diagram,
 )
+from besser.BUML.notations.kg_to_buml.llm_cleanup import (
+    LLM_ALLOWED_KEYS,
+    ORPHAN_ALLOWED_KEYS,
+    analyze_kg_with_description,
+    build_kg_snapshot,
+    classify_orphan_nodes_with_llm,
+    parse_llm_suggestions,
+)
 from besser.BUML.notations.kg_to_buml.preflight import (
     KGAction,
     KGIssue,
@@ -34,6 +42,7 @@ from besser.BUML.notations.kg_to_buml.preflight import (
     kg_signature,
 )
 from besser.BUML.notations.kg_to_buml.resolutions import (
+    DeferredOrphanClassification,
     KGResolution,
     ResolutionError,
     apply_resolutions,
@@ -54,6 +63,13 @@ __all__ = [
     "kg_signature",
     "KGResolution",
     "ResolutionError",
+    "DeferredOrphanClassification",
     "apply_resolutions",
     "dispatch_decision",
+    "LLM_ALLOWED_KEYS",
+    "ORPHAN_ALLOWED_KEYS",
+    "analyze_kg_with_description",
+    "build_kg_snapshot",
+    "classify_orphan_nodes_with_llm",
+    "parse_llm_suggestions",
 ]

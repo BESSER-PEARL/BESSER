@@ -14,6 +14,7 @@ import importlib.util
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, File, UploadFile, Body, Form
 from fastapi.responses import Response
@@ -32,11 +33,17 @@ from besser.utilities.kg_to_owl import serialize_knowledge_graph
 
 # BESSER KG → B-UML (deterministic, offline)
 from besser.BUML.notations.kg_to_buml import (
+    DeferredOrphanClassification,
+    KGAction,
+    KGIssue,
+    KGPreflightReport,
     KGResolution,
     ResolutionError,
     analyze_kg_for_class_diagram,
     analyze_kg_for_object_diagram,
+    analyze_kg_with_description,
     apply_resolutions,
+    classify_orphan_nodes_with_llm,
     dispatch_decision,
     kg_signature,
     kg_to_class_diagram as kg_to_class_diagram_buml,
@@ -775,11 +782,19 @@ def _enforce_signature(input_data: DiagramInput, kg) -> None:
         )
 
 
-def _apply_v2_decisions(kg, decisions, analyzer):
+def _apply_v2_decisions(kg, decisions, analyzer, *, deferred_orphan_node_ids=None):
     """Apply v2-style ``[{issueId, decision}]`` choices.
 
     Re-runs the preflight on ``kg``, looks up each issue by id, dispatches its
     recommended/skip action. Returns the resolved KG (deep copy mutated).
+
+    If ``deferred_orphan_node_ids`` is a list, the deferred-LLM action
+    (``defer_to_llm_classification``) does not abort the loop — its node ids
+    are accumulated into the list and the orphans stay in the KG so the AI
+    tab can classify them next. Without that argument the deferred handler
+    raises and the request fails (preserving back-compat with the legacy
+    ``/kg-to-class-diagram`` / ``/kg-to-object-diagram`` paths, which
+    don't surface the deferred branch to the user).
     """
     report = analyzer(kg)
     issues_by_id = {i.id: i for i in report.issues}
@@ -798,6 +813,19 @@ def _apply_v2_decisions(kg, decisions, analyzer):
             continue
         try:
             resolved_kg = dispatch_decision(resolved_kg, issue, decision)
+        except DeferredOrphanClassification as deferred:
+            if deferred_orphan_node_ids is None:
+                # No deferred channel available — propagate as a conversion error.
+                raise ConversionError(
+                    "An orphan-classification decision was deferred to the LLM, "
+                    "but this endpoint cannot route deferred decisions. Use "
+                    "/apply-kg-refinement instead."
+                ) from deferred
+            # Deferred → KG unchanged; accumulate node ids and continue.
+            for nid in deferred.node_ids:
+                if nid not in deferred_orphan_node_ids:
+                    deferred_orphan_node_ids.append(nid)
+            continue
         except ResolutionError as exc:
             raise ConversionError(str(exc)) from exc
         # Refresh the issues map after each apply: the topology has shifted.
@@ -938,6 +966,322 @@ async def kg_to_object_diagram_endpoint(input_data: DiagramInput):
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
     }
+
+
+# ----------------------------------------------------------------------
+# LLM-driven KG cleanup
+# ----------------------------------------------------------------------
+
+
+def _issues_payload_to_objects(payload: Any) -> Dict[str, KGIssue]:
+    """Reconstruct KGIssue / KGAction objects from the JSON shape returned by
+    ``/llm-clean-kg``. Returns a dict keyed by issue id for fast lookup."""
+    if not isinstance(payload, list):
+        return {}
+    out: Dict[str, KGIssue] = {}
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        issue_id = entry.get("id")
+        code = entry.get("code") or "LLM_CLEANUP"
+        description = entry.get("description") or ""
+        affected_node_ids = list(entry.get("affectedNodeIds") or entry.get("affected_node_ids") or [])
+        affected_edge_ids = list(entry.get("affectedEdgeIds") or entry.get("affected_edge_ids") or [])
+        recommended = _action_payload_to_object(entry.get("recommendedAction") or entry.get("recommended_action"))
+        skip = _action_payload_to_object(entry.get("skipAction") or entry.get("skip_action"))
+        if not issue_id or recommended is None:
+            continue
+        out[issue_id] = KGIssue(
+            id=issue_id,
+            code=code,
+            description=description,
+            affected_node_ids=affected_node_ids,
+            affected_edge_ids=affected_edge_ids,
+            recommended_action=recommended,
+            skip_action=skip if skip is not None else KGAction(key="noop", parameters={}, label="Keep as-is"),
+        )
+    return out
+
+
+def _action_payload_to_object(action: Any) -> Optional[KGAction]:
+    if not isinstance(action, dict):
+        return None
+    key = action.get("key")
+    if not key:
+        return None
+    parameters = action.get("parameters") or {}
+    if not isinstance(parameters, dict):
+        parameters = {}
+    label = action.get("label") or ""
+    return KGAction(key=key, parameters=parameters, label=label)
+
+
+def _apply_llm_decisions(
+    kg,
+    issues_payload: Optional[List[Dict[str, Any]]],
+    decisions: Optional[List[Dict[str, Any]]],
+    *,
+    deferred_orphan_node_ids=None,
+):
+    """Apply round-tripped LLM-issue decisions to a deep-copied KG.
+
+    Unlike :func:`_apply_v2_decisions`, this does NOT re-run the analyzer
+    between decisions: re-calling the LLM per decision would be slow,
+    non-deterministic, and unnecessary because the issue list is already
+    a contract between client and server.
+
+    Symmetrical with :func:`_apply_v2_decisions`: ``deferred_orphan_node_ids``
+    enables routing the deferred-LLM action through ``pendingOrphanClassification``.
+    """
+    if not decisions:
+        return kg
+    issues_by_id = _issues_payload_to_objects(issues_payload or [])
+    if not issues_by_id:
+        raise ConversionError(
+            "No 'llmIssues' provided; the LLM-cleanup apply endpoint needs the "
+            "issue list returned by /llm-clean-kg."
+        )
+    resolved = kg
+    for entry in decisions:
+        if not isinstance(entry, dict):
+            continue
+        issue_id = entry.get("issueId") or entry.get("issue_id")
+        decision = entry.get("decision")
+        if not issue_id or decision not in {"accept", "skip"}:
+            raise ConversionError(
+                "Each LLM decision must include 'issueId' and 'decision' ('accept' or 'skip')."
+            )
+        issue = issues_by_id.get(issue_id)
+        if issue is None:
+            # Issue not in the round-tripped list — tolerate silently.
+            continue
+        try:
+            resolved = dispatch_decision(resolved, issue, decision)
+        except DeferredOrphanClassification as deferred:
+            if deferred_orphan_node_ids is None:
+                raise ConversionError(
+                    "Orphan-classification deferral is not supported on this endpoint."
+                ) from deferred
+            for nid in deferred.node_ids:
+                if nid not in deferred_orphan_node_ids:
+                    deferred_orphan_node_ids.append(nid)
+            continue
+        except ResolutionError as exc:
+            raise ConversionError(str(exc)) from exc
+    return resolved
+
+
+@router.post("/llm-clean-kg")
+@handle_endpoint_errors("llm_clean_kg")
+async def llm_clean_kg_endpoint(
+    diagram: str = Form(...),
+    description: str = Form(...),
+    api_key: str = Form(...),
+    model: str = Form("gpt-4o"),
+):
+    """Ask GPT-4o for KG cleanup suggestions targeted at a described system.
+
+    The frontend POSTs the active KG diagram (JSON-encoded as the ``diagram``
+    field), the natural-language description of the system the user wants
+    to build, and an OpenAI API key. The response is a
+    :class:`KGPreflightReport`-shaped JSON the frontend renders through the
+    existing accept/skip suggestion UI.
+    """
+    if not description or not description.strip():
+        raise HTTPException(status_code=400, detail="A non-empty description is required.")
+    if not api_key or not api_key.strip():
+        raise HTTPException(status_code=400, detail="An OpenAI API key is required.")
+    try:
+        diagram_payload = json.loads(diagram)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in 'diagram': {exc}") from exc
+    try:
+        diagram_input = DiagramInput.model_validate(diagram_payload)
+    except Exception as exc:  # pydantic.ValidationError or similar
+        raise HTTPException(status_code=400, detail=f"Invalid diagram payload: {exc}") from exc
+
+    kg, _json_data = _kg_payload_to_kg(diagram_input)
+    try:
+        report = analyze_kg_with_description(kg, description, api_key, model=model)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return _report_to_response(report)
+
+
+@router.post("/apply-kg-cleanup")
+@handle_endpoint_errors("apply_kg_cleanup")
+async def apply_kg_cleanup_endpoint(input_data: DiagramInput):
+    """Apply the user's accept/skip decisions on LLM-cleanup suggestions.
+
+    Returns the cleaned KG diagram in the editor's JSON shape so the
+    frontend can replace the active KG. ``input_data.llmIssues`` carries
+    the round-tripped issues; ``input_data.resolutions`` carries the
+    decisions (``[{issueId, decision}]``); ``input_data.kgSignature`` (if
+    present) detects a stale graph between analyse and apply.
+
+    Backward-compat alias: this endpoint is equivalent to
+    ``/apply-kg-refinement`` with ``source="llm"``.
+    """
+    kg, _json_data = _kg_payload_to_kg(input_data)
+    _enforce_signature(input_data, kg)
+    base_title = input_data.title or kg.name or "Knowledge Graph"
+    resolved_kg = _apply_llm_decisions(kg, input_data.llmIssues, input_data.resolutions)
+    cleaned_json = kg_to_json(resolved_kg)
+    cleaned_model = cleaned_json.get("model", cleaned_json)
+    if "type" not in cleaned_model:
+        cleaned_model = {**cleaned_model, "type": "KnowledgeGraphDiagram"}
+    return {
+        "title": f"{base_title} (Cleaned)",
+        "model": cleaned_model,
+        "diagramType": "KnowledgeGraphDiagram",
+        "kgSignature": kg_signature(resolved_kg),
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
+
+
+# ----------------------------------------------------------------------
+# Unified KG refinement (Refine KG modal)
+# ----------------------------------------------------------------------
+
+
+@router.post("/apply-kg-refinement")
+@handle_endpoint_errors("apply_kg_refinement")
+async def apply_kg_refinement_endpoint(
+    input_data: DiagramInput,
+    diagramType: str = "ClassDiagram",
+):
+    """Apply Refine-KG decisions and return the cleaned KG.
+
+    Single endpoint serving both tabs of the unified Refine KG modal:
+
+    - ``source="static"``: re-runs the static analyzer (selected via the
+      ``diagramType`` query parameter, default ``ClassDiagram``) and
+      dispatches each accept/skip decision. Orphan-issue ``skip`` choices
+      raise :class:`DeferredOrphanClassification`; the carried node ids
+      are accumulated into ``pendingOrphanClassification.nodeIds`` and
+      returned to the client so the AI tab can call
+      ``/classify-orphans-with-llm`` next.
+    - ``source="llm"``: reconstructs LLM-issue objects from
+      ``llmIssues`` and dispatches them. Equivalent to ``/apply-kg-cleanup``.
+
+    Returns the cleaned KG diagram so the frontend can replace the
+    active KG. The new ``kgSignature`` is also returned for the next
+    apply round-trip.
+    """
+    kg, _json_data = _kg_payload_to_kg(input_data)
+    _enforce_signature(input_data, kg)
+    base_title = input_data.title or kg.name or "Knowledge Graph"
+
+    source = (input_data.source or "static").lower()
+    if source not in {"static", "llm"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid source {input_data.source!r}; expected 'static' or 'llm'.",
+        )
+
+    deferred_orphan_node_ids: List[str] = []
+
+    if source == "static":
+        analyzer = (
+            analyze_kg_for_object_diagram
+            if (diagramType or "").lower() == "objectdiagram"
+            else analyze_kg_for_class_diagram
+        )
+        resolved_kg = _apply_v2_decisions(
+            kg,
+            input_data.resolutions or [],
+            analyzer,
+            deferred_orphan_node_ids=deferred_orphan_node_ids,
+        )
+    else:  # source == "llm"
+        resolved_kg = _apply_llm_decisions(
+            kg,
+            input_data.llmIssues,
+            input_data.resolutions,
+            deferred_orphan_node_ids=deferred_orphan_node_ids,
+        )
+
+    cleaned_json = kg_to_json(resolved_kg)
+    cleaned_model = cleaned_json.get("model", cleaned_json)
+    if "type" not in cleaned_model:
+        cleaned_model = {**cleaned_model, "type": "KnowledgeGraphDiagram"}
+
+    new_signature = kg_signature(resolved_kg)
+    pending_orphan_payload = None
+    if deferred_orphan_node_ids:
+        pending_orphan_payload = {
+            "nodeIds": deferred_orphan_node_ids,
+            "kgSignature": new_signature,
+        }
+
+    return {
+        "title": f"{base_title} (Refined)",
+        "model": cleaned_model,
+        "diagramType": "KnowledgeGraphDiagram",
+        "kgSignature": new_signature,
+        "pendingOrphanClassification": pending_orphan_payload,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
+
+
+@router.post("/classify-orphans-with-llm")
+@handle_endpoint_errors("classify_orphans_with_llm")
+async def classify_orphans_with_llm_endpoint(
+    diagram: str = Form(...),
+    description: str = Form(...),
+    api_key: str = Form(...),
+    node_ids: str = Form(...),
+    model: str = Form("gpt-4o"),
+):
+    """Per-node LLM classification for a batch of orphan node ids.
+
+    Mirrors ``/llm-clean-kg`` but takes an explicit ``node_ids`` list and
+    runs a focused per-node prompt instead of a full-graph snapshot. The
+    response has the same ``KGPreflightReport`` shape so the AI tab can
+    render it through the existing accept/skip UI.
+    """
+    if not description or not description.strip():
+        raise HTTPException(status_code=400, detail="A non-empty description is required.")
+    if not api_key or not api_key.strip():
+        raise HTTPException(status_code=400, detail="An OpenAI API key is required.")
+    try:
+        diagram_payload = json.loads(diagram)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in 'diagram': {exc}") from exc
+    try:
+        diagram_input = DiagramInput.model_validate(diagram_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid diagram payload: {exc}") from exc
+    try:
+        parsed_node_ids = json.loads(node_ids)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in 'node_ids': {exc}") from exc
+    if not isinstance(parsed_node_ids, list):
+        raise HTTPException(status_code=400, detail="'node_ids' must be a JSON array of strings.")
+    if not all(isinstance(x, str) for x in parsed_node_ids):
+        raise HTTPException(status_code=400, detail="'node_ids' must contain only strings.")
+    if not parsed_node_ids:
+        raise HTTPException(status_code=400, detail="'node_ids' must not be empty.")
+
+    kg, _json_data = _kg_payload_to_kg(diagram_input)
+    _enforce_signature(diagram_input, kg)
+    try:
+        report = classify_orphan_nodes_with_llm(
+            kg,
+            parsed_node_ids,
+            description,
+            api_key,
+            model=model,
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return _report_to_response(report)
 
 
 _RDF_FORMATS = {

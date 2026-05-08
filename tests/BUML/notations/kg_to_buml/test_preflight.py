@@ -397,7 +397,10 @@ def test_object_diagram_blank_node(tmp_path: Path):
     assert "BLANK_NODE_AS_OBJECT" in codes
 
 
-def test_object_diagram_individual_no_type(tmp_path: Path):
+def test_orphan_individuals_suppress_individual_no_type(tmp_path: Path):
+    """Individuals with no class anchoring at all are flagged as orphans, and
+    the INDIVIDUAL_NO_TYPE detector is suppressed for them so the user sees a
+    single, drop-or-classify decision instead of two competing issues."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -408,7 +411,8 @@ def test_object_diagram_individual_no_type(tmp_path: Path):
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     report = analyze_kg_for_object_diagram(kg)
     codes = {i.code for i in report.issues}
-    assert "INDIVIDUAL_NO_TYPE" in codes
+    assert "ORPHAN_NODE_NO_CLASS_LINK" in codes
+    assert "INDIVIDUAL_NO_TYPE" not in codes
 
 
 def test_object_diagram_does_not_run_class_detectors(tmp_path: Path):
@@ -474,3 +478,127 @@ def test_object_diagram_report_type(tmp_path: Path):
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     report = analyze_kg_for_object_diagram(kg)
     assert report.diagram_type == "ObjectDiagram"
+
+
+# --- ORPHAN_NODE_NO_CLASS_LINK ---------------------------------------------
+
+
+def test_orphan_single_individual(tmp_path: Path):
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+    :Person a owl:Class .
+    :ghost :spooks :nothing .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    issue = _issue(report, "ORPHAN_NODE_NO_CLASS_LINK")
+    _assert_actions_present(issue)
+    assert issue.recommended_action.key == "drop_orphan_nodes"
+    assert issue.skip_action.key == "defer_to_llm_classification"
+    assert set(issue.recommended_action.parameters["node_ids"]) == set(issue.affected_node_ids)
+
+
+def test_orphan_multiple_disconnected_components(tmp_path: Path):
+    """Two independent orphan islands → two issues, one per component."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+    :Person a owl:Class .
+
+    # Island A
+    :alice :knows :bob .
+
+    # Island B (separate)
+    :foo :rel :bar .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    orphans = [i for i in report.issues if i.code == "ORPHAN_NODE_NO_CLASS_LINK"]
+    assert len(orphans) == 2
+    component_size_sum = sum(len(i.affected_node_ids) for i in orphans)
+    # Each island has 2 nodes (subject + object), 4 in total.
+    assert component_size_sum == 4
+
+
+def test_orphan_anchored_via_property_domain_not_flagged(tmp_path: Path):
+    """A typed individual reachable through a property's domain link is
+    class-anchored and must not appear as an orphan."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Person a owl:Class .
+    :name   a owl:DatatypeProperty ; rdfs:domain :Person .
+    :alice  a :Person .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)
+
+
+def test_orphan_structural_blank_excluded(tmp_path: Path):
+    """Restriction-kind blank nodes (anonymous schema constructs) must not be
+    treated as orphans even when not attached to a class — they have their own
+    detector."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+    :Person a owl:Class .
+    [] a owl:Restriction ;
+       owl:onProperty :age ;
+       owl:cardinality 1 .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    # The unattached restriction is its own issue, NOT folded into ORPHAN.
+    codes = _codes(report)
+    assert "RESTRICTION_UNATTACHED" in codes
+    # An orphan issue may exist if there are other non-anchored elements, but
+    # restriction blanks must not appear inside any orphan issue.
+    for issue in report.issues:
+        if issue.code != "ORPHAN_NODE_NO_CLASS_LINK":
+            continue
+        for nid in issue.affected_node_ids:
+            node = kg.get_node(nid)
+            from besser.BUML.metamodel.kg import KGBlank
+            if isinstance(node, KGBlank):
+                assert node.metadata.get("kind") not in {"restriction", "class_expression"}
+
+
+def test_orphan_id_stable_across_runs(tmp_path: Path):
+    """Issue id must be stable across invocations so accept/skip decisions
+    survive the round-trip to the apply endpoint."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+    :Person a owl:Class .
+    :alice :knows :bob .
+    """
+    kg1 = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    kg2 = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    r1 = analyze_kg_for_class_diagram(kg1)
+    r2 = analyze_kg_for_class_diagram(kg2)
+    o1 = next(i for i in r1.issues if i.code == "ORPHAN_NODE_NO_CLASS_LINK")
+    o2 = next(i for i in r2.issues if i.code == "ORPHAN_NODE_NO_CLASS_LINK")
+    assert o1.id == o2.id
+
+
+def test_orphan_clean_kg_no_issue(tmp_path: Path):
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Person a owl:Class .
+    :name   a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)

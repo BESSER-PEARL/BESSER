@@ -28,6 +28,15 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KnowledgeGraph,
 )
+from besser.BUML.metamodel.kg.axioms import (
+    DisjointClassesAxiom,
+    DisjointUnionAxiom,
+    EquivalentClassesAxiom,
+    HasKeyAxiom,
+    InversePropertiesAxiom,
+    PropertyChainAxiom,
+    SubPropertyOfAxiom,
+)
 from besser.BUML.notations.kg_to_buml._common import (
     RDFS_DOMAIN,
     RDFS_RANGE,
@@ -42,6 +51,7 @@ __all__ = [
     "apply_resolutions",
     "dispatch_decision",
     "ResolutionError",
+    "DeferredOrphanClassification",
 ]
 
 
@@ -51,6 +61,23 @@ __all__ = [
 # alias and let callers translate.
 class ResolutionError(ValueError):
     """Raised when a resolution payload is invalid or unknown."""
+
+
+class DeferredOrphanClassification(Exception):
+    """Raised when a resolution opts to defer orphan-node handling to the LLM.
+
+    The web endpoint catches this exception, accumulates the carried node ids
+    across resolutions, and returns them to the client as
+    ``pendingOrphanClassification`` so the AI tab can call the per-node
+    classifier next. The exception does NOT mutate the KG — the orphan nodes
+    stay in place until the user reviews the LLM's per-node suggestions.
+    """
+
+    def __init__(self, node_ids: List[str]):
+        super().__init__(
+            f"Deferred to LLM classification: {len(node_ids)} node(s)"
+        )
+        self.node_ids: List[str] = list(node_ids)
 
 
 @dataclass
@@ -683,6 +710,266 @@ def _h_merge_associations(kg: KnowledgeGraph, res: KGResolution) -> None:
     _replace_graph(kg, new_nodes, new_edges)
 
 
+# ----------------------------------------------------------------------
+# LLM-cleanup handlers (used by the AI cleanup flow). These handlers
+# operate by node id rather than property/blank IRI because the LLM
+# emits suggestions keyed off the node ids it saw in the snapshot.
+# ----------------------------------------------------------------------
+
+
+def _h_drop_class(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Drop a KGClass node and all incident edges; clean up dangling axioms."""
+    node_id = res.parameters.get("node_id")
+    if not node_id:
+        raise ResolutionError("'drop_class' requires 'node_id'.")
+    node = kg.get_node(node_id)
+    if node is None:
+        return
+    if not isinstance(node, KGClass):
+        raise ResolutionError(f"'drop_class' expected a KGClass, got {type(node).__name__} for {node_id!r}.")
+    surviving_nodes = {n for n in kg.nodes if n.id != node_id}
+    surviving_edges = {e for e in kg.edges if e.source.id != node_id and e.target.id != node_id}
+    _replace_graph(kg, surviving_nodes, surviving_edges)
+    _strip_dangling_axioms(kg)
+
+
+def _h_drop_individual(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Drop a KGIndividual node and all incident edges; clean up dangling axioms."""
+    node_id = res.parameters.get("node_id")
+    if not node_id:
+        raise ResolutionError("'drop_individual' requires 'node_id'.")
+    node = kg.get_node(node_id)
+    if node is None:
+        return
+    if not isinstance(node, KGIndividual):
+        raise ResolutionError(f"'drop_individual' expected a KGIndividual, got {type(node).__name__} for {node_id!r}.")
+    surviving_nodes = {n for n in kg.nodes if n.id != node_id}
+    surviving_edges = {e for e in kg.edges if e.source.id != node_id and e.target.id != node_id}
+    _replace_graph(kg, surviving_nodes, surviving_edges)
+    _strip_dangling_axioms(kg)
+
+
+def _h_promote_individual_to_class(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Promote a KGIndividual to a KGClass with the same id, rewiring edges.
+
+    Drops any outgoing rdf:type edges from the promoted node (a class is not
+    typed by another class via rdf:type in the BUML target).
+    """
+    node_id = res.parameters.get("node_id")
+    if not node_id:
+        raise ResolutionError("'promote_individual_to_class' requires 'node_id'.")
+    node = kg.get_node(node_id)
+    if node is None:
+        return
+    if not isinstance(node, KGIndividual):
+        raise ResolutionError(
+            f"'promote_individual_to_class' expected a KGIndividual, got {type(node).__name__} for {node_id!r}."
+        )
+    new_class = KGClass(
+        id=node.id,
+        label=res.parameters.get("new_label") or node.label,
+        iri=res.parameters.get("new_iri") or node.iri,
+        metadata=dict(node.metadata),
+    )
+    _swap_node(kg, node, new_class, drop_outgoing_predicates={RDF_TYPE})
+
+
+def _h_type_individual_as_class(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Add an ``rdf:type`` edge from a ``KGIndividual`` to a ``KGClass``.
+
+    Used by the LLM cleanup flow when an individual is relevant to the
+    described system but lacks a class link — instead of dropping it (the
+    aggressive default), the LLM can recommend the right typing.
+
+    Parameters: ``{node_id, class_id}``. Both must point at existing nodes;
+    ``node_id`` must be a ``KGIndividual`` and ``class_id`` a ``KGClass``.
+    Idempotent: if the rdf:type edge already exists, it is not duplicated.
+    """
+    node_id = res.parameters.get("node_id")
+    class_id = res.parameters.get("class_id")
+    if not (node_id and class_id):
+        raise ResolutionError("'type_individual_as_class' requires 'node_id' and 'class_id'.")
+    indiv = kg.get_node(node_id)
+    if indiv is None:
+        return
+    if not isinstance(indiv, KGIndividual):
+        raise ResolutionError(
+            f"'type_individual_as_class' expected a KGIndividual, got {type(indiv).__name__} for {node_id!r}."
+        )
+    cls = _require_class(kg, class_id)
+    # Avoid duplicate rdf:type edges between the same (individual, class) pair.
+    for e in kg.edges:
+        if (
+            e.source.id == indiv.id
+            and e.target.id == cls.id
+            and normalize_predicate(e.iri) == RDF_TYPE
+        ):
+            return
+    kg.add_edge(KGEdge(
+        id=_next_edge_id(kg, "type"),
+        source=indiv,
+        target=cls,
+        label="type",
+        iri=RDF_TYPE,
+    ))
+
+
+def _h_drop_orphan_nodes(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Drop a batch of orphan node ids and all incident edges.
+
+    Tolerates ids missing from the KG (idempotent) so the same accept-decision
+    can be replayed safely if the user re-applies. Cleans up dangling axioms
+    after the batch removal.
+    """
+    node_ids = res.parameters.get("node_ids") or []
+    if not isinstance(node_ids, list):
+        raise ResolutionError("'drop_orphan_nodes' requires 'node_ids' as a list.")
+    drop = set(node_ids)
+    if not drop:
+        return
+    surviving_nodes = {n for n in kg.nodes if n.id not in drop}
+    surviving_edges = {
+        e for e in kg.edges if e.source.id not in drop and e.target.id not in drop
+    }
+    _replace_graph(kg, surviving_nodes, surviving_edges)
+    _strip_dangling_axioms(kg)
+
+
+def _h_defer_to_llm_classification(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Deferred handler: signals that the user picked 'send to LLM for
+    classification' for a batch of orphan nodes. Does NOT mutate the KG.
+
+    The web endpoint catches :class:`DeferredOrphanClassification`, accumulates
+    the carried node ids across resolutions, and returns them to the client as
+    ``pendingOrphanClassification`` so the AI tab can call the per-node
+    classifier next.
+    """
+    node_ids = res.parameters.get("node_ids") or []
+    if not isinstance(node_ids, list):
+        raise ResolutionError(
+            "'defer_to_llm_classification' requires 'node_ids' as a list."
+        )
+    raise DeferredOrphanClassification(node_ids)
+
+
+def _h_reclassify_node(kg: KnowledgeGraph, res: KGResolution) -> None:
+    """Change a node's kind (class / individual / property / blank) in place.
+
+    Preserves the node's id, label, iri, metadata, and rewires every edge
+    that referenced the old node to point at the new one.
+    """
+    node_id = res.parameters.get("node_id")
+    target_kind = (res.parameters.get("target_kind") or "").lower()
+    if not (node_id and target_kind):
+        raise ResolutionError("'reclassify_node' requires 'node_id' and 'target_kind'.")
+    target_cls = {
+        "class": KGClass,
+        "individual": KGIndividual,
+        "property": KGProperty,
+        "blank": KGBlank,
+    }.get(target_kind)
+    if target_cls is None:
+        raise ResolutionError(
+            f"'reclassify_node' got unsupported target_kind {target_kind!r}; "
+            f"expected one of class, individual, property, blank."
+        )
+    node = kg.get_node(node_id)
+    if node is None:
+        return
+    if isinstance(node, target_cls):
+        return
+    new_node = target_cls(
+        id=node.id,
+        label=node.label,
+        iri=getattr(node, "iri", None),
+        metadata=dict(node.metadata),
+    )
+    _swap_node(kg, node, new_node)
+
+
+# ----------------------------------------------------------------------
+# Helpers for LLM-cleanup handlers
+# ----------------------------------------------------------------------
+
+
+def _swap_node(
+    kg: KnowledgeGraph,
+    old: KGNode,
+    new: KGNode,
+    *,
+    drop_outgoing_predicates: Optional[Set[str]] = None,
+) -> None:
+    """Replace ``old`` with ``new`` in ``kg`` and rewire incident edges.
+
+    ``drop_outgoing_predicates``: if provided, edges whose ``source`` is the
+    swapped node and whose normalised predicate is in the set are dropped
+    rather than rewired.
+    """
+    drop_outgoing_predicates = drop_outgoing_predicates or set()
+    new_nodes = {n for n in kg.nodes if n.id != old.id}
+    new_nodes.add(new)
+    new_edges: Set[KGEdge] = set()
+    for e in kg.edges:
+        if e.source.id == old.id and normalize_predicate(e.iri) in drop_outgoing_predicates:
+            continue
+        src = new if e.source.id == old.id else e.source
+        tgt = new if e.target.id == old.id else e.target
+        if src is e.source and tgt is e.target:
+            new_edges.add(e)
+        else:
+            new_edges.add(KGEdge(
+                id=e.id, source=src, target=tgt,
+                label=e.label, iri=e.iri, metadata=dict(e.metadata),
+            ))
+    _replace_graph(kg, new_nodes, new_edges)
+
+
+def _strip_dangling_axioms(kg: KnowledgeGraph) -> None:
+    """Remove (or shrink) axioms that reference node ids no longer present.
+
+    For multi-id axioms (equivalent / disjoint / disjoint-union / property-chain
+    / has-key) we filter out missing ids; if fewer than the minimum required
+    ids remain, the axiom is dropped entirely. For pair-axioms (sub-property,
+    inverse) the axiom is dropped if either endpoint is missing.
+    """
+    live_ids = {n.id for n in kg.nodes}
+    surviving: List = []
+    for axiom in kg.axioms:
+        if isinstance(axiom, (EquivalentClassesAxiom, DisjointClassesAxiom)):
+            kept = [c for c in axiom.class_ids if c in live_ids]
+            if len(kept) >= 2:
+                axiom.class_ids = kept
+                surviving.append(axiom)
+        elif isinstance(axiom, DisjointUnionAxiom):
+            if axiom.union_class_id in live_ids:
+                kept_parts = [c for c in axiom.part_class_ids if c in live_ids]
+                if len(kept_parts) >= 1:
+                    axiom.part_class_ids = kept_parts
+                    surviving.append(axiom)
+        elif isinstance(axiom, SubPropertyOfAxiom):
+            if axiom.sub_property_id in live_ids and axiom.super_property_id in live_ids:
+                surviving.append(axiom)
+        elif isinstance(axiom, InversePropertiesAxiom):
+            if axiom.property_a_id in live_ids and axiom.property_b_id in live_ids:
+                surviving.append(axiom)
+        elif isinstance(axiom, PropertyChainAxiom):
+            if axiom.property_id in live_ids:
+                kept = [p for p in axiom.chain_property_ids if p in live_ids]
+                if len(kept) >= 1:
+                    axiom.chain_property_ids = kept
+                    surviving.append(axiom)
+        elif isinstance(axiom, HasKeyAxiom):
+            if axiom.class_id in live_ids:
+                kept = [p for p in axiom.property_ids if p in live_ids]
+                if len(kept) >= 1:
+                    axiom.property_ids = kept
+                    surviving.append(axiom)
+        else:
+            # Unknown / Import axioms — leave as-is.
+            surviving.append(axiom)
+    kg.axioms = surviving
+
+
 _HANDLERS: Dict[str, Any] = {
     # v1 handlers (still used by accept/skip dispatching)
     "assign_domain": _h_assign_domain,
@@ -714,7 +1001,17 @@ _HANDLERS: Dict[str, Any] = {
     "rename_with_suffix": _h_rename_with_suffix,
     "prefer_class": _h_prefer_class,
     "merge_associations": _h_merge_associations,
+    # LLM-cleanup handlers
+    "drop_class": _h_drop_class,
+    "drop_individual": _h_drop_individual,
+    "promote_individual_to_class": _h_promote_individual_to_class,
+    "reclassify_node": _h_reclassify_node,
+    "type_individual_as_class": _h_type_individual_as_class,
+    # Orphan-node refinement handlers
+    "drop_orphan_nodes": _h_drop_orphan_nodes,
+    "defer_to_llm_classification": _h_defer_to_llm_classification,
     # No-op default actions (converter's default already does the right thing):
+    "noop": _h_noop,
     "keep_separate": _h_noop,
     "keep_both": _h_noop,
     "keep_as_string": _h_noop,

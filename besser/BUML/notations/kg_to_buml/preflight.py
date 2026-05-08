@@ -69,6 +69,9 @@ __all__ = [
 
 _XSD_STRING = "http://www.w3.org/2001/XMLSchema#string"
 
+ORPHAN_DESCRIPTION_TRUNCATE = 25
+_CLASS_ANCHOR_PREDICATES = frozenset({RDF_TYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUBCLASS_OF})
+
 
 @dataclass
 class KGAction:
@@ -135,6 +138,8 @@ def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
     issues: List[KGIssue] = []
     indexes = build_indexes(kg)
 
+    orphan_issues, orphan_node_ids = _detect_orphan_nodes(kg, indexes)
+
     issues.extend(_detect_blank_node_instance(kg, indexes))
     issues.extend(_detect_undeclared_class(kg, indexes))
     issues.extend(_detect_no_domain(kg, indexes))
@@ -151,6 +156,7 @@ def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
     issues.extend(_detect_punning(kg))
     issues.extend(_detect_equivalent_classes(kg))
     issues.extend(_detect_inverse_properties(kg))
+    issues.extend(orphan_issues)
 
     return KGPreflightReport(
         issues=issues,
@@ -167,12 +173,15 @@ def analyze_kg_for_object_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
     issues: List[KGIssue] = []
     indexes = build_indexes(kg)
 
+    orphan_issues, orphan_node_ids = _detect_orphan_nodes(kg, indexes)
+
     issues.extend(_detect_blank_node_as_object(kg, indexes))
-    issues.extend(_detect_individual_no_type(kg, indexes))
+    issues.extend(_detect_individual_no_type(kg, indexes, suppress_node_ids=orphan_node_ids))
     issues.extend(_detect_multiple_types(kg, indexes))
     issues.extend(_detect_literal_type_coerced(kg, indexes))
     issues.extend(_detect_link_type_mismatch(kg, indexes))
     issues.extend(_detect_multivalued_literal(kg, indexes))
+    issues.extend(orphan_issues)
 
     return KGPreflightReport(
         issues=issues,
@@ -895,9 +904,19 @@ def _detect_blank_node_as_object(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     return out
 
 
-def _detect_individual_no_type(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
+def _detect_individual_no_type(
+    kg: KnowledgeGraph,
+    indexes,
+    *,
+    suppress_node_ids: Optional[Set[str]] = None,
+) -> List[KGIssue]:
     out: List[KGIssue] = []
+    suppressed = suppress_node_ids or set()
     for ind in _individuals_in(kg):
+        if ind.id in suppressed:
+            continue
+        if is_meta_vocab(getattr(ind, "iri", None) or ind.id):
+            continue
         type_edges = indexes.out_with_predicate(ind.id, RDF_TYPE)
         if type_edges:
             continue
@@ -1077,3 +1096,127 @@ def _detect_link_type_mismatch(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             ),
         ))
     return out
+
+
+# ----------------------------------------------------------------------
+# Shared detector — orphan nodes (used by both class and object analyzers)
+# ----------------------------------------------------------------------
+
+
+def _detect_orphan_nodes(
+    kg: KnowledgeGraph, indexes
+) -> Tuple[List[KGIssue], Set[str]]:
+    """Find Individuals/Literals/Blanks with no transitive class-anchored link.
+
+    A node is *class-anchored* if it can reach (undirected) a ``KGClass`` along
+    edges with predicate in ``{rdf:type, rdfs:domain, rdfs:range,
+    rdfs:subClassOf}``. Anything else of kind Individual / Literal / Blank is
+    orphan: it cannot contribute to a class diagram and forces the LLM
+    pipeline (or the user) to decide whether to drop it or classify it.
+
+    Returns ``(issues, orphan_node_ids)`` so the caller can suppress
+    overlapping detectors (e.g. ``INDIVIDUAL_NO_TYPE``).
+
+    Orphans are grouped into one issue per disconnected component (in the
+    orphan-induced subgraph, edges of any predicate). Each issue exposes:
+
+    - ``recommended_action``: ``drop_orphan_nodes`` — batch-drop the component.
+    - ``skip_action``: ``defer_to_llm_classification`` — defer to a per-node
+      LLM classification step (raises a typed exception caught by the
+      apply endpoint).
+
+    Structural blank nodes (``kind in {restriction, class_expression}``) are
+    excluded — they're handled by their own detectors and live as auxiliary
+    schema graph fragments rather than data.
+    """
+    structural_kinds = {"restriction", "class_expression"}
+    eligible_kinds = (KGIndividual, KGLiteral, KGBlank)
+
+    # Step 1 — class-anchored closure via DFS over the schema-edge subgraph.
+    schema_neighbors: Dict[str, Set[str]] = defaultdict(set)
+    for edge in kg.edges:
+        if normalize_predicate(edge.iri) not in _CLASS_ANCHOR_PREDICATES:
+            continue
+        schema_neighbors[edge.source.id].add(edge.target.id)
+        schema_neighbors[edge.target.id].add(edge.source.id)
+
+    seeds = {n.id for n in kg.nodes if isinstance(n, KGClass)}
+    anchored: Set[str] = set()
+    stack = list(seeds)
+    while stack:
+        nid = stack.pop()
+        if nid in anchored:
+            continue
+        anchored.add(nid)
+        stack.extend(schema_neighbors.get(nid, ()))
+
+    # Step 2 — collect orphan candidates.
+    orphan_ids: Set[str] = set()
+    for node in kg.nodes:
+        if not isinstance(node, eligible_kinds):
+            continue
+        if isinstance(node, KGBlank) and node.metadata.get("kind") in structural_kinds:
+            continue
+        if node.id in anchored:
+            continue
+        orphan_ids.add(node.id)
+
+    if not orphan_ids:
+        return [], set()
+
+    # Step 3 — orphan-induced subgraph + connected components (any predicate).
+    orphan_neighbors: Dict[str, Set[str]] = {nid: set() for nid in orphan_ids}
+    for edge in kg.edges:
+        s, t = edge.source.id, edge.target.id
+        if s in orphan_ids and t in orphan_ids:
+            orphan_neighbors[s].add(t)
+            orphan_neighbors[t].add(s)
+
+    components: List[List[str]] = []
+    unvisited = set(orphan_ids)
+    while unvisited:
+        seed = next(iter(sorted(unvisited)))
+        comp: List[str] = []
+        stack = [seed]
+        while stack:
+            nid = stack.pop()
+            if nid not in unvisited:
+                continue
+            unvisited.remove(nid)
+            comp.append(nid)
+            stack.extend(orphan_neighbors.get(nid, ()))
+        components.append(sorted(comp))
+
+    components.sort(key=lambda c: (len(c), c[0] if c else ""))
+
+    out: List[KGIssue] = []
+    for comp in components:
+        node_ids = list(comp)
+        n = len(node_ids)
+        preview = node_ids[:ORPHAN_DESCRIPTION_TRUNCATE]
+        if n > ORPHAN_DESCRIPTION_TRUNCATE:
+            preview_str = ", ".join(preview) + f", … ({n - ORPHAN_DESCRIPTION_TRUNCATE} more)"
+        else:
+            preview_str = ", ".join(preview)
+        description = (
+            f"{n} node(s) have no link (direct or transitive) to any class: "
+            f"{preview_str}. They will not appear in a class diagram. "
+            f"Drop them, or send them to the LLM for individual classification."
+        )
+        out.append(KGIssue(
+            id=_issue_id("ORPHAN_NODE_NO_CLASS_LINK", *node_ids),
+            code="ORPHAN_NODE_NO_CLASS_LINK",
+            description=description,
+            affected_node_ids=node_ids,
+            recommended_action=KGAction(
+                key="drop_orphan_nodes",
+                parameters={"node_ids": node_ids},
+                label=f"Drop {n} orphan node{'s' if n != 1 else ''}",
+            ),
+            skip_action=KGAction(
+                key="defer_to_llm_classification",
+                parameters={"node_ids": node_ids},
+                label=f"Send {n} node{'s' if n != 1 else ''} to the LLM for classification",
+            ),
+        ))
+    return out, orphan_ids

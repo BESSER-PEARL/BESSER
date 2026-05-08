@@ -154,7 +154,7 @@ def test_parse_json_safely_invalid_json():
 
 # --- Tests for convert_spec_json_to_buml ---
 def test_convert_spec_json_to_buml_creates_valid_structure():
-    """Test that convert_spec_json_to_buml creates proper Apollon/BUML JSON"""
+    """Test that convert_spec_json_to_buml creates proper BESSER WME / BUML JSON"""
     system_spec = _mock_system_spec()
     result = convert_spec_json_to_buml(system_spec)
     

@@ -9,7 +9,7 @@
       "font": "sans",
       "lineSpacing": 1.5,
       "alignment": "left",
-      "color": "var(--apollon-primary-contrast)",
+      "color": "var(--besser-primary-contrast)",
       "contrast": "medium"
     },
     "voiceStyle": {

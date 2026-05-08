@@ -38,7 +38,7 @@ ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STAT
 def empty_model(diagram_type: str) -> Dict[str, Any]:
     """Create an empty model template for the given diagram type.
 
-    Returns the v4 wire shape (``{nodes, edges}``) for Apollon-driven
+    Returns the v4 wire shape (``{nodes, edges}``) for BESSER WME-driven
     diagrams; ``GUINoCodeDiagram`` keeps its bespoke shape.
     """
     if diagram_type == "GUINoCodeDiagram":

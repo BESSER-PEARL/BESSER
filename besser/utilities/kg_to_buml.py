@@ -29,7 +29,7 @@ def parse_json_safely(json_text: str):
 
 def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
     """
-    Convert class specifications from GPT-generated JSON to Apollon/BUML format.
+    Convert class specifications from GPT-generated JSON to BESSER WME / BUML format.
     """
 
     elements = {}
@@ -156,7 +156,7 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
         relationships[rel_id] = relationship_obj
 
     # === Final structure ===
-    apollon_buml_json = {
+    besser_buml_json = {
         "title": title.replace(" ", "_"),
         "model": {
             "elements": elements,
@@ -164,7 +164,7 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
         }
     }
 
-    return apollon_buml_json
+    return besser_buml_json
 
 
 def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):

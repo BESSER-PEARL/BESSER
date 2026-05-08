@@ -171,8 +171,7 @@ platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping
 {% else %}
 platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
-# LLM instantiation based on config['llm']
-{% set has_reply_llm_state = namespace(value=false) %}
+{% set has_default_llm_state = namespace(value=false) %}
 {% set has_db_reply_state = namespace(value=false) %}
 {% for state in agent.states %}
 {% if state.body and state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
@@ -197,37 +196,6 @@ platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
 {% endfor %}
 {% endif %}
-{% if config and 'llm' in config and config['llm'] %}
-{% set has_reply_llm_state.value = true %}
-    {% if config['llm']['provider'] == 'openai' %}
-reply_llm = LLMOpenAI(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-
-    {% elif config['llm']['provider'] == 'huggingface' %}
-reply_llm = LLMHuggingFace(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-
-    {% elif config['llm']['provider'] == 'huggingfaceapi' %}
-reply_llm_api = LLMHuggingFaceAPI(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-    {% elif config['llm']['provider'] == 'replicate' %}
-reply_llm = LLMReplicate(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-
-    {% endif %}
-{% endif %}
 {% if has_speech_input %}
 stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
 {% endif %}
@@ -235,15 +203,8 @@ stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
 tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endif %}
 
-{% if agent.rags and agent.rags|length > 0 %}
-rag_llm = LLMOpenAI(
-    agent=agent,
-    name='gpt-4o-mini',
-    parameters={},
-    num_previous_messages=10
-)
-{% endif %}
-
+{# RAG configurations resolve their LLM via ``llm_name`` against
+   agent.llms at runtime — no separate ``rag_llm`` variable needed. #}
 {% if agent.rags and agent.rags|length > 0 %}
 ##############################
 # RAG CONFIGURATIONS
@@ -281,7 +242,7 @@ rag_llm = LLMOpenAI(
     agent=agent,
     vector_store={{ vector_var }},
     splitter={{ splitter_var }},
-    llm_name='{{ rag.llm_name | replace('\\', '\\\\') | replace("'", "\\'") if rag.llm_name else 'gpt-4o-mini' }}',
+    llm_name='{{ ((rag.llm_name if rag.llm_name else (agent.default_llm_name if agent.default_llm_name else '')) | string) | replace('\\', '\\\\') | replace("'", "\\'") }}',
     k={{ rag.k if rag.k is not none else 4 }},
     num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
 )
@@ -302,8 +263,9 @@ rag_llm = LLMOpenAI(
         activation_hidden_layers='{{ ic_config.activation_hidden_layers }}',
         lr={{ ic_config.lr }}
 ){% elif is_class(ic_config, 'LLMIntentClassifierConfiguration') %}LLMIntentClassifierConfiguration(
-        llm_suite='{{ ic_config.llm_suite }}',
-        parameters={{ ic_config.parameters }},
+        {% if ic_config.llm_name %}llm_name='{{ ic_config.llm_name }}',
+        {% elif ic_config.llm_suite %}llm_suite='{{ ic_config.llm_suite }}',
+        {% endif %}parameters={{ ic_config.parameters }},
         use_intent_descriptions={{ ic_config.use_intent_descriptions }},
         use_training_sentences={{ ic_config.use_training_sentences }},
         use_entity_descriptions={{ ic_config.use_entity_descriptions }},
@@ -311,27 +273,28 @@ rag_llm = LLMOpenAI(
 ){% endif %}
 {% endmacro %}
 
+{% set ic_llm_ns = namespace(name='') %}
+{% if config and 'llm' in config and config['llm'] is mapping and config['llm'].get('name') %}
+{% set ic_llm_ns.name = config['llm']['name'] %}
+{% elif agent.default_llm_name %}
+{% set ic_llm_ns.name = agent.default_llm_name %}
+{% elif agent.llms and agent.llms|length > 0 %}
+{% set ic_llm_ns.name = agent.llms[0].name %}
+{% elif config and 'llm' in config and config['llm'] is mapping and config['llm'].get('model') %}
+{% set ic_llm_ns.name = config['llm']['model'] %}
+{% else %}
+{% set ic_llm_ns.name = '' %}
+{% endif %}
 {% set ic_config_set = namespace(value=false) %}
 {% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
-{% if 'llm' in config  and 'model' in config['llm'] %}
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='{{ config['llm']['model'] }}',
+    llm_name='{{ ic_llm_ns.name }}',
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
     use_entity_descriptions=False,
     use_entity_synonyms=False
 )
-{% else %}
-ic_config = LLMIntentClassifierConfiguration(
-    llm_name='gpt-5-nano',
-    parameters={},
-    use_intent_descriptions=True,
-    use_training_sentences=True,
-    use_entity_descriptions=False,
-    use_entity_synonyms=False
-)
-{% endif %}
 
 agent.set_default_ic_config(ic_config)
 {% set ic_config_set.value = true %}
@@ -352,11 +315,17 @@ agent.set_default_ic_config(ic_config)
 {% set ic_config_set.value = true %}
 {% endif %}
 
-{% if agent.llms != [] and (not config or 'llm' not in config or not config['llm']) %}
+{# Define one Python variable per agent.llms entry. ``default_llm`` is then
+   aliased to the LLM the user marked as default in the customization tab
+   (agent.default_llm_name); if no explicit default is set we fall back
+   to the first registered LLM. #}
+{% if agent.llms and agent.llms|length > 0 %}
+# LLMs
+{% set default_llm_ns = namespace(name=None) %}
 {% for llm in agent.llms %}
-reply_llm = {{ llm.__class__.__name__}}(
-    name='{{ llm.name }}',
+{{ llm.name | replace('-', '_') | replace('.', '_') | replace(' ', '_') }} = {{ llm.__class__.__name__ }}(
     agent=agent,
+    name='{{ llm.name }}',
     {% if llm.parameters %}
     parameters={{ llm.parameters }},
     {% else %}
@@ -366,40 +335,23 @@ reply_llm = {{ llm.__class__.__name__}}(
     num_previous_messages={{ llm.num_previous_messages }},
     {% endif %}
 )
-{{ llm.name | replace('-', '_') | replace('.', '_') | replace(' ', '_') }} = reply_llm
-{% set has_reply_llm_state.value = true %}
+{% if default_llm_ns.name is none %}
+{% set default_llm_ns.name = llm.name %}
+{% endif %}
+{% if agent.default_llm_name and llm.name == agent.default_llm_name %}
+{% set default_llm_ns.name = llm.name %}
+{% endif %}
 {% endfor %}
+default_llm = {{ default_llm_ns.name | replace('-', '_') | replace('.', '_') | replace(' ', '_') }}
+{% set has_default_llm_state.value = true %}
 {% endif %}
-{% if not has_reply_llm_state.value %}
-# Default LLM when no config or model provides one
-reply_llm = LLMOpenAI(
-    agent=agent,
-    name='gpt-5-nano',
-    parameters={}
-)
-{% set has_reply_llm_state.value = true %}
+{% if not has_default_llm_state.value %}
+# No LLM configured; consumers referencing default_llm will fail loudly at runtime
+default_llm = None
+{% set has_default_llm_state.value = true %}
 {% endif %}
-{% set has_reply_llm = has_reply_llm_state.value %}
+{% set has_default_llm = has_default_llm_state.value %}
 {% set has_db_reply = has_db_reply_state.value %}
-
-{# Ensure a Python LLM variable exists for every ReasoningState's llm name.
-   ReasoningState.llm is a free-form string in the metamodel; the agent
-   may not have it registered in agent.llms, so we instantiate one here
-   when needed. #}
-{% set reasoning_llm_ns = namespace(seen=[]) %}
-{% for existing_llm in agent.llms %}
-{% set _ = reasoning_llm_ns.seen.append(existing_llm.name) %}
-{% endfor %}
-{% for state in agent.states %}
-{% if is_class(state, 'ReasoningState') and state.llm and state.llm not in reasoning_llm_ns.seen %}
-{% set _ = reasoning_llm_ns.seen.append(state.llm) %}
-{{ state.llm | replace('-', '_') | replace('.', '_') | replace(' ', '_') }} = LLMOpenAI(
-    agent=agent,
-    name='{{ state.llm }}',
-    parameters={}
-)
-{% endif %}
-{% endfor %}
 
 {% if has_db_reply %}
 # Make relational databases available through session.db_handler
@@ -413,7 +365,7 @@ agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
 {% if not ic_config_set.value %}
 # Default to LLM-based intent classification (avoids PyTorch dependency)
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='gpt-5-nano',
+    llm_name='{{ ic_llm_ns.name }}',
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
@@ -583,7 +535,7 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
     {% if state.llm %}
     llm={{ state.llm | replace('-', '_') | replace('.', '_') | replace(' ', '_') }},
     {% else %}
-    llm=reply_llm,
+    llm=default_llm,
     {% endif %}
     name={{ state.name | string | tojson }},
     {% if state.initial and not has_personalization %}initial=True,{% endif %}
@@ -657,11 +609,12 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     else:
         reply_text = str(db_result)
     {% else %}
-    {% if has_reply_llm %}
+    {% if has_default_llm %}
+    {% if action.llm_name %}{% set chosen_db_llm = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_db_llm = 'default_llm' %}{% endif %}
     db_result = session.db_handler.{{ db_method }}(
         db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
         query=session.event.message,
-        llm=reply_llm
+        llm={{ chosen_db_llm }}
     )
     if isinstance(db_result, (dict, list)):
         retrieved_answer = json.dumps(db_result, default=str)
@@ -671,7 +624,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
         f"Original user query:\n{session.event.message}\n\n"
         f"Retrieved database answer:\n{retrieved_answer}"
     )
-    reply_text = reply_llm.predict(
+    reply_text = {{ chosen_db_llm }}.predict(
         message=llm_input,
         session=session,
         system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
@@ -710,14 +663,14 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {% if body_name not in ns.bodies %}
 {% if state.body.actions and is_class(state.body.actions[0], 'AgentReply') %}
 def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
+    {% if inject_profile_context and has_default_llm %}
+    default_llm.add_user_context(
         session=session,
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration_{{ suffix }}'
     )
     {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
+    default_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
         context_name='user_profile_{{ suffix }}'
@@ -744,14 +697,14 @@ def {{ body_name }}(session: Session):
     {% endif %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
 def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
+    {% if inject_profile_context and has_default_llm %}
+    default_llm.add_user_context(
         session=session,
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration'
     )
     {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
+    default_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
         context_name='user_profile'
@@ -759,10 +712,11 @@ def {{ body_name }}(session: Session):
     {% endif %}
     {% endif %}
     {% set llm_action = state.body.actions[0] %}
+    {% if llm_action.llm_name %}{% set chosen_llm = llm_action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_llm = 'default_llm' %}{% endif %}
     {% if llm_action.prompt %}
-    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    message = {{ chosen_llm }}.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
-    message = reply_llm.predict(message=session.event.message, session=session)
+    message = {{ chosen_llm }}.predict(message=session.event.message, session=session)
     {% endif %}
     session.reply(message)
     {% if speech_enabled %}
@@ -770,14 +724,14 @@ def {{ body_name }}(session: Session):
     {% endif %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
 def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
+    {% if inject_profile_context and has_default_llm %}
+    default_llm.add_user_context(
         session=session,
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration'
     )
     {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
+    default_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
         context_name='user_profile'
@@ -794,14 +748,14 @@ def {{ body_name }}(session: Session):
     {% endfor %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
 def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
+    {% if inject_profile_context and has_default_llm %}
+    default_llm.add_user_context(
         session=session,
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration'
     )
     {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
+    default_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
         context_name='user_profile'
@@ -838,10 +792,11 @@ def {{ fallback_name }}(session: Session):
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
 def {{ fallback_name }}(session: Session):
     {% set llm_action = state.fallback_body.actions[0] %}
+    {% if llm_action.llm_name %}{% set chosen_llm = llm_action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_llm = 'default_llm' %}{% endif %}
     {% if llm_action.prompt %}
-    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    message = {{ chosen_llm }}.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
-    message = reply_llm.predict(message=session.event.message, session=session)
+    message = {{ chosen_llm }}.predict(message=session.event.message, session=session)
     {% endif %}
     session.reply(message)
     {% if speech_enabled %}

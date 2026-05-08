@@ -8,7 +8,7 @@ import os
 from re import search
 from besser.BUML.metamodel.state_machine.agent import (
     Agent, AgentReply, LLMReply, RAGReply, DBReply,
-    ReasoningState,
+    ReasoningState, llm_provider_key,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
@@ -176,35 +176,42 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     llm_required = True
                     break
 
-        # Emit explicit LLM instances when the agent declares any. Reasoning
-        # states reference their driving LLM by variable name, so we need a
-        # stable identifier per LLM (rather than the legacy hardcoded ``llm``).
+        # Emit explicit LLM definitions via Agent.new_llm — every consumer
+        # (reasoning states, replies, RAG, IC config) references its LLM by
+        # name, so the registered list must round-trip exactly.
         llms = getattr(model, 'llms', []) or []
         llm_var_names: dict[str, str] = {}
         if llms:
             f.write("# LLMs\n")
             for llm in llms:
                 llm_var = safe_var_name(llm.name)
-                # Avoid collisions with reserved names already used elsewhere
-                # (``llm`` is the legacy fallback variable below).
                 if llm_var == "llm":
                     llm_var = f"{llm_var}_{safe_var_name(llm.__class__.__name__)}"
                 llm_var_names[llm.name] = llm_var
-                llm_class = llm.__class__.__name__
                 params = getattr(llm, 'parameters', None) or {}
+                provider = llm_provider_key(llm)
                 f.write(
-                    f"{llm_var} = {llm_class}("
-                    f"agent={model_var_name}, "
-                    f"name={repr(llm.name)}, "
-                    f"parameters={repr(params)})\n"
+                    f"{llm_var} = {model_var_name}.new_llm(\n"
+                    f"    name={repr(llm.name)},\n"
+                    f"    provider={repr(provider)},\n"
+                    f"    parameters={repr(params)},\n"
                 )
+                num_prev = getattr(llm, 'num_previous_messages', None)
+                if num_prev is not None and num_prev != 1:
+                    f.write(f"    num_previous_messages={num_prev},\n")
+                global_ctx = getattr(llm, 'global_context', None)
+                if global_ctx:
+                    f.write(f"    global_context={repr(global_ctx)},\n")
+                f.write(")\n")
+            default_llm_name = getattr(model, 'default_llm_name', None)
+            # Only emit set_default_llm when the chosen default differs from
+            # the auto-default (which is the first LLM registered).
+            if default_llm_name and default_llm_name != llms[0].name:
+                f.write(f"{model_var_name}.set_default_llm({repr(default_llm_name)})\n")
             f.write("\n")
 
-        if llm_required and not llms:
-            # Backward-compatible default: only synthesised when no LLM is
-            # registered on the agent but a state body needs one.
-            f.write("# Create LLM instance for use in state bodies\n")
-            f.write(f"llm = LLMOpenAI(agent={model_var_name}, name='gpt-4o-mini', parameters={{}})\n\n")
+        if not llms:
+            f.write(f"default_llm = None\n\n")
 
         # Write states
         f.write("# STATES\n")
@@ -300,11 +307,15 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     elif isinstance(state.body.actions[0], LLMReply):
                         f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
                         for action in state.body.actions:
+                            kwargs = []
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
-                                f.write(f"{state_var}_body.add_action(LLMReply(prompt='{_escape_python_string(prompt)}'))\n")
-                            else:
-                                f.write(f"{state_var}_body.add_action(LLMReply())\n")
+                                kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                kwargs.append(f"llm_name={repr(llm_name)}")
+                            args = ", ".join(kwargs)
+                            f.write(f"{state_var}_body.add_action(LLMReply({args}))\n")
                         f.write("\n")
                         f.write(f"{state_var}.set_body({state_var}_body)\n")
                     elif isinstance(state.body.actions[0], RAGReply):
@@ -334,6 +345,9 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"db_operation={action.db_operation!r}")
                             if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
                                 db_args.append(f"db_sql_query={action.db_sql_query!r}")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_body.add_action(DBReply({args}))\n" if args else f"{state_var}_body.add_action(DBReply())\n")
                         f.write("\n")
@@ -367,13 +381,15 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     elif isinstance(state.fallback_body.actions[0], LLMReply):
                         f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
                         for action in state.fallback_body.actions:
+                            kwargs = []
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
-                                f.write(
-                                    f"{state_var}_fallback_body.add_action(LLMReply(prompt='{_escape_python_string(prompt)}'))\n"
-                                )
-                            else:
-                                f.write(f"{state_var}_fallback_body.add_action(LLMReply())\n")
+                                kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                kwargs.append(f"llm_name={repr(llm_name)}")
+                            args = ", ".join(kwargs)
+                            f.write(f"{state_var}_fallback_body.add_action(LLMReply({args}))\n")
                         f.write("\n")
                         f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], RAGReply):
@@ -403,6 +419,9 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"db_operation={action.db_operation!r}")
                             if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
                                 db_args.append(f"db_sql_query={action.db_sql_query!r}")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state_var}_fallback_body.add_action(DBReply())\n")
                         f.write("\n")

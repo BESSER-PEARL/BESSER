@@ -71,7 +71,11 @@ def _collect_body_messages(body_elements, elements, language, source_language, t
                 msg = translate_text(msg, language, source_language)
             messages.append(msg)
         elif reply_type == "llm":
-            messages.append(f"LLM:{sanitize_text(body_content)}")
+            llm_payload = {
+                "prompt": sanitize_text(body_content),
+                "llm_name": sanitize_text(body_element.get("llm_name", "") or ""),
+            }
+            messages.append(f"LLM:{json_lib.dumps(llm_payload)}")
         elif reply_type == "rag":
             rag_name = sanitize_text(body_element.get("ragDatabaseName", ""))
             if not rag_name:
@@ -118,7 +122,17 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
         for rag_db_name in rag_names:
             body.add_action(RAGReply(rag_db_name=rag_db_name))
     elif has_llm:
-        body.add_action(LLMReply())
+        for m in messages:
+            if not m.startswith("LLM:"):
+                continue
+            payload_str = m.split(":", 1)[1]
+            try:
+                payload = json_lib.loads(payload_str)
+            except (ValueError, TypeError):
+                payload = {"prompt": payload_str, "llm_name": ""}
+            prompt = payload.get("prompt") or None
+            llm_name = payload.get("llm_name") or None
+            body.add_action(LLMReply(prompt=prompt, llm_name=llm_name))
     elif has_code:
         code_contents = [m[5:] for m in messages if m.startswith("CODE:")]
         for code_content in code_contents:
@@ -167,6 +181,7 @@ def process_agent_diagram(json_data):
             db_query_mode=sanitize_text(element.get("dbQueryMode", "llm_query")) or "llm_query",
             db_operation=sanitize_text(element.get("dbOperation", "any")) or "any",
             db_sql_query=element.get("dbSqlQuery") or None,
+            llm_name=sanitize_text(element.get("llm_name", "")) or None,
         )
 
     def serialize_db_reply_payload(element: dict) -> str:
@@ -176,6 +191,7 @@ def process_agent_diagram(json_data):
             "dbQueryMode": element.get("dbQueryMode", "llm_query") or "llm_query",
             "dbOperation": element.get("dbOperation", "any") or "any",
             "dbSqlQuery": element.get("dbSqlQuery", "") or "",
+            "llm_name": element.get("llm_name", "") or "",
         }
         return f"DB:{json_lib.dumps(payload)}"
     """Process Agent Diagram specific elements and return an Agent model."""
@@ -236,15 +252,19 @@ def process_agent_diagram(json_data):
             llm_parameters = element.get("parameters")
             if not isinstance(llm_parameters, dict):
                 llm_parameters = {}
-            provider_classes = {
-                "openai": LLMOpenAI,
-                "huggingface": LLMHuggingFace,
-                "huggingface_api": LLMHuggingFaceAPI,
-                "replicate": LLMReplicate,
-            }
-            llm_cls = provider_classes.get(provider, LLMOpenAI)
-            # The LLM constructor self-registers on ``agent.llms``.
-            llm_cls(agent=agent, name=llm_name, parameters=llm_parameters)
+            num_prev = element.get("num_previous_messages")
+            try:
+                num_prev_int = int(num_prev) if num_prev is not None else 1
+            except (TypeError, ValueError):
+                num_prev_int = 1
+            global_ctx = element.get("global_context") or None
+            agent.new_llm(
+                name=llm_name,
+                provider=provider,
+                parameters=llm_parameters,
+                num_previous_messages=num_prev_int,
+                global_context=global_ctx,
+            )
             continue
         elif element_type == "AgentTool":
             tool_name = sanitize_text((element.get("name") or "").strip())
@@ -332,11 +352,12 @@ def process_agent_diagram(json_data):
                 chunk_size=1000,
                 chunk_overlap=100,
             )
+            rag_llm_name = sanitize_text((element.get("llm_name") or "").strip()) or ""
             rag_config = agent.new_rag(
                 name=rag_name,
                 vector_store=vector_store,
                 splitter=splitter,
-                llm_name="gpt-4o-mini",
+                llm_name=rag_llm_name,
                 k=4,
                 num_previous_messages=0,
             )
@@ -777,6 +798,15 @@ def process_agent_diagram(json_data):
                     )
                 resolved.append(target)
             setattr(state_obj, ref_field, resolved)
+
+    # Apply default LLM from the customization config block (if set).
+    # The customization tab persists which registered LLM is the default;
+    # without an explicit pointer the agent already auto-defaulted to the
+    # first one registered.
+    default_llm_name_cfg = (config or {}).get("default_llm_name")
+    if isinstance(default_llm_name_cfg, str) and default_llm_name_cfg.strip():
+        if any(existing.name == default_llm_name_cfg for existing in agent.llms):
+            agent.set_default_llm(default_llm_name_cfg)
 
     # Validate the agent model at build time so all callers get validation for free
     agent.validate(raise_exception=True)

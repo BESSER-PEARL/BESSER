@@ -55,17 +55,22 @@ class LLMReply(Action):
 
     Args:
         prompt (str, optional): Additional system prompt injected when calling the LLM.
+        llm_name (str, optional): Name of the LLM (registered on the agent via
+            :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
+            the generator fall back to the agent's default LLM.
 
     Attributes:
         prompt (str | None): Optional system prompt that augments the user message.
+        llm_name (str | None): Name of the LLM used for this reply.
     """
 
-    def __init__(self, prompt: Optional[str] = None):
+    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
         super().__init__()
         self.prompt: Optional[str] = prompt
+        self.llm_name: Optional[str] = llm_name
 
     def __repr__(self):
-        return f"LLMReply(prompt={self.prompt!r})"
+        return f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
 
 
 class RAGReply(Action):
@@ -119,6 +124,7 @@ class DBReply(Action):
             db_query_mode: str = "llm_query",
             db_operation: str = "any",
             db_sql_query: Optional[str] = None,
+            llm_name: Optional[str] = None,
     ):
         super().__init__()
 
@@ -150,6 +156,7 @@ class DBReply(Action):
         self.db_query_mode: str = normalized_query_mode
         self.db_operation: str = normalized_operation
         self.db_sql_query: Optional[str] = db_sql_query
+        self.llm_name: Optional[str] = llm_name
 
     def __repr__(self):
         return (
@@ -158,7 +165,8 @@ class DBReply(Action):
             f"db_custom_name={self.db_custom_name!r}, "
             f"db_query_mode={self.db_query_mode!r}, "
             f"db_operation={self.db_operation!r}, "
-            f"db_sql_query={self.db_sql_query!r}"
+            f"db_sql_query={self.db_sql_query!r}, "
+            f"llm_name={self.llm_name!r}"
             ")"
         )
 
@@ -243,38 +251,45 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     """The LLM Intent Classifier Configuration class.
 
     Args:
-        llm_suite (LLMSuite): the service provider from which we will load/access the LLM
+        llm_suite (LLMSuite | None): the service provider from which we will
+            load/access the LLM. Optional when ``llm_name`` is provided —
+            in that case the suite is resolved from the named LLM's class.
         parameters (dict): the LLM parameters (this will vary depending on the suite and the LLM)
         use_intent_descriptions (bool): whether to include the intent descriptions in the LLM prompt
         use_training_sentences (bool): whether to include the intent training sentences in the LLM prompt
         use_entity_descriptions (bool): whether to include the entity descriptions in the LLM prompt
         use_entity_synonyms (bool): whether to include the entity value's synonyms in the LLM prompt
+        llm_name (str, optional): Name of an LLM registered on the agent
+            (via :meth:`Agent.new_llm`) that this classifier should use.
 
     Attributes:
-        llm_suite (str): the service provider from which we will load/access the LLM
+        llm_suite (str | None): the service provider from which we will load/access the LLM
         parameters (dict): the LLM parameters (this will vary depending on the suite and the LLM)
         use_intent_descriptions (bool): whether to include the intent descriptions in the LLM prompt
         use_training_sentences (bool): whether to include the intent training sentences in the LLM prompt
         use_entity_descriptions (bool): whether to include the entity descriptions in the LLM prompt
         use_entity_synonyms (bool): whether to include the entity value's synonyms in the LLM prompt
+        llm_name (str | None): Name of the registered LLM that this classifier should use.
     """
 
     def __init__(
             self,
-            llm_suite: LLMSuite,
+            llm_suite: Optional[LLMSuite] = None,
             parameters: dict = None,
             use_intent_descriptions: bool = False,
             use_training_sentences: bool = False,
             use_entity_descriptions: bool = False,
-            use_entity_synonyms: bool = False
+            use_entity_synonyms: bool = False,
+            llm_name: Optional[str] = None,
     ):
         super().__init__()
-        self.llm_suite: str = llm_suite.value
+        self.llm_suite: Optional[str] = llm_suite.value if llm_suite is not None else None
         self.parameters: dict = parameters if parameters is not None else {}
         self.use_intent_descriptions: bool = use_intent_descriptions
         self.use_training_sentences: bool = use_training_sentences
         self.use_entity_descriptions: bool = use_entity_descriptions
         self.use_entity_synonyms: bool = use_entity_synonyms
+        self.llm_name: Optional[str] = llm_name
 
 
 class LLMWrapper(ABC):
@@ -1482,6 +1497,7 @@ class Agent(StateMachine):
         self.entities: list[Entity] = []
         self.global_initial_states: list[tuple[AgentState, Intent]] = []
         self.llms: list[LLMWrapper] = []
+        self.default_llm_name: Optional[str] = None
         self.rags: list[RAG] = []
         # Reasoning extension primitives — see baf.reasoning at runtime.
         self.tools: list[Tool] = []
@@ -1504,6 +1520,7 @@ class Agent(StateMachine):
         self._validate_state_intent_name_collisions(errors)
         self._validate_transition_intent_references(errors)
         self._validate_reasoning_primitives(errors, warnings)
+        self._validate_llm_references(errors, warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -1685,6 +1702,66 @@ class Agent(StateMachine):
         self.entities.append(new_entity)
         return new_entity
 
+    # Mapping from the public ``provider`` keyword (used in the WME and the
+    # generator template) to the matching :class:`LLMWrapper` subclass.
+    _LLM_PROVIDERS: dict[str, type] = {}  # populated below the class definition
+
+    def new_llm(
+            self,
+            name: str,
+            provider: str = "openai",
+            parameters: Optional[dict] = None,
+            num_previous_messages: int = 1,
+            global_context: Optional[str] = None,
+    ) -> 'LLMWrapper':
+        """Register an LLM on the agent and return the :class:`LLMWrapper` instance.
+
+        ``provider`` selects the concrete subclass: ``openai`` →
+        :class:`LLMOpenAI`, ``huggingface`` → :class:`LLMHuggingFace`,
+        ``huggingface_api`` → :class:`LLMHuggingFaceAPI`,
+        ``replicate`` → :class:`LLMReplicate`. Names must be unique on the
+        agent so other elements (reasoning states, RAG, replies, intent
+        classifiers) can reference the LLM by ``llm_name``.
+        """
+        if any(existing.name == name for existing in self.llms):
+            raise ValueError(
+                f"An agent cannot have two LLMs with the same name ({name})."
+            )
+        provider_key = (provider or "openai").strip().lower()
+        llm_cls = self._LLM_PROVIDERS.get(provider_key)
+        if llm_cls is None:
+            raise ValueError(
+                f"Unsupported LLM provider '{provider}'. Expected one of "
+                f"{sorted(self._LLM_PROVIDERS)}."
+            )
+        # Each subclass auto-appends to ``self.llms`` via LLMWrapper.__init__.
+        llm = llm_cls(
+            agent=self,
+            name=name,
+            parameters=parameters if parameters is not None else {},
+            num_previous_messages=num_previous_messages,
+            global_context=global_context,
+        )
+        # First registered LLM becomes the default unless one is set already.
+        if self.default_llm_name is None:
+            self.default_llm_name = name
+        return llm
+
+    def set_default_llm(self, name: str) -> None:
+        """Mark the LLM with the given name as the agent's default.
+
+        The default LLM is the one used by every consumer (``LLMReply``,
+        ``DBReply``, RAG, intent classifier) that does not specify its own
+        ``llm_name``. The named LLM must already be registered on the
+        agent via :meth:`new_llm`.
+        """
+        if not any(existing.name == name for existing in self.llms):
+            raise ValueError(
+                f"Cannot set default LLM to '{name}': no LLM with that "
+                f"name is registered on agent '{self.name}'."
+            )
+        self.default_llm_name = name
+
     def new_rag(
             self,
             name: str,
@@ -1848,6 +1925,73 @@ class Agent(StateMachine):
             fallback_message=fallback_message,
         ))
 
+    # ─── LLM-reference validation ────────────────────────────────────── #
+
+    def _validate_llm_references(
+        self,
+        errors: list[str],
+        warnings: list[str],
+    ) -> None:
+        """Validate that every ``llm_name`` reference resolves to a registered LLM."""
+        registered = {llm.name for llm in self.llms}
+
+        def _check(label: str, value: Optional[str]) -> None:
+            if value is None or not str(value).strip():
+                return
+            if value not in registered:
+                errors.append(
+                    f"{label} references LLM '{value}' which is not "
+                    f"registered on agent '{self.name}'. Define it via "
+                    f"agent.new_llm(...) first."
+                )
+
+        # ReasoningState.llm
+        for state in self.states:
+            if isinstance(state, ReasoningState):
+                _check(f"ReasoningState '{state.name}'", state.llm)
+
+        # State bodies / fallback bodies referencing LLMs.
+        for state in self.states:
+            for body, label in (
+                (getattr(state, "body", None), "body"),
+                (getattr(state, "fallback_body", None), "fallback_body"),
+            ):
+                if body is None or not getattr(body, "actions", None):
+                    continue
+                for action in body.actions:
+                    if isinstance(action, LLMReply):
+                        _check(
+                            f"State '{state.name}' {label} LLMReply",
+                            action.llm_name,
+                        )
+                    elif isinstance(action, DBReply) and action.db_query_mode == "llm_query":
+                        _check(
+                            f"State '{state.name}' {label} DBReply",
+                            action.llm_name,
+                        )
+
+        # RAG configurations.
+        for rag in self.rags:
+            _check(f"RAG '{rag.name}'", rag.llm_name)
+
+        # Default IC config (LLM-based).
+        ic = self.default_ic_config
+        if isinstance(ic, LLMIntentClassifierConfiguration):
+            _check("Default LLMIntentClassifierConfiguration", ic.llm_name)
+
+        # Per-state IC configs (LLM-based).
+        for state in self.states:
+            ic = getattr(state, "ic_config", None)
+            if isinstance(ic, LLMIntentClassifierConfiguration):
+                _check(
+                    f"State '{state.name}' LLMIntentClassifierConfiguration",
+                    ic.llm_name,
+                )
+
+        # Default LLM pointer.
+        if self.default_llm_name is not None:
+            _check("Agent.default_llm_name", self.default_llm_name)
+
     # ─── Reasoning validation ─────────────────────────────────────────── #
 
     def _validate_reasoning_primitives(
@@ -1892,14 +2036,11 @@ class Agent(StateMachine):
                     f"(got {ws.max_read_bytes})."
                 )
 
-        # ReasoningState: llm name must be defined (free-form string).
+        # ReasoningState: empty llm signals "use the agent's default_llm at
+        # codegen time"; runtime fails loudly if no default is registered.
         for state in self.states:
             if not isinstance(state, ReasoningState):
                 continue
-            if not (state.llm or "").strip():
-                errors.append(
-                    f"ReasoningState '{state.name}' has no LLM name assigned."
-                )
             if state.max_steps <= 0:
                 errors.append(
                     f"ReasoningState '{state.name}' must have max_steps > 0."
@@ -1919,6 +2060,24 @@ class Agent(StateMachine):
                     f"Tool '{tool.name}' has no description; the LLM may "
                     f"not pick it up reliably."
                 )
+
+
+# Register the concrete LLM wrappers against the public ``provider`` keys
+# used by :meth:`Agent.new_llm`, the WME, and the BAF generator.
+Agent._LLM_PROVIDERS = {
+    "openai": LLMOpenAI,
+    "huggingface": LLMHuggingFace,
+    "huggingface_api": LLMHuggingFaceAPI,
+    "replicate": LLMReplicate,
+}
+
+
+def llm_provider_key(llm: 'LLMWrapper') -> str:
+    """Reverse-lookup the ``provider`` keyword for an existing LLM instance."""
+    for key, cls in Agent._LLM_PROVIDERS.items():
+        if isinstance(llm, cls):
+            return key
+    return "openai"
 
 
 class MatchedParameter:

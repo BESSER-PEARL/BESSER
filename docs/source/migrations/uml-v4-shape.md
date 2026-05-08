@@ -948,50 +948,13 @@ spec, not the implementation.
 
 ## Visual deviations from v3
 
-### NN layer cards (SA-2.2 #34)
+### NN layer cards (SA-2.2 #34, restored in SA-UX-FIX-2)
 
-**v3:** `NNBaseLayer` (and every concrete layer kind it spawned —
-Conv1D / Conv2D / Conv3D / Pooling / RNN / LSTM / GRU / Linear /
-Flatten / Embedding / Dropout / LayerNormalization /
-BatchNormalization / TensorOp / Configuration / TrainingDataset /
-TestDataset) rendered as a fixed **110×110 px** card with a custom
-SVG glyph centred in the body and `hasAttributes = false` so no row
-section was drawn. The icon glyphs lived under
-`packages/editor/src/main/packages/nn-diagram/nn-layer-icon/` and
-were imported per layer kind.
-
-**v4:** `_NNLayerBase.tsx` renders a generic `«KindLabel»` stereotype
-card with the layer's `name` underneath, a horizontal separator under
-the header, and a default fill colour per kind. The card auto-resizes
-(min 120×50) and is consistent with SA-3's State / SA-4's Agent
-visuals, so the inspector experience is uniform across every diagram
-type.
-
-**Decision: retire the v3 fixed-icon visual.** The SA-PARITY-2 audit
-flagged the change (round 2 #34) as MEDIUM. Per the SA-2.2 brief,
-visual restoration is in scope only if the v3 SVG icons port cleanly
-within ~2 hours; the icon directory contains 18 hand-tuned SVG
-symbols that would need re-export to React component + theme-aware
-fill threading. SA-2.2 explicitly retires the icon look in favour of
-the stereotype-card style for these reasons:
-
-- **Uniformity** — every other diagram type in the v4 lib uses the
-  stereotype-card pattern; introducing a per-diagram icon view would
-  reintroduce SA-2's pre-spec hot path of bespoke per-kind renderers.
-- **Authoring affordance** — the v3 110×110 card hid the layer's
-  `name` from the canvas (only the kind label was visible). The v4
-  card surfaces both, which is the dominant authoring affordance the
-  v3 inspector users asked for.
-- **Theme fidelity** — v3 icons baked the stroke colour into the SVG
-  source. The stereotype-card style respects `data.fillColor` /
-  `data.strokeColor` / `data.textColor` end-to-end through
-  `getCustomColorsFromData`, so theme + per-node overrides work the
-  same way they do for class / agent / state cards.
-
-If a future contributor wants to restore the icon-view as an opt-in
-toggle (à la SA-2.1's `showIconView` for ObjectName), the SA-2.2
-inspector schema and v3 ↔ v4 round-trip are unaffected — the icons
-would be a render-time-only enhancement on top of `_NNLayerBase.tsx`.
+v3 layer icons restored in SA-UX-FIX-2 — `_NNLayerBase.tsx` now
+renders the per-kind PNG (`/images/nn-layers/<kind>.png`) above the
+stereotype/name header, mirroring v3 visuals while keeping the v4
+stereotype-card structure. Default layer drop height bumped from 60
+→ 140 px to make room.
 
 ### Header underline on UserModelName (SA-2.2 #35)
 

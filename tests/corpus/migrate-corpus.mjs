@@ -143,6 +143,17 @@ function * extractV3Models (file, raw) {
 function probeV3v4Diff (v3Model, v4Model) {
   const issues = []
 
+  const diagramType = v3Model.type
+  // NN diagrams collapse attributes into a name->value dictionary on the
+  // v4 layer node. Skip the per-row checks for those — the value-by-name
+  // shape is fundamentally different and would generate noise. We still
+  // verify that *some* shape is present though.
+  const isDictAttrShape = diagramType === 'NNDiagram'
+  // UserDiagram intentionally drops `visibility` because user attributes
+  // are operator-comparisons, not class members — flag those losses but
+  // tag them as schema-by-design.
+  const isUserDiag = diagramType === 'UserDiagram'
+
   const v3Elements = v3Model.elements || {}
   const v3Rels = v3Model.relationships || {}
   const v4Nodes = v4Model.nodes || []
@@ -169,50 +180,85 @@ function probeV3v4Diff (v3Model, v4Model) {
     }
 
     // 2) Attribute checks – v3 attribute rows live as separate elements; v4
-    //    embeds them in node.data.attributes (array of row objects).
-    const attrRows = (node.data && Array.isArray(node.data.attributes)) ? node.data.attributes : []
+    //    embeds them in node.data.attributes. Class/User/Object/Agent use an
+    //    array of row objects; NN uses a name→value dictionary.
     const v3AttrIds = (el.attributes || [])
-    for (const attrId of v3AttrIds) {
-      const attrEl = v3Elements[attrId]
-      if (!attrEl) continue
-      const v4Row = attrRows.find(r => r && (r.id === attrId || r.elementId === attrId || r.name === attrEl.name))
-      if (!v4Row) {
-        issues.push(`attribute "${attrEl.name ?? '?'}" missing from v4 data.attributes`)
-        continue
+    if (isDictAttrShape) {
+      // NN: each v3 attr row has `name = value` style (or just `name`)
+      // surfacing as data.attributes['name'] = value.
+      const v4dict = (node.data && node.data.attributes && !Array.isArray(node.data.attributes))
+        ? node.data.attributes
+        : null
+      if (v3AttrIds.length > 0 && !v4dict) {
+        issues.push(`v3 has ${v3AttrIds.length} attributes but v4 data.attributes is not a dict`)
       }
-      // Field-by-field defaultValue/visibility/attributeType/isId/isOptional/isDerived/isExternalId checks
-      for (const field of ['defaultValue', 'visibility', 'attributeType', 'isId', 'isOptional', 'isDerived', 'isExternalId']) {
-        if (!(field in attrEl)) continue
-        const v3Val = attrEl[field]
-        if (v3Val === undefined || v3Val === null || v3Val === '' || v3Val === false) continue
-        // Map v3 attributeType -> v4 type (some migrators normalize this).
-        const v4Field = field === 'attributeType' ? 'type' : field
-        const v4Val = v4Row[v4Field] ?? v4Row[field]
-        if (v4Val === undefined || v4Val === null || v4Val === '') {
-          issues.push(`attribute.${field} empty after migration (v3=${JSON.stringify(v3Val)})`)
+      for (const attrId of v3AttrIds) {
+        const attrEl = v3Elements[attrId]
+        if (!attrEl) continue
+        const rawName = String(attrEl.name ?? '').trim()
+        // Extract attribute key — text before "=".
+        const key = rawName.split('=')[0].trim()
+        if (!key) continue
+        if (!v4dict) continue
+        // Tolerate (a) verbatim hit, (b) "<prefix>.<key>" hit (the migrator
+        // namespaces some attrs under their layer kind, e.g. PoolingLayer →
+        // `pooling.dimension`), (c) `name` lifted to data.name on containers.
+        const verbatim = key in v4dict
+        const suffixMatch = Object.keys(v4dict).some(k => k === key || k.endsWith('.' + key))
+        const liftedName = key === 'name' && node.data && node.data.name
+        if (!verbatim && !suffixMatch && !liftedName) {
+          issues.push(`NN attribute "${key}" missing from v4 data.attributes dict`)
+        }
+      }
+    } else {
+      const attrRows = (node.data && Array.isArray(node.data.attributes)) ? node.data.attributes : []
+      for (const attrId of v3AttrIds) {
+        const attrEl = v3Elements[attrId]
+        if (!attrEl) continue
+        const v4Row = attrRows.find(r => r && (r.id === attrId || r.elementId === attrId || r.name === attrEl.name))
+        if (!v4Row) {
+          issues.push(`attribute "${attrEl.name ?? '?'}" missing from v4 data.attributes`)
+          continue
+        }
+        for (const field of ['defaultValue', 'visibility', 'attributeType', 'isId', 'isOptional', 'isDerived', 'isExternalId']) {
+          if (!(field in attrEl)) continue
+          const v3Val = attrEl[field]
+          if (v3Val === undefined || v3Val === null || v3Val === '' || v3Val === false) continue
+          // UserDiagram by design has no `visibility` on operator-style attrs.
+          if (isUserDiag && field === 'visibility') {
+            issues.push(`UserDiagram drops attribute.visibility (by-design? v3=${JSON.stringify(v3Val)})`)
+            continue
+          }
+          const v4Field = field === 'attributeType' ? 'type' : field
+          const v4Val = v4Row[v4Field] ?? v4Row[field]
+          if (v4Val === undefined || v4Val === null || v4Val === '') {
+            issues.push(`attribute.${field} empty after migration (v3=${JSON.stringify(v3Val)})`)
+          }
         }
       }
     }
 
-    // 3) Method checks – analogous structure to attributes.
-    const methodRows = (node.data && Array.isArray(node.data.methods)) ? node.data.methods : []
-    const v3MethodIds = (el.methods || [])
-    for (const methodId of v3MethodIds) {
-      const methodEl = v3Elements[methodId]
-      if (!methodEl) continue
-      const v4Row = methodRows.find(r => r && (r.id === methodId || r.elementId === methodId || r.name === methodEl.name))
-      if (!v4Row) {
-        issues.push(`method "${methodEl.name ?? '?'}" missing from v4 data.methods`)
-        continue
-      }
-      for (const field of ['code', 'visibility', 'implementationType', 'attributeType']) {
-        if (!(field in methodEl)) continue
-        const v3Val = methodEl[field]
-        if (v3Val === undefined || v3Val === null || v3Val === '' || v3Val === false) continue
-        const v4Field = field === 'attributeType' ? 'type' : field
-        const v4Val = v4Row[v4Field] ?? v4Row[field]
-        if (v4Val === undefined || v4Val === null || v4Val === '') {
-          issues.push(`method.${field} empty after migration (v3=${JSON.stringify(v3Val).slice(0, 80)})`)
+    // 3) Method checks – analogous structure to attributes (skipped for NN).
+    if (!isDictAttrShape) {
+      const methodRows = (node.data && Array.isArray(node.data.methods)) ? node.data.methods : []
+      const v3MethodIds = (el.methods || [])
+      for (const methodId of v3MethodIds) {
+        const methodEl = v3Elements[methodId]
+        if (!methodEl) continue
+        const v4Row = methodRows.find(r => r && (r.id === methodId || r.elementId === methodId || r.name === methodEl.name))
+        if (!v4Row) {
+          issues.push(`method "${methodEl.name ?? '?'}" missing from v4 data.methods`)
+          continue
+        }
+        for (const field of ['code', 'visibility', 'implementationType', 'attributeType']) {
+          if (!(field in methodEl)) continue
+          const v3Val = methodEl[field]
+          if (v3Val === undefined || v3Val === null || v3Val === '' || v3Val === false) continue
+          const v4Field = field === 'attributeType' ? 'type' : field
+          const v4Val = v4Row[v4Field] ?? v4Row[field]
+          if (v4Val === undefined || v4Val === null || v4Val === '') {
+            issues.push(`method.${field} empty after migration (v3=${JSON.stringify(v3Val).slice(0, 80)})`)
+          }
         }
       }
     }
@@ -451,7 +497,12 @@ if (topPatterns.length === 0) {
   lines.push('')
   topPatterns.forEach(([pat, n], idx) => {
     let recommendation
-    if (pat.includes('attribute.defaultValue')) {
+    // Order matters: most specific phrases first so generic checks below
+    // do not pre-empt them (e.g. the UserDiagram by-design phrase contains
+    // "attribute.visibility" so it must be matched first).
+    if (pat.includes('UserDiagram drops attribute.visibility')) {
+      recommendation = 'By design — UserDiagram v4 does not model visibility (its attributes are operator comparisons). Confirm with product before treating as a bug; otherwise add `visibility` to the v4 row schema.'
+    } else if (pat.includes('attribute.defaultValue')) {
       recommendation = 'Lift `defaultValue` from the v3 ClassAttribute element onto the v4 `data.attributes[].defaultValue` row.'
     } else if (pat.includes('attribute.attributeType')) {
       recommendation = 'Map v3 `attributeType` onto v4 `data.attributes[].type` (or keep `attributeType` for parity).'
@@ -469,6 +520,8 @@ if (topPatterns.length === 0) {
       recommendation = 'Forward `relationship.name` to v4 edge `data.name` (currently lost for some edge types).'
     } else if (pat.includes('classifier.name')) {
       recommendation = 'Preserve the classifier name verbatim on v4 `data.name`; today the migrator may rename when the v3 name embeds a parameter list.'
+    } else if (pat.includes('NN attribute')) {
+      recommendation = 'Ensure every NN attribute (`name = value` row) lands as a key in the layer node’s `data.attributes` dictionary; current migrator parses `name = value` but may swallow malformed rows.'
     } else if (pat.startsWith('node missing') || pat.startsWith('edge missing')) {
       recommendation = 'Investigate why this element is filtered out — count drops indicate the migrator silently discards unrecognised v3 types.'
     } else {

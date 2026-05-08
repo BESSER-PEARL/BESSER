@@ -6,8 +6,8 @@ Counts only data fields that **were populated in v3** but vanished in v4.
 ## Totals
 
 - Fixtures discovered: **38**
-- PASS: **32**
-- WARN (data loss): **5**
+- PASS: **35**
+- WARN (data loss): **2**
 - FAIL (crash / count drop): **0**
 - SKIP (no migrator for type): **1**
 - Nodes preserved: **248** / **248**
@@ -20,7 +20,7 @@ Counts only data fields that **were populated in v3** but vanished in v4.
 | AgentDiagram | 13 | 0 | 0 | 0 |
 | ClassDiagram | 14 | 0 | 0 | 0 |
 | CommunicationDiagram | 0 | 0 | 0 | 1 |
-| NNDiagram | 1 | 3 | 0 | 0 |
+| NNDiagram | 4 | 0 | 0 | 0 |
 | ObjectDiagram | 1 | 0 | 0 | 0 |
 | StateMachineDiagram | 2 | 0 | 0 | 0 |
 | UserDiagram | 1 | 2 | 0 | 0 |
@@ -29,8 +29,7 @@ Counts only data fields that **were populated in v3** but vanished in v4.
 
 | # | Count | Pattern |
 |--:|------:|---------|
-| 1 | 138 | `attribute "…" missing from v4 data.attributes` |
-| 2 | 9 | `attribute.visibility empty after migration (v3=…)` |
+| 1 | 9 | `UserDiagram drops attribute.visibility (by-design? v3=…)` |
 
 ## Per-fixture results
 
@@ -41,9 +40,9 @@ Counts only data fields that **were populated in v3** but vanished in v4.
 | PASS | AgentDiagram | 17/8 | 6/6 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/agent/greetingagent.json` |
 | PASS | AgentDiagram | 11/9 | 8/8 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/agent/gymagent.json` |
 | PASS | AgentDiagram | 20/10 | 8/8 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/agent/libraryagent.json` |
-| WARN | NNDiagram | 20/3 | 14/14 | 67 | `<develop>/packages/webapp/src/main/templates/pattern/nn/alexnet_nn.json` |
-| WARN | NNDiagram | 7/1 | 5/5 | 26 | `<develop>/packages/webapp/src/main/templates/pattern/nn/lstm_nn.json` |
-| WARN | NNDiagram | 12/4 | 10/10 | 45 | `<develop>/packages/webapp/src/main/templates/pattern/nn/tutorial_example.json` |
+| PASS | NNDiagram | 20/3 | 14/14 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/nn/alexnet_nn.json` |
+| PASS | NNDiagram | 7/1 | 5/5 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/nn/lstm_nn.json` |
+| PASS | NNDiagram | 12/4 | 10/10 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/nn/tutorial_example.json` |
 | PASS | ClassDiagram | 5/5 | 2/2 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/project/library_full_stack.json::diagrams.ClassDiagram[0]` |
 | PASS | AgentDiagram | 20/10 | 8/8 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/project/library_full_stack.json::diagrams.AgentDiagram[0]` |
 | PASS | AgentDiagram | 11/9 | 9/9 | 0 | `<develop>/packages/webapp/src/main/templates/pattern/project/personalized_gym_agent.json::diagrams.AgentDiagram[0]` |
@@ -79,8 +78,7 @@ Counts only data fields that **were populated in v3** but vanished in v4.
 
 Order matches the top-pattern table above:
 
-1. **attribute "…" missing from v4 data.attributes** _(seen 138×)_ — Audit the migrator branch responsible for this field family and add the missing copy.
-2. **attribute.visibility empty after migration (v3=…)** _(seen 9×)_ — Preserve attribute visibility on v4 `data.attributes[].visibility` (default `public` if absent).
+1. **UserDiagram drops attribute.visibility (by-design? v3=…)** _(seen 9×)_ — By design — UserDiagram v4 does not model visibility (its attributes are operator comparisons). Confirm with product before treating as a bug; otherwise add `visibility` to the v4 row schema.
 
 ## Source roots scanned
 

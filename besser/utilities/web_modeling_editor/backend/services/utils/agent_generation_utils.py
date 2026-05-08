@@ -375,9 +375,9 @@ def collect_agents_from_diagrams(
         model = entry_dict.get("model")
         if not model:
             continue
-        # The deploy endpoint additionally required a non-empty ``elements`` map;
+        # The deploy endpoint additionally required a non-empty ``nodes`` list;
         # treat that as the unified contract so both paths reject blank diagrams.
-        if isinstance(model, dict) and not model.get("elements"):
+        if isinstance(model, dict) and not model.get("nodes"):
             continue
         agent_model = process_agent_diagram(entry_dict)
         if agent_model is None:

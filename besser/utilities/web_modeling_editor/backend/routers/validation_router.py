@@ -92,8 +92,8 @@ async def validate_diagram(input_data: DiagramInput):
             reference_json = {
                 "title": reference_data.get("title", "Reference Classes"),
                 "model": {
-                    "elements": reference_data.get("elements", {}),
-                    "relationships": reference_data.get("relationships", {})
+                    "nodes": reference_data.get("nodes", []),
+                    "edges": reference_data.get("edges", []),
                 }
             }
             buml_model = process_class_diagram(reference_json)

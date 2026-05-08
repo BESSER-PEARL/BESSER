@@ -196,7 +196,7 @@ async def deploy_webapp_to_github(
                 )
 
             agent_model_payload = agent_diagram_data.get("model")
-            if isinstance(agent_model_payload, dict) and not agent_model_payload.get("elements"):
+            if isinstance(agent_model_payload, dict) and not agent_model_payload.get("nodes"):
                 raise HTTPException(
                     status_code=400,
                     detail="AgentDiagram must contain at least one element for standalone chatbot deployment",
@@ -967,7 +967,7 @@ async def _export_buml_files_to_repo(
             agent_diagrams = []
 
         for agent_data in agent_diagrams:
-            if not (agent_data and agent_data.get("model", {}).get("elements")):
+            if not (agent_data and agent_data.get("model", {}).get("nodes")):
                 continue
             agent_model = process_agent_diagram(agent_data)
             slug = agent_slug(agent_model.name)

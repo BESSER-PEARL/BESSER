@@ -646,7 +646,7 @@ async def get_json_model_from_image(
     if existing_model:
         try:
             existing_json = json.loads(existing_model)
-            if existing_json.get("model", {}).get("elements") or existing_json.get("elements"):
+            if existing_json.get("model", {}).get("nodes") or existing_json.get("nodes"):
                 payload = existing_json if "model" in existing_json else {"title": "Existing", "model": existing_json}
                 existing_domain_model = process_class_diagram(payload)
         except (json.JSONDecodeError, ValueError):

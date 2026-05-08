@@ -147,10 +147,12 @@ def get_element_by_id(class_model, element_id):
         if element_id in class_model:
             return class_model[element_id]
 
-        # If this is a full diagram dict, look under 'elements'
-        if 'elements' in class_model and isinstance(class_model['elements'], dict):
-            if element_id in class_model['elements']:
-                return class_model['elements'][element_id]
+        # v4 wire shape: full diagram dict with nodes list
+        nodes = class_model.get('nodes')
+        if isinstance(nodes, list):
+            for node in nodes:
+                if isinstance(node, dict) and node.get('id') == element_id:
+                    return node
 
     # List format
     if isinstance(class_model, list):

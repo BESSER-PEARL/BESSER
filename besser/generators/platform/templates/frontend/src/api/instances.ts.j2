@@ -10,6 +10,7 @@ import type {
   InstanceUpdateRequest,
   LinkCreateRequest,
   ExportJsonResponse,
+  Position,
 } from '../types/models';
 
 /**
@@ -64,6 +65,23 @@ export const updateInstance = async (
  */
 export const deleteInstance = async (className: string, instanceId: string): Promise<void> => {
   await apiClient.delete(`/instances/${className}/${instanceId}`);
+};
+
+/**
+ * Update an instance's canvas position. Called on node drag-end so the
+ * backend store stays in sync with the canvas layout — keeps positions
+ * stable across page refresh and through save/load round-trips.
+ */
+export const updateInstancePosition = async (
+  className: string,
+  instanceId: string,
+  position: Position,
+): Promise<BaseInstance> => {
+  const response = await apiClient.patch<BaseInstance>(
+    `/instances/${className}/${instanceId}/position`,
+    position,
+  );
+  return response.data;
 };
 
 /**

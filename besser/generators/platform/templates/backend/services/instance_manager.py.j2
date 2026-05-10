@@ -33,36 +33,46 @@ class InstanceManager:
             {%- endfor %}
         }
     
-    def create_instance(self, class_name: str, instance_name: str, attributes: Dict[str, Any]) -> Dict[str, Any]:
+    def create_instance(
+        self,
+        class_name: str,
+        instance_name: str,
+        attributes: Dict[str, Any],
+        position: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, Any]:
         """
         Create a new instance of a domain model class.
-        
+
         Args:
             class_name: Name of the class to instantiate
             instance_name: Name/identifier for the instance
             attributes: Dictionary of attribute values
-        
+            position: Optional ``{"x": float, "y": float}`` canvas position.
+                Persisting it server-side keeps the layout stable across
+                page refreshes and across save/load round-trips.
+
         Returns:
             Dictionary representation of the created instance
-        
+
         Raises:
             ValueError: If class_name is invalid
         """
         if class_name not in self.class_map:
             raise ValueError(f"Unknown class: {class_name}")
-        
+
         instance_id = str(uuid4())
-        
+
         instance_data = {
             "id": instance_id,
             "class_name": class_name,
             "instance_name": instance_name,
             "attributes": attributes,
-            "links": []
+            "links": [],
+            "position": dict(position) if position else None,
         }
-        
+
         self.instances[class_name][instance_id] = instance_data
-        
+
         return instance_data
     
     def get_instance(self, class_name: str, instance_id: str) -> Optional[Dict[str, Any]]:
@@ -89,8 +99,22 @@ class InstanceManager:
         instance = self.get_instance(class_name, instance_id)
         if instance is None:
             return None
-        
+
         instance["attributes"].update(attributes)
+        return instance
+
+    def update_instance_position(
+        self,
+        class_name: str,
+        instance_id: str,
+        position: Dict[str, float],
+    ) -> Optional[Dict[str, Any]]:
+        """Update only the canvas position. Called on node drag-end from the
+        frontend so layout changes persist without a full instance update."""
+        instance = self.get_instance(class_name, instance_id)
+        if instance is None:
+            return None
+        instance["position"] = {"x": float(position["x"]), "y": float(position["y"])}
         return instance
     
     def delete_instance(self, class_name: str, instance_id: str) -> bool:
@@ -204,12 +228,19 @@ class InstanceManager:
                     raise ValueError(f"Invalid instance entry under class '{class_name}'")
                 iid = instance_data["id"]
                 links = list(instance_data.get("links", []))
+                raw_position = instance_data.get("position")
+                position = (
+                    {"x": float(raw_position["x"]), "y": float(raw_position["y"])}
+                    if isinstance(raw_position, dict) and "x" in raw_position and "y" in raw_position
+                    else None
+                )
                 self.instances[class_name][iid] = {
                     "id": iid,
                     "class_name": class_name,
                     "instance_name": instance_data.get("instance_name", ""),
                     "attributes": dict(instance_data.get("attributes", {})),
                     "links": [dict(link) for link in links],
+                    "position": position,
                 }
                 instance_count += 1
                 link_count += len(links)

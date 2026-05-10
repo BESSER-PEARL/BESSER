@@ -9,12 +9,20 @@ from typing import Dict, List, Any, Optional
 from datetime import date, time, datetime
 
 
+class Position(BaseModel):
+    """Canvas position for an instance node. Persisted on the backend so
+    layouts survive page refresh and round-trip through save/load."""
+    x: float
+    y: float
+
+
 class InstanceCreate(BaseModel):
     """Schema for creating a new instance."""
     class_name: str = Field(..., description="Name of the class to instantiate")
     instance_name: str = Field(..., description="Name/identifier for the instance")
     attributes: Dict[str, Any] = Field(default_factory=dict, description="Attribute values")
-    
+    position: Optional[Position] = Field(default=None, description="Initial canvas position")
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -23,7 +31,8 @@ class InstanceCreate(BaseModel):
                 "attributes": {
                     "title": "The Great Gatsby",
                     "pages": 180
-                }
+                },
+                "position": {"x": 240, "y": 120}
             }
         }
     }
@@ -32,7 +41,7 @@ class InstanceCreate(BaseModel):
 class InstanceUpdate(BaseModel):
     """Schema for updating an existing instance."""
     attributes: Dict[str, Any] = Field(..., description="Attribute values to update")
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -59,7 +68,8 @@ class InstanceResponse(BaseModel):
     instance_name: str = Field(..., description="Name/identifier of the instance")
     attributes: Dict[str, Any] = Field(default_factory=dict, description="Attribute values")
     links: List[LinkData] = Field(default_factory=list, description="Association links")
-    
+    position: Optional[Position] = Field(default=None, description="Canvas position")
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -70,7 +80,8 @@ class InstanceResponse(BaseModel):
                     "title": "The Great Gatsby",
                     "pages": 180
                 },
-                "links": []
+                "links": [],
+                "position": {"x": 240, "y": 120}
             }
         }
     }

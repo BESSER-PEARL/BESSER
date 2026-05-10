@@ -532,6 +532,12 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     const flowNodes: Node[] = renderableInstances.map((instance, index) => {
       const classMetadata = availableClasses.find((c) => c.name === instance.class_name);
       const storedPosition = nodePositionsRef.current.get(instance.id);
+      // Backend is the source of truth. The cache (storedPosition) only
+      // fills in when the backend doesn't yet know a position — otherwise
+      // a stale cache value (e.g. from a pre-import drag) would beat the
+      // freshly-loaded position and the canvas would re-render at the old
+      // coordinates instead of the imported ones.
+      const backendPosition = instance.position ?? undefined;
       const isContainer = Boolean(classMetadata?.isContainer);
       const parentId = parentByChild.get(instance.id);
 
@@ -549,10 +555,13 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           y: 100 + Math.floor(index / 5) * 200,
         };
       }
-      const position = storedPosition ?? defaultPosition;
-      if (!storedPosition) {
-        nodePositionsRef.current.set(instance.id, position);
-      }
+      const position = backendPosition ?? storedPosition ?? defaultPosition;
+      // Re-sync the cache so it can't drift away from whatever's authoritative.
+      // During an interactive drag this useEffect doesn't re-run (xyflow updates
+      // its internal node state via onNodesChange instead), so we won't fight
+      // the user mid-drag — but on every re-render driven by ``instances``
+      // changing, the cache lines up with what we just resolved.
+      nodePositionsRef.current.set(instance.id, position);
 
       const node: Node = {
         id: instance.id,
@@ -755,6 +764,26 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
     setEdges(flowEdges);
   }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges]);
+
+  // Persist position on drag-end so the backend store stays in sync with
+  // the canvas. Fires once per gesture (after the user releases the mouse),
+  // so no debounce is needed. The PATCH is fire-and-forget — a failure logs
+  // but doesn't disrupt the canvas, since the ref already has the new value.
+  const onNodeDragStop = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      const instanceData = (node.data as { instance?: BaseInstance } | undefined)?.instance;
+      if (!instanceData) return;
+      api
+        .updateInstancePosition(instanceData.class_name, instanceData.id, {
+          x: node.position.x,
+          y: node.position.y,
+        })
+        .catch((error) => {
+          console.error('Failed to persist node position:', error);
+        });
+    },
+    [],
+  );
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -1196,6 +1225,9 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         class_name: createInstanceModal.className,
         instance_name: instanceName,
         attributes,
+        // Persist the drop coordinates server-side so the next render uses
+        // them instead of the default grid layout.
+        position: createInstanceModal.position,
       });
 
       // First, materialise any links the user picked in the create modal
@@ -1342,6 +1374,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           nodes={nodes}
           edges={edges}
           onNodesChange={handleNodesChange}
+          onNodeDragStop={onNodeDragStop}
           onEdgesChange={onEdgesChange}
           onEdgesDelete={onEdgesDelete}
           onEdgeDoubleClick={onEdgeDoubleClick}

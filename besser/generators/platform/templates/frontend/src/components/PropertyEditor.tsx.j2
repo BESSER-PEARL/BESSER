@@ -6,7 +6,7 @@
  */
 {% raw %}
 import React, { useMemo, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Play } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AssociationMetadata, BaseInstance, ClassMetadata } from '../types/models';
 import { getEnumerationValues, isAssignableTo } from '../types/models';
+import * as api from '../api/instances';
 
 export interface SelectedLink {
   associationName: string;
@@ -244,6 +245,31 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     return null;
   }, [associations, selections]);
 
+  // Phase 1.0 runtime kernel: tick state. The button is only rendered for
+  // classes whose metadata advertises a step() method (hasStepMethod), so
+  // we don't need to gate the call here — but we do surface errors next to
+  // the button so a failing body doesn't get lost in the console.
+  const [ticking, setTicking] = useState(false);
+  const [tickError, setTickError] = useState<string | null>(null);
+  const [lastTickResult, setLastTickResult] = useState<unknown>(null);
+
+  const handleTick = async () => {
+    setTicking(true);
+    setTickError(null);
+    try {
+      const res = await api.tickInstance(instance.class_name, instance.id);
+      // Reflect the mutated attributes in the open form so the user can
+      // tick again and watch state evolve without closing the dialog.
+      setAttributes(res.instance.attributes);
+      setLastTickResult(res.result);
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setTickError(detail ?? (error as Error).message ?? 'Tick failed');
+    } finally {
+      setTicking(false);
+    }
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (validationError) return;
@@ -366,6 +392,30 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 <AlertCircle className="size-3.5" />
                 {validationError}
               </p>
+            )}
+            {!validationError && tickError && (
+              <p className="mr-auto flex items-center gap-1 text-xs text-destructive">
+                <AlertCircle className="size-3.5" />
+                {tickError}
+              </p>
+            )}
+            {!validationError && !tickError && lastTickResult !== null && lastTickResult !== undefined && (
+              <p className="mr-auto text-xs text-muted-foreground">
+                Last tick → <span className="font-mono">{String(lastTickResult)}</span>
+              </p>
+            )}
+            {classMetadata.hasStepMethod && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleTick}
+                disabled={ticking}
+                title="Run one tick of step(self, dt)"
+                className="gap-1.5"
+              >
+                <Play className="size-3.5" />
+                {ticking ? 'Ticking…' : 'Tick'}
+              </Button>
             )}
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel

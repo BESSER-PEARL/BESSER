@@ -8,7 +8,7 @@ classes defined in the {{ model.name }} domain model.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import instances, export
+from routers import instances, export, runtime
 
 # Create FastAPI application
 app = FastAPI(
@@ -29,6 +29,7 @@ app.add_middleware(
 # Include routers
 app.include_router(instances.router, prefix="/api/instances", tags=["instances"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
+app.include_router(runtime.router, prefix="/api/runtime", tags=["runtime"])
 
 
 @app.get("/")

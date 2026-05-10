@@ -161,6 +161,10 @@ export interface ClassMetadata {
    *  generated InstanceNode renders a "+" affordance when this list is
    *  non-empty so a port can be created without dragging from the palette. */
   addablePortClasses?: Array<{ className: string; associationName: string }>;
+  /** True when the class declares an executable ``step(self, dt)`` method
+   *  the Phase 1 runtime kernel can tick. Drives the ▶ Tick affordance in
+   *  the inspector — only shown for classes the runtime can actually run. */
+  hasStepMethod?: boolean;
 }
 
 export interface AttributeMetadata {
@@ -283,6 +287,9 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
       { className: '{{ entry.className }}', associationName: '{{ entry.associationName }}' }{% if not loop.last %},{% endif %}
       {%- endfor %}
     ],
+    {%- endif %}
+    {%- if tickable_classes and tickable_classes.get(cls.name) %}
+    hasStepMethod: true,
     {%- endif %}
     attributes: [
       {%- for attr in cls.attributes | union(cls.inherited_attributes()) %}

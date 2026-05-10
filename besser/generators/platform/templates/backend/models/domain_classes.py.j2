@@ -45,8 +45,55 @@ class {{ cls.name }}:
             "{{ end.name }}": [obj.to_dict() if hasattr(obj, 'to_dict') else str(obj) for obj in (self.{{ end.name | safe_var_name }} if isinstance(self.{{ end.name | safe_var_name }}, list) else [self.{{ end.name | safe_var_name }}] if self.{{ end.name | safe_var_name }} else [])],
 {% endfor %}
         }
-    
+
     def __repr__(self) -> str:
         return f"{{ cls.name }}({% for attr in cls.attributes | union(cls.inherited_attributes()) %}{{ attr.name }}={self.{{ attr.name | safe_var_name }}!r}{% if not loop.last %}, {% endif %}{% endfor %})"
+
+    # ------------------------------------------------------------------
+    # User-authored behaviour
+    # ------------------------------------------------------------------
+    # Methods are emitted from cls.methods. Phase 1.0 only executes bodies
+    # whose implementation_type is CODE — others stub out and raise so the
+    # gap is visible (instead of silently no-oping). Sorted by name for a
+    # deterministic generated output.
+    #
+    # Method.code can carry two shapes depending on the authoring tool:
+    #   (a) just the body, e.g. ``self.x = self.x + 1``
+    #   (b) the full ``def`` block, e.g. ``def step(self, dt): ...``
+    # The web modeling editor saves shape (b). We detect it at generation
+    # time and emit at class scope; otherwise we wrap with a generated
+    # def header so a bare body still becomes a callable method.
+{% for method in cls.methods | sort(attribute='name') %}
+{% set _impl = method.implementation_type %}
+{% if _impl and _impl.value == 'code' and method.code and method.code.strip() %}
+{% if method.code.lstrip().startswith('def ') %}
+
+{{ method.code | indent_code(4) }}
+{% else %}
+
+    def {{ method.name }}(self{% for p in method.parameters %}, {{ p.name | safe_var_name }}{% endfor %}):
+        """User-authored body (implementation_type=CODE)."""
+{{ method.code | indent_code(8) }}
+{% endif %}
+{% elif _impl and _impl.value in ('besser_action_language', 'state_machine', 'quantum_circuit') %}
+
+    def {{ method.name }}(self{% for p in method.parameters %}, {{ p.name | safe_var_name }}{% endfor %}):
+        """{{ method.name }} — implementation_type={{ _impl.value }}.
+
+        Not yet executable by the Phase 1.0 runtime kernel (CODE only).
+        Build out the corresponding dispatcher in besser/generators/platform/runtime/
+        before relying on this method.
+        """
+        raise NotImplementedError(
+            "Method '{{ method.name }}' uses implementation_type={{ _impl.value }}, "
+            "which the Phase 1.0 runtime kernel does not execute yet."
+        )
+{% else %}
+
+    def {{ method.name }}(self{% for p in method.parameters %}, {{ p.name | safe_var_name }}{% endfor %}):
+        """{{ method.name }} — no executable body (implementation_type=NONE)."""
+        pass
+{% endif %}
+{% endfor %}
 
 {% endfor %}

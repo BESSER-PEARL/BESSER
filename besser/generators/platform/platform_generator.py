@@ -8,6 +8,7 @@ BESSER web modeling editor.
 """
 
 import os
+import shutil
 from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader
@@ -98,6 +99,20 @@ class PlatformGenerator(GeneratorInterface):
         self.env.filters['dash_for'] = dash_for
         self.env.filters['marker_for'] = marker_for
         self.env.filters['enum_value'] = enum_value
+        self.env.filters['indent_code'] = self._indent_code
+
+    @staticmethod
+    def _indent_code(code: str, spaces: int = 8) -> str:
+        """Indent every line of a (possibly multi-line) user-authored method
+        body so it sits inside the emitted ``def``. Empty trailing lines are
+        preserved verbatim — Python tolerates them and stripping would mess
+        with line numbers in tracebacks. If the body is blank, returns
+        ``" " * spaces + "pass"`` so the resulting function is still valid.
+        """
+        if not code or not code.strip():
+            return " " * spaces + "pass"
+        prefix = " " * spaces
+        return "\n".join(prefix + line if line else line for line in code.splitlines())
 
     def _representation_context(self):
         """Compute customization-derived metadata shared by several templates.
@@ -131,6 +146,22 @@ class PlatformGenerator(GeneratorInterface):
             subclass_registry,
             registries["port_classes"].keys(),
         )
+        # Per-class flag: does the class declare an executable ``step(self, dt)``
+        # method? Drives the ▶ Tick affordance in the generated UI — we only
+        # render it for classes the runtime kernel can actually tick. Methods
+        # with implementation_type other than CODE are skipped here (Phase 1.0
+        # only executes Python bodies; STATE_MACHINE/BAL come later).
+        tickable_classes = {}
+        for cls in classes:
+            for method in getattr(cls, "methods", set()) or set():
+                if (
+                    getattr(method, "name", "") == "step"
+                    and getattr(method, "implementation_type", None) is not None
+                    and method.implementation_type.value == "code"
+                    and (method.code or "").strip()
+                ):
+                    tickable_classes[cls.name] = True
+                    break
         return {
             "class_representations": class_representations,
             "port_classes_registry": registries["port_classes"],
@@ -138,6 +169,7 @@ class PlatformGenerator(GeneratorInterface):
             "connection_edge_styles": connection_edge_styles,
             "subclass_registry": subclass_registry,
             "addable_port_classes": addable_port_classes,
+            "tickable_classes": tickable_classes,
         }
 
     def generate(self):
@@ -209,24 +241,43 @@ class PlatformGenerator(GeneratorInterface):
     def _generate_backend(self):
         """Generates FastAPI backend code."""
         backend_dir = os.path.join(self.output_dir, 'backend')
-        
+
         # Generate Python classes from the domain model
         self._generate_python_classes(backend_dir)
-        
+
         # Generate FastAPI main application
         self._generate_backend_main(backend_dir)
-        
+
         # Generate routers
         self._generate_backend_routers(backend_dir)
-        
+
         # Generate services
         self._generate_backend_services(backend_dir)
-        
+
         # Generate Pydantic schemas
         self._generate_backend_schemas(backend_dir)
-        
+
         # Generate requirements.txt
         self._generate_backend_requirements(backend_dir)
+
+        # Copy the runtime kernel verbatim. It's static Python (not Jinja)
+        # because the engine is generic — wiring to per-domain class_map
+        # happens in runtime/__init__.py via the singleton imports.
+        self._copy_runtime_kernel(backend_dir)
+
+    def _copy_runtime_kernel(self, backend_dir):
+        """Copy besser/generators/platform/runtime/ into <backend>/runtime/.
+
+        Static Python — no templating. The Engine is generic and gets
+        bootstrapped against the generated ``services.instance_manager``
+        via plain imports in ``runtime/__init__.py``.
+        """
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runtime')
+        dst = os.path.join(backend_dir, 'runtime')
+        # On regeneration the destination already exists; replace it.
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     
     def _generate_python_classes(self, backend_dir):
         """Generates Python classes representing the domain model."""
@@ -276,7 +327,14 @@ class PlatformGenerator(GeneratorInterface):
         # Generate export router
         template = self.env.get_template('backend/routers/export.py.j2')
         output_path = os.path.join(routers_dir, 'export.py')
-        
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render(model=self.domain_model))
+
+        # Generate runtime router (▶ Tick endpoint — Phase 1.0)
+        template = self.env.get_template('backend/routers/runtime.py.j2')
+        output_path = os.path.join(routers_dir, 'runtime.py')
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(model=self.domain_model))
     

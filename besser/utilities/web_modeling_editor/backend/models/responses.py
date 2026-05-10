@@ -43,3 +43,15 @@ class FeedbackResponse(BaseModel):
     """Response for feedback submission."""
     message: str
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class DbIntrospectResponse(BaseModel):
+    """Response for /db-introspect: discovered schemas and tables."""
+    schemas: Dict[str, List[str]]
+    warnings: List[str] = []
+
+
+class DbUploadSqliteResponse(BaseModel):
+    """Response for /db-upload-sqlite: token to reference the uploaded file."""
+    database_token: str
+    filename: str

@@ -8,6 +8,7 @@ import ast
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import uuid
 import importlib.util
@@ -36,6 +37,10 @@ from besser.utilities.buml_code_builder.state_machine_builder import state_machi
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
+    DbImportRequest,
+    DbIntrospectRequest,
+    DbIntrospectResponse,
+    DbUploadSqliteResponse,
     DiagramInput,
     ProjectInput,
 )
@@ -62,7 +67,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     extract_openai_api_key,
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
+    build_engine,
     csv_to_domain_model,
+    db_to_domain_model,
+    list_schemas_and_tables,
 )
 
 # Backend configuration
@@ -76,6 +84,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     TEMP_DIR_PREFIX,
     AGENT_TEMP_DIR_PREFIX,
     CSV_TEMP_DIR_PREFIX,
+    DB_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
 )
@@ -93,6 +102,7 @@ logger = logging.getLogger(__name__)
 MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
 MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
+MAX_SQLITE_SIZE = 50 * 1024 * 1024    # 50 MB
 
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
@@ -101,6 +111,9 @@ ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
 ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
+ALLOWED_SQLITE_EXTENSIONS = {".sqlite", ".sqlite3", ".db"}
+
+_SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
 def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
@@ -725,3 +738,138 @@ def _generate_user_profile_document(user_profile_model: dict) -> dict:
         _generate_user_profile_document as _gen_user_profile_doc,
     )
     return _gen_user_profile_doc(user_profile_model)
+
+
+# ---------------------------------------------------------------------------
+# External database reverse-engineering
+# ---------------------------------------------------------------------------
+
+def _resolve_sqlite_path(token: str) -> str:
+    """Resolve a database_token to an absolute SQLite file path.
+
+    The token must reference a directory under the system temp root that was
+    created by ``/db-upload-sqlite``. Validates the path stays inside the
+    expected location to prevent traversal.
+    """
+    if not token or not re.fullmatch(r"[A-Za-z0-9_\-]+", token):
+        raise HTTPException(status_code=400, detail="Invalid database_token.")
+
+    tmp_root = os.path.realpath(tempfile.gettempdir())
+    token_dir = os.path.realpath(os.path.join(tmp_root, f"{DB_TEMP_DIR_PREFIX}{token}"))
+    if os.path.commonpath([tmp_root, token_dir]) != tmp_root:
+        raise HTTPException(status_code=400, detail="Invalid database_token.")
+    if not os.path.isdir(token_dir):
+        raise HTTPException(status_code=404, detail="Database token not found or expired.")
+
+    candidates = [f for f in os.listdir(token_dir) if not f.startswith(".")]
+    if not candidates:
+        raise HTTPException(status_code=404, detail="Database token not found or expired.")
+    sqlite_path = os.path.realpath(os.path.join(token_dir, candidates[0]))
+    if os.path.commonpath([token_dir, sqlite_path]) != token_dir:
+        raise HTTPException(status_code=400, detail="Invalid database_token.")
+    return sqlite_path
+
+
+def _build_engine_from_request(connection) -> "Engine":  # type: ignore[name-defined]
+    """Build an Engine from a DbConnectionParams, resolving any SQLite token."""
+    raw_url = (connection.raw_url or "").strip() or None
+    database = connection.database
+    if connection.database_token:
+        if connection.dialect and connection.dialect != "sqlite":
+            raise HTTPException(
+                status_code=400,
+                detail="database_token is only valid for the sqlite dialect.",
+            )
+        database = _resolve_sqlite_path(connection.database_token)
+
+    try:
+        return build_engine(
+            dialect=connection.dialect,
+            host=connection.host,
+            port=connection.port,
+            username=connection.username,
+            password=connection.password,
+            database=database,
+            raw_url=raw_url,
+            options=connection.options,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/db-upload-sqlite", response_model=DbUploadSqliteResponse)
+@handle_endpoint_errors("db_upload_sqlite")
+async def db_upload_sqlite(file: UploadFile = File(...)):
+    """Upload a SQLite database file and return a token to reference it.
+
+    The file is stored under a uniquely-prefixed temp directory and is
+    eligible for the standard 24h cleanup sweep.
+    """
+    content = await file.read()
+    _validate_upload(
+        file,
+        max_size=MAX_SQLITE_SIZE,
+        allowed_extensions=ALLOWED_SQLITE_EXTENSIONS,
+        content=content,
+    )
+    if not content.startswith(_SQLITE_MAGIC):
+        raise HTTPException(
+            status_code=400,
+            detail="File does not appear to be a valid SQLite database (bad magic bytes).",
+        )
+
+    token = uuid.uuid4().hex
+    safe_filename = os.path.basename(file.filename or "uploaded.sqlite")
+    target_dir = os.path.join(tempfile.gettempdir(), f"{DB_TEMP_DIR_PREFIX}{token}")
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, safe_filename)
+    await _write_file(target_path, content)
+    return {"database_token": token, "filename": safe_filename}
+
+
+@router.post("/db-introspect", response_model=DbIntrospectResponse)
+@handle_endpoint_errors("db_introspect")
+async def db_introspect(payload: DbIntrospectRequest = Body(...)):
+    """List schemas and tables visible to the given connection."""
+    engine = _build_engine_from_request(payload.connection)
+    try:
+        schemas = await asyncio.to_thread(list_schemas_and_tables, engine)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        engine.dispose()
+    return {"schemas": schemas, "warnings": []}
+
+
+@router.post("/db-to-domain-model", response_model=DiagramExportResponse)
+@handle_endpoint_errors("db_to_domain_model_endpoint")
+async def db_to_domain_model_endpoint(payload: DbImportRequest = Body(...)):
+    """Reverse-engineer the selected tables into a ClassDiagram JSON model."""
+    engine = _build_engine_from_request(payload.connection)
+    try:
+        domain_model, warnings = await asyncio.to_thread(
+            db_to_domain_model,
+            engine,
+            payload.selection,
+            model_name=payload.model_name or "ClassDiagram",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        engine.dispose()
+
+    if not domain_model or not getattr(domain_model, "types", None):
+        raise HTTPException(status_code=400, detail="No tables produced a domain model.")
+
+    diagram_json = class_buml_to_json(domain_model)
+    if warnings:
+        logger.info("db_to_domain_model warnings: %s", warnings)
+
+    diagram_type = "ClassDiagram"
+    return {
+        "title": payload.model_name or "ClassDiagram",
+        "model": {**diagram_json, "type": diagram_type},
+        "diagramType": diagram_type,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }

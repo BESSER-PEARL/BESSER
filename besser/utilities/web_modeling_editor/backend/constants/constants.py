@@ -5,6 +5,7 @@ API_VERSION = "1.0.0"
 TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
+DB_TEMP_DIR_PREFIX = "besser_db_"
 
 # Output defaults
 OUTPUT_DIR_NAME = "output"

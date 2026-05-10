@@ -1,7 +1,14 @@
+from .db import (
+    DbConnectionParams,
+    DbImportRequest,
+    DbIntrospectRequest,
+)
 from .diagram import DiagramInput, FeedbackSubmission
 from .project import ProjectInput
 from .responses import (
     ApiInfoResponse,
+    DbIntrospectResponse,
+    DbUploadSqliteResponse,
     DiagramExportResponse,
     FeedbackResponse,
     ProjectExportResponse,
@@ -9,6 +16,11 @@ from .responses import (
 )
 
 __all__ = [
+    'DbConnectionParams',
+    'DbImportRequest',
+    'DbIntrospectRequest',
+    'DbIntrospectResponse',
+    'DbUploadSqliteResponse',
     'DiagramInput',
     'ProjectInput',
     'FeedbackSubmission',

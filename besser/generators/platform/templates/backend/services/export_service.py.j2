@@ -93,12 +93,12 @@ class ExportService:
     def export_to_buml(self) -> str:
         """
         Export all instances as BUML Object Model code.
-        
+
         Returns:
             BUML Python code that creates Object instances
         """
         all_instances = instance_manager.get_all_instances()
-        
+
         lines = [
             "# Auto-generated BUML Object Model",
             "# {{ model.name }} Instance Model",
@@ -112,20 +112,23 @@ class ExportService:
             "# Create object instances",
             ""
         ]
-        
-        # Create Object instances
+
+        # Create Object instances. Track id → buml var name so the links
+        # section below can reference instances by their assigned variable.
+        buml_vars: Dict[str, str] = {}
         for instance in all_instances:
             class_name = instance["class_name"]
             instance_name = instance["instance_name"]
             var_name = f"{instance_name.replace(' ', '_').replace('-', '_')}_obj"
-            
+            buml_vars[instance["id"]] = var_name
+
             lines.append(f"# {instance_name} ({class_name})")
             lines.append(f"{var_name} = Object(")
             lines.append(f"    name=\"{instance_name}\",")
             lines.append(f"    classifier={class_name}  # Reference to the Class from domain model")
             lines.append(")")
             lines.append("")
-            
+
             # Add attribute links
             for attr_name, attr_value in instance["attributes"].items():
                 lines.append(f"# Set {attr_name} attribute")
@@ -133,10 +136,50 @@ class ExportService:
                     lines.append(f"{var_name}.{attr_name} = \"{attr_value}\"")
                 else:
                     lines.append(f"{var_name}.{attr_name} = {attr_value}")
-            
+
             lines.append("")
-        
+
+        # Emit links between objects. Mirrors the export_to_python pattern
+        # so the BUML export round-trips structure as well as attributes.
+        if any(inst["links"] for inst in all_instances):
+            lines.append("# Create associations (links) between objects")
+            lines.append("")
+            for instance in all_instances:
+                if not instance["links"]:
+                    continue
+                source_var = buml_vars[instance["id"]]
+                for link in instance["links"]:
+                    target_var = buml_vars.get(link["target_id"])
+                    if target_var:
+                        assoc_name = link["association_name"]
+                        lines.append(f"{source_var}.{assoc_name} = {target_var}")
+            lines.append("")
+
         return "\n".join(lines)
+
+    def import_from_json(self, data: Dict[str, Any], replace: bool = True) -> Dict[str, int]:
+        """
+        Import instances from the JSON shape produced by ``export_to_json``.
+
+        Symmetric counterpart to ``export_to_json``: replays the saved
+        instances + links into the live ``instance_manager``. Used to
+        load a previously saved plant back into the running platform.
+
+        Args:
+            data: Payload of the form ``{"model_name": ..., "instances":
+                {ClassName: [instance_data, ...]}}``.
+            replace: When True (default), wipes existing state before
+                importing — load-plant semantics. When False, merges into
+                whatever is already loaded.
+
+        Returns:
+            Dictionary with ``instances`` and ``links`` counts on success.
+
+        Raises:
+            ValueError: If the payload shape is invalid or references a
+                class not defined in this generated platform.
+        """
+        return instance_manager.import_state(data, replace=replace)
 
 
 # Singleton instance

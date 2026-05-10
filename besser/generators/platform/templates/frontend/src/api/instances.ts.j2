@@ -124,3 +124,19 @@ export const exportAsBuml = async (): Promise<string> => {
   const response = await apiClient.get<string>('/export/buml');
   return response.data;
 };
+
+/**
+ * Import a previously exported JSON payload back into the live store.
+ * Replaces existing instances when ``replace`` is true (default).
+ */
+export const importFromJson = async (
+  data: ExportJsonResponse,
+  replace: boolean = true,
+): Promise<{ success: boolean; instances: number; links: number }> => {
+  const response = await apiClient.post<{ success: boolean; instances: number; links: number }>(
+    '/export/import/json',
+    data,
+    { params: { replace } },
+  );
+  return response.data;
+};

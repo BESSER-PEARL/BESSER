@@ -3,14 +3,14 @@
  * {{ model.name }} Instance Editor
  */
 {% raw %}
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Braces, FileCode2, RotateCw, Trash2 } from 'lucide-react';
+import { Braces, FileCode2, FolderOpen, RotateCw, Trash2 } from 'lucide-react';
 import { InstanceCanvas } from './components/InstanceCanvas';
 import { ClassPalette } from './components/ClassPalette';
 import { Button } from './components/ui/button';
 import { DIAGRAM_STYLE, DOMAIN_CLASSES } from './types/models';
-import type { BaseInstance } from './types/models';
+import type { BaseInstance, ExportJsonResponse } from './types/models';
 import * as api from './api/instances';
 
 const queryClient = new QueryClient();
@@ -46,6 +46,9 @@ function AppContent() {
   useDiagramTheme();
   const [instances, setInstances] = useState<BaseInstance[]>([]);
   const [loading, setLoading] = useState(false);
+  // Hidden file input drives the Load Plant flow; the visible button forwards
+  // its click here so users get the native file picker.
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadInstances = async () => {
     setLoading(true);
@@ -144,6 +147,29 @@ function AppContent() {
     }
   };
 
+  const handleImportJsonClick = () => {
+    importInputRef.current?.click();
+  };
+
+  const handleImportJsonFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset the input so re-picking the same file re-fires onChange.
+    event.target.value = '';
+    if (!file) return;
+    if (!confirm('Loading a plant replaces all current instances. Continue?')) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as ExportJsonResponse;
+      const result = await api.importFromJson(data, true);
+      await loadInstances();
+      alert(`Loaded ${result.instances} instance(s) and ${result.links} link(s).`);
+    } catch (error) {
+      console.error('Failed to import JSON:', error);
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      alert(`Failed to load plant: ${detail ?? (error as Error).message}`);
+    }
+  };
+
   const handleClearAll = async () => {
     if (!confirm('Are you sure you want to clear all instances?')) return;
     try {
@@ -197,6 +223,23 @@ function AppContent() {
 
           <span className="mx-1 h-6 w-px bg-border" aria-hidden />
 
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleImportJsonClick}
+            title="Load a previously saved plant (JSON)"
+            className="gap-1.5"
+          >
+            <FolderOpen className="text-primary/80" />
+            <span>Load</span>
+          </Button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportJsonFile}
+          />
           <Button
             variant="outline"
             size="sm"

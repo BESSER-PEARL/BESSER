@@ -1,10 +1,14 @@
 """
 Export Router
 
-Handles exporting instances to various formats (JSON, Python code).
+Handles exporting instances to various formats (JSON, Python code) and
+importing previously exported JSON payloads back into the live platform
+(round-trip persistence — see /import/json).
 """
 
-from fastapi import APIRouter, HTTPException, Response
+from typing import Any, Dict
+
+from fastapi import APIRouter, Body, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
 from services.export_service import export_service
 import tempfile
@@ -47,5 +51,23 @@ async def export_as_buml():
             media_type="text/plain",
             headers={"Content-Disposition": "attachment; filename=object_model.py"}
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/import/json")
+async def import_as_json(payload: Dict[str, Any] = Body(...), replace: bool = True):
+    """Load a previously exported JSON payload back into the live store.
+
+    Accepts the same shape returned by ``GET /export/json``. ``replace=True``
+    (default) wipes existing state before loading — "Load Plant" semantics.
+    Returns counts of instances and links restored.
+    """
+    try:
+        counts = export_service.import_from_json(payload, replace=replace)
+        return JSONResponse(content={"success": True, **counts})
+    except ValueError as e:
+        # Validation failures (unknown class, bad shape) are user errors.
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

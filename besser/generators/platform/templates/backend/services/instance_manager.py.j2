@@ -156,6 +156,66 @@ class InstanceManager:
         for class_name in self.instances:
             self.instances[class_name].clear()
 
+    def import_state(self, state: Dict[str, Any], replace: bool = True) -> Dict[str, int]:
+        """
+        Replace storage with the export-shaped payload produced by
+        ``ExportService.export_to_json``.
+
+        Payload shape:
+            ``{"model_name": ..., "instances": {ClassName: [instance_data, ...]}}``
+
+        Instance ids are preserved so that ``links`` continue to resolve.
+        Validation is done up front so a typo in one class doesn't leave
+        the store half-populated.
+
+        Args:
+            state: The export-shaped dictionary.
+            replace: When True (default), wipe existing state first. When
+                False, merge — later instances with the same id silently
+                overwrite earlier ones.
+
+        Returns:
+            ``{"instances": N, "links": M}`` on success.
+
+        Raises:
+            ValueError: If the payload shape is invalid or references a
+                class not defined in this platform.
+        """
+        if not isinstance(state, dict) or "instances" not in state:
+            raise ValueError("Invalid import payload: expected a dict with an 'instances' key")
+
+        instances_by_class = state["instances"]
+        if not isinstance(instances_by_class, dict):
+            raise ValueError("Invalid import payload: 'instances' must be a dict keyed by class name")
+
+        # Validate up front so we don't half-import on a typo.
+        for class_name in instances_by_class:
+            if class_name not in self.class_map:
+                raise ValueError(f"Unknown class in import payload: {class_name}")
+
+        if replace:
+            self.clear_all()
+
+        instance_count = 0
+        link_count = 0
+        for class_name, instance_list in instances_by_class.items():
+            for instance_data in instance_list:
+                if not isinstance(instance_data, dict) or "id" not in instance_data:
+                    raise ValueError(f"Invalid instance entry under class '{class_name}'")
+                iid = instance_data["id"]
+                links = list(instance_data.get("links", []))
+                self.instances[class_name][iid] = {
+                    "id": iid,
+                    "class_name": class_name,
+                    "instance_name": instance_data.get("instance_name", ""),
+                    "attributes": dict(instance_data.get("attributes", {})),
+                    "links": [dict(link) for link in links],
+                }
+                instance_count += 1
+                link_count += len(links)
+
+        return {"instances": instance_count, "links": link_count}
+
 
 # Singleton instance
 instance_manager = InstanceManager()

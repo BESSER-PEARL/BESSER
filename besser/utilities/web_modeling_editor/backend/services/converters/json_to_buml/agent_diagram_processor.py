@@ -80,7 +80,13 @@ def _collect_body_messages(body_rows, language, source_language, translate_text,
             if serialize_db_reply_payload:
                 messages.append(serialize_db_reply_payload(body))
         elif reply_type == "code":
-            messages.append(f"CODE:{sanitize_text(body_content)}")
+            # v4 body rows carry the actual source on ``body.code``;
+            # ``body.name`` is the display label only. Prefer ``code``
+            # so JSON->BUML preserves the user's typed code body.
+            code_source = body.get("code")
+            if not isinstance(code_source, str) or not code_source:
+                code_source = body_content
+            messages.append(f"CODE:{sanitize_text(code_source)}")
 
     return messages
 

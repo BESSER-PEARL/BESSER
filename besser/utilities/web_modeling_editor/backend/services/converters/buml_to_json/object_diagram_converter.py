@@ -40,11 +40,25 @@ def _resolve_class_index(domain_json: Dict[str, Any]):
     return class_name_to_id, class_id_to_attributes
 
 
+_CLASS_ASSOCIATION_EDGE_TYPES = (
+    "ClassBidirectional",
+    "ClassUnidirectional",
+    "ClassAggregation",
+    "ClassComposition",
+)
+
+
 def _resolve_association_index(domain_json: Dict[str, Any]) -> dict:
-    """Build {role_pair: edge_id} from v4 reference diagram association edges."""
+    """Build {role_pair: edge_id} from v4 reference diagram association edges.
+
+    Covers every class-association edge type that can host roles
+    (Bi/Uni/Aggregation/Composition) so ObjectLinks emitted by this
+    converter carry the ``associationId`` of the originating
+    association regardless of its v4 edge type.
+    """
     out: dict = {}
     for edge in (domain_json or {}).get("edges") or []:
-        if edge.get("type") not in ("ClassBidirectional", "ClassUnidirectional"):
+        if edge.get("type") not in _CLASS_ASSOCIATION_EDGE_TYPES:
             continue
         d = edge.get("data") or {}
         source_role = d.get("sourceRole", "") or ""

@@ -178,6 +178,30 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
         "visibility": method.visibility,
         "attributeType": "any",
     }
+
+    # Emit structured parameter rows + returnType so the v4 frontend can
+    # round-trip method signatures cleanly (previously these were only
+    # baked into ``name``). Mirrors the ``ClassifierMethodParameter`` /
+    # ``ClassNodeElement.returnType`` shape in
+    # ``packages/library/lib/types/nodes/NodeProps.ts``.
+    structured_parameters: list = []
+    for param in method.parameters:
+        param_type = param.type.name if hasattr(param.type, "name") else str(param.type)
+        param_row: dict = {
+            "id": str(uuid.uuid4()),
+            "name": param.name,
+            "parameterType": param_type,
+        }
+        if hasattr(param, "default_value") and param.default_value is not None:
+            param_row["defaultValue"] = param.default_value
+        structured_parameters.append(param_row)
+    if structured_parameters:
+        row["parameters"] = structured_parameters
+    if hasattr(method, "type") and method.type:
+        row["returnType"] = (
+            method.type.name if hasattr(method.type, "name") else str(method.type)
+        )
+
     if hasattr(method, "code") and method.code:
         row["code"] = method.code
 

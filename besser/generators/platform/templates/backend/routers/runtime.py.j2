@@ -1,10 +1,10 @@
 """
 Runtime Router
 
-Phase 1.0 of besser4DT — exposes the runtime kernel over HTTP so the
-generated frontend can drive ▶ Tick on individual instances. Bigger
-runtime affordances (periodic scheduler, WebSocket deltas, event
-injection) are deliberately out of scope here.
+Exposes the runtime kernel over HTTP. ``/invoke`` is the general entry
+point: call any method on any instance with any args. ``/tick`` is a
+convenience that hardcodes ``step(dt=...)`` for the periodic scheduler
+(Phase 1.2) and matches the conventional UX of a Run/Pause toolbar.
 """
 
 from typing import Any, Dict, Optional
@@ -17,48 +17,78 @@ from runtime import engine
 router = APIRouter()
 
 
-class TickRequest(BaseModel):
-    """Per-instance tick payload."""
+class InvokeRequest(BaseModel):
+    """Per-method invocation payload."""
     class_name: str = Field(..., description="Domain class name of the instance")
     instance_id: str = Field(..., description="Instance UUID")
-    method_name: str = Field("step", description="Method to dispatch (default: step)")
-    dt: float = Field(1.0, description="Simulated time delta passed to the method")
+    method_name: str = Field(..., description="Method to dispatch on the instance")
+    args: Dict[str, Any] = Field(default_factory=dict, description="Keyword arguments to pass to the method")
 
 
-class TickResponse(BaseModel):
-    """Outcome of a single tick."""
+class TickRequest(BaseModel):
+    """Scheduler-shaped payload: always ``step(dt=...)``."""
+    class_name: str = Field(..., description="Domain class name of the instance")
+    instance_id: str = Field(..., description="Instance UUID")
+    dt: float = Field(1.0, description="Simulated time delta passed as ``step(dt=...)``")
+
+
+class InvokeResponse(BaseModel):
+    """Outcome of a single invocation."""
     instance_id: str
     class_name: str
     method_name: str
-    dt: float
+    args: Dict[str, Any]
     result: Optional[Any] = None
     instance: Dict[str, Any]
 
 
-@router.post("/tick", response_model=TickResponse)
-async def tick(payload: TickRequest = Body(...)):
-    """Run one tick on a specific instance.
+def _to_http(error: Exception) -> HTTPException:
+    """Map engine exceptions to HTTP statuses with targeted messages.
 
-    Errors map to HTTP statuses so the frontend can show targeted messages
-    rather than generic 500s — a missing instance is a 404, a missing
-    method is a 422, and a body that raises is a 500 with the original
-    exception text in the detail.
+    Keeps the router DRY across ``/invoke`` and ``/tick`` so the frontend
+    sees the same status semantics regardless of which entry point fired.
+    """
+    if isinstance(error, KeyError):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+    if isinstance(error, ValueError):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))
+    if isinstance(error, AttributeError):
+        return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+    if isinstance(error, TypeError):
+        # Wrong/extra/missing kwargs come back as TypeError from the call.
+        return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Invocation failed: {type(error).__name__}: {error}",
+    )
+
+
+@router.post("/invoke", response_model=InvokeResponse)
+async def invoke(payload: InvokeRequest = Body(...)):
+    """Run a single method invocation against one instance."""
+    try:
+        return engine.invoke(
+            class_name=payload.class_name,
+            instance_id=payload.instance_id,
+            method_name=payload.method_name,
+            args=payload.args,
+        )
+    except Exception as e:
+        raise _to_http(e)
+
+
+@router.post("/tick", response_model=InvokeResponse)
+async def tick(payload: TickRequest = Body(...)):
+    """Convenience: ``step(dt=...)`` on a single instance.
+
+    Used by the periodic scheduler and any UI that still wants a single
+    ▶ Tick affordance. Equivalent to invoking ``step`` with ``{"dt": dt}``.
     """
     try:
         return engine.tick(
             class_name=payload.class_name,
             instance_id=payload.instance_id,
-            method_name=payload.method_name,
             dt=payload.dt,
         )
-    except KeyError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except AttributeError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Tick failed: {type(e).__name__}: {e}",
-        )
+        raise _to_http(e)

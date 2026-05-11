@@ -146,22 +146,41 @@ class PlatformGenerator(GeneratorInterface):
             subclass_registry,
             registries["port_classes"].keys(),
         )
-        # Per-class flag: does the class declare an executable ``step(self, dt)``
-        # method? Drives the ▶ Tick affordance in the generated UI — we only
-        # render it for classes the runtime kernel can actually tick. Methods
-        # with implementation_type other than CODE are skipped here (Phase 1.0
-        # only executes Python bodies; STATE_MACHINE/BAL come later).
-        tickable_classes = {}
+        # Per-class invokable method registry. Drives the ▶ buttons in the
+        # generated PropertyEditor — one per executable method. Only
+        # implementation_type=CODE with a non-empty body is invokable today;
+        # STATE_MACHINE/BAL show up in later phases via a different dispatcher
+        # but are deliberately omitted here so the UI doesn't offer buttons
+        # the runtime can't honour. Methods are sorted by name for
+        # deterministic generation.
+        class_methods_registry = {}
         for cls in classes:
-            for method in getattr(cls, "methods", set()) or set():
-                if (
-                    getattr(method, "name", "") == "step"
-                    and getattr(method, "implementation_type", None) is not None
-                    and method.implementation_type.value == "code"
-                    and (method.code or "").strip()
-                ):
-                    tickable_classes[cls.name] = True
-                    break
+            methods_list = []
+            for method in sorted(
+                getattr(cls, "methods", set()) or set(), key=lambda m: m.name
+            ):
+                impl = getattr(method, "implementation_type", None)
+                code = (getattr(method, "code", "") or "").strip()
+                if impl is None or impl.value != "code" or not code:
+                    continue
+                params = []
+                for param in getattr(method, "parameters", []) or []:
+                    p_type = getattr(getattr(param, "type", None), "name", "any")
+                    params.append({"name": param.name, "type": p_type})
+                return_type = (
+                    getattr(getattr(method, "type", None), "name", None)
+                    if getattr(method, "type", None) is not None
+                    else None
+                )
+                methods_list.append(
+                    {
+                        "name": method.name,
+                        "parameters": params,
+                        "returnType": return_type,
+                    }
+                )
+            if methods_list:
+                class_methods_registry[cls.name] = methods_list
         return {
             "class_representations": class_representations,
             "port_classes_registry": registries["port_classes"],
@@ -169,7 +188,7 @@ class PlatformGenerator(GeneratorInterface):
             "connection_edge_styles": connection_edge_styles,
             "subclass_registry": subclass_registry,
             "addable_port_classes": addable_port_classes,
-            "tickable_classes": tickable_classes,
+            "class_methods_registry": class_methods_registry,
         }
 
     def generate(self):
@@ -266,13 +285,19 @@ class PlatformGenerator(GeneratorInterface):
         self._copy_runtime_kernel(backend_dir)
 
     def _copy_runtime_kernel(self, backend_dir):
-        """Copy besser/generators/platform/runtime/ into <backend>/runtime/.
+        """Copy ``besser/runtime/`` into ``<backend>/runtime/``.
 
-        Static Python — no templating. The Engine is generic and gets
-        bootstrapped against the generated ``services.instance_manager``
-        via plain imports in ``runtime/__init__.py``.
+        Single source of truth: the runtime kernel lives in BESSER core
+        (so the web modeling editor can also import it for inline method
+        execution on the object diagram). The platform generator still
+        copies it verbatim so each deployed plant stays self-contained
+        and doesn't depend on BESSER being installed on the server.
         """
-        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runtime')
+        # besser/generators/platform/platform_generator.py → besser/runtime/
+        # is three ``..`` hops: platform → generators → besser → runtime.
+        here = os.path.dirname(os.path.abspath(__file__))
+        besser_root = os.path.abspath(os.path.join(here, '..', '..'))
+        src = os.path.join(besser_root, 'runtime')
         dst = os.path.join(backend_dir, 'runtime')
         # On regeneration the destination already exists; replace it.
         if os.path.isdir(dst):

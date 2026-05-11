@@ -18,7 +18,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { AssociationMetadata, BaseInstance, ClassMetadata } from '../types/models';
+import type {
+  AssociationMetadata,
+  BaseInstance,
+  ClassMetadata,
+  MethodMetadata,
+  ParameterMetadata,
+} from '../types/models';
 import { getEnumerationValues, isAssignableTo } from '../types/models';
 import * as api from '../api/instances';
 
@@ -245,28 +251,43 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     return null;
   }, [associations, selections]);
 
-  // Phase 1.0 runtime kernel: tick state. The button is only rendered for
-  // classes whose metadata advertises a step() method (hasStepMethod), so
-  // we don't need to gate the call here — but we do surface errors next to
-  // the button so a failing body doesn't get lost in the console.
-  const [ticking, setTicking] = useState(false);
-  const [tickError, setTickError] = useState<string | null>(null);
-  const [lastTickResult, setLastTickResult] = useState<unknown>(null);
+  // Runtime kernel: per-method invocation state.
+  //   - ``invoking`` is the name of the method currently being awaited
+  //     (or null) so we can disable just that button + show its spinner.
+  //   - ``invokeError`` / ``lastInvokeResult`` are surfaced in the footer
+  //     so failures aren't lost to the console.
+  //   - ``paramModalMethod`` holds the open parameter-collection modal.
+  const methods: MethodMetadata[] = classMetadata.methods ?? [];
+  const [invoking, setInvoking] = useState<string | null>(null);
+  const [invokeError, setInvokeError] = useState<string | null>(null);
+  const [lastInvokeResult, setLastInvokeResult] = useState<{
+    method: string;
+    value: unknown;
+  } | null>(null);
+  const [paramModalMethod, setParamModalMethod] = useState<MethodMetadata | null>(null);
 
-  const handleTick = async () => {
-    setTicking(true);
-    setTickError(null);
+  const runMethod = async (method: MethodMetadata, args: Record<string, unknown>) => {
+    setInvoking(method.name);
+    setInvokeError(null);
     try {
-      const res = await api.tickInstance(instance.class_name, instance.id);
-      // Reflect the mutated attributes in the open form so the user can
-      // tick again and watch state evolve without closing the dialog.
+      const res = await api.invokeMethod(instance.class_name, instance.id, method.name, args);
+      // Reflect mutated attributes in the open form so the user can call
+      // again and watch state evolve without closing the dialog.
       setAttributes(res.instance.attributes);
-      setLastTickResult(res.result);
+      setLastInvokeResult({ method: method.name, value: res.result });
     } catch (error) {
       const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setTickError(detail ?? (error as Error).message ?? 'Tick failed');
+      setInvokeError(detail ?? (error as Error).message ?? `${method.name}() failed`);
     } finally {
-      setTicking(false);
+      setInvoking(null);
+    }
+  };
+
+  const handleMethodClick = (method: MethodMetadata) => {
+    if (method.parameters.length === 0) {
+      void runMethod(method, {});
+    } else {
+      setParamModalMethod(method);
     }
   };
 
@@ -289,6 +310,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   };
 
   return (
+    <>
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-hidden p-0 sm:max-w-xl">
         <form onSubmit={handleSave} className="flex max-h-[85vh] flex-col">
@@ -386,6 +408,41 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             )}
           </div>
 
+          {/* Methods section — one ▶ button per executable method. The
+              modal it can open for parameter-taking methods is rendered
+              outside this form, below. */}
+          {methods.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 border-t bg-accent/20 px-6 py-3">
+              <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Methods
+              </span>
+              {methods.map((m) => (
+                <Button
+                  key={m.name}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleMethodClick(m)}
+                  disabled={invoking !== null}
+                  title={
+                    m.parameters.length === 0
+                      ? `Run ${m.name}()`
+                      : `Run ${m.name}(${m.parameters.map((p) => `${p.name}: ${p.type}`).join(', ')})`
+                  }
+                  className="gap-1.5"
+                >
+                  <Play className="size-3.5" />
+                  {invoking === m.name ? `${m.name}…` : m.name}
+                  {m.parameters.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground">
+                      ({m.parameters.length})
+                    </span>
+                  )}
+                </Button>
+              ))}
+            </div>
+          )}
+
           <DialogFooter className="border-t bg-accent/40 px-6 py-4">
             {validationError && (
               <p className="mr-auto flex items-center gap-1 text-xs text-destructive">
@@ -393,29 +450,16 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 {validationError}
               </p>
             )}
-            {!validationError && tickError && (
+            {!validationError && invokeError && (
               <p className="mr-auto flex items-center gap-1 text-xs text-destructive">
                 <AlertCircle className="size-3.5" />
-                {tickError}
+                {invokeError}
               </p>
             )}
-            {!validationError && !tickError && lastTickResult !== null && lastTickResult !== undefined && (
+            {!validationError && !invokeError && lastInvokeResult && lastInvokeResult.value !== null && lastInvokeResult.value !== undefined && (
               <p className="mr-auto text-xs text-muted-foreground">
-                Last tick → <span className="font-mono">{String(lastTickResult)}</span>
+                {lastInvokeResult.method} → <span className="font-mono">{String(lastInvokeResult.value)}</span>
               </p>
-            )}
-            {classMetadata.hasStepMethod && (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleTick}
-                disabled={ticking}
-                title="Run one tick of step(self, dt)"
-                className="gap-1.5"
-              >
-                <Play className="size-3.5" />
-                {ticking ? 'Ticking…' : 'Tick'}
-              </Button>
             )}
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
@@ -423,6 +467,130 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             <Button type="submit" disabled={validationError !== null}>
               Save Changes
             </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
+    {paramModalMethod && (
+      <ParameterPromptDialog
+        method={paramModalMethod}
+        onCancel={() => setParamModalMethod(null)}
+        onSubmit={async (args) => {
+          const m = paramModalMethod;
+          setParamModalMethod(null);
+          await runMethod(m, args);
+        }}
+      />
+    )}
+    </>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Parameter prompt dialog — opens when a method has one or more parameters.
+// Renders one typed input per parameter and collects values into a record
+// keyed by parameter name. Submit forwards to ``onSubmit`` so the parent
+// runs the actual invocation.
+// ---------------------------------------------------------------------------
+const ParameterPromptDialog: React.FC<{
+  method: MethodMetadata;
+  onCancel: () => void;
+  onSubmit: (args: Record<string, unknown>) => void;
+}> = ({ method, onCancel, onSubmit }) => {
+  // Seed values with empty strings; the submit step coerces per parameter type.
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(method.parameters.map((p) => [p.name, ''])),
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const coerce = (param: ParameterMetadata, raw: string): unknown => {
+    const t = param.type.toLowerCase();
+    if (raw === '') return null;
+    if (t.includes('int')) {
+      const n = parseInt(raw, 10);
+      if (Number.isNaN(n)) throw new Error(`'${param.name}' must be an integer`);
+      return n;
+    }
+    if (t.includes('float') || t.includes('double') || t.includes('number')) {
+      const n = parseFloat(raw);
+      if (Number.isNaN(n)) throw new Error(`'${param.name}' must be a number`);
+      return n;
+    }
+    if (t.includes('bool')) {
+      const v = raw.toLowerCase();
+      if (v === 'true' || v === '1' || v === 'yes') return true;
+      if (v === 'false' || v === '0' || v === 'no' || v === '') return false;
+      throw new Error(`'${param.name}' must be true/false`);
+    }
+    return raw;
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const args: Record<string, unknown> = {};
+      for (const p of method.parameters) {
+        args[p.name] = coerce(p, values[p.name] ?? '');
+      }
+      onSubmit(args);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>Invoke {method.name}(…)</DialogTitle>
+            <DialogDescription>
+              Provide values for each parameter. Types are coerced from text
+              before the call lands on the runtime kernel.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            {method.parameters.map((p) => {
+              const inputType = (() => {
+                const t = p.type.toLowerCase();
+                if (t.includes('int') || t.includes('float') || t.includes('double') || t.includes('number')) {
+                  return 'number';
+                }
+                if (t.includes('bool')) return 'text';
+                return 'text';
+              })();
+              return (
+                <div key={p.name} className="space-y-1">
+                  <Label htmlFor={`param-${p.name}`}>
+                    {p.name}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">({p.type})</span>
+                  </Label>
+                  <Input
+                    id={`param-${p.name}`}
+                    type={inputType}
+                    value={values[p.name] ?? ''}
+                    onChange={(e) =>
+                      setValues((prev) => ({ ...prev, [p.name]: e.target.value }))
+                    }
+                    placeholder={p.type.toLowerCase().includes('bool') ? 'true / false' : ''}
+                    autoFocus={p === method.parameters[0]}
+                  />
+                </div>
+              );
+            })}
+            {error && (
+              <p className="flex items-center gap-1 text-xs text-destructive">
+                <AlertCircle className="size-3.5" />
+                {error}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit">Invoke</Button>
           </DialogFooter>
         </form>
       </DialogContent>

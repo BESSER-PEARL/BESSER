@@ -85,30 +85,47 @@ export const updateInstancePosition = async (
 };
 
 /**
- * Phase 1.0 runtime kernel — tick a single instance.
- * Defaults to the conventional ``step`` method with ``dt=1.0``. Returns
- * the per-tick outcome (mutated instance attributes, plus the method's
- * return value if any).
+ * Runtime kernel — invoke a method on an instance.
+ *
+ * General: any method, any args. Use this from per-method ▶ buttons in
+ * the property editor. The scheduler-shaped ``tickInstance`` below is a
+ * thin convenience for ``step(dt)`` and exists mainly for the upcoming
+ * periodic Run/Pause flow.
  */
-export interface TickResponse {
+export interface InvokeResponse {
   instance_id: string;
   class_name: string;
   method_name: string;
-  dt: number;
+  args: Record<string, unknown>;
   result: unknown;
   instance: BaseInstance;
 }
 
+export const invokeMethod = async (
+  className: string,
+  instanceId: string,
+  methodName: string,
+  args: Record<string, unknown> = {},
+): Promise<InvokeResponse> => {
+  const response = await apiClient.post<InvokeResponse>('/runtime/invoke', {
+    class_name: className,
+    instance_id: instanceId,
+    method_name: methodName,
+    args,
+  });
+  return response.data;
+};
+
+/** Convenience: invoke ``step(dt=...)``. Used by the periodic scheduler. */
 export const tickInstance = async (
   className: string,
   instanceId: string,
-  options: { methodName?: string; dt?: number } = {},
-): Promise<TickResponse> => {
-  const response = await apiClient.post<TickResponse>('/runtime/tick', {
+  dt: number = 1.0,
+): Promise<InvokeResponse> => {
+  const response = await apiClient.post<InvokeResponse>('/runtime/tick', {
     class_name: className,
     instance_id: instanceId,
-    method_name: options.methodName ?? 'step',
-    dt: options.dt ?? 1.0,
+    dt,
   });
   return response.data;
 };

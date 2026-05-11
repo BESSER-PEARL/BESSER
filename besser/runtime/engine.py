@@ -1,18 +1,19 @@
-"""Runtime engine — Phase 1.0.
+"""Runtime engine — generic method dispatcher for besser4DT.
 
-Goal: execute a user-authored ``step(self, dt)`` method body against the
-live instance state held by the generated platform's ``instance_manager``.
+Goal: execute any user-authored method body against the live instance
+state held by an ``instance_manager`` — both inside generated platforms
+and (eventually) inside the web modeling editor's object diagram.
 
-The engine is intentionally *generic*: no generated module is imported here.
-Dependencies (the singleton instance manager, the class registry mapping
-class names to Python classes) are passed in at construction time, so this
-file can be unit-tested against fakes and copied verbatim into every
-generated app regardless of domain.
+The engine is intentionally *generic*: no generated module is imported
+here. Dependencies (the singleton instance manager, the class registry
+mapping class names to Python classes) are passed in at construction
+time, so this file can be unit-tested against fakes and copied verbatim
+into every generated app regardless of domain.
 
-Phase 1.0 covers ``implementation_type == CODE`` only — the generated
+This module covers ``implementation_type == CODE`` only — the generated
 domain class already exposes those bodies as real Python methods, so the
-engine just looks up by name and calls. Phase 1.1+ will plug a state-machine
-dispatcher and a periodic scheduler into the same surface.
+engine just looks up by name and calls. Phase 1.1+ will plug a
+state-machine dispatcher and a periodic scheduler into the same surface.
 """
 from __future__ import annotations
 
@@ -20,17 +21,17 @@ from typing import Any, Callable, Dict, Optional
 
 
 class Engine:
-    """Tick-driven runtime for instance state.
+    """Method-driven runtime for instance state.
 
     The contract:
 
       * Reconstruct a domain Python object from the attribute dict the
         ``instance_manager`` is currently holding.
-      * Look up ``method_name`` on that object and call it with ``dt``.
+      * Look up ``method_name`` on that object and call it with ``**args``.
       * Read mutated attributes back out and ``update_instance`` so the
         store reflects the new state — including any new attributes the
         method introduced.
-      * Return a small status dict so the HTTP layer can surface the call
+      * Return a status dict so the HTTP layer can surface the call
         result + the freshly-mutated instance to the frontend.
 
     Failures are propagated as raised exceptions; the FastAPI layer turns
@@ -47,32 +48,38 @@ class Engine:
     # -----------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------
-    def tick(
+    def invoke(
         self,
         class_name: str,
         instance_id: str,
-        method_name: str = "step",
-        dt: float = 1.0,
+        method_name: str,
+        args: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Run one tick of ``method_name`` on the named instance.
+        """Invoke ``method_name`` on the named instance with ``args``.
 
         Args:
             class_name: Domain class of the instance (e.g. ``"Compressor"``).
             instance_id: UUID assigned by ``instance_manager`` at creation.
-            method_name: Method to dispatch. Defaults to ``"step"`` —
-                Phase 1.0 convention — so the UI can ▶ Tick without picking.
-            dt: Simulated time delta passed to the method.
+            method_name: Method to dispatch. The runtime makes no
+                assumptions about the name — callers (UI buttons, the
+                scheduler, an event injector) decide.
+            args: Keyword arguments forwarded to the method. ``None``
+                means call with no args. Keys must match the method's
+                parameter names as declared in the diagram.
 
         Returns:
-            ``{instance_id, class_name, method_name, dt, result, instance}``
+            ``{instance_id, class_name, method_name, args, result, instance}``
             where ``instance`` is the freshly-mutated row in the store.
 
         Raises:
             KeyError: If no instance with that id exists for the class.
             ValueError: If the class isn't registered (typo / wrong domain).
             AttributeError: If the class has no method by that name.
+            TypeError: If ``args`` doesn't match the method's signature.
             Exception: Whatever the method body raises is re-raised.
         """
+        args = dict(args or {})
+
         instance_data = self._im.get_instance(class_name, instance_id)
         if instance_data is None:
             raise KeyError(
@@ -92,10 +99,11 @@ class Engine:
                 f"check the implementation_type of the method in the source diagram."
             )
 
-        result = method(dt)
+        result = method(**args)
 
-        # Persist mutated state back. This is the part that makes the tick
-        # actually move the world forward instead of running in a vacuum.
+        # Persist mutated state back. This is the part that makes the
+        # invocation actually move the world forward instead of running
+        # in a vacuum.
         new_attrs = self._extract_attributes(domain_obj, instance_data)
         self._im.update_instance(class_name, instance_id, new_attrs)
         updated = self._im.get_instance(class_name, instance_id)
@@ -104,10 +112,29 @@ class Engine:
             "instance_id": instance_id,
             "class_name": class_name,
             "method_name": method_name,
-            "dt": dt,
+            "args": args,
             "result": result,
             "instance": updated,
         }
+
+    def tick(
+        self,
+        class_name: str,
+        instance_id: str,
+        dt: float = 1.0,
+    ) -> Dict[str, Any]:
+        """Convenience: invoke ``step(dt=...)`` on the named instance.
+
+        Used by the periodic scheduler (Phase 1.2) which ticks every
+        instance with the conventional ``step(self, dt)`` method. Manual
+        per-method buttons in the UI go through ``invoke`` directly.
+        """
+        return self.invoke(
+            class_name=class_name,
+            instance_id=instance_id,
+            method_name="step",
+            args={"dt": dt},
+        )
 
     # -----------------------------------------------------------------
     # Helpers
@@ -130,8 +157,8 @@ class Engine:
                     setattr(obj, key, value)
                 except Exception:
                     # Ignore attributes the class refuses — better to run
-                    # the tick on a partially-rehydrated object than to
-                    # abort the simulation on a single bad key.
+                    # the call on a partially-rehydrated object than to
+                    # abort on a single bad key.
                     continue
             return obj
 
@@ -143,8 +170,8 @@ class Engine:
         Returns a dict suitable for ``instance_manager.update_instance``.
         Keys come from the original attribute set *and* any new attribute
         the method body introduced via ``self.foo = ...``. Association
-        slots are excluded — the runtime kernel does not own link state
-        in Phase 1.0; that's the link API's job.
+        slots are excluded — the runtime kernel does not own link state;
+        that's the link API's job.
         """
         original_attrs = dict(original.get("attributes") or {})
         result: Dict[str, Any] = {}

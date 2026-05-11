@@ -21,16 +21,15 @@
 -- project. If targeting a non-Supabase Postgres, uncomment the line below:
 -- CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-{% set non_empty_enums = model.get_enumerations() | selectattr("literals") | list %}
-{% if non_empty_enums %}
+{% if enums %}
 -- =============================================================================
 -- Enumerations
 -- =============================================================================
-{% for enum in non_empty_enums %}
+{% for enum in enums %}
 DO $$ BEGIN
-    CREATE TYPE "{{ enum.name | lower }}" AS ENUM (
+    CREATE TYPE "{{ enum.name }}" AS ENUM (
 {% for lit in enum.literals %}
-        '{{ lit.name }}'{{ "," if not loop.last else "" }}
+        '{{ lit }}'{{ "," if not loop.last else "" }}
 {% endfor %}
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;

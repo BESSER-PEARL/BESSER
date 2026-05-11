@@ -8,6 +8,7 @@ import ast
 import logging
 import os
 import io
+import re
 import uuid
 import zipfile
 import shutil
@@ -98,6 +99,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_QISKIT_SHOTS,
     DEFAULT_DJANGO_PROJECT_NAME,
     DEFAULT_DJANGO_APP_NAME,
+    DEFAULT_SUPABASE_USER_ROOT,
 )
 
 # Centralized error handling
@@ -682,6 +684,8 @@ async def _handle_class_diagram_generation(
         return await _generate_django(buml_model, generator_class, config, temp_dir)
     if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
+    if generator_type == "supabase":
+        return await _generate_supabase(buml_model, generator_class, config, temp_dir)
     if generator_type == "sqlalchemy":
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
     if generator_type == "jsonschema":
@@ -857,6 +861,36 @@ async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str
     await asyncio.to_thread(generator_instance.generate)
 
     return _create_file_response(temp_dir, "sql")
+
+
+_SUPABASE_USER_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+
+async def _generate_supabase(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate Supabase Postgres DDL."""
+    user_root = DEFAULT_SUPABASE_USER_ROOT
+    if config and "user_root" in config:
+        raw = config["user_root"]
+        if raw == "" or raw is None:
+            # Empty / None means "skip auth integration entirely"
+            user_root = None
+        else:
+            if not isinstance(raw, str) or not _SUPABASE_USER_ROOT_RE.match(raw):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Invalid user_root: must be a class name matching "
+                        "[A-Za-z_][A-Za-z0-9_]{0,62} (or empty to skip auth integration)."
+                    ),
+                )
+            user_root = raw
+
+    generator_instance = generator_class(
+        buml_model, output_dir=temp_dir, user_root=user_root
+    )
+    await asyncio.to_thread(generator_instance.generate)
+
+    return _create_file_response(temp_dir, "supabase")
 
 
 async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_dir: str):

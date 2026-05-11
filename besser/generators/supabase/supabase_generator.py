@@ -2,6 +2,7 @@ import os
 import re
 from collections import deque
 from datetime import datetime
+
 from jinja2 import Environment, FileSystemLoader
 
 from besser.BUML.metamodel.structural import (
@@ -28,7 +29,11 @@ class SupabaseGenerator(GeneratorInterface):
         denormalized ``user_id UUID`` column referencing ``public.<user_root>``,
         and RLS policies keyed on ``auth.uid() = user_id``. Association FKs
         pointing AT the user-root are suppressed to avoid duplicate columns.
-      - All identifiers are double-quoted in DDL to bypass reserved words.
+      - All identifiers are double-quoted in DDL and escaped (``"`` doubled to
+        ``""``) before reaching the template, so a malicious model name cannot
+        break out of the quoted identifier and inject DDL.
+      - Enum literal values are escaped (``'`` doubled to ``''``) for the
+        single-quoted ``CREATE TYPE ... AS ENUM`` string.
     """
 
     POSTGRES_TYPES = {
@@ -44,10 +49,50 @@ class SupabaseGenerator(GeneratorInterface):
     }
 
     def __init__(self, model: DomainModel, output_dir: str = None, user_root: str = "User"):
+        """
+        Args:
+            model: Source BUML domain model.
+            output_dir: Where to write the generated ``.sql`` file. Defaults
+                to ``./output``.
+            user_root: Name of the class that mirrors ``auth.users``. Pass
+                ``None`` to skip auth integration entirely.
+        """
         super().__init__(model, output_dir)
         self.user_root_name = user_root
 
+    # ---------------- Sanitization helpers ----------------
+    #
+    # Every name flowing into the SQL template passes through one of these
+    # helpers in the generator (not the template), so the template can render
+    # values verbatim without re-escaping. ``_safe_ident`` is the boundary for
+    # any value that appears inside a double-quoted identifier ("..."), and
+    # ``_safe_string`` is the boundary for any value that appears inside a
+    # single-quoted string literal ('...'). NUL / CR / LF are rejected outright
+    # -- they cannot appear in valid identifiers or single-line literals, and
+    # would almost certainly be an injection or a corrupted model.
+
+    @staticmethod
+    def _reject_control_chars(value: str, kind: str) -> str:
+        if any(c in value for c in ("\0", "\n", "\r")):
+            raise ValueError(
+                f"Invalid character (NUL/CR/LF) in {kind}: {value!r}"
+            )
+        return value
+
+    @classmethod
+    def _safe_ident(cls, name: str) -> str:
+        """Escape ``name`` for inclusion inside a double-quoted Postgres identifier."""
+        return cls._reject_control_chars(name, "identifier").replace('"', '""')
+
+    @classmethod
+    def _safe_string(cls, value: str) -> str:
+        """Escape ``value`` for inclusion inside a single-quoted Postgres string literal."""
+        return cls._reject_control_chars(value, "string literal").replace("'", "''")
+
+    # ---------------- Model introspection ----------------
+
     def _find_user_root(self):
+        """Return the Class named ``self.user_root_name``, or None."""
         if self.user_root_name is None:
             return None
         for cls in self.model.get_classes():
@@ -73,8 +118,9 @@ class SupabaseGenerator(GeneratorInterface):
         return reachable
 
     def _pg_type(self, attr):
+        """Map a BUML attribute to its Postgres type (already safe-quoted for enums)."""
         if isinstance(attr.type, Enumeration):
-            return f'"{attr.type.name.lower()}"'
+            return f'"{self._safe_ident(attr.type.name.lower())}"'
         return self.POSTGRES_TYPES.get(attr.type.name, "TEXT")
 
     def _classes_for_emit(self, user_root):
@@ -92,29 +138,33 @@ class SupabaseGenerator(GeneratorInterface):
         return classes
 
     def _table_name(self, cls):
-        return cls.name.lower()
+        """Pre-escaped, lowercased class name, ready to drop inside ``"..."``."""
+        return self._safe_ident(cls.name.lower())
 
-    def _build_table_columns(self, cls, user_root, per_user, fkeys):
+    # ---------------- Column / table builders ----------------
+
+    def _build_table_columns(self, cls, user_root, per_user):
         """Return list of column-definition strings for a class."""
         is_user_root = (user_root is not None and cls is user_root)
         cols = []
         emitted_pk = False
 
         for attr in sort_by_timestamp(cls.attributes):
+            attr_name = self._safe_ident(attr.name)
             if attr.is_id:
                 if is_user_root:
                     cols.append(
-                        f'"{attr.name}" UUID PRIMARY KEY '
+                        f'"{attr_name}" UUID PRIMARY KEY '
                         f'REFERENCES auth.users(id) ON DELETE CASCADE'
                     )
                 else:
                     cols.append(
-                        f'"{attr.name}" UUID PRIMARY KEY DEFAULT gen_random_uuid()'
+                        f'"{attr_name}" UUID PRIMARY KEY DEFAULT gen_random_uuid()'
                     )
                 emitted_pk = True
             else:
                 null_clause = "" if attr.is_optional else " NOT NULL"
-                cols.append(f'"{attr.name}" {self._pg_type(attr)}{null_clause}')
+                cols.append(f'"{attr_name}" {self._pg_type(attr)}{null_clause}')
 
         # The user-root MUST have an id column referencing auth.users. If the
         # modeler forgot is_id on every attribute, force-emit the canonical id
@@ -155,7 +205,7 @@ class SupabaseGenerator(GeneratorInterface):
             fk_col_names = []
             for end in ends:
                 target_tbl = self._table_name(end.type)
-                col_name = f"{end.name}_id"
+                col_name = self._safe_ident(f"{end.name}_id")
                 fk_col_names.append(col_name)
                 cols.append(
                     f'"{col_name}" UUID NOT NULL '
@@ -180,18 +230,19 @@ class SupabaseGenerator(GeneratorInterface):
             cols.append(f"PRIMARY KEY ({pk_cols})")
 
             yield {
-                "name": assoc.name.lower(),
+                "cls": None,
+                "name": self._safe_ident(assoc.name.lower()),
                 "columns": cols,
                 "is_user_root": False,
                 "is_per_user": is_per_user,
                 "fk_col_names": fk_col_names,
             }
 
-    def _association_fks(self, user_root, per_user, fkeys):
+    def _association_fks(self, user_root, fkeys):
         """
-        Yield (table_name, column_name, target_table, nullable) for each
-        association FK to emit. Suppresses FKs pointing at the user-root,
-        since the denormalized user_id covers them.
+        Yield ``(table, column, target_table, nullable)`` for each association
+        FK to emit via ALTER TABLE. Suppresses FKs pointing AT the user-root
+        because the denormalized ``user_id`` already covers that relationship.
         """
         for assoc in self.model.associations:
             if len(assoc.ends) != 2:
@@ -200,24 +251,37 @@ class SupabaseGenerator(GeneratorInterface):
             if not entry:
                 continue
             fk_class_name, fk_end_name = entry
-            # Locate the end pointing to the FK target
             target_end = next(
                 (e for e in assoc.ends if e.name == fk_end_name), None
             )
             if target_end is None:
                 continue
             target_cls = target_end.type
-            # Suppress FKs pointing at the user-root -- denorm user_id covers it
             if user_root is not None and target_cls is user_root:
                 continue
             yield (
-                fk_class_name.lower(),
-                f"{fk_end_name}_id",
+                self._safe_ident(fk_class_name.lower()),
+                self._safe_ident(f"{fk_end_name}_id"),
                 self._table_name(target_cls),
                 target_end.multiplicity.min == 0,
             )
 
-    def generate(self):
+    def _build_safe_enums(self):
+        """Pre-sanitize enums for the template. Skips enums with no literals."""
+        safe = []
+        for enum in self.model.get_enumerations():
+            if not enum.literals:
+                continue
+            safe.append({
+                "name": self._safe_ident(enum.name.lower()),
+                "literals": [self._safe_string(lit.name) for lit in enum.literals],
+            })
+        return safe
+
+    # ---------------- Render ----------------
+
+    def generate(self) -> None:
+        """Render the SQL file to ``output_dir``. Filename is a Supabase migration-style ``<timestamp>_<slug>.sql``."""
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         env = Environment(
             loader=FileSystemLoader(templates_path),
@@ -227,26 +291,28 @@ class SupabaseGenerator(GeneratorInterface):
         )
         template = env.get_template("supabase_template.sql.j2")
 
+        # Validate model name now so injection attempts via the comment header
+        # surface as a clean ValueError rather than a corrupted SQL file.
+        self._reject_control_chars(self.model.name, "model name")
+
         user_root = self._find_user_root()
         per_user = self._per_user_classes(user_root)
         fkeys = get_foreign_keys(self.model)
 
         classes = self._classes_for_emit(user_root)
-        # Pre-compute column lists so the template stays declarative
         tables = []
         for cls in classes:
             tables.append({
                 "cls": cls,
                 "name": self._table_name(cls),
-                "columns": self._build_table_columns(cls, user_root, per_user, fkeys),
+                "columns": self._build_table_columns(cls, user_root, per_user),
                 "is_user_root": user_root is not None and cls is user_root,
                 "is_per_user": cls in per_user,
             })
-
-        # M:N junction tables come after class tables so their FKs resolve
         tables.extend(self._junction_tables(user_root, per_user))
 
-        fk_alters = list(self._association_fks(user_root, per_user, fkeys))
+        fk_alters = list(self._association_fks(user_root, fkeys))
+        safe_enums = self._build_safe_enums()
 
         # Migration-ready filename: <YYYYMMDDHHMMSS>_<model_slug>.sql is the
         # naming convention expected by `supabase db reset` (which applies
@@ -262,6 +328,7 @@ class SupabaseGenerator(GeneratorInterface):
             user_root=user_root,
             user_root_tbl=self._table_name(user_root) if user_root else None,
             fk_alters=fk_alters,
+            enums=safe_enums,
             filename=filename,
         )
 

@@ -7,11 +7,13 @@ Supabase Schema Generator
    Supabase patterns (UUID primary keys, ``auth.users`` mirroring, per-user
    RLS) but has known gaps -- see :ref:`supabase-limitations` below.
 
-The Supabase generator produces a single ``supabase.sql`` file you can paste
-into the Supabase SQL Editor. It emits Postgres DDL plus the Supabase-specific
-pieces: ``auth.users`` cascading, a ``handle_new_user`` trigger, denormalized
-``user_id`` columns on per-user tables, explicit ``GRANT``\ s, and Row Level
-Security policies that follow Supabase's documented best practices.
+The Supabase generator produces a single migration-style
+``<YYYYMMDDHHMMSS>_<model>.sql`` file you can either paste into the Supabase
+SQL Editor or drop straight into ``supabase/migrations/`` for the CLI. It
+emits Postgres DDL plus the Supabase-specific pieces: ``auth.users``
+cascading, a ``handle_new_user`` trigger, denormalized ``user_id`` columns
+on per-user tables, explicit ``GRANT``\ s, and Row Level Security policies
+that follow Supabase's documented best practices.
 
 Quick start
 -----------
@@ -152,10 +154,12 @@ the following (abbreviated for brevity):
 
 .. code-block:: sql
 
-    -- user-root mirrors auth.users (no gen_random_uuid default)
+    -- user-root mirrors auth.users (no gen_random_uuid default).
+    -- Note: keep email/password/phone OUT of this table -- they live in
+    -- auth.users. See Known limitations #3.
     CREATE TABLE IF NOT EXISTS public."user" (
         "id" UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-        "email" TEXT NOT NULL
+        "display_name" TEXT NOT NULL
     );
 
     -- per-user table, with denormalized user_id and its index
@@ -203,7 +207,7 @@ The three Supabase-specific patterns to notice:
 Output structure
 ----------------
 
-A single ``supabase.sql`` file with sections in this order:
+A single ``<timestamp>_<slug>.sql`` file with sections in this order:
 
 1. Header comment + ``pgcrypto`` note
 2. Enumerations (skipped if none)
@@ -220,7 +224,11 @@ Conventions
 -----------
 
 - All identifiers are double-quoted in DDL to bypass Postgres reserved words
-  (``user``, ``time``, ``order``, etc.).
+  (``user``, ``time``, ``order``, etc.). Embedded double-quotes in names are
+  doubled (``"`` → ``""``) and enum literal single-quotes are doubled
+  (``'`` → ``''``) before reaching the template, so a malicious or malformed
+  model name cannot break out of the quoted identifier or string literal.
+  Names containing ``NUL`` / ``CR`` / ``LF`` are rejected with ``ValueError``.
 - Class names become table names via simple lowercasing (``IntakeSchedule`` ->
   ``intakeschedule``). No automatic pluralization or snake_case conversion --
   pick the names you want in the model.

@@ -1,0 +1,40 @@
+Version 7.7.0
+=============
+
+This release ships the **Supabase generator** — a one-shot Postgres DDL
+emitter targeted at Supabase projects. It takes a BUML structural model and
+produces a single timestamped ``.sql`` file you can paste into the Supabase
+SQL Editor or drop into ``supabase/migrations/`` for the CLI. The generated
+schema follows Supabase's documented patterns: UUID primary keys via
+``gen_random_uuid()``, the user-root class mirrors ``auth.users`` via a
+``handle_new_user`` trigger, every reachable class gets a denormalized
+``user_id`` column with the full RLS policy set, and many-to-many
+associations land as junction tables with composite primary keys. No
+metamodel or API contract changes.
+
+New Features and Improvements
+-----------------------------
+
+**Supabase Generator (new)**
+
+* Added ``besser.generators.supabase.SupabaseGenerator`` and registered it in the Web Modeling Editor under **File → Generate Code → Database → Supabase**. The generator emits a single migration-style ``<YYYYMMDDHHMMSS>_<model>.sql`` file: drop-in for ``supabase/migrations/`` so ``supabase db reset`` picks it up by filename order, and a perfectly fine paste-target for the cloud SQL Editor.
+* **UUID primary keys** are emitted for every class whose model has an ``is_id=True`` attribute. The user-root class (default name: ``User``, configurable via a generator parameter and a frontend dialog) is the exception: its primary key references ``auth.users(id) ON DELETE CASCADE`` instead of generating a fresh UUID. If the user-root class has no ``is_id`` attribute the canonical ``id`` column is force-injected so the auth integration doesn't silently break.
+* **`handle_new_user` trigger** mirrors every new ``auth.users`` insert into ``public.<user_root>`` using Supabase's recommended pattern: ``SECURITY DEFINER``, ``SET search_path = ''``, and ``INSERT ... ON CONFLICT (id) DO NOTHING`` so re-runs and admin pre-seeding don't break signup.
+* **Per-user reachability** walks the association graph from the user-root and adds a denormalized ``user_id UUID NOT NULL REFERENCES public.<user_root>(id) ON DELETE CASCADE`` column (plus an index) to every reachable table. Association FKs pointing **at** the user-root are suppressed so the table doesn't end up with two columns referencing the same row.
+* **Row Level Security** is enabled on the user-root and on every reachable table with the full four-policy set (SELECT / INSERT / UPDATE / DELETE), each ``AS PERMISSIVE``, ``TO authenticated``, and keyed on ``(SELECT auth.uid()) = ...`` so Postgres evaluates the auth function once per query rather than once per row (per Supabase's RLS performance guidance). ``UPDATE`` policies include a ``WITH CHECK`` clause so an authenticated user can't transfer a row to a different user by rewriting ``user_id``. Every policy is preceded by ``DROP POLICY IF EXISTS`` for idempotent re-runs.
+* **Many-to-many associations** become junction tables with a composite primary key over both foreign-key columns, ``ON DELETE CASCADE`` on each side, and per-user RLS when either endpoint is reachable from the user-root. If one of the FK columns is already named ``user_id`` it does double duty as both the FK and the RLS predicate column.
+* **Identifier injection hardening**: every class, attribute, association-end, enum, FK column, and user-root name flowing into the SQL template passes through a generator-side ``_safe_ident()`` (doubles embedded ``"``) or ``_safe_string()`` (doubles embedded ``'`` for enum literals) before the template renders it. Names containing ``NUL`` / ``CR`` / ``LF`` are rejected with ``ValueError`` so a malicious or malformed model name surfaces cleanly instead of producing corrupted SQL. The ``user_root`` value coming over HTTP from the editor is additionally validated at the router boundary against ``^[A-Za-z_][A-Za-z0-9_]{0,62}$`` and rejected with HTTP 400 if malformed.
+* **Combined `GRANT` block** emits a single ``GRANT SELECT, INSERT, UPDATE, DELETE ON <all tables> TO authenticated`` plus ``GRANT USAGE ON SCHEMA public TO authenticated``. Supabase's default project privileges normally cover this, but emitting them explicitly makes the script work on non-Supabase Postgres and on projects where the defaults were reset.
+* Frontend: new **Supabase Configuration** dialog under the Database submenu collects the user-root class name (default ``User``, empty string to skip auth integration entirely) before generating.
+* Tests: ``tests/generators/supabase/`` ships 8 cases covering structural emission against the shared ``library_book_author_model`` fixture, the M:N junction path, the ``auth.users`` mirror + trigger, denormalized ``user_id`` plus the four RLS policies, the two SQL-injection escape paths (double-quote in class name, single-quote in enum literal), control-character rejection, and the migration-style filename format.
+* Documentation: ``docs/source/generators/supabase.rst`` is a full reference — cloud and local workflows, sample output, conventions, type mapping, idempotency notes, and a candid Known Limitations section. Closes ``BESSER-PEARL/BESSER#533``.
+
+Known Limitations
+-----------------
+
+The Supabase generator ships with documented gaps; see ``docs/source/generators/supabase.rst`` for the full list. Headline items:
+
+* **Reachable means per-user.** Any class reachable from the user-root through associations gets a ``user_id`` column and per-user RLS. This catches genuinely per-user data but also mis-tags shared catalog data (e.g. a global ``Ingredient`` table linked into the per-user graph) — that case needs the model author to keep reference data outside the per-user reachability island.
+* **Auth-owned attributes aren't filtered.** If the user-root class has ``email`` / ``password`` / ``phone`` attributes, they are emitted as columns on ``public.<user_root>`` even though Supabase keeps those in ``auth.users``. Remove them from the user-root class before generating.
+* **Association classes are silently dropped.** Plain binary 1:1, 1:N, and M:N work; classes attached to an M:N association are not yet supported.
+* **Inheritance is flattened.** Parent and child become independent tables — no polymorphic discriminator column.

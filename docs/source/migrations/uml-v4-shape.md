@@ -1,12 +1,16 @@
-# BESSER UML v3 → v4 Wire Shape Specification
+# BESSER UML v4 Wire Shape Specification (v3 Legacy Notes)
 
-**Status**: SA-1 Wave 1 hand-off contract.
-**Audience**: every Wave-2 sub-agent (frontend nodes/edges, backend converters).
-**Source of truth**: this document. No SA-to-SA chatter.
+**Status**: Canonical spec for the v4 React Flow editor.
+**Audience**: every contributor touching `packages/library` (frontend nodes/edges)
+or `besser/utilities/web_modeling_editor/backend/services/converters/` (Python).
+**Source of truth**: this document.
 
-This file describes, per BESSER diagram type, the **v3** shape that the legacy
-`packages/editor` Apollon fork currently emits and the **v4** shape that the
-new React-Flow library (`packages/library`, `@tumaet/apollon` 4.x) accepts.
+This file describes, per BESSER diagram type, the **v4** shape that the
+React-Flow library at `packages/library` emits and accepts as the canonical
+on-disk / on-wire format. For backward compatibility it also documents the
+legacy **v3** shape that the retired SVG/Redux editor used to emit; the
+v3→v4 migrator at `packages/library/lib/utils/versionConverter.ts`
+upgrades old fixtures to v4 on load.
 
 The mapping is exhaustive enough that:
 
@@ -72,13 +76,13 @@ type V4UMLModel = {
   title: string;
   type: UMLDiagramType;
   size?: { width: number; height: number };  // optional, recomputable from nodes
-  nodes: ApollonNode[];
-  edges: ApollonEdge[];
+  nodes: BesserNode[];
+  edges: BesserEdge[];
   interactive?: { elements: Record<string, boolean>; relationships: Record<string, boolean> };
   assessments: { [id: string]: Assessment };
 };
 
-type ApollonNode = {
+type BesserNode = {
   id: string;
   type: DiagramNodeType;       // string union, see per-diagram sections
   position: { x: number; y: number };
@@ -89,7 +93,7 @@ type ApollonNode = {
   parentId?: string;           // replaces v3 owner
 };
 
-type ApollonEdge = {
+type BesserEdge = {
   id: string;
   source: string;              // node id
   target: string;              // node id
@@ -121,7 +125,7 @@ diagram models. The migrator runs on read in
 
 ## ClassDiagram
 
-### v3 element subtypes (mined from `packages/editor/src/main/packages/uml-class-diagram/`)
+### v3 element subtypes (ClassDiagram)
 
 - `Package` — container for classes.
 - `Class` / `AbstractClass` / `Interface` / `Enumeration` (`stereotype` field
@@ -256,7 +260,7 @@ type ClassifierMember = {
 
 ## ObjectDiagram
 
-### v3 element subtypes (`packages/editor/src/main/packages/uml-object-diagram/`)
+### v3 element subtypes (ObjectDiagram)
 
 - `ObjectName` (top-level container; carries optional `classId` linking to
   a class in a sibling ClassDiagram).
@@ -320,7 +324,7 @@ type ObjectAttribute = {
 
 ## StateMachineDiagram
 
-### v3 element subtypes (`packages/editor/src/main/packages/uml-state-diagram/`)
+### v3 element subtypes (StateMachineDiagram)
 
 - `State` (container; has `bodies: string[]`, `fallbackBodies: string[]`,
   `stereotype: string | null`, `italic`, `underline`, `deviderPosition`,
@@ -425,7 +429,7 @@ type StateCodeBlockData = {
 
 ## AgentDiagram
 
-### v3 element subtypes (`packages/editor/src/main/packages/agent-state-diagram/`)
+### v3 element subtypes (AgentDiagram)
 
 The agent diagram **inherits all StateMachine element types** plus its own:
 
@@ -529,10 +533,9 @@ the canonical shape and strips the legacy flat fields.
 
 ### Legacy AgentStateTransition shapes (must round-trip)
 
-The v3 deserializer at
-`packages/editor/src/main/packages/agent-state-diagram/agent-state-transition/agent-state-transition.ts`
-accepts at least 5 historical shapes. The migrator must collapse them all
-to the canonical v4 shape above. Reference fixtures:
+The legacy v3 deserializer accepted at least 5 historical shapes. The
+migrator must collapse them all to the canonical v4 shape above. Reference
+fixtures:
 
 #### 1. Canonical predefined (current writer output)
 
@@ -668,7 +671,7 @@ migrator must implement identical fallthrough order:
 
 ## UserDiagram
 
-### v3 element subtypes (`packages/editor/src/main/packages/user-modeling/`)
+### v3 element subtypes (UserDiagram)
 
 - `UserModelName` (top-level user node; like ObjectName).
 - `UserModelAttribute`.
@@ -728,7 +731,7 @@ attribute as its own UMLElement** (e.g. `NameAttributeConv2D`,
 every layer's attributes into `node.data.attributes: Record<string,
 unknown>`**.
 
-### v3 element subtypes (`packages/editor/src/main/packages/nn-diagram/`)
+### v3 element subtypes (NNDiagram)
 
 Layer types:
 
@@ -745,9 +748,8 @@ Layer types:
 - `Configuration`
 - `TrainingDataset`, `TestDataset`
 
-Attribute element types: see
-`packages/editor/src/main/packages/nn-diagram/index.ts` for the full
-enumeration; per layer kind there are 3–13 attribute element types whose
+Attribute element types: per layer kind there are 3–13 attribute element
+types in the legacy v3 shape, whose
 names start with the attribute slug and end in the layer slug, e.g.
 `NameAttributeConv2D`, `KernelDimAttributeConv2D`,
 `InputReusedAttributeConv2D`.
@@ -858,10 +860,8 @@ value if they diverge; otherwise just copy the layer's `name` and drop the
 attribute element.
 
 The full attribute schema and validation defaults live at
-`packages/editor/src/main/packages/nn-diagram/nn-attribute-widget-config.ts`
-and `nn-validation-defaults.ts`. SA-5 (NNDiagram) ports these verbatim
-into `packages/library/lib/nodes/nnDiagram/nnAttributeWidgetConfig.ts`
-and `nnValidationDefaults.ts` as data-only modules.
+`packages/library/lib/nodes/nnDiagram/nnAttributeWidgetConfig.ts` and
+`nnValidationDefaults.ts` as data-only modules.
 
 ### v4 edge types
 

@@ -131,5 +131,7 @@ see:
    web_editor_backend
 
 .. note::
-   The BESSER Web Modeling Editor is based on a fork of the
-   `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_, a UML modeling editor.
+   The BESSER Web Modeling Editor is built on `React Flow <https://reactflow.dev/>`_
+   and `Zustand <https://github.com/pmndrs/zustand>`_, packaged as the
+   ``@besser/wme`` editor library. The diagram engine lives in
+   ``packages/library`` and the React SPA that hosts it lives in ``packages/webapp``.

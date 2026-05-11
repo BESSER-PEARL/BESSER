@@ -99,6 +99,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_QISKIT_SHOTS,
     DEFAULT_DJANGO_PROJECT_NAME,
     DEFAULT_DJANGO_APP_NAME,
+    DEFAULT_SUPABASE_USER_ROOT,
 )
 
 # Centralized error handling
@@ -683,6 +684,8 @@ async def _handle_class_diagram_generation(
         return await _generate_django(buml_model, generator_class, config, temp_dir)
     if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
+    if generator_type == "supabase":
+        return await _generate_supabase(buml_model, generator_class, config, temp_dir)
     if generator_type == "sqlalchemy":
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
     if generator_type == "jsonschema":

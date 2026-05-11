@@ -52,11 +52,6 @@ Choosing a Generator
      - Structural
      - .sql
      - You need DDL statements for any SQL dialect
-   * - **Supabase** *(experimental)*
-     - Structural
-     - .sql
-     - You're deploying to Supabase and want UUID PKs, ``auth.users``
-       integration, and Row Level Security out of the box
    * - **SQLAlchemy**
      - Structural
      - .py
@@ -140,7 +135,6 @@ Generate database schemas, APIs, and data formats:
    :maxdepth: 1
 
    generators/sql
-   generators/supabase
    generators/alchemy
    generators/json_schema
    generators/rdf

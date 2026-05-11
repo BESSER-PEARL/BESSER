@@ -2,9 +2,6 @@ __pycache__/
 .pytest_cache/
 /.idea/
 
-# Local generator scratch
-tmp_supabase/
-
 # virtual env
 Pipfile
 Pipfile.lock

@@ -1,0 +1,26 @@
+Version 7.7.1
+=============
+
+Patch release: makes the **Supabase generator** actually reachable from
+the Web Modeling Editor UI. v7.7.0 shipped the generator and the
+backend wiring, but the editor's generator-config dialog was missing
+the prop forwarding for the new Supabase entry, so the dialog crashed
+the moment a user tried to use it. No backend, metamodel, or API
+contract changes — frontend submodule bump only.
+
+Fixes
+-----
+
+* **Web Modeling Editor — Supabase config dialog wiring**: in
+  ``packages/webapp/src/main/app/application.tsx``, the
+  ``GeneratorConfigDialogs`` component destructures
+  ``supabaseUserRoot``, ``onSupabaseUserRootChange`` and
+  ``onSupabaseGenerate``, but ``application.tsx`` never forwarded
+  them from ``useGeneratorExecution``. At runtime the handlers were
+  ``undefined``, so typing in the **User-root class** field or
+  clicking **Generate** threw ``W is not a function`` in the
+  minified bundle and the dialog became unusable. The three props
+  are now forwarded so the dialog behaves as designed in v7.7.0.
+
+Frontend submodule pointer moves from ``fa0fa92b`` to ``077afbdf``;
+that range contains only the prop-forwarding fix above.

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
 
@@ -8,6 +9,39 @@ logger = logging.getLogger(__name__)
 
 
 OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
+
+
+def _normalize_setting(value):
+    if isinstance(value, str):
+        return value.strip().lower()
+    return value
+
+
+def _is_effective_setting(value) -> bool:
+    normalized = _normalize_setting(value)
+    return isinstance(normalized, str) and normalized not in ("", "none", "original")
+
+
+def _has_non_empty_texts(texts) -> bool:
+    return any(isinstance(text, str) and text.strip() for text in texts or [])
+
+
+def _resolve_model_name(config: dict | None, default: str = "gpt-5") -> str:
+    model_config = config.get("llm") if isinstance(config, dict) else None
+    if isinstance(model_config, str) and model_config.strip():
+        return model_config.strip()
+    if isinstance(model_config, dict):
+        model_name = model_config.get("model")
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name.strip()
+    return default
+
+
+def _extract_numbered_results(response_text: str) -> list[str]:
+    numbered_matches = re.findall(r"^\s*\d+\.\s*(.+)$", response_text or "", flags=re.MULTILINE)
+    if numbered_matches:
+        return [entry.strip() for entry in numbered_matches if entry.strip()]
+    return [line.strip() for line in (response_text or "").splitlines() if line.strip()]
 
 
 def _resolve_openai_api_key(config: dict = None, openai_api_key: str = None) -> str | None:
@@ -118,6 +152,8 @@ def translate_text_batch(texts, target_language, model="gpt-5", openai_api_key=N
     """
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts must be a list or tuple of strings")
+    if not _has_non_empty_texts(texts):
+        return list(texts)
 
     # Define the system prompt for translation
     system_prompt = (
@@ -139,11 +175,7 @@ def translate_text_batch(texts, target_language, model="gpt-5", openai_api_key=N
     )
 
     # Try to split the returned text back into a list of outputs
-    results = [
-        line.split(". ", 1)[1] if ". " in line else line
-        for line in response_text.splitlines()
-        if line.strip()
-    ]
+    results = _extract_numbered_results(response_text)
     return results
 
 def translate_text_api(text, target_language):
@@ -178,6 +210,8 @@ def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=No
     """
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts must be a list or tuple of strings")
+    if not _has_non_empty_texts(texts):
+        return list(texts)
 
     style = (style or '').lower()
     if style not in ('formal', 'informal'):
@@ -219,7 +253,7 @@ def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=No
     )
 
     # Try to split the returned text back into a list of outputs
-    results = [line.split(". ", 1)[1].replace("'", "\\'") if ". " in line else line for line in response_text.splitlines() if line.strip()]
+    results = [entry.replace("'", "\\'") for entry in _extract_numbered_results(response_text)]
     return results
 
 
@@ -239,20 +273,23 @@ def configure_agent(agent, config, openai_api_key: str = None):
     # Example: You could use OpenAI API here to modify agent intents, responses, etc.
     # openai.api_key = os.getenv('OPENAI_API_KEY')
     # ... personalization logic ...
+    language_setting = config.get('agentLanguage')
+    should_translate_language = _is_effective_setting(language_setting)
+
     training_sentences = []
     for intent in getattr(agent, 'intents', []):
         for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
             logger.debug("Intent: %s, Sentence %d: %s", getattr(intent, 'name', ''), idx, sentence)
-            if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+            if should_translate_language:
                 logger.debug("Translating using API...")
                 training_sentences.append(sentence)
-    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+    if should_translate_language and training_sentences:
         if not resolved_api_key:
             raise RuntimeError(
                 f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
-        target_language = config['agentLanguage']
+        target_language = language_setting
         translated_sentences = translate_text_batch(
             training_sentences,
             target_language,
@@ -262,7 +299,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
         ti = 0
         for intent in getattr(agent, 'intents', []):
             for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
-                if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+                if should_translate_language:
                     logger.debug("Replacing sentence %d with translated version.", ti)
                     intent.training_sentences[idx] = translated_sentences[ti]
                     ti += 1
@@ -278,6 +315,9 @@ def configure_agent(agent, config, openai_api_key: str = None):
                         # process each message individually
                         # action.message = replace_reply(action.message, config)
                         messages.append(action.message)
+
+    if not _has_non_empty_texts(messages):
+        return
 
     personalized_messages = replace_reply_batch(
         messages,
@@ -308,78 +348,131 @@ def configure_agent(agent, config, openai_api_key: str = None):
 
 def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str = None) -> list[str]:
     config = flatten_agent_config_structure(config or {})
-    personalized_messages = messages
+    personalized_messages = list(messages)
 
-    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and False:
-        target_language = config['agentLanguage']
-        # personalized_message = translate_text(personalized_message, target_language)
-    elif 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original' and False:
-        target_language = config['agentLanguage']
-        for i, msg in enumerate(personalized_messages):
-            personalized_messages[i] = translate_text_api(msg, target_language)
-    if 'agentStyle' in config and config['agentStyle'] != 'original':
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
-            )
-        style = config['agentStyle']
-        personalized_messages = style_text_batch(
-            personalized_messages,
-            style,
+    if not _has_non_empty_texts(personalized_messages):
+        return personalized_messages
+
+    style = _normalize_setting(config.get('agentStyle'))
+    complexity = _normalize_setting(config.get('languageComplexity'))
+    sentence_length = _normalize_setting(config.get('sentenceLength'))
+    target_language = _normalize_setting(config.get('agentLanguage'))
+    user_profile = config.get('userProfileModel') if isinstance(config.get('userProfileModel'), dict) else None
+
+    has_transforms = any([
+        style in {'formal', 'informal'},
+        complexity in {'simple', 'medium', 'complex'},
+        sentence_length in {'concise', 'verbose'},
+        isinstance(user_profile, dict),
+        _is_effective_setting(target_language),
+    ])
+
+    if not has_transforms:
+        return personalized_messages
+
+    if not openai_api_key:
+        raise RuntimeError(
+            f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+            "or include 'openaiApiKey'/'openai_api_key' in generator config."
+        )
+
+    return rewrite_reply_batch(
+        personalized_messages,
+        config=config,
+        style=style if style in {'formal', 'informal'} else None,
+        complexity=complexity if complexity in {'simple', 'medium', 'complex'} else None,
+        sentence_length=sentence_length if sentence_length in {'concise', 'verbose'} else None,
+        user_profile=user_profile,
+        target_language=target_language if _is_effective_setting(target_language) else None,
+        openai_api_key=openai_api_key,
+    )
+
+
+def rewrite_reply_batch(
+    messages: list[str],
+    config: dict,
+    style: str | None = None,
+    complexity: str | None = None,
+    sentence_length: str | None = None,
+    user_profile: dict | None = None,
+    target_language: str | None = None,
+    openai_api_key: str | None = None,
+) -> list[str]:
+    """Apply all enabled reply transformations in a single LLM request."""
+    personalized_messages: list[str] = list(messages)
+    valid_entries: list[tuple[int, str]] = []
+
+    for idx, original_text in enumerate(messages):
+        if isinstance(original_text, str) and original_text.strip():
+            valid_entries.append((idx, original_text))
+        else:
+            personalized_messages[idx] = original_text
+
+    if not valid_entries:
+        return personalized_messages
+
+    instruction_lines = [
+        "Rewrite each numbered reply while preserving meaning and intent.",
+    ]
+    if style:
+        instruction_lines.append(f"- Use a {style} style.")
+    if complexity:
+        instruction_lines.append(f"- Target a {complexity} language complexity.")
+    if sentence_length:
+        instruction_lines.append(f"- Prefer {sentence_length} sentence length.")
+    if user_profile:
+        instruction_lines.append(
+            "- Adapt to the provided user profile only when needed to avoid contradictions."
+        )
+    if target_language:
+        instruction_lines.append(f"- Translate the final text to {target_language}.")
+    instruction_lines.append(
+        "Return only a numbered list of rewritten replies in the same order with no explanations."
+    )
+
+    profile_context = ""
+    if user_profile:
+        profile_json = json.dumps(user_profile, ensure_ascii=False)
+        max_profile_chars = 6000
+        if len(profile_json) > max_profile_chars:
+            profile_json = profile_json[:max_profile_chars] + '... (truncated)'
+        profile_context = f"User profile (JSON):\n{profile_json}\n\n"
+
+    numbered_replies = "\n".join(
+        f"{i + 1}. {text}" for i, (_, text) in enumerate(valid_entries)
+    )
+    user_prompt = (
+        f"{profile_context}"
+        f"Instructions:\n{chr(10).join(instruction_lines)}\n\n"
+        "Original replies:\n"
+        f"{numbered_replies}"
+    )
+
+    try:
+        model_name = _resolve_model_name(config, default='gpt-5')
+        response_text = call_openai_chat(
+            "You are a precise rewriting assistant for agent responses.",
+            user_prompt,
+            model=model_name,
             openai_api_key=openai_api_key,
             config=config,
         )
-    if 'languageComplexity' in config and config['languageComplexity'] != 'original':
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+        rewritten_values = _extract_numbered_results(response_text)
+
+        if len(rewritten_values) != len(valid_entries):
+            logger.warning(
+                "Reply rewriting returned %d results but expected %d; falling back to originals.",
+                len(rewritten_values),
+                len(valid_entries),
             )
-        complexity = config['languageComplexity']
-        personalized_messages = complexity_text_batch(
-            personalized_messages,
-            complexity,
-            openai_api_key=openai_api_key,
-            config=config,
-        )
-    if 'sentenceLength' in config and config['sentenceLength'] != 'original':
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
-            )
-        length_pref = config['sentenceLength']
-        personalized_messages = sentence_length_batch(
-            personalized_messages,
-            length_pref,
-            openai_api_key=openai_api_key,
-            config=config,
-        )
-    if isinstance(config.get('userProfileModel'), dict):
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
-            )
-        personalized_messages = replace_content_profile_batch(
-            personalized_messages,
-            config,
-            openai_api_key=openai_api_key,
-        )
-    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
-            )
-        target_language = config['agentLanguage']
-        personalized_messages = translate_text_batch(
-            personalized_messages,
-            target_language,
-            openai_api_key=openai_api_key,
-            config=config,
-        )
+            rewritten_values = [text for _, text in valid_entries]
+
+        for (msg_idx, original_text), rewritten in zip(valid_entries, rewritten_values):
+            personalized_messages[msg_idx] = rewritten if rewritten else original_text
+    except Exception as exc:
+        logger.error("Reply rewriting failed: %s", exc, exc_info=True)
+        for msg_idx, original_text in valid_entries:
+            personalized_messages[msg_idx] = original_text
 
     return personalized_messages
 
@@ -398,11 +491,7 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
     else:
         profile_context = profile_json
 
-    model_name = flattened_config.get('llm')
-    if not isinstance(model_name, str) or not model_name.strip():
-        model_name = 'gpt-5'
-    else:
-        model_name = model_name.strip()
+    model_name = _resolve_model_name(flattened_config, default='gpt-5')
 
     system_prompt = (
         "You personalize agent replies for a single user based on a provided profile. "
@@ -440,11 +529,7 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
             openai_api_key=openai_api_key,
             config=flattened_config,
         )
-        results = [
-            line.split(". ", 1)[1] if ". " in line else line
-            for line in response_text.splitlines()
-            if line.strip()
-        ]
+        results = _extract_numbered_results(response_text)
 
         if len(results) != len(valid_entries):
             logger.warning(
@@ -485,29 +570,30 @@ def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None,
 
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts must be a list or tuple of strings")
+    if not _has_non_empty_texts(texts):
+        return list(texts)
 
-    # Define the system prompt based on the complexity level
-    if complexity == "simple":
-        system_prompt = (
+    complexity_prompts = {
+        "simple": (
             "You are a text simplification engine. "
             "Simplify the following texts to make them easier to understand while retaining their meaning. "
             "If a text already fits the A1-A2 complexity level, no changes are required. "
             "Return the simplified texts as a numbered list."
-        )
-    elif complexity == "medium":
-        system_prompt = (
+        ),
+        "medium": (
             "You are a text adjustment engine. "
             "Adjust the following texts to a medium level of complexity, suitable for a general audience. "
             "If a text already fits the B1-B2 complexity level, no changes are required. "
             "Return the adjusted texts as a numbered list."
-        )
-    elif complexity == "complex":
-        system_prompt = (
+        ),
+        "complex": (
             "You are a text enhancement engine. "
             "Enhance the following texts to make them more sophisticated and complex while retaining their meaning. "
             "If a text already fits the C1-C2 complexity level, no changes are required. "
             "Return the enhanced texts as a numbered list."
-        )
+        ),
+    }
+    system_prompt = complexity_prompts[complexity]
 
     # Combine all texts into a single prompt with numbering for clarity
     user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
@@ -522,11 +608,7 @@ def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None,
     )
 
     # Try to split the returned text back into a list of outputs
-    results = [
-        line.split(". ", 1)[1] if ". " in line else line
-        for line in response_text.splitlines()
-        if line.strip()
-    ]
+    results = _extract_numbered_results(response_text)
     return results
 
 
@@ -542,6 +624,8 @@ def sentence_length_batch(texts, preference, model="gpt-5", openai_api_key=None,
 
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts must be a list or tuple of strings")
+    if not _has_non_empty_texts(texts):
+        return list(texts)
 
     if normalized_pref == "concise":
         system_prompt = (
@@ -566,9 +650,5 @@ def sentence_length_batch(texts, preference, model="gpt-5", openai_api_key=None,
         openai_api_key=openai_api_key,
         config=config,
     )
-    results = [
-        line.split(". ", 1)[1] if ". " in line else line
-        for line in response_text.splitlines()
-        if line.strip()
-    ]
+    results = _extract_numbered_results(response_text)
     return results

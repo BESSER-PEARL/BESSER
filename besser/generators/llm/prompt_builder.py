@@ -240,51 +240,23 @@ Do not rewrite generated files from scratch — make surgical modifications.{pri
 6. **OCL constraints must run.** For every constraint listed under the
    class, emit a runtime check in the language idiomatic to the target
    (Pydantic `@field_validator`, Zod refine, SQL CHECK, etc.).
-7. **Standard hygiene + project metadata.** Every project must ship the
-   STANDARD project file for its target stack: `pyproject.toml` for
-   Python, `pom.xml` for Java with Maven, `package.json` for Node /
-   TypeScript, `Cargo.toml` for Rust, `go.mod` for Go, `Gemfile` for
-   Ruby, `build.gradle.kts` for Kotlin / Gradle. Always ship a
-   `README.md` with (a) one-line summary, (b) a runnable quick-start
-   command, (c) a brief list of file roles. Always ship a `tests/`
-   directory with at least one smoke test in the stack's idiomatic
-   framework (pytest / vitest / cargo test / go test / minitest /
-   JUnit). A Dockerised app additionally needs `docker-compose.yml`;
-   an env-dependent app needs `.env.example`.
+7. **Standard hygiene.** Every project must ship the STANDARD project
+   file for its target stack: `pyproject.toml` for Python, `pom.xml`
+   for Java with Maven, `package.json` for Node / TypeScript,
+   `Cargo.toml` for Rust, `go.mod` for Go, `Gemfile` for Ruby,
+   `build.gradle.kts` for Kotlin / Gradle. Ship a brief `README.md`
+   with a one-line summary + a runnable quick-start command. Only add
+   `tests/`, `Dockerfile`, or `.env.example` when the user request
+   mentions them.
 8. **Read before modify.** Read the relevant section of a file before editing it.
    Use offset/limit for large files (>200 lines).
 9. **Be efficient.** One read per file. Write complete files in one call.
 10. **Don't re-read files** you already read. Remember what's in them.
-11. **Audit your output against the model before finishing.** After your
-    initial pass of changes, re-read the model sections above. For every
-    Class in the domain model, verify each declared attribute and each
-    declared method appears in your generated output for that class
-    (under whatever name the target language uses — see rule 12). If
-    anything is missing, add it before declaring done. Do not silently
+11. **Check your output against the model before finishing.** Before
+    declaring done, verify that every Class's declared attributes and
+    methods appear in your output (under whatever name the target
+    language uses). If anything is missing, add it. Do not silently
     drop attributes the LLM judges "not needed" — the model is the spec.
-12. **Implement obvious method bodies; never stub when the semantics are
-    inferable.** For methods whose intent is clear from the name +
-    parameters + the class's attributes (concatenation of fields like
-    `getFullName`, boolean predicates on simple state like
-    `isAvailable`/`isInStock`, returning a stored value, simple
-    state mutations like `markDone`/`cancel`), implement the body using
-    the class's own attributes. Do NOT leave `return True` / `pass` /
-    `return None` / `raise NotImplementedError` placeholders. If a
-    method genuinely needs state the class doesn't have, ADD that
-    state as a private attribute rather than stubbing the body.
-13. **Stack-aware naming.** The domain model is stored in language-
-    neutral camelCase (`publishedYear`, `borrowedBooks`,
-    `getFullName`). Translate identifiers to the target stack's
-    convention as you generate:
-      - **Python, Ruby, Go, SQL, PostgreSQL columns** → snake_case
-        (`published_year`, `borrowed_books`, `get_full_name`). When
-        the schema must round-trip (Pydantic `Field(alias=...)`,
-        SQLAlchemy `Column('publishedYear', ...)`), preserve the
-        original name via an alias so model fidelity is kept.
-      - **Java, Kotlin, C#, TypeScript, JavaScript, Swift** →
-        preserve camelCase as-is.
-      - **Class names** stay PascalCase across all stacks.
-    Method names follow the same per-language convention.
 
 ## Tools for deeper model inspection
 

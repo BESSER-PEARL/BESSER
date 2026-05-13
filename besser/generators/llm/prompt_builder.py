@@ -285,18 +285,6 @@ Do not rewrite generated files from scratch — make surgical modifications.{pri
         preserve camelCase as-is.
       - **Class names** stay PascalCase across all stacks.
     Method names follow the same per-language convention.
-14. **Break up Phase-1 monoliths first.** If the deterministic
-    generator emitted a single source file longer than ~500 lines in
-    a framework where idiomatic projects use a multi-file layout
-    (FastAPI: `app/routers/`, `app/models/`, `app/schemas/`,
-    `app/main.py`; Django: per-app `models.py`/`views.py`/`urls.py`),
-    SPLIT THE MONOLITH before doing other customise work. Use
-    `modify_file` to delete the original after the pieces are
-    written out. Don't customise on top of a 1400-line monolith — the
-    customise loop's edits get harder to reason about and the output
-    looks machine-generated. NOTE: this is a temporary
-    customise-loop measure; the proper long-term fix is in the
-    deterministic generator itself, queued separately.
 
 ## Tools for deeper model inspection
 

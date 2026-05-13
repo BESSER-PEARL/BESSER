@@ -638,6 +638,7 @@ class SmartGenerationRunner:
                         usd=round(cost_usd, 4),
                         turns=getattr(orchestrator, "total_turns", 0),
                         elapsedSeconds=round(elapsed, 2),
+                        servedModel=getattr(client.usage, "served_model", None),
                     ))
                 except Exception:
                     pass
@@ -812,6 +813,7 @@ class SmartGenerationRunner:
                     usd=round(final_cost, 4),
                     turns=getattr(orchestrator, "total_turns", 0),
                     elapsedSeconds=round(elapsed, 2),
+                    servedModel=getattr(client.usage, "served_model", None),
                 )
             )
 

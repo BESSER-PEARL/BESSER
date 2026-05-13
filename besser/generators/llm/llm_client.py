@@ -25,33 +25,46 @@ logger = logging.getLogger(__name__)
 # Cost tracking (inspired by claw-code/usage.rs)
 # ======================================================================
 
-# Pricing per million tokens (as of 2025)
+# Pricing per million tokens (refreshed early 2026).
+# Sources: OpenAI public pricing page + OpenRouter / pricepertoken.com
+# corroboration for gpt-5.5. Anthropic rates are stable from 2025.
+# ``cache_read`` is OpenAI's prompt-caching discount (~10% of input);
+# ``cache_write`` is 0 for OpenAI since they don't charge a write
+# premium like Anthropic does.
 _MODEL_PRICING: dict[str, dict[str, float]] = {
     # Anthropic Claude
-    "haiku": {"input": 1.0, "output": 5.0, "cache_write": 1.25, "cache_read": 0.1},
-    "sonnet": {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.3},
-    "opus": {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5},
-    # OpenAI
-    "gpt-4o": {"input": 2.5, "output": 10.0, "cache_write": 0, "cache_read": 0},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.6, "cache_write": 0, "cache_read": 0},
-    "gpt-5": {"input": 5.0, "output": 20.0, "cache_write": 0, "cache_read": 0},
-    "o3": {"input": 10.0, "output": 40.0, "cache_write": 0, "cache_read": 0},
-    "o3-mini": {"input": 1.1, "output": 4.4, "cache_write": 0, "cache_read": 0},
+    "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.1},
+    "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.3},
+    "opus":   {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5},
+    # OpenAI — early-2026 public rates
+    "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
+    "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
+    "gpt-5.5":     {"input": 5.0,  "output": 30.0, "cache_write": 0, "cache_read": 0.5},
+    "gpt-5":       {"input": 1.25, "output": 10.0, "cache_write": 0, "cache_read": 0.125},
+    "o3-mini":     {"input": 1.1,  "output": 4.4,  "cache_write": 0, "cache_read": 0},
+    "o3":          {"input": 10.0, "output": 40.0, "cache_write": 0, "cache_read": 0},
 }
 
 
 def _get_pricing(model_id: str) -> dict[str, float]:
-    """Get pricing tier based on model ID."""
+    """Get pricing tier based on model ID.
+
+    Order matters in the OpenAI loop — longer / more-specific keys
+    must come first so e.g. ``gpt-5.5`` doesn't get mis-matched to
+    ``gpt-5`` (which is a substring) and silently billed at the
+    cheaper tier. Falls back to ``gpt-4o`` so an unknown model gets a
+    reasonable middle-tier rate.
+    """
     model_lower = model_id.lower()
-    # Anthropic tiers
+    # Anthropic tiers — unambiguous identifiers so order doesn't matter.
     for tier in ("haiku", "sonnet", "opus"):
         if tier in model_lower:
             return _MODEL_PRICING[tier]
-    # OpenAI exact matches (longest first to avoid partial matches)
-    for key in ("gpt-4o-mini", "gpt-4o", "gpt-5", "o3-mini", "o3"):
+    # OpenAI: ``gpt-5.5`` must precede ``gpt-5`` (substring conflict).
+    for key in ("gpt-4o-mini", "gpt-4o", "gpt-5.5", "gpt-5", "o3-mini", "o3"):
         if key in model_lower:
             return _MODEL_PRICING[key]
-    return _MODEL_PRICING["sonnet"]  # default
+    return _MODEL_PRICING["gpt-4o"]  # default
 
 
 class UsageTracker:
@@ -65,6 +78,30 @@ class UsageTracker:
         self.cache_creation_tokens = 0
         self.cache_read_tokens = 0
         self.api_calls = 0
+        # The actual model name OpenAI / Anthropic returned in the
+        # response. May differ from ``self.model`` (the requested name)
+        # if the provider aliases server-side. Captured once and held;
+        # logged a warning if it changes mid-run.
+        self.served_model: Optional[str] = None
+
+    def set_served_model(self, name: str | None) -> None:
+        """Record the model name the provider actually served.
+
+        Idempotent: silently keeps the first non-empty value. Logs a
+        warning if the served model changes mid-run (rare, but would
+        indicate a routing change we want to know about).
+        """
+        if not name:
+            return
+        if self.served_model is None:
+            self.served_model = name
+            logger.info("UsageTracker: served model = %s (requested %s)", name, self.model)
+        elif self.served_model != name:
+            logger.warning(
+                "UsageTracker: served model changed mid-run: %s → %s",
+                self.served_model, name,
+            )
+            self.served_model = name
 
     def record(self, usage) -> None:
         """Record usage from an API response."""
@@ -572,14 +609,34 @@ def _openai_response_to_common(response) -> dict[str, Any]:
 # ======================================================================
 
 class _OpenAIUsageAdapter:
-    """Adapter so ``UsageTracker.record()`` works with OpenAI usage objects."""
+    """Adapter so ``UsageTracker.record()`` works with OpenAI usage objects.
+
+    Surfaces OpenAI's prompt-caching fields (``cached_tokens`` under
+    ``prompt_tokens_details``) into the same shape Anthropic exposes,
+    so the same ``UsageTracker`` cost formula works for both. The
+    ``input_tokens`` value is reported NET of cached tokens — the
+    cached portion is billed separately at the ``cache_read`` rate.
+    Without this split, cached tokens get billed at the full input
+    rate, inflating cost by ~10×.
+    """
 
     def __init__(self, usage):
-        self.input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        prompt = getattr(usage, "prompt_tokens", 0) or 0
+        cached = 0
+        details = getattr(usage, "prompt_tokens_details", None)
+        if details is not None:
+            cached = getattr(details, "cached_tokens", 0) or 0
+        # Net "fresh" input tokens (those NOT served from cache). We
+        # don't let cached exceed prompt; defensive against an API
+        # quirk where the two could disagree.
+        self.input_tokens = max(0, prompt - cached)
         self.output_tokens = getattr(usage, "completion_tokens", 0) or 0
-        # OpenAI does not report cache tokens in the same way
+        # OpenAI has no separate cache-write step (writes happen
+        # implicitly as a side-effect of a regular call); the discount
+        # only applies on subsequent reads. So cache_creation = 0,
+        # cache_read = cached_tokens.
         self.cache_creation_input_tokens = 0
-        self.cache_read_input_tokens = 0
+        self.cache_read_input_tokens = cached
 
 
 class OpenAIProvider(LLMProvider):
@@ -663,9 +720,11 @@ class OpenAIProvider(LLMProvider):
 
                 response = self._client.chat.completions.create(**kwargs)
 
-                # Track usage
+                # Track usage + the actual served model (audit signal:
+                # the requested model name may be aliased server-side).
                 if response.usage:
                     self._usage.record(_OpenAIUsageAdapter(response.usage))
+                self._usage.set_served_model(getattr(response, "model", None))
 
                 return _openai_response_to_common(response)
 
@@ -713,6 +772,9 @@ class OpenAIProvider(LLMProvider):
                 stream = self._client.chat.completions.create(**kwargs)
                 try:
                     for chunk in stream:
+                        # The served model name appears on every chunk
+                        # in a stream; capture once.
+                        self._usage.set_served_model(getattr(chunk, "model", None))
                         if not chunk.choices:
                             # Usage-only chunk at end of stream
                             if chunk.usage:

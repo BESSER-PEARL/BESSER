@@ -93,12 +93,20 @@ class ToolCallEvent(BaseSseEvent):
 
 
 class CostEvent(BaseSseEvent):
-    """Periodic cost / runtime tick emitted by the cost emitter task."""
+    """Periodic cost / runtime tick emitted by the cost emitter task.
+
+    ``servedModel`` carries the model name the upstream provider
+    actually served on the most recent call. Useful for audits where
+    the requested model (e.g. ``gpt-5.5``) may get aliased server-side
+    to a different variant. Optional because not every chunk knows it
+    (Anthropic doesn't expose it the same way).
+    """
 
     event: Literal["cost"] = "cost"
     usd: float
     turns: int
     elapsedSeconds: float
+    servedModel: Optional[str] = None
 
 
 class DoneEvent(BaseSseEvent):

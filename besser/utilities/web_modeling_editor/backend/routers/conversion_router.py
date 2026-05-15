@@ -49,6 +49,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_bpmn_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -352,6 +353,21 @@ async def export_buml(input_data: DiagramInput):
                 headers={
                     "Content-Disposition": 'attachment; filename="agent_buml.py"'
                 },
+            )
+
+        elif elements_data.get("type") == "BPMNDiagram":
+            # 03- (the converter) is wired here; the BUML .py emit step needs the
+            # 04- BPMN code-builder (`bpmn_model_builder.py`). Until 04- lands,
+            # parse + validate run, but the .py write surfaces as a 400 with a
+            # clear message rather than silently producing an empty file.
+            try:
+                bpmn_model = process_bpmn_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
+            bpmn_model.validate(raise_exception=False)
+            raise ConversionError(
+                "BPMN export to BUML .py is not yet implemented (waiting on the "
+                "BPMN code-builder — see .claude/bpmn/04-bpmn-code-builder-guide.md)."
             )
 
         elif elements_data.get("type") == "NNDiagram":

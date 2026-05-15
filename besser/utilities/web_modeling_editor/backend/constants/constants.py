@@ -59,3 +59,38 @@ RELATIONSHIP_TYPES = {
     "aggregation": "ClassAggregation",
     "inheritance": "ClassInheritance"
 }
+
+# ---------------------------------------------------------------------------
+# BPMN — WME ↔ B-UML BPMN metamodel constants
+# Single source of truth for the BPMN converter pair (json_to_buml /
+# buml_to_json). Diagram-type discriminator: "BPMNDiagram" (uniform with
+# "ClassDiagram", "StateMachineDiagram", …).
+# ---------------------------------------------------------------------------
+BPMN_DIAGRAM_TYPE = "BPMNDiagram"
+BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
+
+# WME element-type string → metamodel class name.
+BPMN_ELEMENT_TYPES = {
+    "BPMNTask": "Task",
+    "BPMNSubprocess": "SubProcess",
+    "BPMNTransaction": "Transaction",
+    "BPMNCallActivity": "CallActivity",
+    "BPMNStartEvent": "StartEvent",
+    "BPMNIntermediateEvent": "IntermediateEvent",
+    "BPMNEndEvent": "EndEvent",
+    "BPMNGateway": "Gateway",
+    "BPMNDataObject": "DataObject",
+    "BPMNDataStore": "DataStore",
+    "BPMNAnnotation": "TextAnnotation",
+    "BPMNGroup": "Group",
+    "BPMNPool": "Participant",
+    "BPMNSwimlane": "Lane",
+}
+
+# WME flowType → metamodel class name.
+BPMN_FLOW_TYPES = {
+    "sequence": "SequenceFlow",
+    "message": "MessageFlow",
+    "association": "Association",
+    "data association": "DataAssociation",
+}

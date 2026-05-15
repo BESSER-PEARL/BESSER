@@ -250,6 +250,11 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'GUINoCodeDiagram': 'GUI Diagram',
     'QuantumCircuitDiagram': 'Quantum Circuit Diagram',
     'NNDiagram': 'NN Diagram',
+    # BPMNDiagram default title — slot reserved so project export emits an empty BPMN
+    # entry. The actual BUML-string → BPMN-JSON parser (`bpmn_to_json`) is gated on
+    # `.claude/bpmn/04-bpmn-code-builder-guide.md`; until then BPMN single-diagram
+    # detection (`SINGLE_DIAGRAM_KEYWORDS`) is intentionally not wired.
+    'BPMNDiagram': 'BPMN Diagram',
 }
 
 
@@ -313,6 +318,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "BPMNDiagram": "BPMNDiagram",
     }
 
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
@@ -458,6 +464,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "BPMNDiagram": "BPMNDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

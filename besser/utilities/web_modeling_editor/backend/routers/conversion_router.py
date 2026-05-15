@@ -34,6 +34,7 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -59,6 +60,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     gui_buml_to_json,
     project_to_json,
     nn_buml_to_json,
+    bpmn_to_json,
 )
 
 # Backend services - Other services
@@ -356,18 +358,17 @@ async def export_buml(input_data: DiagramInput):
             )
 
         elif elements_data.get("type") == "BPMNDiagram":
-            # 03- (the converter) is wired here; the BUML .py emit step needs the
-            # 04- BPMN code-builder (`bpmn_model_builder.py`). Until 04- lands,
-            # parse + validate run, but the .py write surfaces as a 400 with a
-            # clear message rather than silently producing an empty file.
             try:
                 bpmn_model = process_bpmn_diagram(json_data)
             except (KeyError, TypeError, AttributeError) as exc:
                 raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
-            bpmn_model.validate(raise_exception=False)
-            raise ConversionError(
-                "BPMN export to BUML .py is not yet implemented (waiting on the "
-                "BPMN code-builder — see .claude/bpmn/04-bpmn-code-builder-guide.md)."
+            output_file_path = os.path.join(temp_dir, "bpmn_model.py")
+            bpmn_model_to_code(model=bpmn_model, file_path=output_file_path)
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": 'attachment; filename="bpmn_model.py"'},
             )
 
         elif elements_data.get("type") == "NNDiagram":
@@ -454,6 +455,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         '.add_train_data(', '.add_test_data('
     ])
 
+    is_bpmn = any(keyword in content_lower for keyword in [
+        'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
+    ])
+
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
     # Try to parse based on detected type
@@ -483,6 +488,9 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             elif parsed_project.get("QuantumCircuitDiagram") and parsed_project["QuantumCircuitDiagram"].get("model"):
                 diagram_data = parsed_project["QuantumCircuitDiagram"]
                 diagram_type = "QuantumCircuitDiagram"
+            elif parsed_project.get("BPMNDiagram") and parsed_project["BPMNDiagram"].get("model"):
+                diagram_data = parsed_project["BPMNDiagram"]
+                diagram_type = "BPMNDiagram"
 
             if diagram_data and diagram_data.get("title"):
                 diagram_title = diagram_data["title"]
@@ -554,11 +562,23 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as nn_error:
             logger.error("NN diagram parsing failed: %s", str(nn_error))
 
+    elif is_bpmn:
+        try:
+            logger.info("Detected BPMN diagram, parsing...")
+            bpmn_json = bpmn_to_json(buml_content)
+            diagram_data = {
+                "title": diagram_title,
+                "model": bpmn_json
+            }
+            diagram_type = "BPMNDiagram"
+        except Exception as bpmn_error:
+            logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
+
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, or Project."
+            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend

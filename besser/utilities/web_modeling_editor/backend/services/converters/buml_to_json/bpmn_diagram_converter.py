@@ -1,12 +1,14 @@
 """BPMN conversion from BUML to JSON format.
 
-Provides ``bpmn_object_to_json(model: BPMNModel) -> dict`` — turns a metamodel instance
-into the WME BPMN diagram JSON envelope (mirror of
-``json_to_buml.bpmn_diagram_processor.process_bpmn_diagram``).
+Two entry points:
 
-The file-based ``bpmn_to_json(content: str) -> dict`` (BUML ``.py`` → JSON) is gated on
-the ``04-bpmn-code-builder-guide.md`` work — it requires the BPMN code-builder which
-hasn't been written yet — so it is intentionally absent from this module.
+* ``bpmn_object_to_json(model: BPMNModel) -> dict`` — converts a metamodel object
+  directly. Mirror of ``json_to_buml.bpmn_diagram_processor.process_bpmn_diagram``.
+* ``bpmn_to_json(content: str) -> dict`` — execs a BPMN BUML ``.py`` source string
+  in a fresh namespace, finds the resulting ``BPMNModel``, and delegates to
+  ``bpmn_object_to_json``. The ``.py`` files emitted by
+  ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
+  exactly what this wrapper expects.
 
 Design points (mirror of the processor):
 
@@ -56,6 +58,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event_mapping import (
     serialise_event_type,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     calculate_connection_points,
     calculate_path_points,
@@ -458,3 +461,52 @@ class _GridLayout:
         y = 40 + row * 180
         self._x_for_row[row] = x + size["width"] + 40
         return {"x": x, "y": y, "width": size["width"], "height": size["height"]}
+
+
+# ---------------------------------------------------------------------------
+# bpmn_to_json — BUML .py source string → WME JSON
+# ---------------------------------------------------------------------------
+
+def bpmn_to_json(content: str) -> dict:
+    """Convert a BPMN BUML ``.py`` source string into a WME BPMN diagram JSON dict.
+
+    Execs ``content`` in a fresh namespace, locates the resulting ``BPMNModel``, and
+    delegates to :func:`bpmn_object_to_json`. The ``.py`` files emitted by
+    ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
+    exactly what this wrapper expects.
+
+    Args:
+        content: BPMN BUML Python source code as a string.
+
+    Returns:
+        A WME BPMN diagram JSON dict (the standard Apollon envelope).
+
+    Raises:
+        ConversionError: if the source fails to parse / execute, or if no
+            ``BPMNModel`` instance is produced.
+    """
+    namespace: dict = {}
+    try:
+        exec(content, namespace)
+    except (SyntaxError, NameError, TypeError, ValueError) as exc:
+        raise ConversionError(f"BPMN BUML file failed to execute: {exc}") from exc
+
+    model = _find_bpmn_model(namespace)
+    if model is None:
+        raise ConversionError(
+            "BPMN BUML file produced no BPMNModel — expected a top-level variable "
+            "(`bpmn_model = BPMNModel(...)` is the convention emitted by "
+            "`bpmn_model_to_code`)."
+        )
+    return bpmn_object_to_json(model)
+
+
+def _find_bpmn_model(namespace: dict):
+    """Return the ``BPMNModel`` from the exec'd namespace, preferring ``bpmn_model``."""
+    candidate = namespace.get("bpmn_model")
+    if isinstance(candidate, BPMNModel):
+        return candidate
+    for value in namespace.values():
+        if isinstance(value, BPMNModel):
+            return value
+    return None

@@ -487,3 +487,66 @@ def test_layout_fallback_envelope_size_min_800x600():
     out = bpmn_object_to_json(model)
     assert out["size"]["width"] >= 800
     assert out["size"]["height"] >= 600
+
+
+# ---------------------------------------------------------------------------
+# 7. bpmn_to_json wrapper (exec-based, added in 04-)
+# ---------------------------------------------------------------------------
+
+from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code  # noqa: E402
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.bpmn_diagram_converter import (  # noqa: E402
+    bpmn_to_json,
+)
+
+
+class TestBpmnToJsonWrapper:
+    @pytest.mark.parametrize(
+        "fixture_name",
+        ["poolless_start_task_end_json", "two_pool_collaboration_json",
+         "gateway_with_default_json", "subprocess_json"],
+    )
+    def test_full_round_trip_via_builder(self, request, fixture_name):
+        # JSON → BUML model → emitted .py → exec → BPMNModel → JSON.
+        # The result must agree with calling bpmn_object_to_json directly on the model
+        # for the load-bearing fields (subtype attrs, containment, flowType, isDefault).
+        json_in = request.getfixturevalue(fixture_name)
+        model = process_bpmn_diagram(json_in)
+        source = bpmn_model_to_code(model)
+        json_out = bpmn_to_json(source)
+
+        direct = bpmn_object_to_json(model)
+        # Compare structural signatures (ids change because the layout passthrough
+        # only carries ids on nodes, not on flows).
+        in_el, _ = _signature(direct["elements"], direct["relationships"])
+        out_el, _ = _signature(json_out["elements"], json_out["relationships"])
+        # Element-wise: same set of (type, name, owner-style, subtype attrs).
+        in_el_no_id = sorted(t[1:] for t in in_el)
+        out_el_no_id = sorted(t[1:] for t in out_el)
+        assert in_el_no_id == out_el_no_id
+
+    def test_exec_failure_raises_conversion_error(self):
+        # A NameError is one of the documented failure modes the wrapper catches
+        # (the wrapper deliberately does NOT catch arbitrary RuntimeError so genuinely
+        # unexpected errors stay visible — see 04- guide §5).
+        with pytest.raises(ConversionError, match="failed to execute"):
+            bpmn_to_json("undefined_symbol\n")
+
+    def test_no_bpmn_model_raises_conversion_error(self):
+        with pytest.raises(ConversionError, match="produced no BPMNModel"):
+            bpmn_to_json("x = 1\n")
+
+    def test_finds_model_under_any_variable_name(self):
+        # The wrapper should find the model even if it's not the conventional name.
+        source = (
+            "from besser.BUML.metamodel.bpmn import BPMNModel, Process, Task\n"
+            "task_x = Task(name='x')\n"
+            "p = Process(name='P', flow_nodes={task_x})\n"
+            "weird_var_name = BPMNModel(name='X', processes={p})\n"
+        )
+        out = bpmn_to_json(source)
+        assert out["type"] == "BPMNDiagram"
+        assert len(out["elements"]) == 1
+
+    def test_syntax_error_raises_conversion_error(self):
+        with pytest.raises(ConversionError, match="failed to execute"):
+            bpmn_to_json("def broken(:\n    pass\n")

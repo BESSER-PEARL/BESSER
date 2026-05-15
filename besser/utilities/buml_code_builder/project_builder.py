@@ -23,6 +23,7 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -87,6 +88,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     quantum_models = []
     state_machine_models = []   # StateMachine models
     nn_models = []
+    bpmn_models = []
 
     # Import GUIModel locally to avoid circular imports
     try:
@@ -105,6 +107,12 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         from besser.BUML.metamodel.nn import NN
     except ImportError:
         NN = None
+
+    # Import BPMNModel locally to avoid potential circular imports
+    try:
+        from besser.BUML.metamodel.bpmn import BPMNModel
+    except ImportError:
+        BPMNModel = None
 
     for model in project.models:
         if isinstance(model, DomainModel):
@@ -127,6 +135,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             quantum_models.append(model)
         elif NN and isinstance(model, NN):
             nn_models.append(model)
+        elif BPMNModel and isinstance(model, BPMNModel):
+            bpmn_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -166,6 +176,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_quantum = len(quantum_models)
     n_sm = len(state_machine_models)
     n_nn = len(nn_models)
+    n_bpmn = len(bpmn_models)
 
     # Variable names collected for the final Project(...) definition
     model_vars = []
@@ -380,6 +391,34 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # a project held more than one NN.
                 nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name, title=title)
                 _write_temp_to_output(tmp_path, f)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # BPMN MODELS                                                #
+            # ---------------------------------------------------------- #
+            for idx, bpmn in enumerate(bpmn_models, start=1):
+                # Variable prefix matches SECTION_CONFIG['bpmn_model'] in the importer
+                # so the round-trip pairs cleanly.
+                var_name = _suffixed_name("bpmn_model", idx, n_bpmn)
+
+                # For n_bpmn == 1, the builder emits its own `# BPMN MODEL #` banner —
+                # matching state_machine's pattern. For n_bpmn > 1 a labeled header
+                # disambiguates between sections (titles still get lost on round-trip
+                # because of the same banner-vs-labeled-header collision the state-
+                # machine path has — see project_builder.py NN block for the proper
+                # fix; not reproduced here to keep `04-` scope tight).
+                section = ""
+                if n_bpmn > 1:
+                    label = getattr(bpmn, "name", f"BPMN {idx}")
+                    section = f"# BPMN MODEL {idx}: \"{label}\" #\n\n"
+
+                tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
+                bpmn_model_to_code(
+                    model=bpmn,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
 
             # Legacy: if a raw code string was passed, include it as-is

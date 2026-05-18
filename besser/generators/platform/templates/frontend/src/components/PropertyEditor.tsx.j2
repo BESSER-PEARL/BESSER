@@ -6,7 +6,7 @@
  */
 {% raw %}
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, Play } from 'lucide-react';
+import { AlertCircle, Play, X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -311,15 +311,28 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 
   return (
     <>
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-hidden p-0 sm:max-w-xl">
-        <form onSubmit={handleSave} className="flex max-h-[85vh] flex-col">
-          <DialogHeader className="border-b bg-accent/40 px-6 py-5">
-            <DialogTitle className="text-xl">Edit Instance</DialogTitle>
-            <DialogDescription>{instance.class_name}</DialogDescription>
-          </DialogHeader>
+    <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-border bg-card">
+      <form onSubmit={handleSave} className="flex h-full flex-col">
+        <header className="flex items-center justify-between gap-2 border-b bg-accent/40 px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-semibold text-foreground">
+              {instance.instance_name || 'Instance'}
+            </h2>
+            <p className="text-xs text-muted-foreground">{instance.class_name}</p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            title="Close inspector"
+            aria-label="Close inspector"
+          >
+            <X className="size-4" />
+          </Button>
+        </header>
 
-          <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="edit-instance-name">Instance Name</Label>
               <Input
@@ -412,7 +425,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
               modal it can open for parameter-taking methods is rendered
               outside this form, below. */}
           {methods.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 border-t bg-accent/20 px-6 py-3">
+            <div className="flex flex-wrap items-center gap-1.5 border-t bg-accent/20 px-4 py-3">
               <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Methods
               </span>
@@ -443,34 +456,32 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             </div>
           )}
 
-          <DialogFooter className="border-t bg-accent/40 px-6 py-4">
-            {validationError && (
-              <p className="mr-auto flex items-center gap-1 text-xs text-destructive">
-                <AlertCircle className="size-3.5" />
-                {validationError}
-              </p>
-            )}
-            {!validationError && invokeError && (
-              <p className="mr-auto flex items-center gap-1 text-xs text-destructive">
-                <AlertCircle className="size-3.5" />
-                {invokeError}
-              </p>
-            )}
-            {!validationError && !invokeError && lastInvokeResult && lastInvokeResult.value !== null && lastInvokeResult.value !== undefined && (
-              <p className="mr-auto text-xs text-muted-foreground">
-                {lastInvokeResult.method} → <span className="font-mono">{String(lastInvokeResult.value)}</span>
-              </p>
-            )}
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={validationError !== null}>
+        <footer className="flex flex-col gap-2 border-t bg-accent/40 px-4 py-3">
+          {validationError && (
+            <p className="flex items-center gap-1 text-xs text-destructive">
+              <AlertCircle className="size-3.5" />
+              {validationError}
+            </p>
+          )}
+          {!validationError && invokeError && (
+            <p className="flex items-center gap-1 text-xs text-destructive">
+              <AlertCircle className="size-3.5" />
+              {invokeError}
+            </p>
+          )}
+          {!validationError && !invokeError && lastInvokeResult && lastInvokeResult.value !== null && lastInvokeResult.value !== undefined && (
+            <p className="text-xs text-muted-foreground">
+              {lastInvokeResult.method} → <span className="font-mono">{String(lastInvokeResult.value)}</span>
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button type="submit" size="sm" disabled={validationError !== null}>
               Save Changes
             </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </div>
+        </footer>
+      </form>
+    </aside>
 
     {paramModalMethod && (
       <ParameterPromptDialog

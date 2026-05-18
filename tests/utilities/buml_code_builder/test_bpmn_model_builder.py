@@ -16,11 +16,8 @@ from besser.BUML.metamodel.bpmn import (
     BPMNModel,
     Collaboration,
     EndEvent,
-    EventDefinitionType,
-    EventDirection,
     Gateway,
     GatewayType,
-    LoopCharacteristics,
     MessageFlow,
     Participant,
     Process,
@@ -272,7 +269,7 @@ class TestDeterminism:
         time.sleep(0.001)
         t_second = Task(name="x")
         p = Process(name="P", flow_nodes={t_first, t_second})
-        source = bpmn_model_to_code(p_model := BPMNModel(name="ts", processes={p}))
+        source = bpmn_model_to_code(BPMNModel(name="ts", processes={p}))
         # The second-created task's var should appear AFTER the first-created task's
         # var in the emitted source. Both use prefix `task_x` + suffix.
         first_idx = source.index("task_x =")

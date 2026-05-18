@@ -8,7 +8,6 @@ Appendix A in ``.claude/bpmn/03-bpmn-converters-guide.md``), and error handling.
 import pytest
 
 from besser.BUML.metamodel.bpmn import (
-    Activity,
     BPMNModel,
     Collaboration,
     EndEvent,
@@ -17,10 +16,8 @@ from besser.BUML.metamodel.bpmn import (
     Gateway,
     GatewayType,
     IntermediateEvent,
-    Lane,
     LoopCharacteristics,
     MessageFlow,
-    Participant,
     Process,
     SequenceFlow,
     StartEvent,

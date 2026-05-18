@@ -602,3 +602,20 @@ def test_orphan_clean_kg_no_issue(tmp_path: Path):
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     report = analyze_kg_for_class_diagram(kg)
     assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)
+
+
+def test_orphan_literal_attached_to_typed_individual_not_flagged(tmp_path: Path):
+    """A literal attached to a class-anchored individual is reachable through
+    that individual and must not be flagged as orphan, regardless of whether a
+    schema-level DatatypeProperty for the predicate exists."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :City a owl:Class .
+    :grandPrairie a :City ; rdfs:label "Grand Prairie" .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)

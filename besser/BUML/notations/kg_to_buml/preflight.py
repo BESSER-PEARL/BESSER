@@ -1150,6 +1150,32 @@ def _detect_orphan_nodes(
         anchored.add(nid)
         stack.extend(schema_neighbors.get(nid, ()))
 
+    # Step 1b — anchor literals/blanks dangling off anchored individuals.
+    # These nodes contribute to the class diagram as datatype-attribute
+    # values (kg_to_class_diagram Step 5 bumps multiplicity from exactly
+    # these KGIndividual → KGLiteral edges), so they are not truly orphan
+    # even though no schema-anchor predicate connects them.
+    node_by_id: Dict[str, KGNode] = {n.id: n for n in kg.nodes}
+    data_neighbors: Dict[str, Set[str]] = defaultdict(set)
+    for edge in kg.edges:
+        data_neighbors[edge.source.id].add(edge.target.id)
+        data_neighbors[edge.target.id].add(edge.source.id)
+
+    for nid in list(anchored):
+        if not isinstance(node_by_id.get(nid), KGIndividual):
+            continue
+        for neighbor_id in data_neighbors.get(nid, ()):
+            if neighbor_id in anchored:
+                continue
+            neighbor = node_by_id.get(neighbor_id)
+            if isinstance(neighbor, KGLiteral):
+                anchored.add(neighbor_id)
+            elif (
+                isinstance(neighbor, KGBlank)
+                and neighbor.metadata.get("kind") not in structural_kinds
+            ):
+                anchored.add(neighbor_id)
+
     # Step 2 — collect orphan candidates.
     orphan_ids: Set[str] = set()
     for node in kg.nodes:

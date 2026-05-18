@@ -389,8 +389,9 @@ class TestAddablePortClasses:
         assert "setStreamClassPicker" in canvas
         assert "setCreateStreamModal" in canvas
         # Lenient inlet/outlet check — same-direction ports get rejected, but
-        # ports lacking a direction attribute fall through.
-        assert "direction must differ" in canvas
+        # ports lacking a direction attribute fall through. The rejection
+        # message tells the user which constraint they hit.
+        assert "One must be inlet and the other outlet" in canvas
         assert "attributes?.direction" in canvas
         # isValidConnection now has a port-handle branch (fixes silent veto).
         assert "isPortClass(sourcePort.class_name)" in canvas

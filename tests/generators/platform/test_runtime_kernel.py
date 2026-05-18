@@ -17,13 +17,16 @@ from pathlib import Path
 import pytest
 
 from besser.BUML.metamodel.structural import (
+    BinaryAssociation,
     Class,
     DomainModel,
     IntegerType,
     FloatType,
     Method,
+    Multiplicity,
     Parameter,
     Property,
+    StringType,
 )
 from besser.generators.platform.platform_generator import PlatformGenerator
 
@@ -331,6 +334,194 @@ class TestRuntimeKernel:
         finally:
             _cleanup_imports(backend_dir)
 
+    def test_generated_platform_resolves_links_for_tank_step(self, tmp_path):
+        """Phase 1.0.8 — the generated platform's Engine must traverse the
+        link graph just like the editor backend does. Builds a tiny H2-
+        plant model (Tank/Port/MaterialStream with the same role names
+        the user is using on H2PlantDSL), generates the platform,
+        dynamic-imports the runtime + instance_manager, creates linked
+        instances via the real CRUD methods, and asserts ``step(dt)``
+        integrates inflow − outflow from connected streams."""
+        # Domain model — mirrors the user's hydrogen plant DSL.
+        tank = Class(
+            name="Tank",
+            attributes={Property(name="level", type=FloatType)},
+        )
+        port = Class(
+            name="Port",
+            attributes={Property(name="direction", type=StringType)},
+        )
+        stream = Class(
+            name="MaterialStream",
+            attributes={Property(name="massFlow", type=FloatType)},
+        )
+
+        equi_ports = BinaryAssociation(
+            name="equi_ports",
+            ends={
+                Property(
+                    name="equipment",
+                    type=tank,
+                    multiplicity=Multiplicity(min_multiplicity=1, max_multiplicity=1),
+                ),
+                Property(
+                    name="ports",
+                    type=port,
+                    multiplicity=Multiplicity(min_multiplicity=0, max_multiplicity=9999),
+                ),
+            },
+        )
+        source_assoc = BinaryAssociation(
+            name="source",
+            ends={
+                Property(
+                    name="outgoingStreams",
+                    type=stream,
+                    multiplicity=Multiplicity(min_multiplicity=0, max_multiplicity=9999),
+                ),
+                Property(
+                    name="sourcePort",
+                    type=port,
+                    multiplicity=Multiplicity(min_multiplicity=1, max_multiplicity=1),
+                ),
+            },
+        )
+        target_assoc = BinaryAssociation(
+            name="target",
+            ends={
+                Property(
+                    name="incomingStreams",
+                    type=stream,
+                    multiplicity=Multiplicity(min_multiplicity=0, max_multiplicity=9999),
+                ),
+                Property(
+                    name="targetPort",
+                    type=port,
+                    multiplicity=Multiplicity(min_multiplicity=1, max_multiplicity=1),
+                ),
+            },
+        )
+
+        step = Method(
+            name="step",
+            parameters=[Parameter(name="dt", type=FloatType)],
+            code=(
+                "inflow = 0.0\n"
+                "outflow = 0.0\n"
+                "for p in (self.ports or []):\n"
+                "    direction = str(getattr(p, 'direction', '')).strip().lower()\n"
+                "    if direction == 'inlet':\n"
+                "        for s in (p.incomingStreams or []):\n"
+                "            inflow += float(s.massFlow or 0.0)\n"
+                "    elif direction == 'outlet':\n"
+                "        for s in (p.outgoingStreams or []):\n"
+                "            outflow += float(s.massFlow or 0.0)\n"
+                "self.level = max(0.0, min(100.0, (self.level or 0.0) + (inflow - outflow) * dt))\n"
+            ),
+        )
+        tank.methods = {step}
+
+        model = DomainModel(
+            name="TinyH2Platform",
+            types={tank, port, stream},
+            associations={equi_ports, source_assoc, target_assoc},
+        )
+
+        out = tmp_path / "platform_h2"
+        PlatformGenerator(model, customization=None, output_dir=str(out)).generate()
+        backend_dir = out / "backend"
+        try:
+            im_mod, runtime_mod = _import_platform_runtime(backend_dir)
+            engine = runtime_mod.engine
+            im = im_mod.instance_manager
+
+            # Build the topology via the real CRUD surface so the
+            # instance_manager's ``links`` arrays are populated exactly
+            # the way an operator's clicks would populate them.
+            tank_a = im.create_instance("Tank", "Tank_A", {"level": 10.0})
+            port_in = im.create_instance("Port", "Port_In", {"direction": "Inlet"})
+            port_out = im.create_instance("Port", "Port_Out", {"direction": "Outlet"})
+            stream_in = im.create_instance("MaterialStream", "Stream_In", {"massFlow": 5.0})
+            stream_out = im.create_instance("MaterialStream", "Stream_Out", {"massFlow": 2.0})
+
+            im.create_link("Tank", tank_a["id"], "Port", port_in["id"], "equi_ports")
+            im.create_link("Tank", tank_a["id"], "Port", port_out["id"], "equi_ports")
+            # Stream_In flows INTO Port_In  (target association)
+            im.create_link("MaterialStream", stream_in["id"], "Port", port_in["id"], "target")
+            # Stream_Out flows OUT OF Port_Out  (source association)
+            im.create_link("MaterialStream", stream_out["id"], "Port", port_out["id"], "source")
+
+            res = engine.invoke("Tank", tank_a["id"], "step", {"dt": 2.0})
+
+            # inflow=5, outflow=2, dt=2 → delta=+6; level was 10 → 16
+            assert res["instance"]["attributes"]["level"] == 16.0
+            assert im.get_instance("Tank", tank_a["id"])["attributes"]["level"] == 16.0
+
+        finally:
+            _cleanup_imports(backend_dir)
+
+
+class TestMethodBodyValidation:
+    """The generator must catch broken Python in user-authored method
+    bodies BEFORE emitting domain_classes.py, otherwise the operator
+    only finds out at backend startup time with an obscure
+    IndentationError pointing to generated code they didn't write."""
+
+    def test_clean_body_validates_and_generates(self, tmp_path, counter_model):
+        """Sanity: a syntactically correct body still generates fine."""
+        out = tmp_path / "platform_clean_body"
+        PlatformGenerator(counter_model, customization=None, output_dir=str(out)).generate()
+        # No exception = pass.
+        assert (out / "backend" / "metamodel" / "domain_classes.py").exists()
+
+    def test_broken_indentation_raises_targeted_error(self, tmp_path):
+        """A body with mixed-indent steps (the real failure mode from the
+        user's H2 plant) should fail loudly with class + method + line
+        context, NOT silently emit broken Python."""
+        broken_body = (
+            "def update_tank_level(self):\n"
+            "      inflow = 0.0\n"
+            "      for p in (self.ports or []):\n"
+            "        direction = ''\n"
+            "          if direction == 'inlet':\n"        # ← 2 extra spaces — Python rejects
+            "              inflow += 1.0\n"
+        )
+        tank = Class(
+            name="StorageTank",
+            attributes={Property(name="level", type=FloatType)},
+        )
+        bad = Method(
+            name="update_tank_level",
+            parameters=[],
+            code=broken_body,
+        )
+        tank.methods = {bad}
+        model = DomainModel(name="BrokenBody", types={tank})
+
+        out = tmp_path / "platform_broken"
+        with pytest.raises(ValueError, match=r"Python syntax error in method 'update_tank_level' on class 'StorageTank'"):
+            PlatformGenerator(model, customization=None, output_dir=str(out)).generate()
+
+    def test_bare_body_with_uniform_indent_passes(self, tmp_path):
+        """Body-only authoring (no ``def`` line) with a single consistent
+        indent level should parse cleanly via the synthetic-def wrap path."""
+        tank = Class(
+            name="Counter",
+            attributes={Property(name="count", type=IntegerType)},
+        )
+        ok = Method(
+            name="increment",
+            parameters=[],
+            code="self.count = (self.count or 0) + 1",
+        )
+        tank.methods = {ok}
+        model = DomainModel(name="OkBare", types={tank})
+
+        out = tmp_path / "platform_bare_ok"
+        # Should not raise.
+        PlatformGenerator(model, customization=None, output_dir=str(out)).generate()
+        assert (out / "backend" / "metamodel" / "domain_classes.py").exists()
+
 
 class TestPhase1Wiring:
     """Structural checks: the generator emits all the pieces that compose
@@ -396,3 +587,53 @@ class TestPhase1Wiring:
         # tickInstance survives as the scheduler convenience
         assert "export const tickInstance" in api_src
         assert "/runtime/tick" in api_src
+
+
+class TestInspectorLayout:
+    """Right-side inspector replaces the old centred Edit Instance modal —
+    locks the new layout so future regressions don't accidentally bring
+    the Dialog wrapper back."""
+
+    def test_property_editor_renders_as_aside(self, tmp_path, counter_model):
+        out = tmp_path / "platform_aside"
+        PlatformGenerator(counter_model, customization=None, output_dir=str(out)).generate()
+        editor_src = (out / "frontend" / "src" / "components" / "PropertyEditor.tsx").read_text(encoding="utf-8")
+        # Side panel, not a Dialog
+        assert "<aside" in editor_src
+        # Dialog/DialogContent wrapping the form is gone (parameter
+        # prompt is still a Dialog, so we check for the previous
+        # full-modal markers specifically).
+        assert "<DialogContent" not in editor_src or 'sm:max-w-xl' not in editor_src
+
+    def test_instance_node_has_no_hover_popup(self, tmp_path, counter_model):
+        out = tmp_path / "platform_no_hover_popup"
+        PlatformGenerator(counter_model, customization=None, output_dir=str(out)).generate()
+        node_src = (out / "frontend" / "src" / "components" / "InstanceNode.tsx").read_text(encoding="utf-8")
+        # The old popup labelled its block with "Attributes" + an inline
+        # Edit button. Both are gone.
+        assert "uppercase tracking-wider text-primary" not in node_src or "Attributes" not in node_src
+        assert "isHovered &&" in node_src  # state still around for scale/shadow feedback
+        # The popup-specific JSX is gone
+        assert "min-w-[220px] max-w-[300px]" not in node_src
+
+    def test_canvas_wires_node_click_for_inspection(self, tmp_path, counter_model):
+        out = tmp_path / "platform_click_inspect"
+        PlatformGenerator(counter_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        # Clicking a node opens the inspector
+        assert "onNodeClick={onNodeClick}" in canvas_src
+        # Clicking empty pane closes it
+        assert "onPaneClick={onPaneClick}" in canvas_src
+        # Inspector column is always rendered (empty state when nothing selected)
+        assert "Click an instance to inspect" in canvas_src
+
+    def test_property_editor_remounts_per_selection(self, tmp_path, counter_model):
+        """Regression: PropertyEditor must reset its form state when the
+        user switches selected instance. Achieved by keying it on the
+        selected id so React remounts the component. Without this, the
+        first selection's instance name + attribute values leak into
+        the second selection's form."""
+        out = tmp_path / "platform_propeditor_remount"
+        PlatformGenerator(counter_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "key={selectedInstance.id}" in canvas_src

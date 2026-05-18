@@ -1,12 +1,12 @@
 {
   "project": {
-    "id": "project_1777969797165_g7yhkxlgv",
+    "id": "project_1778447812496_ddekcmts8",
     "type": "Project",
     "schemaVersion": 4,
     "name": "H2PlantDSL",
     "description": "Metamodel for a hydrogen-plant Digital-Twin DSL (Aspen HYSYS / Aspen Plus inspired)",
     "owner": "Iván Alfonso",
-    "createdAt": "2026-05-05T08:29:57.165Z",
+    "createdAt": "2026-05-10T21:16:52.496Z",
     "currentDiagramType": "ClassDiagram",
     "currentDiagramIndices": {
       "ClassDiagram": 0,
@@ -246,113 +246,6 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": false,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
-              },
-              "class_0020": {
-                "id": "class_0020",
-                "name": "ChemicalComponent",
-                "type": "Class",
-                "owner": null,
-                "bounds": {
-                  "x": -581.4000244140625,
-                  "y": -1653.1999816894531,
-                  "width": 240,
-                  "height": 140
-                },
-                "attributes": [
-                  "attr_0021",
-                  "attr_0022",
-                  "attr_0023",
-                  "attr_0024"
-                ],
-                "methods": []
-              },
-              "attr_0021": {
-                "id": "attr_0021",
-                "name": "name",
-                "type": "ClassAttribute",
-                "owner": "class_0020",
-                "bounds": {
-                  "x": -580.9000244140625,
-                  "y": -1612.6999816894531,
-                  "width": 239,
-                  "height": 25
-                },
-                "code": "",
-                "visibility": "public",
-                "attributeType": "str",
-                "implementationType": "none",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": false,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
-              },
-              "attr_0022": {
-                "id": "attr_0022",
-                "name": "formula",
-                "type": "ClassAttribute",
-                "owner": "class_0020",
-                "bounds": {
-                  "x": -580.9000244140625,
-                  "y": -1587.6999816894531,
-                  "width": 239,
-                  "height": 25
-                },
-                "code": "",
-                "visibility": "public",
-                "attributeType": "str",
-                "implementationType": "none",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": false,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
-              },
-              "attr_0023": {
-                "id": "attr_0023",
-                "name": "molecularWeight",
-                "type": "ClassAttribute",
-                "owner": "class_0020",
-                "bounds": {
-                  "x": -580.9000244140625,
-                  "y": -1562.6999816894531,
-                  "width": 239,
-                  "height": 25
-                },
-                "code": "",
-                "visibility": "public",
-                "attributeType": "float",
-                "implementationType": "none",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": false,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
-              },
-              "attr_0024": {
-                "id": "attr_0024",
-                "name": "casNumber",
-                "type": "ClassAttribute",
-                "owner": "class_0020",
-                "bounds": {
-                  "x": -580.9000244140625,
-                  "y": -1537.6999816894531,
-                  "width": 239,
-                  "height": 25
-                },
-                "code": "",
-                "visibility": "public",
-                "attributeType": "str",
-                "implementationType": "none",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": true,
                 "isDerived": false,
                 "isId": false,
                 "isExternalId": false
@@ -818,67 +711,6 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
-              },
-              "class_0083": {
-                "id": "class_0083",
-                "name": "ComponentFraction",
-                "type": "Class",
-                "owner": null,
-                "bounds": {
-                  "x": 20.60009765625,
-                  "y": -1628.2000122070312,
-                  "width": 240,
-                  "height": 90
-                },
-                "attributes": [
-                  "attr_0084",
-                  "attr_0085"
-                ],
-                "methods": []
-              },
-              "attr_0084": {
-                "id": "attr_0084",
-                "name": "molarFraction",
-                "type": "ClassAttribute",
-                "owner": "class_0083",
-                "bounds": {
-                  "x": 21.10009765625,
-                  "y": -1587.7000122070312,
-                  "width": 239,
-                  "height": 25
-                },
-                "code": "",
-                "visibility": "public",
-                "attributeType": "float",
-                "implementationType": "none",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": false,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
-              },
-              "attr_0085": {
-                "id": "attr_0085",
-                "name": "massFraction",
-                "type": "ClassAttribute",
-                "owner": "class_0083",
-                "bounds": {
-                  "x": 21.10009765625,
-                  "y": -1562.7000122070312,
-                  "width": 239,
-                  "height": 25
-                },
-                "code": "",
-                "visibility": "public",
-                "attributeType": "float",
-                "implementationType": "none",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": false,
                 "isDerived": false,
                 "isId": false,
                 "isExternalId": false
@@ -1675,7 +1507,7 @@
                   "x": -1531,
                   "y": -763,
                   "width": 240,
-                  "height": 190
+                  "height": 280
                 },
                 "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><ellipse cx=\"32\" cy=\"14\" rx=\"18\" ry=\"5\"/><path d=\"M14 14v36c0 2.8 8 5 18 5s18-2.2   18-5V14\" fill=\"#2196F3\" fill-opacity=\"0.2\"/><ellipse cx=\"32\" cy=\"14\" rx=\"18\" ry=\"5\" fill=\"none\"/><path d=\"M32 4v10M28 56v4M36   56v4\"/></svg>",
                 "attributes": [
@@ -1684,9 +1516,13 @@
                   "attr_0137",
                   "attr_0138",
                   "attr_0139",
-                  "attr_0140"
+                  "attr_0140",
+                  "1107d5b7-94a0-4fec-801d-444e7e37925d"
                 ],
-                "methods": []
+                "methods": [
+                  "b0404213-bc3e-46f1-bd8b-6697c69ef49e",
+                  "f3d0593c-bfbe-419a-b708-583c0a7edefb"
+                ]
               },
               "attr_0135": {
                 "id": "attr_0135",
@@ -1816,6 +1652,72 @@
                 "stateMachineId": "",
                 "quantumCircuitId": "",
                 "isOptional": true,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "1107d5b7-94a0-4fec-801d-444e7e37925d": {
+                "id": "1107d5b7-94a0-4fec-801d-444e7e37925d",
+                "name": "level",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -1530.5,
+                  "y": -572.5,
+                  "width": 239,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "b0404213-bc3e-46f1-bd8b-6697c69ef49e": {
+                "id": "b0404213-bc3e-46f1-bd8b-6697c69ef49e",
+                "name": "+ increase(value: float)",
+                "type": "ClassMethod",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -1530.5,
+                  "y": -542.5,
+                  "width": 239,
+                  "height": 30
+                },
+                "code": "def increase(self, value: float):\n    \"\"\"Add your docstring here.\"\"\"\n    # Add your implementation here\n    self.level = min((self.level or 0.0) + value, 100.0)\n",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "code",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "f3d0593c-bfbe-419a-b708-583c0a7edefb": {
+                "id": "f3d0593c-bfbe-419a-b708-583c0a7edefb",
+                "name": "+ decrease(value: float)",
+                "type": "ClassMethod",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -1530.5,
+                  "y": -512.5,
+                  "width": 239,
+                  "height": 30
+                },
+                "code": "def decrease(self, value: float):\n    \"\"\"Add your docstring here.\"\"\"\n    # Add your implementation here\n    self.level = max((self.level or 0.0) - value, 0.0)\n",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "code",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
                 "isDerived": false,
                 "isId": false,
                 "isExternalId": false
@@ -4485,113 +4387,11 @@
                   }
                 },
                 "isManuallyLayouted": false
-              },
-              "rel_0245": {
-                "id": "rel_0245",
-                "name": "material_fraction",
-                "type": "ClassBidirectional",
-                "owner": null,
-                "bounds": {
-                  "x": -192.2000732421875,
-                  "y": -1538.2000122070312,
-                  "width": 344.0335040092468,
-                  "height": 267.2001953125
-                },
-                "path": [
-                  {
-                    "x": 5,
-                    "y": 258.2001953125
-                  },
-                  {
-                    "x": 5,
-                    "y": 129.10009765625
-                  },
-                  {
-                    "x": 332.8001708984375,
-                    "y": 129.10009765625
-                  },
-                  {
-                    "x": 332.8001708984375,
-                    "y": 0
-                  }
-                ],
-                "source": {
-                  "direction": "Topleft",
-                  "element": "class_0069",
-                  "multiplicity": "0..1",
-                  "role": "",
-                  "bounds": {
-                    "x": 0,
-                    "y": 0,
-                    "width": 0,
-                    "height": 0
-                  }
-                },
-                "target": {
-                  "direction": "Down",
-                  "element": "class_0083",
-                  "multiplicity": "*",
-                  "role": "",
-                  "bounds": {
-                    "x": 0,
-                    "y": 0,
-                    "width": 0,
-                    "height": 0
-                  }
-                },
-                "isManuallyLayouted": false
-              },
-              "rel_0246": {
-                "id": "rel_0246",
-                "name": "chemical_fraction",
-                "type": "ClassBidirectional",
-                "owner": null,
-                "bounds": {
-                  "x": -341.4000244140625,
-                  "y": -1593.2000122070312,
-                  "width": 362.0001220703125,
-                  "height": 48
-                },
-                "path": [
-                  {
-                    "x": 362.0001220703125,
-                    "y": 10
-                  },
-                  {
-                    "x": 0,
-                    "y": 10
-                  }
-                ],
-                "source": {
-                  "direction": "Left",
-                  "element": "class_0083",
-                  "multiplicity": "*",
-                  "role": "",
-                  "bounds": {
-                    "x": 0,
-                    "y": 0,
-                    "width": 0,
-                    "height": 0
-                  }
-                },
-                "target": {
-                  "direction": "Right",
-                  "element": "class_0020",
-                  "multiplicity": "1",
-                  "role": "",
-                  "bounds": {
-                    "x": 0,
-                    "y": 0,
-                    "width": 0,
-                    "height": 0
-                  }
-                },
-                "isManuallyLayouted": false
               }
             },
             "assessments": {}
           },
-          "lastUpdate": "2026-05-07T14:26:39.038Z"
+          "lastUpdate": "2026-05-11T14:38:41.853Z"
         }
       ],
       "PlatformCustomizationDiagram": [
@@ -4642,6 +4442,6 @@
       "collaborationEnabled": false
     }
   },
-  "exportedAt": "2026-05-07T14:26:53.542Z",
+  "exportedAt": "2026-05-11T14:38:55.590Z",
   "version": "2.0.0"
 }

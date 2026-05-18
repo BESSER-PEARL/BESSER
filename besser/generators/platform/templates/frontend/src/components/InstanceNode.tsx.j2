@@ -523,58 +523,10 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
         </>
       )}
 
-      {isHovered && (
-        <div
-          className="absolute left-1/2 top-[105px] z-[1000] min-w-[220px] max-w-[300px] -translate-x-1/2 rounded-lg border-2 border-primary bg-card p-3 shadow-lg"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {Object.entries(instance.attributes).length > 0 ? (
-            <div className="space-y-1">
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-primary">
-                Attributes
-              </div>
-              {Object.entries(instance.attributes).map(([key, value]) => (
-                <div
-                  key={key}
-                  className="flex justify-between gap-3 rounded bg-muted/50 px-2 py-1 text-[11px]"
-                >
-                  <span className="font-semibold text-muted-foreground">{key}:</span>
-                  <span className="break-words text-foreground">{String(value || 'â€”')}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mb-2 text-[11px] italic text-muted-foreground">
-              No attributes defined
-            </div>
-          )}
-
-          <div className="mt-3 flex gap-2">
-            <Button
-              size="sm"
-              variant="default"
-              className="flex-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-            >
-              <Pencil /> Edit
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="flex-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Trash2 /> Delete
-            </Button>
-          </div>
-        </div>
-      )}
+      {/* Hover popup intentionally removed: the right-side inspector
+          panel is now the canonical place to see attributes + run
+          methods. Hover styling (scale, shadow) still gives visual
+          feedback without obscuring the canvas. */}
     </div>
   );
 };

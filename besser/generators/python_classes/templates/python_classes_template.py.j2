@@ -1,4 +1,5 @@
 {% import "class_parameters.py.j2" as class_parameters -%}
+{% import "method_body.py.j2" as method_body -%}
 from datetime import datetime, date, time
 {%- set ns = namespace(abstract_found=false) %}
 {%- for class in domain.classes_sorted_by_inheritance() -%}
@@ -122,8 +123,7 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         {%- if method.is_abstract %}
         pass
         {%- else %}
-        # TODO: Implement {{ method.name }} method
-        pass
+        {{ method_body.infer_body(class, method) }}
         {%- endif %}
     {%- endif %}
 {% endfor -%}

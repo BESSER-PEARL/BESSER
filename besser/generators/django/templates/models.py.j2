@@ -1,5 +1,6 @@
 {#- Django model template generator #}
 {%- import "django_fields.py.j2" as django_fields -%}
+{%- import "method_body.py.j2" as method_body -%}
 from django.db import models
 
 {# Enumeration definition -#}
@@ -117,7 +118,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         """
         {{ method.name }} method for {{ class_obj.name }}.
         """
-        pass
+        {{ method_body.infer_body(class_obj, method) }}
     {%- endif %}
 
     {%- endfor %}

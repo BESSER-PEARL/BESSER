@@ -7,8 +7,10 @@ includes a FastAPI backend and React + TypeScript frontend similar to the
 BESSER web modeling editor.
 """
 
+import ast
 import os
 import shutil
+import textwrap
 from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader
@@ -101,18 +103,114 @@ class PlatformGenerator(GeneratorInterface):
         self.env.filters['enum_value'] = enum_value
         self.env.filters['indent_code'] = self._indent_code
 
+    def _validate_method_bodies(self):
+        """Parse every user-authored ``Method.code`` via ``ast.parse``
+        and raise a targeted error if any of them is malformed Python.
+
+        Catches the common authoring mistake of inconsistent indentation
+        (mixed 2/4/6-space steps, or a line dedented below its block)
+        at *generation time* instead of letting it leak into the emitted
+        ``domain_classes.py`` — where the only signal is an obscure
+        IndentationError when the operator tries to start the backend.
+
+        Two body shapes are validated:
+          * Full ``def name(...): ...`` — parsed directly (after
+            ``textwrap.dedent`` to absorb any common leading whitespace).
+          * Bare body — wrapped with a synthetic ``def _check(self, ...):``
+            header that mirrors the method's parameters, then parsed.
+
+        Empty / NONE-typed methods are skipped (the template emits a
+        ``pass`` stub for those, which is always valid).
+        """
+        for cls in self.domain_model.get_classes():
+            methods = getattr(cls, "methods", None) or set()
+            for method in methods:
+                impl = getattr(method, "implementation_type", None)
+                code = (getattr(method, "code", "") or "").strip()
+                if impl is None or impl.value != "code" or not code:
+                    continue
+                self._parse_method_or_raise(cls, method, code)
+
+    @staticmethod
+    def _parse_method_or_raise(cls, method, code: str) -> None:
+        """Helper: parses one method's code and raises with class + method
+        context if it fails. Kept static so the error message doesn't
+        depend on PlatformGenerator state."""
+        normalized = code.replace("\r\n", "\n").replace("\r", "\n").expandtabs(4)
+        dedented = textwrap.dedent(normalized)
+        if dedented.lstrip().startswith("def "):
+            source_to_check = dedented
+        else:
+            # Wrap as a synthetic def using the method's declared params
+            # so the indented body parses in the right scope.
+            param_names = [
+                getattr(p, "name", "") for p in (getattr(method, "parameters", []) or [])
+            ]
+            param_names = [p for p in param_names if p]
+            signature = ", ".join(["self"] + param_names)
+            body_indented = textwrap.indent(dedented, "    ")
+            source_to_check = f"def _validate_check({signature}):\n{body_indented}\n"
+
+        try:
+            ast.parse(source_to_check)
+        except SyntaxError as e:
+            cls_name = getattr(cls, "name", "<unknown>")
+            method_name = getattr(method, "name", "<unknown>")
+            # Show the offending source so the user can see immediately
+            # what they need to fix. Trim to the area around the error
+            # so the message stays readable for long bodies.
+            lines = source_to_check.splitlines()
+            if e.lineno and 1 <= e.lineno <= len(lines):
+                lo = max(0, e.lineno - 3)
+                hi = min(len(lines), e.lineno + 2)
+                snippet = "\n".join(
+                    f"  {i + 1:4d} | {lines[i]}" for i in range(lo, hi)
+                )
+            else:
+                snippet = ""
+            raise ValueError(
+                f"Python syntax error in method '{method_name}' on class '{cls_name}' "
+                f"(line {e.lineno}, offset {e.offset}): {e.msg}.\n"
+                f"\n{snippet}\n\n"
+                f"Open the editor's Python Implementation panel for {cls_name}.{method_name} "
+                f"and fix the indentation. Use 4 spaces per nested block, and make sure all "
+                f"statements in the same block start at the same column."
+            ) from e
+
     @staticmethod
     def _indent_code(code: str, spaces: int = 8) -> str:
         """Indent every line of a (possibly multi-line) user-authored method
-        body so it sits inside the emitted ``def``. Empty trailing lines are
-        preserved verbatim — Python tolerates them and stripping would mess
-        with line numbers in tracebacks. If the body is blank, returns
-        ``" " * spaces + "pass"`` so the resulting function is still valid.
+        body so it sits inside the emitted ``def``.
+
+        Pipeline:
+          1. Normalize line endings (CRLF → LF) so platform-specific
+             paste-from-Notepad payloads don't confuse the parser.
+          2. Expand tabs to 4 spaces — tabs + spaces in the same body
+             are a recipe for ``inconsistent use of tabs and spaces``
+             at runtime.
+          3. ``textwrap.dedent`` to strip any *common* leading whitespace
+             so an author who copy-pasted from an already-indented file
+             doesn't compound that offset with our re-indent.
+          4. Re-indent every non-blank line by ``spaces``.
+
+        Blank lines are preserved (Python tolerates them, and stripping
+        would mess with line numbers in tracebacks).
+
+        If the body is empty after stripping, returns ``"<spaces>pass"``
+        so the resulting function is still syntactically valid.
+
+        Note: this normalizes *leading* whitespace only. If the author's
+        body has *internal* indentation inconsistencies (e.g. nested
+        blocks at irregular depths), Python will still error at runtime —
+        that's a real source bug, not a generator one.
         """
         if not code or not code.strip():
             return " " * spaces + "pass"
-        prefix = " " * spaces
-        return "\n".join(prefix + line if line else line for line in code.splitlines())
+        # Normalize line endings + expand tabs before dedent so the
+        # common-prefix calculation isn't thrown off by mixed whitespace.
+        normalized = code.replace("\r\n", "\n").replace("\r", "\n").expandtabs(4)
+        dedented = textwrap.dedent(normalized)
+        return textwrap.indent(dedented, " " * spaces, predicate=lambda line: bool(line.strip()))
 
     def _representation_context(self):
         """Compute customization-derived metadata shared by several templates.
@@ -216,6 +314,14 @@ class PlatformGenerator(GeneratorInterface):
                     + bullet.join(issues)
                 )
 
+        # Catch broken Python in any user-authored method body BEFORE
+        # writing files. Without this, an IndentationError in (say)
+        # ``StorageTank.update_tank_level`` only surfaces when the
+        # operator tries to start the generated backend — by which
+        # point they're staring at a stack trace inside a generated
+        # file they didn't write.
+        self._validate_method_bodies()
+
         # Create directory structure
         self._create_directory_structure()
         
@@ -292,6 +398,16 @@ class PlatformGenerator(GeneratorInterface):
         execution on the object diagram). The platform generator still
         copies it verbatim so each deployed plant stays self-contained
         and doesn't depend on BESSER being installed on the server.
+
+        After copying, we overwrite the kernel's ``__init__.py`` with a
+        platform-flavoured bootstrap that builds the ``engine`` singleton
+        from the generated ``services.instance_manager`` AND a generated
+        ``associations.py`` that encodes the per-class association-end
+        metadata (multiplicities, role names) so the engine can resolve
+        the link graph at invocation time. Core's ``__init__.py``
+        deliberately doesn't do any of this so the kernel is importable
+        in contexts where ``services.instance_manager`` doesn't exist
+        (the editor backend, tests, a REPL).
         """
         # besser/generators/platform/platform_generator.py → besser/runtime/
         # is three ``..`` hops: platform → generators → besser → runtime.
@@ -303,6 +419,78 @@ class PlatformGenerator(GeneratorInterface):
         if os.path.isdir(dst):
             shutil.rmtree(dst)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+
+        # Emit per-domain association-end metadata as static Python data.
+        # The bootstrap reads this and feeds it to the Engine so method
+        # bodies can navigate associations (``self.ports``,
+        # ``port.incomingStreams``, ...) at invoke time. See Phase 1.0.8.
+        from besser.runtime.materialize import build_associations_index
+        assoc_index = build_associations_index(self.domain_model)
+        association_entries = []
+        seen = set()
+        # Pull from both indices and de-duplicate — same end can land
+        # in both ``by_end`` and ``by_assoc``.
+        for meta in list(assoc_index.by_end.values()) + list(assoc_index.by_assoc.values()):
+            key = (meta.owner_class, meta.end_name, meta.association_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            association_entries.append({
+                "owner_class": meta.owner_class,
+                "end_name": meta.end_name,
+                "target_class": meta.target_class,
+                "multiplicity_max": meta.multiplicity_max,
+                "association_name": meta.association_name,
+            })
+        associations_source = (
+            '"""Per-class association-end metadata, generated from the\n'
+            'source DomainModel. Drives runtime link resolution in the\n'
+            'Engine (multiplicity-aware slot assignment + reverse-index\n'
+            'bidirectional navigation).\n'
+            '"""\n'
+            'ASSOCIATION_ENDS = [\n'
+        )
+        for entry in association_entries:
+            associations_source += '    ' + repr(entry) + ',\n'
+        associations_source += ']\n'
+        with open(os.path.join(dst, 'associations.py'), 'w', encoding='utf-8') as f:
+            f.write(associations_source)
+
+        # Override the copied __init__.py with the platform-side bootstrap.
+        platform_init = (
+            '"""Generated platform bootstrap for the besser4DT runtime kernel.\n'
+            '\n'
+            'Wires the generic Engine to this platform\'s singleton\n'
+            '``services.instance_manager`` and to the per-domain\n'
+            '``ASSOCIATION_ENDS`` table so ``from runtime import engine``\n'
+            'returns a ready-to-use, domain-aware instance.\n'
+            '"""\n'
+            'from services.instance_manager import instance_manager\n'
+            '\n'
+            'from .associations import ASSOCIATION_ENDS\n'
+            'from .engine import Engine\n'
+            'from .materialize import AssociationEndMeta, AssociationsIndex, materialize_classes\n'
+            '\n'
+            '_by_end = {}\n'
+            '_by_assoc = {}\n'
+            'for _entry in ASSOCIATION_ENDS:\n'
+            '    _meta = AssociationEndMeta(**_entry)\n'
+            '    if _meta.end_name:\n'
+            '        _by_end[(_meta.owner_class, _meta.end_name)] = _meta\n'
+            '    if _meta.association_name:\n'
+            '        _by_assoc[(_meta.owner_class, _meta.association_name)] = _meta\n'
+            '_associations_index = AssociationsIndex(by_end=_by_end, by_assoc=_by_assoc)\n'
+            '\n'
+            'engine = Engine(\n'
+            '    instance_manager=instance_manager,\n'
+            '    class_map=instance_manager.class_map,\n'
+            '    associations_index=_associations_index,\n'
+            ')\n'
+            '\n'
+            '__all__ = ["Engine", "engine", "materialize_classes"]\n'
+        )
+        with open(os.path.join(dst, '__init__.py'), 'w', encoding='utf-8') as f:
+            f.write(platform_init)
     
     def _generate_python_classes(self, backend_dir):
         """Generates Python classes representing the domain model."""

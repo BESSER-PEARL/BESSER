@@ -1,21 +1,21 @@
-"""Runtime kernel package — copied verbatim into every generated platform.
+"""besser4DT runtime kernel.
 
-This package is the home of the besser4DT execution engine. Phase 1.0 ships
-with a tick-based ``Engine`` that runs ``step(self, dt)`` method bodies on
-instances of the generated domain classes. Future phases plug a state-machine
-dispatcher, a periodic scheduler, and a WebSocket delta channel into the
-same Engine without touching the generated app's wiring.
+Generic method dispatcher for instance state. Two consumers:
 
-Bootstrap is intentionally tiny: import the manager + class map exposed by
-the generated ``services.instance_manager``, hand them to the Engine, and
-expose a singleton named ``engine``. The router layer imports it as
-``from runtime import engine``.
+  1. **Generated platforms** — the platform generator copies the rest of
+     this package (``engine.py``, ``materialize.py``) into ``<backend>/
+     runtime/`` and writes a separate ``__init__.py`` over there that
+     wires the kernel to the generated ``services.instance_manager``
+     singleton. See ``PlatformGenerator._copy_runtime_kernel``.
+  2. **BESSER web modeling editor** — imports ``Engine`` and
+     ``materialize_classes`` directly from here to run methods inline on
+     the object-diagram view, without generating a platform first.
+
+This module intentionally does NOT create a singleton or import any
+generated-app modules. That keeps it usable outside a deployed platform
+(in the editor backend, in tests, in a Python REPL).
 """
-from services.instance_manager import instance_manager
-
 from .engine import Engine
+from .materialize import materialize_classes
 
-# Module-level singleton used by the generated FastAPI router.
-engine = Engine(instance_manager=instance_manager, class_map=instance_manager.class_map)
-
-__all__ = ["Engine", "engine"]
+__all__ = ["Engine", "materialize_classes"]

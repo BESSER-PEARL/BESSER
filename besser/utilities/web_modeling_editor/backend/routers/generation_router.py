@@ -45,6 +45,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
+    process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -520,6 +521,10 @@ async def generate_code_output(input_data: DiagramInput):
         if generator_info.category == "neural_network":
             return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
 
+        # Handle BPMN generators (reads BPMNDiagram via process_bpmn_diagram)
+        if generator_info.category == "business_process":
+            return await _generate_bpmn(json_data, generator_type, generator_info.generator_class, temp_dir)
+
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
             if diagram_type == "UserDiagram":
@@ -983,6 +988,24 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
     )
+
+
+async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
+    """Generate vendor-neutral BPMN 2.0 XML.
+
+    Processes the BPMN diagram JSON via ``process_bpmn_diagram`` (re-wrapping
+    malformed-payload exceptions as ``ConversionError`` so they surface as 400),
+    then runs the BPMNGenerator and returns the emitted ``.bpmn`` file.
+    """
+    try:
+        bpmn_model = process_bpmn_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
+
+    generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    return _create_file_response(temp_dir, generator_type)
 
 
 async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):

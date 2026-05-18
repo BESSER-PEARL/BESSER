@@ -97,6 +97,10 @@ Choosing a Generator
      - ZIP
      - You want a BAF agent adapted to an end-user profile (language, style,
        accessibility, modality); see :doc:`generators/agent_personalization`
+   * - **BPMN**
+     - BPMN
+     - .bpmn (XML)
+     - You need vendor-neutral BPMN 2.0 XML readable by every BPMN-aware tool
 
 
 Web Application
@@ -171,6 +175,16 @@ Generate conversational agents:
 
    generators/baf
    generators/agent_personalization
+
+Business Process
+----------------
+
+Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/bpmn
 
 Build Your Own
 --------------

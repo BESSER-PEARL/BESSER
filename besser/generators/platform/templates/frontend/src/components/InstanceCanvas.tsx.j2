@@ -765,6 +765,42 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     setEdges(flowEdges);
   }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges]);
 
+  // Single-click on a node opens the right-side inspector for that
+  // instance. Double-click on a connection edge (handled separately
+  // via onEdgeDoubleClick) opens the inspector for the connection
+  // instance. Clicking empty canvas closes the inspector.
+  const onNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      const instanceData = (node.data as { instance?: BaseInstance } | undefined)?.instance;
+      if (instanceData) setSelectedInstance(instanceData);
+    },
+    [],
+  );
+
+  const onPaneClick = useCallback(() => {
+    setSelectedInstance(null);
+  }, []);
+
+  // Persist node deletions to the backend. xyflow's deleteKeyCode removes
+  // the node from local React state but leaves the instance in the store
+  // — the next loadInstances() refetch would resurrect it. Forward each
+  // removed node through onInstanceDelete (the parent App.tsx handler)
+  // so it actually calls DELETE /instances/:cls/:id and reloads. Also
+  // closes the inspector if the deleted node was the selected one.
+  const onNodesDelete = useCallback(
+    (deleted: Node[]) => {
+      for (const node of deleted) {
+        const instanceData = (node.data as { instance?: BaseInstance } | undefined)?.instance;
+        if (!instanceData) continue;
+        onInstanceDelete(instanceData.class_name, instanceData.id);
+        if (selectedInstance?.id === instanceData.id) {
+          setSelectedInstance(null);
+        }
+      }
+    },
+    [onInstanceDelete, selectedInstance],
+  );
+
   // Persist position on drag-end so the backend store stays in sync with
   // the canvas. Fires once per gesture (after the user releases the mouse),
   // so no debounce is needed. The PATCH is fire-and-forget — a failure logs
@@ -831,10 +867,24 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
   const onConnect = useCallback(
     async (connection: Connection) => {
-      if (!connection.source || !connection.target) return;
+      // Every silent-reject path below carries a console.warn so users
+      // (and we, when debugging) can see the precise reason. xyflow's
+      // own drag-and-drop offers no UI feedback for connections that
+      // pass isValidConnection but then no-op here — a missing log = a
+      // user staring at a dragged line that just disappears.
+      if (!connection.source || !connection.target) {
+        console.warn('[besser4DT] connect rejected: missing source or target', connection);
+        return;
+      }
       const sourceInstance = instances.find((i) => i.id === connection.source);
       const targetInstance = instances.find((i) => i.id === connection.target);
-      if (!sourceInstance || !targetInstance) return;
+      if (!sourceInstance || !targetInstance) {
+        console.warn('[besser4DT] connect rejected: source or target instance not found', {
+          sourceId: connection.source,
+          targetId: connection.target,
+        });
+        return;
+      }
 
       // Port-handle path: when both endpoints are port instances (the handle
       // ids are the port instance UUIDs), defer the actual creation to a
@@ -857,21 +907,55 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         const td = String(targetPortInstance.attributes?.direction ?? '').trim().toLowerCase();
         if (sd && td && sd === td) {
           console.warn(
-            `Cannot connect two ${sd} ports — direction must differ (one inlet, one outlet).`,
+            `[besser4DT] connect rejected: both ports have direction "${sd}". ` +
+            `One must be inlet and the other outlet.`,
+            { sourcePort: sourcePortInstance.instance_name, targetPort: targetPortInstance.instance_name },
+          );
+          alert(
+            `Cannot connect two ${sd} ports.\n\n` +
+            `One port must be inlet and the other outlet.`,
           );
           return;
         }
 
         // Polymorphic match: a port class matches any connection-class whose
-        // declared portClass is the port's class OR an ancestor.
-        const candidates = Object.entries(CONNECTION_CLASSES).filter(([_, meta]) => {
+        // declared portClass is the port's class OR an ancestor. Abstract
+        // classes are excluded — they can be flagged connection-mode in
+        // the customization (so the styling cascades to subclasses) but
+        // they're not instantiable, so showing them as a choice would
+        // dead-end the user on Continue.
+        const candidates = Object.entries(CONNECTION_CLASSES).filter(([className, meta]) => {
           if (!meta.portClass) return false;
+          const classMeta = availableClasses.find((c) => c.name === className);
+          if (classMeta?.isAbstract) return false;
           return (
             isAssignableTo(sourcePortInstance.class_name, meta.portClass) ||
             isAssignableTo(targetPortInstance.class_name, meta.portClass)
           );
         });
-        if (candidates.length === 0) return;
+        if (candidates.length === 0) {
+          const available = Object.keys(CONNECTION_CLASSES).join(', ') || '<none>';
+          console.warn(
+            '[besser4DT] connect rejected: no connection-class accepts these port classes.',
+            {
+              sourcePortClass: sourcePortInstance.class_name,
+              targetPortClass: targetPortInstance.class_name,
+              availableConnectionClasses: available,
+              connectionClassPortClasses: Object.entries(CONNECTION_CLASSES).map(
+                ([n, m]) => `${n} (portClass=${m.portClass ?? '<unset>'})`,
+              ),
+            },
+          );
+          alert(
+            `No connection class can link a "${sourcePortInstance.class_name}" port ` +
+            `to a "${targetPortInstance.class_name}" port.\n\n` +
+            `Available connection classes: ${available}.\n\n` +
+            `If you expected a stream class to be available, make sure it's flagged ` +
+            `as a connection class in the platform customization with a matching ` +
+            `portClass.`,
+          );
+          return;
+        }
         if (candidates.length === 1) {
           setCreateStreamModal({
             className: candidates[0][0],
@@ -886,6 +970,25 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           });
         }
         return;
+      }
+
+      // One side wasn't a port instance — common cause: user dropped onto
+      // the equipment body instead of one of its ports. Log + alert so
+      // they know to aim for the port handle.
+      if (
+        (connection.sourceHandle || connection.targetHandle) &&
+        (!sourcePortInstance || !targetPortInstance)
+      ) {
+        console.warn(
+          '[besser4DT] connect: handle id did not resolve to a port instance — ' +
+          'falling through to association path. Likely the drag missed the port handle.',
+          {
+            sourceHandle: connection.sourceHandle,
+            targetHandle: connection.targetHandle,
+            sourcePortFound: Boolean(sourcePortInstance),
+            targetPortFound: Boolean(targetPortInstance),
+          },
+        );
       }
 
       const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
@@ -922,6 +1025,24 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
             connection.targetHandle,
           );
         }
+      } else {
+        // Last-resort silent path before this fix. The association-based
+        // fallback found nothing: no port-to-port connection class
+        // matched (above) AND no equipment-level association links
+        // these classes either. Log enough to debug from the console.
+        console.warn(
+          '[besser4DT] connect rejected: neither a connection-class nor a ' +
+          'direct association exists between these instances. Make sure the ' +
+          'drag hits actual port handles (the small dark squares) — dropping ' +
+          'on the equipment body falls through to the association path.',
+          {
+            sourceClass: sourceInstance.class_name,
+            targetClass: targetInstance.class_name,
+            sourceHandle: connection.sourceHandle,
+            targetHandle: connection.targetHandle,
+            availableConnectionClasses: Object.keys(CONNECTION_CLASSES),
+          },
+        );
       }
     },
     [instances, availableClasses, onLinkCreate, onInstanceCreate, rememberEdgeHandles]
@@ -1375,6 +1496,9 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           edges={edges}
           onNodesChange={handleNodesChange}
           onNodeDragStop={onNodeDragStop}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+          onNodesDelete={onNodesDelete}
           onEdgesChange={onEdgesChange}
           onEdgesDelete={onEdgesDelete}
           onEdgeDoubleClick={onEdgeDoubleClick}
@@ -1488,8 +1612,19 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         </ReactFlow>
       </div>
 
-      {selectedInstance && (
+      {/* Right-side inspector — always reserves the column so canvas
+          width stays stable. Empty state when nothing is selected
+          (mirrors how BESSER's class-diagram inspector works).
+
+          ``key`` forces a full remount whenever the selected instance
+          changes. Without it, the form's local useState (instanceName,
+          attributes, selections) keeps the OLD instance's data after
+          clicking a different node: the header reads fresh props but
+          the text fields stay stale. Keying by id is the standard
+          React workaround for "reset state on prop change". */}
+      {selectedInstance ? (
         <PropertyEditor
+          key={selectedInstance.id}
           instance={selectedInstance}
           classMetadata={
             availableClasses.find((c) => c.name === selectedInstance.class_name)!
@@ -1499,6 +1634,12 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onSave={handleUpdateInstance}
           onClose={() => setSelectedInstance(null)}
         />
+      ) : (
+        <aside className="flex h-full w-[360px] shrink-0 flex-col items-center justify-center border-l border-border bg-card/40 px-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Click an instance to inspect its attributes and run methods.
+          </p>
+        </aside>
       )}
 
       {pendingConnection && (

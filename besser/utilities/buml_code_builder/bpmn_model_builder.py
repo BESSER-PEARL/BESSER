@@ -10,6 +10,9 @@ emitted modules read the same way as the existing diagram-type builders.
 """
 
 from besser.BUML.metamodel.bpmn import (
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
     Association,
     BPMNModel,
     CallActivity,
@@ -95,7 +98,19 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
     """
     var = dispenser.name_for(node)
 
-    if isinstance(node, Task):
+    if isinstance(node, AgenticTask):
+        # AgenticTask is a Task subclass — emit it before the Task branch.
+        needed.update({
+            "AgenticTask", "TaskType", "LoopCharacteristics", "ReflectionMode",
+        })
+        body.append(
+            f"{var} = AgenticTask(name={_quoted(node.name)}, "
+            f"task_type=TaskType.{node.task_type.name}, "
+            f"loop_characteristics=LoopCharacteristics.{node.loop_characteristics.name}, "
+            f"reflection_mode=ReflectionMode.{node.reflection_mode.name}, "
+            f"trust_score={node.trust_score})"
+        )
+    elif isinstance(node, Task):
         needed.update({"Task", "TaskType", "LoopCharacteristics"})
         body.append(
             f"{var} = Task(name={_quoted(node.name)}, "
@@ -141,6 +156,24 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
             f"{var} = EndEvent(name={_quoted(node.name)}, "
             f"direction=EventDirection.{node.direction.name}, "
             f"event_definition=EventDefinitionType.{node.event_definition.name})"
+        )
+    elif isinstance(node, AgenticGateway):
+        # AgenticGateway is a Gateway subclass — emit it before the Gateway branch.
+        needed.update({
+            "AgenticGateway", "GatewayType", "GatewayRole",
+            "CollaborationMode", "MergingStrategy",
+        })
+        if node.merging_strategy is None:
+            merging_repr = "None"
+        else:
+            merging_repr = f"MergingStrategy.{node.merging_strategy.name}"
+        body.append(
+            f"{var} = AgenticGateway(name={_quoted(node.name)}, "
+            f"gateway_type=GatewayType.{node.gateway_type.name}, "
+            f"gateway_role=GatewayRole.{node.gateway_role.name}, "
+            f"collaboration_mode=CollaborationMode.{node.collaboration_mode.name}, "
+            f"merging_strategy={merging_repr}, "
+            f"trust_score={node.trust_score})"
         )
     elif isinstance(node, Gateway):
         needed.update({"Gateway", "GatewayType"})
@@ -194,8 +227,16 @@ def _emit_lane(lane, process_var: str, dispenser: _NameDispenser,
                body: list, needed: set) -> str:
     """Emit a Lane constructor + ``add_lane`` + an ``add_flow_node`` per member."""
     var = dispenser.name_for(lane)
-    needed.add("Lane")
-    body.append(f"{var} = Lane(name={_quoted(lane.name)})")
+    if isinstance(lane, AgenticLane):
+        needed.update({"AgenticLane", "AgentRole"})
+        body.append(
+            f"{var} = AgenticLane(name={_quoted(lane.name)}, "
+            f"role=AgentRole.{lane.role.name}, "
+            f"trust_score={lane.trust_score})"
+        )
+    else:
+        needed.add("Lane")
+        body.append(f"{var} = Lane(name={_quoted(lane.name)})")
     _emit_layout_if_present(lane, var, body)
     body.append(f"{process_var}.add_lane({var})")
     for member in sort_by_timestamp(lane.flow_nodes):

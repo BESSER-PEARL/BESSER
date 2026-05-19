@@ -215,12 +215,146 @@ def _convert_section(
     }
 
 
+# Detection heuristics for single-diagram BUML files that omit the Project(...)
+# wrapper. Keep these in sync with the per-type checks in
+# routers.conversion_router.get_single_json_model.
+SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
+    # Order matters: 'agent' is checked before 'state_machine' because agent
+    # files also contain StateMachine-style constructs.
+    ('AgentDiagram', (
+        'agent(', '.new_intent(', '.new_state(',
+        'when_intent_matched', 'session.reply',
+    )),
+    ('StateMachineDiagram', (
+        'statemachine(', 'when_event_go_to', '.add_transition', '.new_body',
+    )),
+    ('ClassDiagram', (
+        'domainmodel(', '.create_class(', '.add_attribute(',
+        '.create_association',
+    )),
+    ('GUINoCodeDiagram', (
+        'guimodel(', '.new_screen(', '.new_module(',
+        'viewcomponent', 'viewcontainer',
+    )),
+    ('NNDiagram', (
+        '.add_layer(', '.add_tensor_op(', '.add_sub_nn(',
+        '.add_configuration(', '.add_train_data(', '.add_test_data(',
+    )),
+]
+
+_SINGLE_DIAGRAM_DEFAULT_TITLES = {
+    'ClassDiagram': 'Class Diagram',
+    'ObjectDiagram': 'Object Diagram',
+    'AgentDiagram': 'Agent Diagram',
+    'StateMachineDiagram': 'State Machine Diagram',
+    'GUINoCodeDiagram': 'GUI Diagram',
+    'QuantumCircuitDiagram': 'Quantum Circuit Diagram',
+    'NNDiagram': 'NN Diagram',
+}
+
+
+def _detect_single_diagram_type(content: str) -> str:
+    """Return the diagram type for a single-diagram BUML file, or '' if unknown."""
+    content_lower = content.lower()
+    # AgentDiagram wins over StateMachineDiagram because agent files share
+    # state-machine vocabulary; this matches the precedence used in
+    # get_single_json_model.
+    agent_match = any(kw in content_lower for kw in SINGLE_DIAGRAM_KEYWORDS[0][1])
+    if agent_match:
+        return 'AgentDiagram'
+    for diagram_type, keywords in SINGLE_DIAGRAM_KEYWORDS[1:]:
+        if any(kw in content_lower for kw in keywords):
+            return diagram_type
+    return ''
+
+
+def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
+    """Wrap a single-diagram BUML file (no Project(...)) into a project structure."""
+    diagram_type = _detect_single_diagram_type(content)
+    if not diagram_type:
+        raise ValueError(
+            "No models defined in 'models=[...]' and the file was not recognized "
+            "as a single-diagram BUML file. Supported single-diagram types: "
+            "ClassDiagram, AgentDiagram, StateMachineDiagram, GUINoCodeDiagram, NNDiagram."
+        )
+
+    title = _SINGLE_DIAGRAM_DEFAULT_TITLES[diagram_type]
+    try:
+        if diagram_type == 'ClassDiagram':
+            parsed = parse_buml_content(content)
+            model = class_buml_to_json(parsed)
+        elif diagram_type == 'AgentDiagram':
+            model = agent_buml_to_json(content)
+        elif diagram_type == 'StateMachineDiagram':
+            model = state_machine_to_json(content)
+        elif diagram_type == 'GUINoCodeDiagram':
+            model = gui_buml_to_json(content)
+        elif diagram_type == 'NNDiagram':
+            model = nn_buml_to_json(content)
+        else:
+            raise ValueError(f"Unsupported single-diagram type: {diagram_type}")
+    except (SyntaxError, ValueError, TypeError) as e:
+        raise ValueError(
+            f"Failed to parse single-diagram BUML file (detected as {diagram_type}): {e}"
+        ) from e
+
+    filled_entry = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "model": model,
+        "lastUpdate": datetime.now(timezone.utc).isoformat(),
+    }
+
+    diagram_defaults = {
+        "ClassDiagram": "ClassDiagram",
+        "ObjectDiagram": "ObjectDiagram",
+        "AgentDiagram": "AgentDiagram",
+        "StateMachineDiagram": "StateMachineDiagram",
+        "GUINoCodeDiagram": "GUINoCodeDiagram",
+        "QuantumCircuitDiagram": "QuantumCircuitDiagram",
+        "NNDiagram": "NNDiagram",
+    }
+
+    diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
+    for dt, mt in diagram_defaults.items():
+        if dt == diagram_type:
+            diagram_jsons[dt] = [filled_entry]
+        else:
+            diagram_jsons[dt] = [{
+                "id": str(uuid.uuid4()),
+                "title": _SINGLE_DIAGRAM_DEFAULT_TITLES[dt],
+                "model": empty_model(mt),
+                "lastUpdate": datetime.now(timezone.utc).isoformat(),
+            }]
+
+    return {
+        "id": str(uuid.uuid4()),
+        "type": "Project",
+        "schemaVersion": 3,
+        "name": "Imported Project",
+        "description": "Imported from single-diagram BUML file",
+        "owner": "Unknown",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "currentDiagramType": diagram_type,
+        "currentDiagramIndices": {dt: 0 for dt in diagram_defaults},
+        "diagrams": diagram_jsons,
+        "settings": {
+            "defaultDiagramType": diagram_type,
+            "autoSave": True,
+            "collaborationEnabled": False,
+        },
+    }
+
+
 def project_to_json(content: str) -> Dict[str, Any]:
     """
     Convert a BUML project content to JSON format matching the frontend structure.
 
     Supports both the legacy single-diagram-per-type format and the new
     multi-diagram-per-type format with numbered/titled section headers.
+    Also accepts plain single-diagram BUML files that omit the Project(...)
+    wrapper — they are wrapped into a one-diagram project so that the
+    Project Import flow works with any well-formed BUML file.
 
     Args:
         content: Project Python code as string
@@ -232,7 +366,12 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # Detect models included in the project
     model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
     if not model_match:
-        raise ValueError("No models defined in 'models=[...]'")
+        # No Project(...) wrapper — fall back to single-diagram detection so
+        # plain class/agent/state-machine/GUI/NN files can still be imported.
+        logger.info(
+            "No 'models=[...]' declaration found; using single-diagram fallback."
+        )
+        return _build_project_from_single_diagram(content)
 
     model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
     logger.debug("Detected model names in project: %s", model_names)

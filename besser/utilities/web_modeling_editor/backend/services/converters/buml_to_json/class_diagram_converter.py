@@ -36,8 +36,12 @@ def parse_buml_content(content: str) -> DomainModel:
         if isinstance(content, DomainModel):
             return content
 
-        # Create a safe environment for eval without any generators
+        # Create a safe environment for eval without any generators.
+        # __name__ is set to a sentinel (not "__main__") so any
+        # ``if __name__ == "__main__":`` guarded blocks in user files are
+        # skipped during import — matching normal Python import semantics.
         safe_globals = {
+            "__name__": "besser_buml_import",
             "__builtins__": {
                 "set": set,
                 "list": list,

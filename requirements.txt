@@ -21,3 +21,4 @@ pymysql>=1.1.1
 pyodbc>=5.2.0
 bocl==1.0.0
 rdflib>=7.0
+pyshacl>=0.25

@@ -49,6 +49,8 @@ from besser.BUML.notations.kg_to_buml import (
     kg_to_class_diagram as kg_to_class_diagram_buml,
     kg_to_object_diagram as kg_to_object_diagram_buml,
 )
+from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
+from dataclasses import asdict as _dataclass_asdict
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -890,6 +892,30 @@ def _report_to_response(report):
             }
             for i in report.issues
         ],
+    }
+
+
+@router.post("/check-kg-consistency")
+@handle_endpoint_errors("check_kg_consistency")
+async def check_kg_consistency_endpoint(input_data: DiagramInput):
+    """Run the OWL2 + SHACL consistency check on the supplied KG.
+
+    Delegates to pyshacl (with OWL2-RL inference) plus a small OWL→SHACL
+    shim for class-level axioms. Returns a list of issues with severity
+    `info` / `warning` / `violation`, the offending node ids, and the
+    originating constraint shape id (when resolvable). Empty issues list
+    means the KG is fully conformant.
+    """
+    kg, _ = _kg_payload_to_kg(input_data)
+    report = check_kg_consistency(kg)
+    return {
+        "issues": [_dataclass_asdict(i) for i in report.issues],
+        "issueCount": report.issue_count,
+        "severityCounts": report.severity_counts,
+        "kgSignature": report.kg_signature,
+        "inferenceUsed": report.inference_used,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
     }
 
 

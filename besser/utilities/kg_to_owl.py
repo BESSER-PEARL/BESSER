@@ -155,7 +155,11 @@ def _term_for_node(node: KGNode, default_ns: str) -> Union[URIRef, BNode, Litera
     if isinstance(node, (KGNodeConstraint, KGPropertyConstraint)):
         if node.iri:
             return URIRef(node.iri)
-        return BNode()
+        # Deterministic BNode so the consistency checker can map pyshacl's
+        # `sh:sourceShape` (the emitted blank-node subject of the shape's
+        # SHACL triples) back to the original KG constraint-node id. We
+        # slugify because BNode ids must be valid blank-node labels.
+        return BNode(_slugify(node.id))
     if node.iri:
         return URIRef(node.iri)
     return URIRef(default_ns + _slugify(node.label or node.id))
@@ -326,6 +330,26 @@ def _emit_single_shacl_constraint(
             return
         head = _emit_rdf_list(g, shape_terms)
         g.add((shape_subject, pred, head))
+        return
+
+    # SHACL doesn't have `sh:exactCount` / `sh:qualifiedExactCount`; the spec
+    # recommends emitting BOTH min+max with the same value. Handled before the
+    # `_SHACL_PROPERTY_KINDS` lookup because these kinds aren't in that map.
+    if kind == "exactQualifiedCardinality" and on_class:
+        qv_shape = BNode()
+        g.add((qv_shape, RDF.type, SH.NodeShape))
+        g.add((qv_shape, SH["class"], URIRef(on_class)))
+        g.add((shape_subject, SH.qualifiedValueShape, qv_shape))
+        lit = _spec_to_literal(value)
+        if lit is not None:
+            g.add((shape_subject, SH.qualifiedMinCount, lit))
+            g.add((shape_subject, SH.qualifiedMaxCount, lit))
+        return
+    if kind == "exactCardinality":
+        lit = _spec_to_literal(value)
+        if lit is not None:
+            g.add((shape_subject, SH.minCount, lit))
+            g.add((shape_subject, SH.maxCount, lit))
         return
 
     pred = _SHACL_PROPERTY_KINDS.get(kind)
@@ -574,9 +598,16 @@ def knowledge_graph_to_rdf(
     nc_to_shape_term: Dict[str, URIRef | BNode] = {}
     for node in kg.nodes:
         if isinstance(node, KGPropertyConstraint):
-            pc_to_shape_term[node.id] = URIRef(node.iri) if node.iri else BNode()
+            # Mirror `_term_for_node`: stable BNode handle from node.id so
+            # downstream consumers (the consistency checker) can map
+            # pyshacl's `sh:sourceShape` back to this KG node.
+            pc_to_shape_term[node.id] = (
+                URIRef(node.iri) if node.iri else BNode(_slugify(node.id))
+            )
         elif isinstance(node, KGNodeConstraint):
-            nc_to_shape_term[node.id] = URIRef(node.iri) if node.iri else BNode()
+            nc_to_shape_term[node.id] = (
+                URIRef(node.iri) if node.iri else BNode(_slugify(node.id))
+            )
 
     def resolve_ref(node_id: str):
         return pc_to_shape_term.get(node_id) or nc_to_shape_term.get(node_id)

@@ -48,6 +48,65 @@ Identifier handling preserves WME ids on round-trip when they are
 `NCName <https://www.w3.org/TR/REC-xml-names/#NT-NCName>`_-valid; otherwise
 fresh ``<Class>_<uuid8>`` ids are minted.
 
+Agentic extension elements
+--------------------------
+
+Models that use the :ref:`bpmn-agentic-extension` (``AgenticTask`` /
+``AgenticGateway`` / ``AgenticLane``) emit additional information per
+element through the standard BPMN 2.0 ``<bpmn:extensionElements>``
+mechanism. The root ``<bpmn:definitions>`` element gains the
+``xmlns:agentic="https://www.besser-pearl.org/bpmn/agentic"`` namespace
+declaration, and each agentic element carries one
+``<agentic:agentic .../>`` child with flat attributes:
+
+.. code-block:: xml
+
+    <bpmn:userTask id="Task_1" name="Review">
+      <bpmn:extensionElements>
+        <agentic:agentic reflectionMode="cross" trustScore="85"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_in</bpmn:incoming>
+      <bpmn:outgoing>Flow_out</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:parallelGateway id="Gateway_M" name="Vote">
+      <bpmn:extensionElements>
+        <agentic:agentic gatewayRole="merging" collaborationMode="voting"
+                         mergingStrategy="majority" trustScore="85"/>
+      </bpmn:extensionElements>
+    </bpmn:parallelGateway>
+
+    <bpmn:lane id="Lane_Reviewer" name="Reviewers">
+      <bpmn:extensionElements>
+        <agentic:agentic role="manager" trustScore="85"/>
+      </bpmn:extensionElements>
+      <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
+    </bpmn:lane>
+
+Attribute presence follows the metamodel's invariants. Per paper § 4.3,
+a **diverging** ``AgenticGateway`` does not emit ``mergingStrategy`` (the
+strategy is meaningful only at the merging gateway):
+
+.. code-block:: xml
+
+    <bpmn:parallelGateway id="Gateway_D" name="Fork">
+      <bpmn:extensionElements>
+        <agentic:agentic gatewayRole="diverging" collaborationMode="voting"
+                         trustScore="85"/>
+      </bpmn:extensionElements>
+    </bpmn:parallelGateway>
+
+The ``<bpmn:extensionElements>`` element is always emitted as the **first
+child** of its host (``tFlowNode`` / ``tLane`` per the BPMN 2.0 schema).
+Enum values use lowercase strings (``"cross"`` / ``"voting"`` /
+``"majority"`` / ``"manager"`` / ``"diverging"`` / …), mirroring the
+WME editor's wire format so the agentic block round-trips byte-for-byte
+with WME's exporter.
+
+Vanilla BPMN models (no agentic subclasses) emit no
+``<bpmn:extensionElements>`` blocks — the agentic emission is strictly
+additive.
+
 Engine-specific variants (Camunda 7 / 8 / Flowable BPMN XML with execution
 attributes) are out of scope for this generator and can be added as separate
 generators in the future.

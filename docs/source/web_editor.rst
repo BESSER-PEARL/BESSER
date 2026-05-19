@@ -151,12 +151,28 @@ XML import / export). The backend converters
 JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_to_json`` close the
 round-trip through executable BUML ``.py`` files.
 
+The editor also supports the :ref:`bpmn-agentic-extension` from the
+SEAA'25 paper. ``BPMNTask`` / ``BPMNGateway`` / ``BPMNSwimlane`` elements
+carry an ``isAgentic`` flag plus the SEAA fields when toggled on:
+``reflectionMode`` and ``trustScore`` on tasks; ``gatewayRole``,
+``collaborationMode``, ``mergingStrategy``, and ``trustScore`` on
+gateways (the gateway-type picker hides ``exclusive`` / ``complex`` /
+``event-based`` when ``isAgentic`` is true, matching paper § 4.3); and
+``role`` plus ``trustScore`` on swimlanes. The backend converters
+construct the corresponding ``AgenticTask`` / ``AgenticGateway`` /
+``AgenticLane`` subclasses on import and re-emit the WME-shape JSON
+plus the BPMN-XML ``<agentic:agentic .../>`` extension elements on
+export.
+
 .. note::
    The frontend BPMN editor currently lives on the ``dev/bpmn`` branch of the
    `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
-   repository and is being merged into ``main``. The backend metamodel,
-   converters, and code builder are available on the BESSER ``feature/bpmn``
-   branch.
+   repository and is being merged into ``main``. That branch carries both
+   the vanilla BPMN editor and the SEAA'25 agentic extension. The backend
+   metamodel, converters, code builder, and BPMN-XML generator (with the
+   agentic ``<extensionElements>`` emission) are available on the BESSER
+   ``feature/bpmn`` and ``feature/seaa25-bpmn-extension`` branches
+   respectively.
 
 Backend API Reference
 ---------------------

@@ -1296,8 +1296,9 @@ async def export_kg_rdf(fmt: str, input_data: DiagramInput = Body(...)):
     """Serialize a Knowledge Graph diagram as OWL (RDF/XML) or Turtle.
 
     The path parameter ``fmt`` selects the serialization: ``owl`` for RDF/XML,
-    ``ttl`` for Turtle. The response is a downloadable file with the diagram
-    title (sanitized) as the filename stem.
+    ``ttl`` for Turtle. The optional ``vocab`` field on the body selects which
+    constraint vocabularies (OWL restrictions vs SHACL shapes vs both) to emit;
+    defaults to ``both``.
     """
     if fmt not in _RDF_FORMATS:
         raise HTTPException(
@@ -1306,8 +1307,15 @@ async def export_kg_rdf(fmt: str, input_data: DiagramInput = Body(...)):
         )
     rdflib_fmt, media_type, ext = _RDF_FORMATS[fmt]
 
+    vocab_choice = (getattr(input_data, "vocab", None) or "both").lower()
+    if vocab_choice not in ("owl", "shacl", "both"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported vocab '{vocab_choice}'. Use 'owl', 'shacl', or 'both'.",
+        )
+
     kg, _json_data = _kg_payload_to_kg(input_data)
-    serialized = serialize_knowledge_graph(kg, fmt=rdflib_fmt)
+    serialized = serialize_knowledge_graph(kg, fmt=rdflib_fmt, vocab=vocab_choice)
 
     base = input_data.title or kg.name or "knowledge_graph"
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in base).strip("_") or "knowledge_graph"

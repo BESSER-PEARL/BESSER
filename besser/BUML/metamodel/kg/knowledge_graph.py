@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from besser.BUML.metamodel.structural import Element, Model
 from besser.BUML.metamodel.kg.axioms import KGAxiom
+from besser.BUML.metamodel.kg.constraint_specs import is_valid_spec
 
 
 __all__ = [
@@ -27,6 +28,8 @@ __all__ = [
     "KGProperty",
     "KGLiteral",
     "KGBlank",
+    "KGNodeConstraint",
+    "KGPropertyConstraint",
     "KGEdge",
     "KnowledgeGraph",
 ]
@@ -165,6 +168,89 @@ class KGLiteral(KGNode):
     @datatype.setter
     def datatype(self, value: Optional[str]):
         self.__datatype = value
+
+
+class _ConstraintNodeMixin:
+    """Validates ``metadata['constraintSpecs']`` on KGNodeConstraint / KGPropertyConstraint.
+
+    Reuses :class:`KGNode`'s metadata storage; only the *setter* gains the extra
+    structural check. Specs are kept as plain dicts so they round-trip through
+    the existing JSON converters unchanged.
+    """
+
+    def _validate_constraint_metadata(self, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(f"{type(self).__name__}.metadata must be a dict or None.")
+        specs = value.get("constraintSpecs")
+        if specs is not None:
+            if not isinstance(specs, list):
+                raise ValueError(
+                    f"{type(self).__name__}.metadata['constraintSpecs'] must be a list."
+                )
+            for idx, spec in enumerate(specs):
+                if not is_valid_spec(spec):
+                    raise ValueError(
+                        f"{type(self).__name__}.metadata['constraintSpecs'][{idx}] is invalid: {spec!r}"
+                    )
+        return value
+
+    def add_spec(self, spec):
+        if not is_valid_spec(spec):
+            raise ValueError(f"Invalid constraint spec: {spec!r}")
+        meta = dict(self.metadata) if self.metadata else {}
+        specs = list(meta.get("constraintSpecs", []))
+        specs.append(spec)
+        meta["constraintSpecs"] = specs
+        self.metadata = meta
+
+    def remove_spec(self, index: int):
+        meta = dict(self.metadata) if self.metadata else {}
+        specs = list(meta.get("constraintSpecs", []))
+        if 0 <= index < len(specs):
+            specs.pop(index)
+            meta["constraintSpecs"] = specs
+            self.metadata = meta
+
+    def get_specs(self):
+        return list(self.metadata.get("constraintSpecs", []))
+
+
+class KGNodeConstraint(_ConstraintNodeMixin, KGNode):
+    """A reified constraint that applies to a class.
+
+    Materialises an OWL restriction set or a SHACL ``sh:NodeShape`` as a
+    first-class visual node. The constraint payload lives in
+    ``metadata['constraintSpecs']`` as a list of dicts matching
+    :class:`~besser.BUML.metamodel.kg.constraint_specs.ConstraintSpec`.
+
+    Linked to its target class via an edge with iri
+    ``http://besser.local/kg#constraintTargetClass`` (and, for SHACL
+    NodeShapes, may also carry the standard ``sh:targetClass`` predicate
+    on export).
+    """
+
+    @KGNode.metadata.setter
+    def metadata(self, value):
+        validated = self._validate_constraint_metadata(value)
+        # delegate to base setter via the underlying property machinery
+        KGNode.metadata.fset(self, validated)
+
+
+class KGPropertyConstraint(_ConstraintNodeMixin, KGNode):
+    """A reified constraint that applies to a property.
+
+    Materialises an OWL ``owl:Restriction`` or a SHACL ``sh:PropertyShape``
+    as a first-class visual node. Linked to a :class:`KGProperty` via the
+    ``constraintTargetProperty`` edge and/or grouped under a
+    :class:`KGNodeConstraint` via the ``sh:property`` edge.
+    """
+
+    @KGNode.metadata.setter
+    def metadata(self, value):
+        validated = self._validate_constraint_metadata(value)
+        KGNode.metadata.fset(self, validated)
 
 
 class KGEdge(Element):

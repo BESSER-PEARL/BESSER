@@ -18,7 +18,9 @@ from besser.BUML.metamodel.kg import (
     KGIndividual,
     KGLiteral,
     KGNode,
+    KGNodeConstraint,
     KGProperty,
+    KGPropertyConstraint,
     KnowledgeGraph,
 )
 
@@ -32,6 +34,8 @@ _CLASS_TO_NODE_TYPE = {
     KGProperty: "property",
     KGLiteral: "literal",
     KGBlank: "blank",
+    KGNodeConstraint: "nodeConstraint",
+    KGPropertyConstraint: "propertyConstraint",
 }
 
 

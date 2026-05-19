@@ -46,6 +46,11 @@ class DiagramInput(BaseModel):
     # send to the per-node LLM classifier instead of dropping. Populated
     # by ``/classify-orphans-with-llm`` request bodies.
     orphanNodeIds: Optional[List[str]] = None
+    # KG RDF export: which constraint vocabularies to emit. ``"owl"`` emits
+    # only ``owl:Restriction`` blank nodes; ``"shacl"`` emits only
+    # ``sh:NodeShape`` / ``sh:PropertyShape``; ``"both"`` (default) emits
+    # both where each spec has the required semantics.
+    vocab: Optional[Literal["owl", "shacl", "both"]] = None
 
 
 class FeedbackSubmission(BaseModel):

@@ -348,39 +348,90 @@ def _descendants_of(node_id: str, parents_of: Dict[str, Set[str]]) -> Set[str]:
 
 
 def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
+    """Flag restrictions whose target is missing.
+
+    A constraint is meaningfully "attached" when it points at something:
+
+    - Legacy ``KGBlank`` restrictions are attached when a ``KGClass`` reaches
+      them via ``rdfs:subClassOf`` / ``owl:equivalentClass`` (no other
+      attachment exists in the legacy model).
+    - A ``KGPropertyConstraint`` is attached when it has an outgoing
+      ``constraintTargetProperty`` edge to a ``KGProperty`` — that's the
+      conceptual home of a property constraint and what the user authored
+      in the editor. The wrapping ``KGNodeConstraint`` (if any) only adds
+      class context for BUML lifting; its absence is *not* an "unattached"
+      issue, since standalone SHACL ``sh:PropertyShape``s are valid.
+
+    A ``KGPropertyConstraint`` with no ``constraintTargetProperty`` edge —
+    i.e. floating with no property at all — is genuinely unattached and is
+    flagged here. The ``RESTRICTION_NO_OWNER_CLASS`` check below is the
+    softer warning when an attached property constraint has no owner class
+    and therefore won't be lifted into a BUML multiplicity.
+    """
+    from besser.BUML.metamodel.kg import KGPropertyConstraint
     out: List[KGIssue] = []
     LINK_PREDS = {RDFS_SUBCLASS_OF, "http://www.w3.org/2002/07/owl#equivalentClass"}
-    attached: Set[str] = set()
+
+    # PropertyConstraints with at least one outgoing edge to a Property are
+    # NOT considered unattached, regardless of whether a class wraps them.
+    # We deliberately accept *any* edge predicate here (not just the canonical
+    # ``constraintTargetProperty`` IRI), so that diagrams authored before the
+    # canvas auto-tagging fix — where the user drew the edge in the editor
+    # but the edge was saved without an explicit IRI — don't keep tripping
+    # this detector. The exporter is stricter and only emits constraint
+    # triples when the canonical IRI is present.
+    pc_with_property: Set[str] = {
+        e.source.id for e in kg.edges
+        if isinstance(e.source, KGPropertyConstraint)
+        and isinstance(e.target, KGProperty)
+    }
+    # Class attachment via the legacy KGBlank path.
+    class_attached: Set[str] = set()
     for edge in kg.edges:
         if normalize_predicate(edge.iri) not in LINK_PREDS:
             continue
-        if isinstance(edge.target, KGBlank) and edge.target.metadata.get("kind") == "restriction":
-            if isinstance(edge.source, KGClass):
-                attached.add(edge.target.id)
-    for blank in sorted_by_id([
+        if isinstance(edge.target, KGBlank) and isinstance(edge.source, KGClass):
+            if edge.target.metadata.get("kind") == "restriction":
+                class_attached.add(edge.target.id)
+
+    legacy = [
         n for n in kg.nodes
         if isinstance(n, KGBlank) and n.metadata.get("kind") == "restriction"
-    ]):
-        if blank.id in attached:
-            continue
-        on_prop = blank.metadata.get("on_property") or "<unknown>"
-        out.append(KGIssue(
-            id=_issue_id("RESTRICTION_UNATTACHED", blank.id),
-            code="RESTRICTION_UNATTACHED",
-            description=(
+    ]
+    modern = [n for n in kg.nodes if isinstance(n, KGPropertyConstraint)]
+
+    for n in sorted_by_id(legacy + modern):
+        if isinstance(n, KGBlank):
+            if n.id in class_attached:
+                continue
+            on_prop = n.metadata.get("on_property") or "<unknown>"
+            description = (
                 f"An owl:Restriction on property '{on_prop}' is not attached to any class. "
                 f"It cannot be lifted into BUML without an owner."
-            ),
-            affected_node_ids=[blank.id],
+            )
+        else:
+            # Modern PropertyConstraint.
+            if n.id in pc_with_property:
+                continue  # Properly attached to a property — not unattached.
+            on_prop = n.metadata.get("onPropertyIri") or "<unknown>"
+            description = (
+                f"A property constraint (target property '{on_prop}') is not connected to any property. "
+                f"Link it to a Property node or remove it."
+            )
+        out.append(KGIssue(
+            id=_issue_id("RESTRICTION_UNATTACHED", n.id),
+            code="RESTRICTION_UNATTACHED",
+            description=description,
+            affected_node_ids=[n.id],
             recommended_action=KGAction(
                 key="drop_restriction",
-                parameters={"blank_id": blank.id},
-                label="Drop the unattached restriction",
+                parameters={"blank_id": n.id},
+                label="Drop the unattached constraint",
             ),
             skip_action=KGAction(
                 key="drop_restriction",
-                parameters={"blank_id": blank.id},
-                label="Drop the unattached restriction",
+                parameters={"blank_id": n.id},
+                label="Drop the unattached constraint",
             ),
         ))
     return out
@@ -389,6 +440,7 @@ def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue
 def _detect_unsupported_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     """Restrictions that *are* attached but use semantics with no clean BUML mapping
     (allValuesFrom, hasValue, hasSelf)."""
+    from besser.BUML.metamodel.kg import KGPropertyConstraint
     UNSUPPORTED = {"allValuesFrom", "hasValue", "hasSelf"}
     out: List[KGIssue] = []
     for blank in sorted_by_id([
@@ -415,6 +467,33 @@ def _detect_unsupported_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssu
             skip_action=KGAction(
                 key="drop_restriction",
                 parameters={"blank_id": blank.id},
+                label="Drop the restriction entirely",
+            ),
+        ))
+    # Modern (KGPropertyConstraint) form.
+    for pc in sorted_by_id([n for n in kg.nodes if isinstance(n, KGPropertyConstraint)]):
+        specs = pc.get_specs()
+        unsupported_kinds = {s.get("kind") for s in specs if s.get("kind") in UNSUPPORTED}
+        if not unsupported_kinds:
+            continue
+        on_prop = pc.metadata.get("onPropertyIri") or "<unknown>"
+        rtype = ", ".join(sorted(unsupported_kinds))
+        out.append(KGIssue(
+            id=_issue_id("RESTRICTION_UNSUPPORTED", pc.id),
+            code="RESTRICTION_UNSUPPORTED",
+            description=(
+                f"Restriction '{rtype}' on property '{on_prop}' has no clean mapping into BUML "
+                f"multiplicity. The semantic constraint cannot be enforced by the class diagram alone."
+            ),
+            affected_node_ids=[pc.id],
+            recommended_action=KGAction(
+                key="record_as_description",
+                parameters={"blank_id": pc.id},
+                label="Record as a textual constraint on the class description",
+            ),
+            skip_action=KGAction(
+                key="drop_restriction",
+                parameters={"blank_id": pc.id},
                 label="Drop the restriction entirely",
             ),
         ))

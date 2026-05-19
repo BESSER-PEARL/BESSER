@@ -21,7 +21,9 @@ from besser.BUML.metamodel.kg import (
     KGEdge,
     KGIndividual,
     KGLiteral,
+    KGNodeConstraint,
     KGProperty,
+    KGPropertyConstraint,
     KnowledgeGraph,
     PropertyChainAxiom,
     SubPropertyOfAxiom,
@@ -46,6 +48,8 @@ _NODE_TYPE_TO_CLASS = {
     "individual": KGIndividual,
     "property": KGProperty,
     "blank": KGBlank,
+    "nodeconstraint": KGNodeConstraint,
+    "propertyconstraint": KGPropertyConstraint,
 }
 
 
@@ -115,7 +119,8 @@ def _build_node(raw: Dict[str, Any]):
     if cls is None:
         raise ConversionError(
             f"Unknown KG nodeType '{raw.get('nodeType')!r}' (expected one of "
-            "'class', 'individual', 'property', 'literal', 'blank')."
+            "'class', 'individual', 'property', 'literal', 'blank', "
+            "'nodeConstraint', 'propertyConstraint')."
         )
     return cls(id=node_id, label=label, iri=iri, metadata=metadata)
 

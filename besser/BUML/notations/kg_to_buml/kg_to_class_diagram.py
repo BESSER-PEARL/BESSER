@@ -30,8 +30,15 @@ from besser.BUML.metamodel.kg import (
     KGIndividual,
     KGLiteral,
     KGNode,
+    KGNodeConstraint,
     KGProperty,
+    KGPropertyConstraint,
     KnowledgeGraph,
+)
+from besser.BUML.metamodel.kg.constants import (
+    CONSTRAINT_TARGET_CLASS,
+    CONSTRAINT_TARGET_PROPERTY,
+    SH_PROPERTY,
 )
 from besser.BUML.metamodel.structural import (
     BinaryAssociation,
@@ -83,6 +90,18 @@ class ClassConversionResult:
     warnings: List[KGConversionWarning] = field(default_factory=list)
 
 
+@dataclass
+class ConstraintIndex:
+    """Index of constraint-node relationships extracted while lifting cardinality.
+
+    Reused by the OCL emitter so we don't re-walk the edge list.
+    """
+
+    class_to_ncs: Dict[str, List[KGNodeConstraint]] = field(default_factory=lambda: defaultdict(list))
+    nc_to_pcs: Dict[str, List[KGPropertyConstraint]] = field(default_factory=lambda: defaultdict(list))
+    pc_to_property: Dict[str, str] = field(default_factory=dict)
+
+
 def _looks_like_datatype_iri(iri: Optional[str]) -> bool:
     if not iri:
         return False
@@ -104,6 +123,7 @@ def kg_to_class_diagram(
     *,
     model_name: Optional[str] = None,
     resolutions: Optional[List["KGResolution"]] = None,
+    emit_ocl: bool = True,
 ) -> ClassConversionResult:
     """Convert a :class:`KnowledgeGraph` into a :class:`DomainModel` (TBox).
 
@@ -114,6 +134,10 @@ def kg_to_class_diagram(
             (see :mod:`besser.BUML.notations.kg_to_buml.preflight`). When
             provided, :func:`apply_resolutions` rewrites a deep-copied
             KG before conversion (so the input is untouched).
+        emit_ocl: When ``True`` (default), also emits B-UML OCL ``Constraint``
+            objects from the KG's constraint nodes + axioms. Set to ``False``
+            for callers that consume constraint specs directly from the KG
+            and want to avoid duplicate representation in the domain model.
     """
     if resolutions:
         # Lazy import to avoid a top-of-module cycle through the package's
@@ -372,7 +396,7 @@ def kg_to_class_diagram(
     # blank nodes attached via rdfs:subClassOf or owl:equivalentClass refine
     # the multiplicity of the matching attribute or association end.
     # ------------------------------------------------------------------
-    explicit_multiplicity_props: Set[str] = _apply_restrictions_and_characteristics(
+    explicit_multiplicity_props, constraint_index = _apply_restrictions_and_characteristics(
         kg=kg,
         id_to_class=id_to_class,
         property_iri_to_attribute=property_iri_to_attribute,
@@ -432,6 +456,28 @@ def kg_to_class_diagram(
         associations=associations,
         generalizations=generalizations,
     )
+
+    # ------------------------------------------------------------------
+    # Step 6: OCL constraint emission from KG constraint nodes + axioms.
+    # Cardinality already lives in Multiplicity; everything else that maps
+    # to B-OCL is emitted here as `Constraint` objects attached to the
+    # domain model.
+    # ------------------------------------------------------------------
+    if emit_ocl:
+        from besser.BUML.notations.kg_to_buml.constraint_to_ocl import emit_ocl_constraints
+        ocl_result = emit_ocl_constraints(
+            kg,
+            iri_to_class=iri_to_class,
+            property_iri_to_attribute=property_iri_to_attribute,
+            property_iri_to_association=property_iri_to_association,
+            assoc_source_end=assoc_source_end,
+            class_to_ncs=constraint_index.class_to_ncs,
+            nc_to_pcs=constraint_index.nc_to_pcs,
+            pc_to_property=constraint_index.pc_to_property,
+        )
+        for c in ocl_result.constraints:
+            domain_model.add_constraint(c)
+        warnings.extend(ocl_result.warnings)
 
     return ClassConversionResult(
         domain_model=domain_model,
@@ -584,12 +630,16 @@ def _apply_restrictions_and_characteristics(
     property_iri_to_association: Dict[str, BinaryAssociation],
     assoc_source_end: Dict[int, Property],
     warnings: List[KGConversionWarning],
-) -> Set[str]:
+) -> Tuple[Set[str], "ConstraintIndex"]:
     """Lift OWL property characteristics + ``owl:Restriction`` payloads into
     BUML ``Multiplicity`` on attributes and association target ends.
 
-    Returns the set of property IRIs whose multiplicity was set explicitly
-    (so ABox-driven heuristics in Step 5 can avoid overriding them).
+    Returns:
+        - the set of property IRIs whose multiplicity was set explicitly
+          (so ABox-driven heuristics in Step 5 can avoid overriding them);
+        - a :class:`ConstraintIndex` capturing the constraint-node
+          relationships traversed during the lift, reused downstream by the
+          OCL emitter.
     """
     explicit: Set[str] = set()
 
@@ -617,8 +667,14 @@ def _apply_restrictions_and_characteristics(
                 target_end.multiplicity = Multiplicity(min(tmin, 1), 1)
                 explicit.add(prop_iri)
 
-    # 2. owl:Restriction payloads on KGBlank nodes attached via rdfs:subClassOf
-    #    or owl:equivalentClass to an owner KGClass.
+    # 2. owl:Restriction payloads.
+    #    Two equivalent representations are supported:
+    #     a) Legacy: KGBlank with metadata.kind == "restriction", linked from
+    #        a KGClass via rdfs:subClassOf / owl:equivalentClass.
+    #     b) Modern: KGPropertyConstraint with metadata.constraintSpecs,
+    #        either attached to an owner class via a wrapping KGNodeConstraint
+    #        (NC --constraintTargetClass--> Class, NC --sh:property--> PC) or
+    #        attached directly to a KGClass via rdfs:subClassOf.
     #    Group restrictions by (owner_class_id, on_property_iri).
     grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for edge in kg.edges:
@@ -636,6 +692,79 @@ def _apply_restrictions_and_characteristics(
         if not on_prop:
             continue
         grouped[(edge.source.id, on_prop)].append(edge.target.metadata)
+
+    # 2b. Modern representation via KGPropertyConstraint nodes.
+    def _spec_payload(spec: Dict[str, Any]) -> Dict[str, Any]:
+        """Translate a constraint spec into the legacy restriction-payload shape
+        the lifter below understands."""
+        kind = spec.get("kind")
+        rev_map = {
+            "minCardinality": "minCardinality",
+            "maxCardinality": "maxCardinality",
+            "exactCardinality": "cardinality",
+            "minQualifiedCardinality": "minQualifiedCardinality",
+            "maxQualifiedCardinality": "maxQualifiedCardinality",
+            "exactQualifiedCardinality": "qualifiedCardinality",
+            "someValuesFrom": "someValuesFrom",
+            "allValuesFrom": "allValuesFrom",
+            "hasValue": "hasValue",
+            "hasSelf": "hasSelf",
+        }
+        rt = rev_map.get(kind)
+        if rt is None:
+            return {}
+        return {"restriction_type": rt, "value": spec.get("value"), "on_class": spec.get("on_class")}
+
+    # Index: PropertyConstraint id -> target property IRI (via constraintTargetProperty edge).
+    pc_to_property: Dict[str, str] = {}
+    for edge in kg.edges:
+        if edge.iri == CONSTRAINT_TARGET_PROPERTY and isinstance(edge.source, KGPropertyConstraint):
+            target_iri = getattr(edge.target, "iri", None) or edge.target.id
+            pc_to_property[edge.source.id] = target_iri
+    # NodeConstraint -> list of (PropertyConstraint) via sh:property edge.
+    nc_to_pcs: Dict[str, List[KGPropertyConstraint]] = defaultdict(list)
+    for edge in kg.edges:
+        if edge.iri == SH_PROPERTY and isinstance(edge.source, KGNodeConstraint) \
+                and isinstance(edge.target, KGPropertyConstraint):
+            nc_to_pcs[edge.source.id].append(edge.target)
+    # Class -> list of NodeConstraint (incoming constraintTargetClass).
+    class_to_ncs: Dict[str, List[KGNodeConstraint]] = defaultdict(list)
+    for edge in kg.edges:
+        if edge.iri == CONSTRAINT_TARGET_CLASS and isinstance(edge.source, KGNodeConstraint) \
+                and isinstance(edge.target, KGClass):
+            class_to_ncs[edge.target.id].append(edge.source)
+
+    for class_id, ncs in class_to_ncs.items():
+        if class_id not in id_to_class:
+            continue
+        for nc in ncs:
+            for pc in nc_to_pcs.get(nc.id, []):
+                prop_iri = pc_to_property.get(pc.id)
+                if not prop_iri:
+                    continue
+                for spec in pc.get_specs():
+                    payload = _spec_payload(spec)
+                    if payload:
+                        grouped[(class_id, prop_iri)].append(payload)
+
+    # Standalone PropertyConstraints linked to a class via rdfs:subClassOf
+    # (no wrapping NC).
+    for edge in kg.edges:
+        pred = normalize_predicate(edge.iri)
+        if pred not in _OWL_RESTRICTION_LINK_PREDICATES:
+            continue
+        if not isinstance(edge.target, KGPropertyConstraint):
+            continue
+        owner_cls = id_to_class.get(edge.source.id)
+        if owner_cls is None:
+            continue
+        prop_iri = pc_to_property.get(edge.target.id)
+        if not prop_iri:
+            continue
+        for spec in edge.target.get_specs():
+            payload = _spec_payload(spec)
+            if payload:
+                grouped[(edge.source.id, prop_iri)].append(payload)
 
     for (owner_id, prop_iri), payloads in grouped.items():
         attr = property_iri_to_attribute.get(prop_iri)
@@ -701,7 +830,12 @@ def _apply_restrictions_and_characteristics(
             target_end.multiplicity = new_mult
         explicit.add(prop_iri)
 
-    return explicit
+    index = ConstraintIndex(
+        class_to_ncs=class_to_ncs,
+        nc_to_pcs=nc_to_pcs,
+        pc_to_property=pc_to_property,
+    )
+    return explicit, index
 
 
 def _target_end_of(

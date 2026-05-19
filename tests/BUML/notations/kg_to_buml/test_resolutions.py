@@ -14,6 +14,7 @@ from besser.BUML.notations.kg_to_buml import (
     apply_resolutions,
     kg_to_class_diagram,
 )
+from besser.BUML.metamodel.kg import KGPropertyConstraint
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 
@@ -143,7 +144,11 @@ def test_attach_to_class_links_restriction_to_owner(tmp_path: Path):
        owl:cardinality "1"^^xsd:nonNegativeInteger .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank_id = next(n.id for n in kg.nodes if "Restriction" in (n.metadata.get("kind", "") or "") or n.metadata.get("kind") == "restriction")
+    blank_id = next(
+        n.id for n in kg.nodes
+        if isinstance(n, KGPropertyConstraint)
+        or n.metadata.get("kind") == "restriction"
+    )
     res = KGResolution(
         issue_id="i1",
         choice="attach_to_class",

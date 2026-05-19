@@ -123,6 +123,38 @@ def test_multiple_domains_in_subclass_chain_not_triggered(tmp_path: Path):
 
 
 def test_unattached_restriction(tmp_path: Path):
+    """A property constraint without a target property at all is genuinely
+    unattached. The historical "free-floating owl:Restriction" pattern (an
+    anonymous restriction with owl:onProperty but no class wrapper) is *not*
+    flagged any more: in the new representation it imports as a
+    KGPropertyConstraint connected to its target property, so it has a
+    semantic home — the constraint just won't be lifted into BUML
+    multiplicity without a class wrapper, which is acceptable for SHACL-style
+    standalone PropertyShapes.
+    """
+    from besser.BUML.metamodel.kg import KGPropertyConstraint, KnowledgeGraph
+
+    # Build the unattached case directly: a PropertyConstraint that has
+    # no constraintTargetProperty edge at all.
+    kg = KnowledgeGraph(name="unattached")
+    pc = KGPropertyConstraint(
+        id="pc-orphan",
+        label="orphan",
+        metadata={"constraintSpecs": [{"kind": "minCardinality", "value": 1}]},
+    )
+    kg.add_node(pc)
+
+    report = analyze_kg_for_class_diagram(kg)
+    issue = _issue(report, "RESTRICTION_UNATTACHED")
+    _assert_actions_present(issue)
+    assert issue.recommended_action.key == "drop_restriction"
+
+
+def test_property_only_attached_restriction_not_flagged(tmp_path: Path):
+    """A property constraint linked to a property (but with no class wrapper)
+    is *not* flagged as RESTRICTION_UNATTACHED — that wording would be
+    misleading, since the constraint is connected to the property it
+    restricts. Standalone SHACL-style PropertyShapes are valid."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -135,9 +167,7 @@ def test_unattached_restriction(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     report = analyze_kg_for_class_diagram(kg)
-    issue = _issue(report, "RESTRICTION_UNATTACHED")
-    _assert_actions_present(issue)
-    assert issue.recommended_action.key == "drop_restriction"
+    assert "RESTRICTION_UNATTACHED" not in _codes(report)
 
 
 def test_attached_restriction_not_flagged(tmp_path: Path):
@@ -541,9 +571,9 @@ def test_orphan_anchored_via_property_domain_not_flagged(tmp_path: Path):
 
 
 def test_orphan_structural_blank_excluded(tmp_path: Path):
-    """Restriction-kind blank nodes (anonymous schema constructs) must not be
-    treated as orphans even when not attached to a class — they have their own
-    detector."""
+    """Restriction blanks / property-constraint nodes (anonymous schema
+    constructs) must not be folded into the orphan-node detector — they have
+    their own dedicated detectors."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -555,19 +585,18 @@ def test_orphan_structural_blank_excluded(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     report = analyze_kg_for_class_diagram(kg)
-    # The unattached restriction is its own issue, NOT folded into ORPHAN.
-    codes = _codes(report)
-    assert "RESTRICTION_UNATTACHED" in codes
-    # An orphan issue may exist if there are other non-anchored elements, but
-    # restriction blanks must not appear inside any orphan issue.
+    # The restriction lands as a KGPropertyConstraint linked to :age — it
+    # must not be flagged as an ORPHAN. (Whether it's "unattached" is the
+    # job of the dedicated restriction detector, not the orphan detector.)
+    from besser.BUML.metamodel.kg import KGBlank, KGPropertyConstraint
     for issue in report.issues:
         if issue.code != "ORPHAN_NODE_NO_CLASS_LINK":
             continue
         for nid in issue.affected_node_ids:
             node = kg.get_node(nid)
-            from besser.BUML.metamodel.kg import KGBlank
             if isinstance(node, KGBlank):
                 assert node.metadata.get("kind") not in {"restriction", "class_expression"}
+            assert not isinstance(node, KGPropertyConstraint)
 
 
 def test_orphan_id_stable_across_runs(tmp_path: Path):

@@ -20,6 +20,7 @@ from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
     KGIndividual,
+    KGPropertyConstraint,
     KGProperty,
     PropertyChainAxiom,
     SubPropertyOfAxiom,
@@ -162,6 +163,19 @@ def _restriction_blank(kg) -> KGBlank:
     return blanks[0]
 
 
+def _restriction_pc(kg) -> KGPropertyConstraint:
+    """Return the single PropertyConstraint emitted for an OWL restriction.
+
+    OWL restrictions are imported as KGPropertyConstraint nodes (with the
+    constraint payload in ``metadata['constraintSpecs']``); the legacy
+    ``_restriction_blank`` helper is kept only for tests still asserting the
+    pre-constraint-nodes representation.
+    """
+    pcs = [n for n in kg.nodes if isinstance(n, KGPropertyConstraint)]
+    assert len(pcs) == 1, f"expected exactly one PropertyConstraint, got {len(pcs)}"
+    return pcs[0]
+
+
 def test_restriction_min_cardinality_annotated_on_blank(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
@@ -178,10 +192,12 @@ def test_restriction_min_cardinality_annotated_on_blank(tmp_path: Path):
     :hasName a owl:DatatypeProperty .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _restriction_blank(kg)
-    assert blank.metadata["restriction_type"] == "minCardinality"
-    assert blank.metadata["value"] == 1
-    assert blank.metadata["on_property"] == "http://ex.org/hasName"
+    pc = _restriction_pc(kg)
+    specs = pc.get_specs()
+    assert len(specs) == 1
+    assert specs[0]["kind"] == "minCardinality"
+    assert specs[0]["value"] == 1
+    assert pc.metadata.get("onPropertyIri") == "http://ex.org/hasName"
 
 
 def test_restriction_some_values_from_annotated_on_blank(tmp_path: Path):
@@ -200,10 +216,11 @@ def test_restriction_some_values_from_annotated_on_blank(tmp_path: Path):
     :owns a owl:ObjectProperty .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _restriction_blank(kg)
-    assert blank.metadata["restriction_type"] == "someValuesFrom"
-    assert blank.metadata["value"] == "http://ex.org/Pet"
-    assert blank.metadata["on_property"] == "http://ex.org/owns"
+    pc = _restriction_pc(kg)
+    specs = pc.get_specs()
+    assert specs[0]["kind"] == "someValuesFrom"
+    assert specs[0]["value"] == "http://ex.org/Pet"
+    assert pc.metadata.get("onPropertyIri") == "http://ex.org/owns"
 
 
 def test_restriction_has_value_annotated_on_blank(tmp_path: Path):
@@ -221,9 +238,10 @@ def test_restriction_has_value_annotated_on_blank(tmp_path: Path):
     :country a owl:DatatypeProperty .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _restriction_blank(kg)
-    assert blank.metadata["restriction_type"] == "hasValue"
-    assert blank.metadata["value"] == "US"
+    pc = _restriction_pc(kg)
+    specs = pc.get_specs()
+    assert specs[0]["kind"] == "hasValue"
+    assert specs[0]["value"] == "US"
 
 
 def test_restriction_qualified_cardinality(tmp_path: Path):
@@ -244,10 +262,11 @@ def test_restriction_qualified_cardinality(tmp_path: Path):
     :Pet a owl:Class .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _restriction_blank(kg)
-    assert blank.metadata["restriction_type"] == "minQualifiedCardinality"
-    assert blank.metadata["value"] == 2
-    assert blank.metadata["on_class"] == "http://ex.org/Pet"
+    pc = _restriction_pc(kg)
+    specs = pc.get_specs()
+    assert specs[0]["kind"] == "minQualifiedCardinality"
+    assert specs[0]["value"] == 2
+    assert specs[0]["on_class"] == "http://ex.org/Pet"
 
 
 # --- Class combinators ----------------------------------------------------

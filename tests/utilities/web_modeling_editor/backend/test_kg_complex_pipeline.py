@@ -49,11 +49,15 @@ def test_analyze_surfaces_expected_issue_codes(client: TestClient, kg_payload: d
     assert resp.status_code == 200, resp.text
     body = resp.json()
     codes = {i["code"] for i in body["issues"]}
-    # Every issue type the fixture is designed to trigger:
+    # Every issue type the fixture is designed to trigger. Note:
+    # RESTRICTION_UNATTACHED no longer fires for the fixture's "free-floating"
+    # owl:Restriction — under the new constraint-node representation that
+    # restriction is imported as a KGPropertyConstraint linked to its target
+    # property, so it is properly attached (to a property). The detector now
+    # only flags property constraints that have no property edge at all.
     expected = {
         "PROPERTY_NO_DOMAIN",
         "MULTIPLE_DOMAINS",
-        "RESTRICTION_UNATTACHED",
         "RESTRICTION_UNSUPPORTED",
         "PROPERTY_NO_RANGE",
         "PUNNING",

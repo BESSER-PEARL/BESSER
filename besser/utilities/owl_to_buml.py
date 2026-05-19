@@ -25,7 +25,7 @@ import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import rdflib
-from rdflib import RDF, RDFS, OWL, BNode, Literal, URIRef
+from rdflib import RDF, RDFS, OWL, BNode, Literal, Namespace, URIRef
 
 from besser.BUML.metamodel.kg import (
     DisjointClassesAxiom,
@@ -40,11 +40,22 @@ from besser.BUML.metamodel.kg import (
     KGIndividual,
     KGLiteral,
     KGNode,
+    KGNodeConstraint,
     KGProperty,
+    KGPropertyConstraint,
     KnowledgeGraph,
     PropertyChainAxiom,
     SubPropertyOfAxiom,
 )
+from besser.BUML.metamodel.kg.constants import (
+    CONSTRAINT_TARGET_CLASS,
+    CONSTRAINT_TARGET_PROPERTY,
+    SH_PATH,
+    SH_PROPERTY,
+)
+
+
+SH = Namespace("http://www.w3.org/ns/shacl#")
 
 
 __all__ = ["owl_file_to_knowledge_graph"]
@@ -405,6 +416,135 @@ def _emit_imports(g: rdflib.Graph) -> List[ImportAxiom]:
     return out
 
 
+# ----------------------------------------------------------------------
+# SHACL Core constraint components.
+# ----------------------------------------------------------------------
+
+# Maps SHACL predicate → (constraint kind, value extractor).
+# Each extractor receives (graph, object_term, lists) and returns the spec value.
+def _shacl_literal_int(_g, o, _lists):
+    try:
+        return int(str(o))
+    except (TypeError, ValueError):
+        return str(o)
+
+
+def _shacl_literal_value(_g, o, _lists):
+    if isinstance(o, Literal):
+        try:
+            return float(str(o))
+        except (TypeError, ValueError):
+            return str(o)
+    return _term_str(o) or str(o)
+
+
+def _shacl_iri(_g, o, _lists):
+    return _term_str(o) or str(o)
+
+
+def _shacl_literal_str(_g, o, _lists):
+    return str(o)
+
+
+def _shacl_literal_bool(_g, o, _lists):
+    if isinstance(o, Literal):
+        return bool(o)
+    return str(o).lower() in ("true", "1")
+
+
+def _shacl_iri_list(_g, o, lists):
+    if isinstance(o, BNode):
+        members = lists.get(o, []) or []
+        return [_term_str(m) or str(m) for m in members]
+    return [_term_str(o) or str(o)]
+
+
+def _shacl_literal_list(_g, o, lists):
+    if isinstance(o, BNode):
+        members = lists.get(o, []) or []
+        out = []
+        for m in members:
+            if isinstance(m, Literal):
+                out.append({"value": str(m), "datatype": str(m.datatype) if m.datatype else None,
+                            "language": m.language})
+            else:
+                out.append(_term_str(m) or str(m))
+        return out
+    return [str(o)]
+
+
+# Single-value SHACL property-shape constraints.
+_SHACL_PROPERTY_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
+    SH.minCount: ("minCardinality", _shacl_literal_int),
+    SH.maxCount: ("maxCardinality", _shacl_literal_int),
+    SH.minInclusive: ("minInclusive", _shacl_literal_value),
+    SH.maxInclusive: ("maxInclusive", _shacl_literal_value),
+    SH.minExclusive: ("minExclusive", _shacl_literal_value),
+    SH.maxExclusive: ("maxExclusive", _shacl_literal_value),
+    SH.minLength: ("minLength", _shacl_literal_int),
+    SH.maxLength: ("maxLength", _shacl_literal_int),
+    SH.pattern: ("pattern", _shacl_literal_str),
+    SH.flags: ("flags", _shacl_literal_str),
+    SH.datatype: ("datatype", _shacl_iri),
+    SH.nodeKind: ("nodeKind", _shacl_iri),
+    SH.hasValue: ("hasValue", _shacl_literal_value),
+    SH.uniqueLang: ("uniqueLang", _shacl_literal_bool),
+    SH.languageIn: ("languageIn", _shacl_literal_list),
+    SH["class"]: ("someValuesFrom", _shacl_iri),  # sh:class maps onto someValuesFrom-of-class
+    SH["in"]: ("in", _shacl_literal_list),
+    SH.severity: ("shaclSeverity", _shacl_iri),
+    SH.message: ("shaclMessage", _shacl_literal_str),
+    SH.name: ("shaclName", _shacl_literal_str),
+    SH.description: ("shaclDescription", _shacl_literal_str),
+    SH.deactivated: ("shaclDeactivated", _shacl_literal_bool),
+    SH.order: ("shaclOrder", _shacl_literal_value),
+    SH.group: ("shaclGroup", _shacl_iri),
+}
+
+# Node-shape components (closure plus shape-level shaclXXX meta).
+_SHACL_NODE_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
+    SH.closed: ("shaclClosed", _shacl_literal_bool),
+    SH.ignoredProperties: ("shaclIgnoredProperties", _shacl_iri_list),
+    SH.disjoint: ("shaclDisjoint", _shacl_iri),
+    SH.severity: ("shaclSeverity", _shacl_iri),
+    SH.message: ("shaclMessage", _shacl_literal_str),
+    SH.name: ("shaclName", _shacl_literal_str),
+    SH.description: ("shaclDescription", _shacl_literal_str),
+    SH.deactivated: ("shaclDeactivated", _shacl_literal_bool),
+}
+
+
+def _restriction_payload_to_specs(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Translate a decoded OWL ``owl:Restriction`` payload into ``constraintSpecs``.
+
+    The decoder produces one ``{restriction_type, value, on_class}`` triple per
+    restriction. This helper maps that into the normalised spec shape used by
+    :class:`KGPropertyConstraint`.
+    """
+    rt = payload.get("restriction_type")
+    val = payload.get("value")
+    on_class = payload.get("on_class")
+    kind_map = {
+        "minCardinality": "minCardinality",
+        "maxCardinality": "maxCardinality",
+        "cardinality": "exactCardinality",
+        "minQualifiedCardinality": "minQualifiedCardinality",
+        "maxQualifiedCardinality": "maxQualifiedCardinality",
+        "qualifiedCardinality": "exactQualifiedCardinality",
+        "someValuesFrom": "someValuesFrom",
+        "allValuesFrom": "allValuesFrom",
+        "hasValue": "hasValue",
+        "hasSelf": "hasSelf",
+    }
+    kind = kind_map.get(rt)
+    if not kind:
+        return []
+    spec: Dict[str, Any] = {"kind": kind, "value": val}
+    if on_class:
+        spec["on_class"] = on_class
+    return [spec]
+
+
 def _detect_punning(g: rdflib.Graph, classes: Set[URIRef]) -> Set[URIRef]:
     """Detect IRIs that are explicitly *both* a class and an individual.
 
@@ -423,6 +563,583 @@ def _detect_punning(g: rdflib.Graph, classes: Set[URIRef]) -> Set[URIRef]:
 # ----------------------------------------------------------------------
 # Top-level entry point
 # ----------------------------------------------------------------------
+
+
+def _decode_shacl_shapes(
+    g: rdflib.Graph,
+    lists: Dict[BNode, List[Any]],
+) -> Dict[Any, Dict[str, Any]]:
+    """Decode SHACL shapes (NodeShape / PropertyShape) into structured payloads.
+
+    Returns a dict keyed by the shape's RDF term (URIRef or BNode) with shape
+    fields:
+
+        {
+            "shape_kind": "nodeShape" | "propertyShape",
+            "target_class": iri | None,
+            "target_node": [iri, ...],
+            "target_subjects_of": [iri, ...],
+            "target_objects_of": [iri, ...],
+            "path": iri | None,           # property shapes only
+            "property_shape_terms": [term, ...],  # node shapes only
+            "constraint_specs": [{...}, ...],
+            "logical_terms": {"shaclAnd": [term, ...], ...},
+            "qualified": [{count_kind, count, value_shape_term}, ...],
+        }
+
+    Targets / paths that aren't simple IRIs (e.g. sequence paths) are recorded
+    verbatim as strings so the editor can preserve them.
+    """
+    out: Dict[Any, Dict[str, Any]] = {}
+
+    # Identify shape terms.
+    node_shapes: Set[Any] = set()
+    prop_shapes: Set[Any] = set()
+    for s, _, _ in g.triples((None, RDF.type, SH.NodeShape)):
+        node_shapes.add(s)
+    for s, _, _ in g.triples((None, RDF.type, SH.PropertyShape)):
+        prop_shapes.add(s)
+    # SHACL infers PropertyShape via sh:path / sh:property targets.
+    for s, _, _ in g.triples((None, SH.path, None)):
+        prop_shapes.add(s)
+    for _, _, o in g.triples((None, SH.property, None)):
+        prop_shapes.add(o)
+    # SHACL infers NodeShape via sh:targetClass / sh:property subjects.
+    for s, _, _ in g.triples((None, SH.targetClass, None)):
+        node_shapes.add(s)
+    for s, _, _ in g.triples((None, SH.property, None)):
+        if s not in prop_shapes:
+            node_shapes.add(s)
+    # Shapes referenced only via the four logical operators (sh:not, sh:and,
+    # sh:or, sh:xone) — these may be anonymous inline shapes that carry no
+    # other shape-defining predicate. We still need to decode their
+    # constraint components so the lifter can inline them as nested shapes.
+    logical_obj_preds = [SH["not"], SH["and"], SH["or"], SH.xone]
+    for pred in logical_obj_preds:
+        for _, _, obj in g.triples((None, pred, None)):
+            if pred == SH["not"]:
+                terms = [obj]
+            else:
+                terms = lists.get(obj, []) if isinstance(obj, BNode) else [obj]
+            for term in terms:
+                if term in node_shapes or term in prop_shapes:
+                    continue
+                # Default to property-shape semantics for nested inline shapes
+                # (property-style constraints — datatype, pattern, cardinality
+                # — are by far the most common nested-shape contents). The
+                # constraint-component decoder treats both shape kinds
+                # uniformly anyway via _SHACL_PROPERTY_COMPONENTS.
+                prop_shapes.add(term)
+
+    def _init(term):
+        return out.setdefault(
+            term,
+            {
+                "target_class": None,
+                "target_node": [],
+                "target_subjects_of": [],
+                "target_objects_of": [],
+                "path": None,
+                "property_shape_terms": [],
+                "constraint_specs": [],
+                "logical_terms": {},
+                "qualified": [],
+            },
+        )
+
+    for term in node_shapes:
+        payload = _init(term)
+        payload["shape_kind"] = "nodeShape"
+
+    for term in prop_shapes:
+        payload = _init(term)
+        payload["shape_kind"] = "propertyShape"
+
+    # Targets.
+    for s, _, o in g.triples((None, SH.targetClass, None)):
+        if s in out:
+            out[s]["target_class"] = _term_str(o) or str(o)
+    for s, _, o in g.triples((None, SH.targetNode, None)):
+        if s in out:
+            out[s]["target_node"].append(_term_str(o) or str(o))
+    for s, _, o in g.triples((None, SH.targetSubjectsOf, None)):
+        if s in out:
+            out[s]["target_subjects_of"].append(_term_str(o) or str(o))
+    for s, _, o in g.triples((None, SH.targetObjectsOf, None)):
+        if s in out:
+            out[s]["target_objects_of"].append(_term_str(o) or str(o))
+
+    # sh:path on property shapes (only IRI paths handled deterministically;
+    # other path shapes get stringified).
+    for s, _, o in g.triples((None, SH.path, None)):
+        if s in out:
+            if isinstance(o, URIRef):
+                out[s]["path"] = str(o)
+            else:
+                out[s]["path"] = str(o)
+
+    # sh:property links NodeShape → PropertyShape.
+    for s, _, o in g.triples((None, SH.property, None)):
+        if s in out:
+            out[s]["property_shape_terms"].append(o)
+
+    # Simple constraint components on property shapes.
+    for pred, (kind, extractor) in _SHACL_PROPERTY_COMPONENTS.items():
+        for s, _, o in g.triples((None, pred, None)):
+            if s not in out:
+                continue
+            spec_value = extractor(g, o, lists)
+            spec: Dict[str, Any] = {"kind": kind, "value": spec_value}
+            out[s]["constraint_specs"].append(spec)
+
+    # Node-shape components (these may overlap with property-shape preds for
+    # the SHACL meta vocabulary, but the predicate set above keeps both shapes
+    # accumulating in their own payloads).
+    for pred, (kind, extractor) in _SHACL_NODE_COMPONENTS.items():
+        for s, _, o in g.triples((None, pred, None)):
+            if s not in out or out[s].get("shape_kind") != "nodeShape":
+                continue
+            spec_value = extractor(g, o, lists)
+            # Avoid duplicate emission if the same predicate was also added via
+            # the property-shape table (only happens for meta predicates).
+            already = any(
+                existing.get("kind") == kind and existing.get("value") == spec_value
+                for existing in out[s]["constraint_specs"]
+            )
+            if not already:
+                out[s]["constraint_specs"].append({"kind": kind, "value": spec_value})
+
+    # sh:not / sh:and / sh:or / sh:xone: record the linked shape terms for the
+    # post-processor to wire as nested-spec references.
+    logical_preds = {
+        SH["not"]: "shaclNot",
+        SH["and"]: "shaclAnd",
+        SH["or"]: "shaclOr",
+        SH.xone: "shaclXone",
+    }
+    for pred, kind in logical_preds.items():
+        for s, _, o in g.triples((None, pred, None)):
+            if s not in out:
+                continue
+            if pred == SH["not"]:
+                terms = [o]
+            else:
+                terms = lists.get(o, []) if isinstance(o, BNode) else [o]
+            out[s]["logical_terms"].setdefault(kind, []).extend(terms)
+
+    # Qualified value shapes: sh:qualifiedValueShape + sh:qualifiedMinCount /
+    # sh:qualifiedMaxCount.
+    for s, _, o in g.triples((None, SH.qualifiedValueShape, None)):
+        if s not in out:
+            continue
+        q_min = next(g.objects(s, SH.qualifiedMinCount), None)
+        q_max = next(g.objects(s, SH.qualifiedMaxCount), None)
+        entry = {"value_shape_term": o}
+        if q_min is not None:
+            try:
+                entry["min_count"] = int(str(q_min))
+            except (TypeError, ValueError):
+                pass
+        if q_max is not None:
+            try:
+                entry["max_count"] = int(str(q_max))
+            except (TypeError, ValueError):
+                pass
+        out[s]["qualified"].append(entry)
+
+    return out
+
+
+def _lift_to_constraint_nodes(
+    kg: KnowledgeGraph,
+    g: rdflib.Graph,
+    restriction_terms: Dict[BNode, str],
+    shacl_payloads: Dict[Any, Dict[str, Any]],
+    shacl_term_to_id: Dict[Any, str],
+) -> None:
+    """Mutate the KG in place so OWL restrictions and SHACL shapes appear as
+    first-class :class:`KGNodeConstraint` / :class:`KGPropertyConstraint` nodes.
+
+    Steps:
+
+    1. Each OWL ``owl:Restriction`` (currently emitted as ``KGBlank``) is
+       replaced by a ``KGPropertyConstraint`` carrying the equivalent
+       ``constraintSpecs`` payload. ``constraintTargetProperty`` edges are
+       added to the property the restriction is ``owl:onProperty``.
+    2. ``rdfs:subClassOf`` edges from a class to such a restriction are removed
+       and replaced by a wrapping ``KGNodeConstraint`` linked via
+       ``constraintTargetClass`` to the class and via ``sh:property`` to each
+       associated PropertyConstraint.
+    3. Class-level axioms (``equivalentClass``, ``disjointWith``, ``oneOf``,
+       ``hasKey``, ``disjointUnionOf``) materialise as anonymous
+       ``KGNodeConstraint`` nodes (in addition to remaining on
+       ``kg.axioms`` for the existing class-diagram conversion).
+    4. SHACL shapes from ``shacl_payloads`` materialise their full
+       ``constraintSpecs`` and target / ``sh:property`` edges.
+    """
+    nodes_by_id: Dict[str, KGNode] = {n.id: n for n in kg.nodes}
+    edges_by_id: Dict[str, KGEdge] = {e.id: e for e in kg.edges}
+
+    def _next_edge_id() -> str:
+        i = len(edges_by_id) + 1
+        while f"cedge:{i}" in edges_by_id:
+            i += 1
+        return f"cedge:{i}"
+
+    def _next_node_id(prefix: str) -> str:
+        i = 1
+        while f"{prefix}{i}" in nodes_by_id:
+            i += 1
+        return f"{prefix}{i}"
+
+    def _add_edge(src: KGNode, tgt: KGNode, label: str, iri: str) -> KGEdge:
+        eid = _next_edge_id()
+        edge = KGEdge(id=eid, source=src, target=tgt, label=label, iri=iri)
+        kg.add_edge(edge)
+        edges_by_id[eid] = edge
+        return edge
+
+    def _replace_node(old: KGNode, new: KGNode) -> None:
+        """Swap a node in the KG, preserving all edges pointing at the old node."""
+        # Remove old, add new.
+        kg.nodes.remove(old)
+        kg.nodes.add(new)
+        nodes_by_id.pop(old.id, None)
+        nodes_by_id[new.id] = new
+        # Re-wire edges.
+        for e in list(kg.edges):
+            if e.source is old:
+                e.source = new
+            if e.target is old:
+                e.target = new
+
+    # 1. Replace OWL restriction KGBlank nodes with KGPropertyConstraint.
+    blank_to_pc: Dict[str, KGPropertyConstraint] = {}
+    for bnode_term, blank_id in restriction_terms.items():
+        old = nodes_by_id.get(blank_id)
+        if old is None or not isinstance(old, KGBlank):
+            continue
+        payload = dict(old.metadata)
+        specs = _restriction_payload_to_specs(payload)
+        if not specs:
+            continue  # leave unknown restrictions as blank nodes
+        on_property_iri = payload.get("on_property")
+        pc = KGPropertyConstraint(
+            id=old.id,
+            label=old.label or "PropertyConstraint",
+            iri=None,
+            metadata={
+                "constraintSpecs": specs,
+                "isAnonymous": True,
+                "source": "owl",
+                "onPropertyIri": on_property_iri,
+            },
+        )
+        _replace_node(old, pc)
+        blank_to_pc[old.id] = pc
+        # Add constraintTargetProperty edge to the property node (if known).
+        if on_property_iri and on_property_iri in nodes_by_id:
+            prop_node = nodes_by_id[on_property_iri]
+            if isinstance(prop_node, KGProperty):
+                _add_edge(pc, prop_node, "constraintTargetProperty", CONSTRAINT_TARGET_PROPERTY)
+
+    # 2. For each class that's rdfs:subClassOf a restriction-now-PC, replace
+    #    that edge with a wrapping NodeConstraint.
+    if blank_to_pc:
+        class_to_pcs: Dict[str, List[KGPropertyConstraint]] = {}
+        edges_to_remove: List[KGEdge] = []
+        for e in list(kg.edges):
+            if e.iri == str(RDFS.subClassOf):
+                tgt_id = e.target.id
+                if tgt_id in blank_to_pc and isinstance(e.source, KGClass):
+                    class_to_pcs.setdefault(e.source.id, []).append(blank_to_pc[tgt_id])
+                    edges_to_remove.append(e)
+        for e in edges_to_remove:
+            kg.edges.discard(e)
+            edges_by_id.pop(e.id, None)
+        for class_id, pcs in class_to_pcs.items():
+            class_node = nodes_by_id[class_id]
+            wrapper_id = _next_node_id(f"nc:{class_id}#")
+            nc = KGNodeConstraint(
+                id=wrapper_id,
+                label=f"{class_node.label or 'Class'} restrictions",
+                metadata={"constraintSpecs": [], "isAnonymous": True, "source": "owl"},
+            )
+            kg.add_node(nc)
+            nodes_by_id[nc.id] = nc
+            _add_edge(nc, class_node, "constraintTargetClass", CONSTRAINT_TARGET_CLASS)
+            for pc in pcs:
+                _add_edge(nc, pc, "property", SH_PROPERTY)
+
+    # 3. Materialise class-level axioms as NodeConstraints (in addition to the
+    #    typed kg.axioms records).
+    def _axiom_nc(label: str, target_class_id: str, specs: List[Dict[str, Any]]) -> None:
+        target_node = nodes_by_id.get(target_class_id)
+        if not isinstance(target_node, KGClass):
+            return
+        nid = _next_node_id(f"nc:axiom:{target_class_id}#")
+        nc = KGNodeConstraint(
+            id=nid,
+            label=label,
+            metadata={"constraintSpecs": specs, "isAnonymous": True, "source": "owl-axiom"},
+        )
+        kg.add_node(nc)
+        nodes_by_id[nc.id] = nc
+        _add_edge(nc, target_node, "constraintTargetClass", CONSTRAINT_TARGET_CLASS)
+
+    for axiom in list(kg.axioms):
+        if isinstance(axiom, EquivalentClassesAxiom) and axiom.class_ids:
+            anchor = axiom.class_ids[0]
+            others = axiom.class_ids[1:]
+            if others:
+                _axiom_nc("Equivalent", anchor, [{"kind": "equivalentClasses", "value": others}])
+        elif isinstance(axiom, DisjointClassesAxiom) and axiom.class_ids:
+            anchor = axiom.class_ids[0]
+            others = axiom.class_ids[1:]
+            if others:
+                _axiom_nc("Disjoint", anchor, [{"kind": "disjointWith", "value": others}])
+        elif isinstance(axiom, DisjointUnionAxiom) and axiom.union_class_id:
+            _axiom_nc(
+                "Disjoint union",
+                axiom.union_class_id,
+                [{"kind": "disjointUnionOf", "value": list(axiom.part_class_ids)}],
+            )
+        elif isinstance(axiom, HasKeyAxiom) and axiom.class_id:
+            _axiom_nc(
+                "Has key",
+                axiom.class_id,
+                [{"kind": "hasKey", "value": list(axiom.property_ids)}],
+            )
+
+    # 4. SHACL shapes.
+    if shacl_payloads:
+        # Decide which shapes are "top-level" (worth materialising as a
+        # KGNodeConstraint / KGPropertyConstraint node) vs "nested-only"
+        # (only referenced from a logical operator on another shape — we
+        # inline these into the parent's spec value as ``{"specs": [...]}``).
+        def _is_top_level(term: Any, payload: Dict[str, Any]) -> bool:
+            if payload["shape_kind"] == "nodeShape":
+                if any(payload.get(k) for k in (
+                    "target_class", "target_node", "target_subjects_of", "target_objects_of"
+                )):
+                    return True
+            else:  # propertyShape
+                if payload.get("path"):
+                    return True
+            # Named (URIRef) shapes are always materialised so the user can
+            # reuse them by name across the diagram.
+            if isinstance(term, URIRef):
+                return True
+            # Referenced from a top-level node shape via sh:property → still
+            # materialised so the editor can show the sh:property edge.
+            for other_term, other in shacl_payloads.items():
+                if other.get("shape_kind") != "nodeShape":
+                    continue
+                if term in other.get("property_shape_terms", []):
+                    return True
+            return False
+
+        top_level_terms: Set[Any] = {
+            t for t, p in shacl_payloads.items() if _is_top_level(t, p)
+        }
+
+        shape_term_to_node: Dict[Any, KGNode] = {}
+        for term, payload in shacl_payloads.items():
+            if term not in top_level_terms:
+                # Nested-only: kept in shacl_payloads for the logical-spec
+                # builder below, but no node is created.
+                continue
+            existing_id = shacl_term_to_id.get(term)
+            existing = nodes_by_id.get(existing_id) if existing_id else None
+            label = ""
+            for spec in payload["constraint_specs"]:
+                if spec["kind"] == "shaclName":
+                    label = str(spec.get("value") or "")
+                    break
+            if not label:
+                if isinstance(term, URIRef):
+                    label = _local_name(str(term))
+                elif payload.get("path"):
+                    label = _local_name(payload["path"]) + " shape"
+                elif payload.get("target_class"):
+                    label = _local_name(payload["target_class"]) + " shape"
+                else:
+                    label = "Shape"
+            iri = str(term) if isinstance(term, URIRef) else None
+            specs = list(payload["constraint_specs"])
+            if payload["shape_kind"] == "nodeShape":
+                nc = KGNodeConstraint(
+                    id=existing.id if existing else (iri or _next_node_id("nc:shacl:")),
+                    label=label,
+                    iri=iri,
+                    metadata={"constraintSpecs": specs, "source": "shacl", "isAnonymous": iri is None},
+                )
+                if existing:
+                    _replace_node(existing, nc)
+                else:
+                    kg.add_node(nc)
+                    nodes_by_id[nc.id] = nc
+                shape_term_to_node[term] = nc
+                # Wire targetClass edge.
+                target_class_iri = payload.get("target_class")
+                if target_class_iri and target_class_iri in nodes_by_id:
+                    tgt = nodes_by_id[target_class_iri]
+                    if isinstance(tgt, KGClass):
+                        _add_edge(nc, tgt, "constraintTargetClass", CONSTRAINT_TARGET_CLASS)
+            else:
+                pc = KGPropertyConstraint(
+                    id=existing.id if existing else (iri or _next_node_id("pc:shacl:")),
+                    label=label,
+                    iri=iri,
+                    metadata={"constraintSpecs": specs, "source": "shacl", "isAnonymous": iri is None},
+                )
+                if existing:
+                    _replace_node(existing, pc)
+                else:
+                    kg.add_node(pc)
+                    nodes_by_id[pc.id] = pc
+                shape_term_to_node[term] = pc
+                # Wire constraintTargetProperty edge.
+                path_iri = payload.get("path")
+                if path_iri and path_iri in nodes_by_id:
+                    prop = nodes_by_id[path_iri]
+                    if isinstance(prop, KGProperty):
+                        _add_edge(pc, prop, "constraintTargetProperty", CONSTRAINT_TARGET_PROPERTY)
+
+        # Wire sh:property edges from NodeShape → PropertyShape.
+        for term, payload in shacl_payloads.items():
+            src = shape_term_to_node.get(term)
+            if not isinstance(src, KGNodeConstraint):
+                continue
+            for ps_term in payload.get("property_shape_terms", []):
+                tgt = shape_term_to_node.get(ps_term)
+                if isinstance(tgt, KGPropertyConstraint):
+                    _add_edge(src, tgt, "property", SH_PROPERTY)
+
+        # Append shaclNot / shaclAnd / shaclOr / shaclXone specs to each
+        # materialised shape. Each entry resolves to either a {"ref": node-id}
+        # (for top-level referenced shapes) or {"specs": [...]} (for inline /
+        # nested-only shapes), recursing through nested logical operators so
+        # arbitrarily-deep SHACL combinator trees round-trip.
+        def _payload_to_full_specs(payload: Dict[str, Any], visited: Set[Any]) -> List[Dict[str, Any]]:
+            out_specs: List[Dict[str, Any]] = list(payload.get("constraint_specs", []))
+            for kind, terms in (payload.get("logical_terms") or {}).items():
+                nested = [_resolve_nested(t, visited) for t in terms]
+                # shaclNot must have exactly one entry; the importer never
+                # produces more, but guard against malformed input.
+                if kind == "shaclNot":
+                    nested = nested[:1] if nested else [{"specs": []}]
+                out_specs.append({"kind": kind, "value": nested})
+            return out_specs
+
+        def _resolve_nested(term: Any, visited: Set[Any]) -> Dict[str, Any]:
+            if term in visited:
+                # Cyclic reference: bail out with an empty inline shape; the
+                # rdflib graph can express cycles via blank-node loops, but
+                # the editor's spec tree can't.
+                return {"specs": []}
+            tnode = shape_term_to_node.get(term)
+            if tnode is not None:
+                return {"ref": tnode.id}
+            payload = shacl_payloads.get(term)
+            if payload is None:
+                return {"specs": []}
+            return {"specs": _payload_to_full_specs(payload, visited | {term})}
+
+        for term in top_level_terms:
+            payload = shacl_payloads[term]
+            tnode = shape_term_to_node.get(term)
+            if tnode is None:
+                continue
+            logical_specs: List[Dict[str, Any]] = []
+            for kind, terms in (payload.get("logical_terms") or {}).items():
+                nested = [_resolve_nested(t, {term}) for t in terms]
+                if kind == "shaclNot":
+                    nested = nested[:1] if nested else [{"specs": []}]
+                logical_specs.append({"kind": kind, "value": nested})
+            if not logical_specs:
+                continue
+            meta = dict(tnode.metadata)
+            specs = list(meta.get("constraintSpecs", []))
+            specs.extend(logical_specs)
+            meta["constraintSpecs"] = specs
+            tnode.metadata = meta
+
+        # Cleanup: nested-only SHACL shapes were materialised as KGBlank
+        # nodes during the first emission pass (every term becomes a node),
+        # and their raw shape predicates (sh:datatype, sh:minLength, …) plus
+        # the rdf:List spine that joined them (rdf:first / rdf:rest blanks)
+        # live on as KGEdges. Now that the contents are folded into a parent
+        # constraint's nested-spec value, the raw blanks + their incident
+        # edges are redundant. Drop them so the exporter doesn't leak the
+        # same constraints twice (once via the nested spec, once as raw
+        # blank-node triples).
+        nested_blank_ids: Set[str] = set()
+        for term in shacl_payloads:
+            if term in top_level_terms:
+                continue
+            if isinstance(term, BNode):
+                nid = f"_:{str(term)}"
+                if nid in nodes_by_id and isinstance(nodes_by_id[nid], KGBlank):
+                    nested_blank_ids.add(nid)
+        # Walk every list head that fed a logical operator, collecting the
+        # list spine blank nodes (the chained rdf:rest cursors). They have
+        # served their decoding purpose and are about to be re-emitted via
+        # _emit_rdf_list on the export side.
+        rdf_first = str(RDF.first)
+        rdf_rest = str(RDF.rest)
+        list_spine_ids: Set[str] = set()
+        for payload in shacl_payloads.values():
+            for kind, terms in (payload.get("logical_terms") or {}).items():
+                if kind == "shaclNot":
+                    continue  # sh:not takes a single shape, no list
+                # `terms` is the flat list of members; we need the list-head
+                # itself, which we recover by scanning the original Turtle
+                # rdflib graph for the head whose first item is terms[0].
+                for t in terms:
+                    nid_t = f"_:{str(t)}" if isinstance(t, BNode) else None
+                    if nid_t:
+                        list_spine_ids.add(nid_t)  # member blanks already in nested_blank_ids
+        # Sweep any blank node whose only incident edges are rdf:first /
+        # rdf:rest to also-doomed nodes. That's the spine.
+        for blank_node in [n for n in kg.nodes if isinstance(n, KGBlank)]:
+            edges_in = [e for e in kg.edges if e.source.id == blank_node.id or e.target.id == blank_node.id]
+            if not edges_in:
+                continue
+            if all(e.iri in (rdf_first, rdf_rest) for e in edges_in):
+                # If at least one neighbour is a doomed nested blank, this
+                # spine node is doomed too.
+                touching = {e.source.id for e in edges_in} | {e.target.id for e in edges_in}
+                touching.discard(blank_node.id)
+                if touching & nested_blank_ids:
+                    list_spine_ids.add(blank_node.id)
+        # Repeat the spine sweep until no further nodes are added, so chains
+        # of rdf:rest blanks get pruned end-to-end.
+        prev = -1
+        doomed = nested_blank_ids | list_spine_ids
+        while len(doomed) != prev:
+            prev = len(doomed)
+            for blank_node in [n for n in kg.nodes if isinstance(n, KGBlank) and n.id not in doomed]:
+                edges_in = [e for e in kg.edges if e.source.id == blank_node.id or e.target.id == blank_node.id]
+                if not edges_in:
+                    continue
+                if all(e.iri in (rdf_first, rdf_rest) for e in edges_in):
+                    touching = {e.source.id for e in edges_in} | {e.target.id for e in edges_in}
+                    touching.discard(blank_node.id)
+                    if touching & doomed:
+                        doomed.add(blank_node.id)
+        if doomed:
+            surviving_edges = {
+                e for e in kg.edges
+                if e.source.id not in doomed and e.target.id not in doomed
+            }
+            kg.edges = surviving_edges
+            for nid in doomed:
+                node = nodes_by_id.pop(nid, None)
+                if node is not None:
+                    kg.nodes.discard(node)
+            edges_by_id.clear()
+            edges_by_id.update({e.id: e for e in kg.edges})
 
 
 def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
@@ -477,6 +1194,7 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
     combinator_payloads = _decode_class_combinators(g, list_resolutions)
     descriptions = _collect_descriptions(g)
     punned = _detect_punning(g, classes)
+    shacl_payloads = _decode_shacl_shapes(g, list_resolutions)
 
     # Second pass: build nodes.
     nodes_by_key: Dict[str, KGNode] = {}
@@ -580,6 +1298,26 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
     kg = KnowledgeGraph(name="knowledge_graph", nodes=set(nodes_by_key.values()), axioms=axioms)
     for e in edges:
         kg.add_edge(e)
+
+    # Track which terms correspond to which node ids so the lifter can swap
+    # them in place: OWL restriction blank nodes already in nodes_by_key as
+    # ``_:<bnode>`` ids, SHACL shapes via their term -> node-id mapping.
+    restriction_terms: Dict[BNode, str] = {}
+    for bnode_term in restriction_payloads:
+        nid = f"_:{str(bnode_term)}"
+        if nid in nodes_by_key:
+            restriction_terms[bnode_term] = nid
+
+    shacl_term_to_id: Dict[Any, str] = {}
+    for shape_term in shacl_payloads:
+        if isinstance(shape_term, URIRef):
+            shacl_term_to_id[shape_term] = str(shape_term)
+        elif isinstance(shape_term, BNode):
+            nid = f"_:{str(shape_term)}"
+            if nid in nodes_by_key:
+                shacl_term_to_id[shape_term] = nid
+
+    _lift_to_constraint_nodes(kg, g, restriction_terms, shacl_payloads, shacl_term_to_id)
     return kg
 
 

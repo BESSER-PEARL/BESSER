@@ -266,6 +266,19 @@ class LLMOrchestrator:
         self.tool_calls_log: list[dict] = []
         self.total_turns = 0
         self._recent_tool_calls: list[str] = []
+        # Parallel ring buffer of (tool_name, path) entries used by the
+        # per-file modify-loop guard. ``path`` is None for tools that
+        # don't operate on a single file (e.g. ``list_files``,
+        # ``run_command``) — those entries break any in-progress
+        # modify_file streak. Kept separate from ``_recent_tool_calls``
+        # so the legacy uniform-tool ``_is_stuck`` heuristic stays
+        # exactly as it was.
+        self._recent_modify_targets: list[tuple[str, str | None]] = []
+        # Path most recently warned about — prevents the per-file
+        # reminder from firing turn after turn while the LLM is still
+        # working on the SAME file. Resets when a different file or
+        # tool is observed.
+        self._last_modify_warning_path: str | None = None
         self._compaction_count = 0
         self._generator_used: str | None = None
         # Phase 0.5 stack id (e.g. ``"nextjs"``) and the list of metadata
@@ -315,6 +328,14 @@ class LLMOrchestrator:
         self._phase2_exited_cleanly: bool = False
 
     _LOOP_THRESHOLD = 4
+    # Tighter, per-file threshold for the modify_file streak guard.
+    # Long sequences of small modify_file edits on the same path are
+    # the typical "death by a thousand cuts" failure mode: the LLM
+    # keeps making forward progress, so the legacy uniform-tool
+    # ``_is_stuck`` warning (a soft note appended to a tool_result)
+    # doesn't change behaviour. At 3 consecutive single-file edits we
+    # inject a high-salience reminder before the NEXT LLM call.
+    _PER_FILE_MODIFY_THRESHOLD = 3
 
     def _auto_detect_primary_kind(self) -> str | None:
         """Pick the primary model kind from whatever is present.
@@ -1046,6 +1067,38 @@ class LLMOrchestrator:
                 tool_results = self._execute_tool_blocks(tool_blocks, turn)
                 messages.append({"role": "user", "content": tool_results})
 
+                # Per-file modify-loop guard. After the tool_results are
+                # appended, check whether the LLM has just made a streak
+                # of modify_file calls on a single path. If so, inject a
+                # high-salience reminder as a separate user message
+                # BEFORE the next LLM call, so the model sees it at
+                # response-time (not buried inside a tool_result blob).
+                stuck_path = self._consecutive_modify_on_same_file()
+                if stuck_path is not None:
+                    reminder_text = self._build_modify_loop_reminder(stuck_path)
+                    logger.warning(
+                        "Per-file modify loop: %d consecutive modify_file "
+                        "on %s — injecting reminder",
+                        self._PER_FILE_MODIFY_THRESHOLD, stuck_path,
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": reminder_text}],
+                    })
+                    # Record so we don't re-fire on the next turn while
+                    # the LLM is still on the same file. The next
+                    # _consecutive_modify_on_same_file() call will return
+                    # None for ``stuck_path`` until the LLM switches
+                    # files / tools.
+                    self._last_modify_warning_path = stuck_path
+                else:
+                    # Streak broken (LLM switched file/tool) — clear so
+                    # a fresh streak on the same path could re-warn.
+                    if self._recent_modify_targets:
+                        last_tool, last_path = self._recent_modify_targets[-1]
+                        if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
+                            self._last_modify_warning_path = None
+
                 # Save a checkpoint at the end of every full turn so a
                 # crash AFTER tool execution doesn't make the LLM
                 # re-execute the same tool calls on resume. We save
@@ -1128,6 +1181,25 @@ class LLMOrchestrator:
             # the tail.
             if len(self._recent_tool_calls) > self._LOOP_THRESHOLD * 2:
                 self._recent_tool_calls = self._recent_tool_calls[-self._LOOP_THRESHOLD * 2 :]
+
+        # Track (tool, path) for the per-file modify streak guard. We
+        # record ALL tools here — including read-only ones — so that a
+        # ``read_file`` / ``list_files`` between modify calls correctly
+        # breaks the streak. For ``modify_file`` we capture the path;
+        # any other tool gets ``path=None`` and so trips the
+        # uniqueness check in ``_consecutive_modify_on_same_file``.
+        target_path = None
+        if tool_name == "modify_file" and isinstance(block.input, dict):
+            raw_path = block.input.get("path")
+            if isinstance(raw_path, str):
+                # Normalise for stable comparison across mixed
+                # separators (Windows ``\`` vs POSIX ``/``).
+                target_path = raw_path.replace("\\", "/").strip()
+        self._recent_modify_targets.append((tool_name, target_path))
+        if len(self._recent_modify_targets) > self._PER_FILE_MODIFY_THRESHOLD * 2:
+            self._recent_modify_targets = self._recent_modify_targets[
+                -self._PER_FILE_MODIFY_THRESHOLD * 2 :
+            ]
 
         if self.on_progress:
             self.on_progress(turn + 1, tool_name, "executing")
@@ -1741,6 +1813,29 @@ class LLMOrchestrator:
                 ]
                 tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
                 messages.append({"role": "user", "content": tool_results})
+
+                # Per-file modify-loop guard (mirrors Phase 2). The fix
+                # cycle is the most common offender — the LLM gets a
+                # single error to fix and starts dribbling out one-line
+                # modify_file calls instead of rewriting the file.
+                stuck_path = self._consecutive_modify_on_same_file()
+                if stuck_path is not None:
+                    reminder_text = self._build_modify_loop_reminder(stuck_path)
+                    logger.warning(
+                        "Per-file modify loop (fix cycle): %d consecutive "
+                        "modify_file on %s — injecting reminder",
+                        self._PER_FILE_MODIFY_THRESHOLD, stuck_path,
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": reminder_text}],
+                    })
+                    self._last_modify_warning_path = stuck_path
+                else:
+                    if self._recent_modify_targets:
+                        last_tool, last_path = self._recent_modify_targets[-1]
+                        if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
+                            self._last_modify_warning_path = None
             else:
                 break
 
@@ -1830,6 +1925,59 @@ class LLMOrchestrator:
     def _is_stuck(self) -> bool:
         recent = self._recent_tool_calls[-self._LOOP_THRESHOLD:]
         return len(recent) >= self._LOOP_THRESHOLD and len(set(recent)) == 1
+
+    def _consecutive_modify_on_same_file(self) -> str | None:
+        """Return the file path being repeatedly modified, or None.
+
+        Fires when the tail of the recent write-tool history is
+        ``_PER_FILE_MODIFY_THRESHOLD`` consecutive ``modify_file`` calls
+        on the SAME (normalised) path. Any other write-class tool in
+        the window — ``write_file``, ``run_command``, ``delete_file``,
+        etc. — breaks the streak because its slot in the buffer has
+        ``path=None`` (or a different path), so the uniqueness check
+        below fails.
+
+        Resets / suppresses repeat firing: once we've warned about a
+        path, ``_last_modify_warning_path`` is set; subsequent identical
+        streaks return None until the LLM either switches files or
+        switches tools.
+        """
+        n = self._PER_FILE_MODIFY_THRESHOLD
+        recent = self._recent_modify_targets[-n:]
+        if len(recent) < n:
+            return None
+        if any(tool != "modify_file" for tool, _ in recent):
+            return None
+        paths = {path for _, path in recent}
+        if len(paths) != 1:
+            return None
+        path = next(iter(paths))
+        if path is None:
+            # modify_file without a parseable path argument — skip.
+            return None
+        if path == self._last_modify_warning_path:
+            # Already warned about this streak; wait for a real change
+            # of file or tool before firing again.
+            return None
+        return path
+
+    def _build_modify_loop_reminder(self, path: str) -> str:
+        """High-salience system-style reminder text for the per-file
+        modify-streak guard. Worded to push the LLM toward a decisive
+        action (rewrite-or-quit) instead of continuing to dribble out
+        single-line edits.
+        """
+        n = self._PER_FILE_MODIFY_THRESHOLD
+        return (
+            f"<system-reminder>You've called modify_file on `{path}` "
+            f"{n} times in a row. Stop incrementally editing this file. "
+            "EITHER call write_file with the complete new contents for "
+            f"`{path}` in a single call, OR stop modifying this file "
+            "and move on to other work (or call end_turn / produce your "
+            "final response if the file is satisfactory). Do NOT issue "
+            "another modify_file on this same path."
+            "</system-reminder>"
+        )
 
     # ==================================================================
     # Recipe

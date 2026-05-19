@@ -19,6 +19,9 @@ import xml.etree.ElementTree as ET
 
 from besser.BUML.metamodel.bpmn import (
     Activity,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
     BPMNModel,
     CallActivity,
     Collaboration,
@@ -55,6 +58,9 @@ _NS = {
     "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
     "dc": "http://www.omg.org/spec/DD/20100524/DC",
     "di": "http://www.omg.org/spec/DD/20100524/DI",
+    # SEAA'25 agentic extension namespace -- verbatim from WME's
+    # common/types.ts (AGENTIC_NS_URI). See `01-...` D8.
+    "agentic": "https://www.besser-pearl.org/bpmn/agentic",
 }
 
 # BESSER-PEARL is the publishing org for files emitted by this generator.
@@ -107,6 +113,46 @@ _NCNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 def _qname(prefix: str, local: str) -> str:
     """Build an ElementTree expanded-name (``{ns-uri}local``) for a namespaced tag."""
     return f"{{{_NS[prefix]}}}{local}"
+
+
+def _emit_agentic_extension(host_el, obj) -> None:
+    """Emit ``<bpmn:extensionElements><agentic:agentic .../></bpmn:extensionElements>``
+    as the next child of ``host_el`` when ``obj`` is a SEAA'25 agentic subclass.
+
+    Attribute presence per ``01-...`` D8 / WME's ``emitAgenticExtension()``
+    on branch ``dev/bpmn``:
+
+    * ``role`` -- emit iff ``obj`` is an ``AgenticLane``.
+    * ``reflectionMode`` -- emit iff ``obj`` is an ``AgenticTask``.
+    * ``gatewayRole`` -- emit iff ``obj`` is an ``AgenticGateway``.
+    * ``collaborationMode`` -- emit iff ``obj`` is an ``AgenticGateway``.
+    * ``mergingStrategy`` -- emit iff ``obj`` is an ``AgenticGateway`` AND
+      ``obj.merging_strategy is not None`` (equivalently, MERGING role;
+      paper section 4.3 sets the strategy on the merging gateway only).
+    * ``trustScore`` -- emit on every agentic subclass.
+
+    Enum values come through ``<enum>.value`` (the lowercase WME-mirrored
+    strings -- e.g. ``"voting"``, ``"majority"``, ``"diverging"``).
+
+    No-op for non-agentic objects so callers can invoke it unconditionally.
+    """
+    if not isinstance(obj, (AgenticTask, AgenticGateway, AgenticLane)):
+        return
+
+    attrs: dict = {}
+    if isinstance(obj, AgenticLane):
+        attrs["role"] = obj.role.value
+    if isinstance(obj, AgenticTask):
+        attrs["reflectionMode"] = obj.reflection_mode.value
+    if isinstance(obj, AgenticGateway):
+        attrs["gatewayRole"] = obj.gateway_role.value
+        attrs["collaborationMode"] = obj.collaboration_mode.value
+        if obj.merging_strategy is not None:
+            attrs["mergingStrategy"] = obj.merging_strategy.value
+    attrs["trustScore"] = str(obj.trust_score)
+
+    ext_el = ET.SubElement(host_el, _qname("bpmn", "extensionElements"))
+    ET.SubElement(ext_el, _qname("agentic", "agentic"), attrib=attrs)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +298,9 @@ class BPMNGenerator(GeneratorInterface):
                     attrib={"id": self._id_for_obj(lane, "Lane"),
                             "name": lane.name or ""},
                 )
+                # SEAA'25 agentic extensionElements — must precede
+                # <flowNodeRef> per BPMN 2.0 tLane schema. No-op for base Lane.
+                _emit_agentic_extension(lane_el, lane)
                 for member in sort_by_timestamp(lane.flow_nodes):
                     ref = ET.SubElement(lane_el, _qname("bpmn", "flowNodeRef"))
                     ref.text = self._id_for_obj(member, type(member).__name__)
@@ -339,6 +388,10 @@ class BPMNGenerator(GeneratorInterface):
             attrs["default"] = self._id_for_obj(node.default_flow, "Flow")
 
         el = ET.SubElement(parent, _qname("bpmn", tag), attrib=attrs)
+
+        # 2b. SEAA'25 agentic extensionElements — must be the first child of
+        #     any tFlowNode per the BPMN 2.0 schema. No-op for non-agentic.
+        _emit_agentic_extension(el, node)
 
         # 3. <bpmn:incoming> / <bpmn:outgoing> children — required by Camunda
         #    Modeler / bpmn-js (§3.1). Sorted for deterministic output.

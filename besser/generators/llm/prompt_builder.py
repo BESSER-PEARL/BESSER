@@ -226,7 +226,10 @@ Do not rewrite generated files from scratch — make surgical modifications.{pri
 
 1. **Keep changes scoped to the user request.** Don't rewrite generated files
    or add features the user didn't ask for.
-2. **Use modify_file** for changes to existing files. Use write_file only for NEW files.
+2. **Pick the right write tool.** Use `modify_file` for one or two
+   localised edits to an existing file. Use `write_file` for new files
+   and for any existing file that needs three or more changes — one
+   `write_file` is cheaper than a chain of `modify_file` calls.
 3. **Model is truth.** Never invent entities not in the models above. If a
    detail is missing from the JSON, query it with the tools above before
    guessing.
@@ -250,7 +253,13 @@ Do not rewrite generated files from scratch — make surgical modifications.{pri
    mentions them.
 8. **Read before modify.** Read the relevant section of a file before editing it.
    Use offset/limit for large files (>200 lines).
-9. **Be efficient.** One read per file. Write complete files in one call.
+9. **Be efficient. Batch tool calls in one turn.** Issue every
+   independent tool call you can in the SAME turn — read multiple files
+   in one turn, edit multiple files in one turn. When a single file
+   needs three or more changes, prefer one `write_file` over a chain of
+   `modify_file` calls. Each turn is a separate LLM round-trip, so
+   sequential single edits multiply cost; the runner executes batched
+   tool calls in parallel.
 10. **Don't re-read files** you already read. Remember what's in them.
 11. **Check your output against the model before finishing.** Before
     declaring done, verify that every Class's declared attributes and

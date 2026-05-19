@@ -209,9 +209,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "write_file",
         "description": (
-            "Create a new file or completely overwrite an existing file. "
-            "Use for new files (Dockerfiles, configs, auth modules, README). "
-            "For modifying generated code, prefer modify_file instead."
+            "Create a new file or completely overwrite an existing file "
+            "with full contents. Use for new files (Dockerfiles, configs, "
+            "auth modules, README) and for existing files that need three "
+            "or more changes — one write_file is cheaper than a chain of "
+            "modify_file calls. For one or two localised edits to an "
+            "existing file, prefer modify_file."
         ),
         "input_schema": {
             "type": "object",
@@ -226,7 +229,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "name": "modify_file",
         "description": (
             "Apply a targeted search-and-replace edit to an existing file. "
-            "PREFERRED over write_file for modifying generated code. "
+            "Use for small, localised changes (1-2 edits per file). "
+            "If a file needs three or more changes, use write_file with "
+            "the complete new contents instead — fewer round-trips. "
+            "You can issue multiple modify_file calls (across different "
+            "files or different sections) in the SAME turn; the runner "
+            "executes them in parallel. "
             "old_text must match exactly (including whitespace)."
         ),
         "input_schema": {

@@ -1038,6 +1038,97 @@ class BehaviorDeclaration(NamedElement):
         return f'BehaviorDeclaration({self.name}, {self.implementations})'
 
 
+def _stem_role_name(role_name: str) -> tuple[str, str]:
+    """Strip a common English plural suffix from ``role_name``.
+
+    Returns ``(stem, suffix_tag)`` where ``suffix_tag`` is one of:
+
+    - ``"ies"`` -- name ended in ``-ies`` (stem reconstructs the singular as ``stem + "y"``).
+    - ``"es"``  -- name ended in ``-ses``, ``-shes``, ``-ches``, ``-xes`` (plural via ``-es``).
+    - ``"s"``   -- name ended in a lone ``-s`` (simple plural).
+    - ``""``    -- not pluralised (stem is the original name).
+
+    Only conservative English pluralisation rules are applied so that
+    intentional role names like ``"borrower"`` are not mistaken for plurals.
+    """
+    if not role_name:
+        return role_name, ""
+    lower = role_name.lower()
+    if lower.endswith("ies") and len(lower) > 3:
+        # categories -> categor (singular is categor + y -> category)
+        return role_name[:-3] + ("Y" if role_name[-3].isupper() else "y"), "ies"
+    if lower.endswith("es") and len(lower) > 2:
+        # Treat ``-es`` as a plural suffix only when the preceding letters
+        # form one of the canonical English ``-es`` triggers.
+        preceding = lower[:-2]
+        if (preceding.endswith("s") or preceding.endswith("sh") or
+                preceding.endswith("ch") or preceding.endswith("x") or
+                preceding.endswith("z")):
+            return role_name[:-2], "es"
+    if lower.endswith("s") and not lower.endswith("ss") and len(lower) > 1:
+        return role_name[:-1], "s"
+    return role_name, ""
+
+
+def _pluralize_for_role(base: str, suffix_tag: str) -> str:
+    """Apply the same plural style identified by :func:`_stem_role_name`.
+
+    The returned string is the standard English plural of ``base`` for the
+    given ``suffix_tag``. ``suffix_tag == ""`` returns ``base`` unchanged.
+    """
+    if not suffix_tag:
+        return base
+    if suffix_tag == "ies":
+        # User-supplied stem already ends in something; apply ``y -> ies``.
+        if base.lower().endswith("y") and len(base) > 1 and base[-2].lower() not in "aeiou":
+            return base[:-1] + "ies"
+        # If the base does not end in a consonant + 'y' we fall back to '+s'
+        # so the result remains pronounceable (e.g. ``Tag`` -> ``Tags``).
+        return base + "s"
+    if suffix_tag == "es":
+        if (base.lower().endswith(("s", "sh", "ch", "x", "z"))):
+            return base + "es"
+        return base + "s"
+    # default ``"s"``
+    return base + "s"
+
+
+def _match_role_case(template: str, candidate: str) -> str:
+    """Adapt ``candidate`` to mirror the casing convention of ``template``.
+
+    Heuristic:
+    - If ``template`` is all lowercase -> return ``candidate.lower()``.
+    - If ``template`` is all uppercase -> return ``candidate.upper()``.
+    - If ``template`` starts with a lowercase letter (camelCase-ish role
+      like ``borrowedBooks``) -> first char lowercase, rest as-is from
+      ``candidate``.
+    - Otherwise return ``candidate`` unchanged (preserves PascalCase).
+    """
+    if not template:
+        return candidate
+    if template.islower():
+        return candidate.lower()
+    if template.isupper():
+        return candidate.upper()
+    if template[0].islower() and candidate:
+        return candidate[0].lower() + candidate[1:]
+    return candidate
+
+
+def _role_name_matches_class(role_name: str, class_name: str) -> tuple[bool, str]:
+    """Return ``(matches, suffix_tag)`` if ``role_name`` is the (possibly
+    pluralised) lowercase form of ``class_name``.
+
+    The match is exact after stripping a recognised plural suffix and
+    case-folding -- intentionally non-fuzzy so that role names like
+    ``"borrower"`` (pointing to a ``Member`` class) are left alone.
+    """
+    stem, suffix_tag = _stem_role_name(role_name)
+    if stem.lower() == class_name.lower():
+        return True, suffix_tag
+    return False, ""
+
+
 class Class(Type):
     """Represents a class in a modeling context.
 
@@ -1079,6 +1170,58 @@ class Class(Type):
         self.methods: set[Method] = methods if methods is not None else set()
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
+
+    @NamedElement.name.setter
+    def name(self, name: str):
+        """str: Set the name of the class.
+
+        Beyond the validation inherited from :class:`NamedElement`, this
+        setter propagates a class rename to any *role-style* association end
+        names that referenced the old class name. Concretely, for every
+        association end whose ``type`` is this class and whose name is the
+        case-insensitive (possibly pluralised) form of the previous class
+        name, the role name is rewritten to the matching form of the new
+        class name. Role names that intentionally differ from the class name
+        (e.g. ``"borrower"`` pointing to a ``Member`` class) are left alone.
+
+        See :func:`_role_name_matches_class` for the matching rule and
+        :func:`_pluralize_for_role` for the pluralisation policy. Renames
+        that would collide with an existing end name on the same class are
+        skipped to preserve metamodel invariants.
+        """
+        # Capture the previous name *before* we delegate to the base setter,
+        # but only if the object has already been initialised. During
+        # ``__init__`` ``_NamedElement__name`` is not yet set, so this branch
+        # is skipped and we simply install the initial name.
+        old_name = getattr(self, "_NamedElement__name", None)
+        super(Class, Class).name.fset(self, name)
+        if old_name is None or old_name == name:
+            return
+        # ``__associations`` is populated *after* ``super().__init__`` runs
+        # (see ``Class.__init__``). When the setter fires during
+        # construction the attribute does not exist yet -- bail out safely.
+        associations = getattr(self, "_Class__associations", None)
+        if not associations:
+            return
+        for association in associations:
+            for end in association.ends:
+                if end.type is not self:
+                    continue
+                matches, suffix_tag = _role_name_matches_class(end.name, old_name)
+                if not matches:
+                    continue
+                new_role = _pluralize_for_role(name, suffix_tag)
+                new_role = _match_role_case(end.name, new_role)
+                if new_role == end.name:
+                    continue
+                # Avoid creating duplicate role names on the same class.
+                # ``association.ends`` are validated for uniqueness on every
+                # ``ends`` assignment; renaming in place skips that check, so
+                # we replicate the relevant subset here.
+                sibling_names = {e.name for e in association.ends if e is not end}
+                if new_role in sibling_names:
+                    continue
+                end.name = new_role
 
     @property
     def attributes(self) -> set[Property]:

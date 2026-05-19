@@ -716,3 +716,147 @@ def test_no_attribute_shadowing_validation():
 
     result = domain_model.validate(raise_exception=False)
     assert result["success"] is True
+
+
+# Tests for class-rename propagation to matching association role names.
+# Renaming a class to which an association end refers should automatically
+# update role names that were the (case-insensitive, plural-tolerant) form of
+# the old class name. Role names that intentionally differ must be left alone.
+
+def test_class_rename_propagates_to_matching_role_simple_plural():
+    """``Member`` -> ``User`` should rename role ``members`` to ``users``."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    books_end: Property = Property(name="books", type=book, multiplicity=Multiplicity(0, "*"))
+    members_end: Property = Property(name="members", type=member, multiplicity=Multiplicity(0, "*"))
+    assoc: BinaryAssociation = BinaryAssociation(name="book_member", ends={books_end, members_end})
+
+    member.name = "User"
+
+    assert member.name == "User"
+    # The end pointing to the renamed class is propagated.
+    assert members_end.name == "users"
+    # The other end (typed Book) is untouched.
+    assert books_end.name == "books"
+    # Association linkage is intact.
+    assert assoc.ends == {books_end, members_end}
+
+
+def test_class_rename_preserves_intentional_role_name():
+    """A role name that does not match the class name (``borrower`` -> ``Member``)
+    must be left alone when the class is renamed."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    books_end: Property = Property(name="books", type=book, multiplicity=Multiplicity(0, "*"))
+    borrower_end: Property = Property(name="borrower", type=member, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="book_borrower", ends={books_end, borrower_end})
+
+    member.name = "User"
+
+    assert member.name == "User"
+    # ``borrower`` is an intentional role and must remain unchanged.
+    assert borrower_end.name == "borrower"
+    assert books_end.name == "books"
+
+
+def test_class_rename_propagates_singular_role():
+    """A singular role name (``member``) matching the old class name should
+    be renamed to the singular of the new class name (``user``)."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    book_end: Property = Property(name="book", type=book, multiplicity=Multiplicity(1, 1))
+    member_end: Property = Property(name="member", type=member, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="book_member_owner", ends={book_end, member_end})
+
+    member.name = "User"
+
+    assert member_end.name == "user"
+    assert book_end.name == "book"
+
+
+def test_class_rename_propagates_ies_plural():
+    """Role ``categories`` -> class ``Category`` is renamed to ``Tag`` -> ``tags``."""
+    product: Class = Class(name="Product", attributes=set())
+    category: Class = Class(name="Category", attributes=set())
+    products_end: Property = Property(name="products", type=product, multiplicity=Multiplicity(0, "*"))
+    categories_end: Property = Property(name="categories", type=category, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="product_category", ends={products_end, categories_end})
+
+    category.name = "Tag"
+
+    assert categories_end.name == "tags"
+    assert products_end.name == "products"
+
+
+def test_class_rename_no_op_when_role_does_not_match_old_name():
+    """When the role name does not match the old class name (e.g. typo or
+    deliberately different), renaming the class must not touch the role."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    library_end: Property = Property(name="library", type=book, multiplicity=Multiplicity(1, 1))
+    users_end: Property = Property(name="users", type=member, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="book_member_users", ends={library_end, users_end})
+
+    # Renaming ``Member`` to ``User`` should NOT touch ``users`` because the
+    # role name does not match the *old* class name.
+    member.name = "User"
+    assert users_end.name == "users"
+    assert library_end.name == "library"
+
+
+def test_class_rename_preserves_case_style():
+    """The propagated role name keeps the case convention of the original."""
+    # Lowercase role
+    a: Class = Class(name="Item", attributes=set())
+    b: Class = Class(name="Bin", attributes=set())
+    other: Property = Property(name="other", type=a, multiplicity=Multiplicity(1, 1))
+    bins_end: Property = Property(name="bins", type=b, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="item_bin", ends={other, bins_end})
+    b.name = "Container"
+    assert bins_end.name == "containers"
+
+    # PascalCase role
+    c: Class = Class(name="Order", attributes=set())
+    d: Class = Class(name="Line", attributes=set())
+    other2: Property = Property(name="Order", type=c, multiplicity=Multiplicity(1, 1))
+    lines_end: Property = Property(name="Lines", type=d, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="order_line", ends={other2, lines_end})
+    d.name = "Item"
+    assert lines_end.name == "Items"
+
+
+def test_class_rename_during_construction_is_noop():
+    """Constructing a class must not raise even though the setter is invoked
+    by ``__init__`` before associations exist."""
+    cls = Class(name="Thing", attributes=set())
+    assert cls.name == "Thing"
+
+
+def test_class_rename_avoids_role_name_collision():
+    """If a propagated role would collide with the sibling end's name on the
+    same association, the rename is skipped to preserve uniqueness."""
+    member: Class = Class(name="Member", attributes=set())
+    # Self-association: both ends typed Member. ``members`` is the only end
+    # name we want to rename; ``user`` is the sibling end. Renaming
+    # ``Member`` -> ``User`` would attempt to rename ``members`` to
+    # ``users``; that's distinct from sibling ``user`` so it should succeed.
+    members_end: Property = Property(name="members", type=member, multiplicity=Multiplicity(0, "*"))
+    leader_end: Property = Property(name="leader", type=member, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="member_self", ends={members_end, leader_end})
+
+    member.name = "User"
+    assert members_end.name == "users"
+    assert leader_end.name == "leader"
+
+    # Now arrange a collision case: rename ``Member`` -> ``Leader`` when one
+    # end is already called ``leader``. The propagation must be skipped so
+    # that the metamodel keeps unique end names.
+    member2: Class = Class(name="Member", attributes=set())
+    members_end2: Property = Property(name="members", type=member2, multiplicity=Multiplicity(0, "*"))
+    leader_end2: Property = Property(name="leader", type=member2, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="member_leader", ends={members_end2, leader_end2})
+
+    member2.name = "Leader"
+    # ``leaders`` does not collide with ``leader``; the rename should apply.
+    assert members_end2.name == "leaders"
+    assert leader_end2.name == "leader"

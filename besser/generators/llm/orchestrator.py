@@ -52,6 +52,11 @@ from besser.generators.llm.prompt_builder import (
     build_system_prompt,
     build_inventory,
 )
+from besser.generators.llm.stack_metadata import (
+    detect_stack,
+    pre_generate_metadata,
+    stack_label,
+)
 from besser.generators.llm.tool_executor import ToolExecutor
 from besser.generators.llm.tools import get_all_tools, get_all_tools_including_generators
 from besser.generators.llm.tracing import (
@@ -263,6 +268,12 @@ class LLMOrchestrator:
         self._recent_tool_calls: list[str] = []
         self._compaction_count = 0
         self._generator_used: str | None = None
+        # Phase 0.5 stack id (e.g. ``"nextjs"``) and the list of metadata
+        # files it created. Both stay None / [] when Phase 0.5 didn't
+        # run (Python stacks, or unknown target). Used by the inventory
+        # builder to surface "these files were pre-created" to the LLM.
+        self._phase0_5_stack: str | None = None
+        self._phase0_5_files: list[str] = []
         self._inventory: str = ""
         self._start_time: float | None = None
         # Stored as ValidationIssue objects so the recipe captures severity.
@@ -366,6 +377,15 @@ class LLMOrchestrator:
             phase="phase1",
             generator_used=self._generator_used,
         )
+
+        # -- Phase 0.5: Stack-metadata floor (only when no Phase 1 ran) ---
+        # When Phase 1 picked a Python generator (Django / FastAPI /
+        # SQLAlchemy / Pydantic / plain Python), the deterministic
+        # generator already emitted the manifest. Phase 0.5 only
+        # intervenes when Phase 1 was a no-op — i.e. the target is a
+        # stack BESSER doesn't generate (Next.js, Rust, Kotlin / Spring).
+        # This keeps the Python paths byte-identical to today's output.
+        self._run_phase0_5_metadata(instructions)
 
         # -- Phase 1.5: Validate Phase 1 output ---------------------------
         phase1_issues = self._validate_phase1_output()
@@ -757,6 +777,94 @@ class LLMOrchestrator:
 
         # No clear keyword match — let caller decide
         return None
+
+    # ==================================================================
+    # Phase 0.5: Stack-metadata pre-generation
+    # ==================================================================
+
+    def _run_phase0_5_metadata(self, instructions: str) -> None:
+        """Pre-create a minimal build-metadata file for non-Python stacks.
+
+        BESSER's deterministic generators only cover the Python family.
+        For Next.js / Rust / Kotlin requests, the customise loop has
+        historically been expected to invent ``tsconfig.json`` /
+        ``Cargo.toml`` / ``build.gradle.kts`` from scratch — which it
+        occasionally forgets, breaking the per-project compile check.
+
+        This step writes a stack-appropriate manifest as a floor under
+        the customise loop. The LLM is free to extend it (adding
+        dependencies, scripts, etc.) but doesn't have to remember to
+        create it.
+
+        Guarantees:
+          - No-op when Phase 1 actually ran a generator (Python stacks
+            are byte-identical to today's output).
+          - No-op when the target stack isn't one we have a template
+            for (e.g. Go, Ruby, Express — left to the customise loop
+            as before, until templates are added).
+          - Strictly additive: if a file already exists at the target
+            path, it is preserved (covers the rare case where the
+            executor wrote one before Phase 0.5 ran).
+        """
+        # Don't second-guess BESSER's own generators. If Phase 1 ran a
+        # Python generator, the manifest is already on disk and almost
+        # certainly more tailored than our static template would be.
+        if self._generator_used:
+            return
+
+        stack_id = detect_stack(instructions)
+        if stack_id is None:
+            logger.debug(
+                "Phase 0.5: no recognised non-Python stack in instructions; skipping"
+            )
+            return
+
+        try:
+            written = pre_generate_metadata(stack_id, self.output_dir)
+        except Exception as exc:  # pragma: no cover - defensive
+            # A broken template must not abort the whole run — log and
+            # fall through to the customise loop, which can still try
+            # to author the files itself.
+            logger.warning(
+                "Phase 0.5 template write failed for %s: %s", stack_id, exc,
+            )
+            return
+
+        if not written:
+            return
+
+        self._phase0_5_stack = stack_id
+        self._phase0_5_files = list(written)
+        # Tell the customise loop these files already exist. Otherwise
+        # ``_inventory`` is empty for non-Python stacks (Phase 1 skipped)
+        # and the LLM has no signal that the manifest is on disk —
+        # so it might rewrite it from scratch, the very thing this
+        # phase is here to prevent.
+        bullet_files = "\n".join(f"  - {p}" for p in written)
+        self._inventory = (
+            f"Phase 0.5 pre-generated a minimal {stack_label(stack_id)} "
+            f"project manifest:\n{bullet_files}\n\n"
+            "These are MINIMAL but VALID build-config files. Build your "
+            "application on top of them — read them with `read_file` and "
+            "use `modify_file` to add dependencies as needed. Do NOT "
+            "rewrite them from scratch."
+        )
+        self._trace.write(
+            EVENT_PHASE_ENTER,
+            phase="phase0_5",
+            stack=stack_id,
+            files=list(written),
+        )
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase0_5", stack=stack_id)
+        if self.on_progress:
+            # Use the same "skipped" sentinel shape so the smart-gen
+            # progress card stays compact — we don't want a new top-level
+            # row for what is essentially a tiny scaffolding step.
+            self.on_progress(
+                0,
+                "__metadata__",
+                f"{stack_label(stack_id)}: {', '.join(written)}",
+            )
 
     # ==================================================================
     # Phase 1.5: Validate Phase 1 output

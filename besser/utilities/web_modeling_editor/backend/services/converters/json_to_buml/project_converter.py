@@ -6,6 +6,7 @@ not just the active one.
 """
 
 import logging
+from typing import Optional
 
 from . import (
     process_class_diagram,
@@ -16,12 +17,101 @@ from . import (
     process_deployment_diagram,
 )
 from besser.BUML.metamodel.project import Project
-from besser.BUML.metamodel.structural.structural import Metadata
+from besser.BUML.metamodel.structural.structural import Class, DomainModel, Metadata
+from besser.BUML.metamodel.uml_component import ComponentModel
+from besser.BUML.metamodel.uml_deployment import DeploymentModel
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_cross_diagram_references(
+    *,
+    component_models: Optional[list] = None,
+    deployment_models: Optional[list] = None,
+    class_models: Optional[list] = None,
+    bpmn_models: Optional[list] = None,
+) -> dict:
+    """Validate cross-diagram references at the project level.
+
+    Promotes the in-diagram ``validate()`` warnings (W4/W5 on Component,
+    W3 on Deployment) to errors when the referenced peer diagram is
+    loaded in the same project. The per-diagram ``validate()`` itself
+    is unchanged — cross-diagram refs still surface there as warnings.
+    This helper *adds* errors when peers are present and refs dangle.
+
+    Args:
+        component_models: Component diagrams in this project (any
+            number; the union of their Component IDs resolves
+            Artifact.manifests).
+        deployment_models: Deployment diagrams in this project.
+        class_models: Structural class diagrams in this project.
+        bpmn_models: BPMN diagrams in this project (post-BPMN-merge;
+            today the BPMN metamodel is on the parallel SEAA'25 track
+            and the matching mechanism is deferred).
+
+    Returns:
+        ``{"errors": list[str], "warnings": list[str]}``.
+    """
+    errors: list = []
+    warnings: list = []
+    component_models = component_models or []
+    deployment_models = deployment_models or []
+    class_models = class_models or []
+    bpmn_models = bpmn_models or []
+
+    # Artifact.manifests -> Component.id (via Component.layout["id"]).
+    if component_models and deployment_models:
+        component_ids = {
+            (c.layout or {}).get("id")
+            for cm in component_models
+            for c in cm.all_components()
+            if (c.layout or {}).get("id") is not None
+        }
+        for dm in deployment_models:
+            for artifact in dm.all_artifacts():
+                for cid in artifact.manifests:
+                    if cid not in component_ids:
+                        errors.append(
+                            f"Artifact '{artifact.name}' manifests "
+                            f"unknown Component id '{cid}'."
+                        )
+
+    # Component.realizes -> Class.name. B-UML structural Class identity
+    # is by name; if Class ever acquires a stable UUID via D10-style
+    # layout, switch this to UUID matching.
+    if component_models and class_models:
+        class_names = {
+            cls.name
+            for cm in class_models
+            for cls in cm.types
+            if isinstance(cls, Class)
+        }
+        for cm in component_models:
+            for component in cm.all_components():
+                for class_name in component.realizes:
+                    if class_name not in class_names:
+                        errors.append(
+                            f"Component '{component.name}' realizes "
+                            f"unknown Class '{class_name}'."
+                        )
+
+    # Component.process_model_refs -> BPMN Process.id (stub).
+    # Activates once the BPMN baseline merges to master and exposes a
+    # stable Process-ID mechanism (the SEAA'25 BPMN track is where
+    # that ID convention is being established). Until then, silently
+    # no-op — matches the Component-only / Deployment-only / Class-only
+    # cases (no peer present, no check possible).
+    try:
+        from besser.BUML.metamodel.bpmn import BPMNModel  # noqa: F401
+    except ImportError:
+        pass
+    # else: fill in once BPMN's ID mechanism is locked.
+    _ = bpmn_models  # placeholder reference so ruff doesn't flag unused-arg.
+
+    return {"errors": errors, "warnings": warnings}
 
 
 def _is_valid_diagram(diag, diagram_type):
@@ -254,5 +344,22 @@ def json_to_buml_project(project):
     # can read them without changing this function's return type (the
     # public API stays a single Project instance).
     project_instance._nn_diagram_titles = nn_titles
+
+    # Project-level cross-diagram-reference promotion (02b-...).
+    # Classify the already-built models and promote dangling cross-refs
+    # from per-diagram warnings to project-level errors. Result is
+    # stashed on the project so a future /validate-project endpoint can
+    # aggregate it with per-diagram validate() output.
+    cross_class_models = [m for m in model_list if isinstance(m, DomainModel)]
+    cross_component_models = [m for m in model_list if isinstance(m, ComponentModel)]
+    cross_deployment_models = [
+        m for m in model_list if isinstance(m, DeploymentModel)
+    ]
+    project_instance._cross_diagram_errors = _validate_cross_diagram_references(
+        component_models=cross_component_models,
+        deployment_models=cross_deployment_models,
+        class_models=cross_class_models,
+        # bpmn_models filled in once the BPMN baseline merges to master.
+    )
 
     return project_instance

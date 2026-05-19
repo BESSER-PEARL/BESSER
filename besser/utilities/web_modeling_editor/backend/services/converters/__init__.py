@@ -11,6 +11,8 @@ from .json_to_buml import (
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
 )
 from .buml_to_json import (
     class_buml_to_json,
@@ -26,6 +28,10 @@ from .buml_to_json import (
     empty_model,
     nn_model_to_json,
     nn_buml_to_json,
+    component_object_to_json,
+    component_buml_to_json,
+    deployment_object_to_json,
+    deployment_buml_to_json,
 )
 
 __all__ = [
@@ -37,6 +43,8 @@ __all__ = [
     "process_gui_diagram",
     "process_quantum_diagram",
     "process_nn_diagram",
+    "process_component_diagram",
+    "process_deployment_diagram",
     "class_buml_to_json",
     "parse_buml_content",
     "state_machine_to_json",
@@ -50,4 +58,8 @@ __all__ = [
     "empty_model",
     "nn_model_to_json",
     "nn_buml_to_json",
+    "component_object_to_json",
+    "component_buml_to_json",
+    "deployment_object_to_json",
+    "deployment_buml_to_json",
 ]

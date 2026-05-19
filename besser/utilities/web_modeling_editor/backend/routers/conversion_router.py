@@ -49,6 +49,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -371,6 +373,35 @@ async def export_buml(input_data: DiagramInput):
                 content=file_content,
                 media_type="text/plain",
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
+            )
+
+        elif elements_data.get("type") == "ComponentDiagram":
+            # 02-... wires the processor half; emitting the .py needs the
+            # `03-component-deployment-code-builders-guide.md` builder. Until
+            # 03- lands, surface a 400 with a clear message via ConversionError.
+            try:
+                process_component_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Component diagram payload: {exc}"
+                ) from exc
+            raise ConversionError(
+                "Component diagram .py export is gated on the 03- "
+                "code-builder guide; the processor side works but the "
+                "builder is not yet implemented."
+            )
+
+        elif elements_data.get("type") == "DeploymentDiagram":
+            try:
+                process_deployment_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Deployment diagram payload: {exc}"
+                ) from exc
+            raise ConversionError(
+                "Deployment diagram .py export is gated on the 03- "
+                "code-builder guide; the processor side works but the "
+                "builder is not yet implemented."
             )
 
         else:

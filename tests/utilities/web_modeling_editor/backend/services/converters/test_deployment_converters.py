@@ -17,8 +17,6 @@ from besser.BUML.metamodel.uml_deployment import (
     CommunicationPath,
     DeploymentModel,
     DeploymentRelation,
-    Interface,
-    Locality,
     Node,
     NodeKind,
 )

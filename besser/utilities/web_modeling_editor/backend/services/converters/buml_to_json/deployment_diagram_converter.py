@@ -301,10 +301,37 @@ def deployment_buml_to_json(content: str) -> dict:
     """Convert a Deployment BUML ``.py`` file's source text into a WME
     Deployment diagram (JSON).
 
-    **Gated on 03-** — needs ``deployment_model_to_code`` from
-    ``buml_code_builder``. Raises ``ConversionError`` until then.
+    Same posture as ``component_buml_to_json`` — exec in a fresh
+    namespace, locate the ``DeploymentModel``, delegate to
+    ``deployment_object_to_json``. Wraps the four expected exec failure
+    modes into ``ConversionError``; everything else propagates.
     """
-    raise ConversionError(
-        "deployment_buml_to_json is gated on the 03- code-builder guide; "
-        "the file-import path for DeploymentDiagram is not wired yet."
-    )
+    namespace: dict = {}
+    try:
+        exec(content, namespace)
+    except (SyntaxError, NameError, TypeError, ValueError) as exc:
+        raise ConversionError(
+            f"Deployment BUML file failed to execute: {exc}"
+        ) from exc
+
+    model = _find_deployment_model(namespace)
+    if model is None:
+        raise ConversionError(
+            "Deployment BUML file produced no DeploymentModel — expected "
+            "a top-level variable (`deployment_model = DeploymentModel(...)` "
+            "is the convention emitted by `deployment_model_to_code`)."
+        )
+    return deployment_object_to_json(model)
+
+
+def _find_deployment_model(namespace: dict):
+    """Return the DeploymentModel from the exec'd namespace, preferring
+    the conventional ``deployment_model`` variable name; fall back to any
+    DeploymentModel instance."""
+    candidate = namespace.get("deployment_model")
+    if isinstance(candidate, DeploymentModel):
+        return candidate
+    for value in namespace.values():
+        if isinstance(value, DeploymentModel):
+            return value
+    return None

@@ -22,7 +22,11 @@ from besser.BUML.metamodel.uml_deployment import (
     Node,
     NodeKind,
 )
+from besser.utilities.buml_code_builder.deployment_model_builder import (
+    deployment_model_to_code,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.deployment_diagram_converter import (
+    deployment_buml_to_json,
     deployment_object_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.deployment_diagram_processor import (
@@ -31,6 +35,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.multiplicity_format import (
     format_to_name,
     parse_from_name,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 
@@ -426,3 +433,51 @@ class TestMultiplicityFormat:
             format_to_name("worker", Multiplicity(1, UNLIMITED_MAX_MULTIPLICITY))
             == "worker [1..*]"
         )
+
+
+# ---------------------------------------------------------------------------
+# deployment_buml_to_json exec wrapper (03-... §7)
+# ---------------------------------------------------------------------------
+
+class TestDeploymentBumlToJson:
+    def test_round_trips_via_builder(self, real_deployment_diagram):
+        """Full pipeline: JSON -> DeploymentModel -> .py source -> JSON."""
+        model = process_deployment_diagram(real_deployment_diagram)
+        source = deployment_model_to_code(model)
+        result = deployment_buml_to_json(source)
+        assert result["type"] == "DeploymentDiagram"
+        in_ids = sorted(real_deployment_diagram["model"]["elements"].keys())
+        out_ids = sorted(result["elements"].keys())
+        assert in_ids == out_ids
+
+    def test_exec_failure_raises_conversion_error(self):
+        with pytest.raises(ConversionError):
+            deployment_buml_to_json("raise NameError('boom')")
+
+    def test_missing_model_raises_conversion_error(self):
+        with pytest.raises(ConversionError) as exc_info:
+            deployment_buml_to_json("x = 1")
+        assert "no DeploymentModel" in str(exc_info.value)
+
+    def test_finds_model_under_any_var_name(self):
+        source = (
+            "from besser.BUML.metamodel.uml_deployment import DeploymentModel\n"
+            "xyz = DeploymentModel(name='Found')\n"
+        )
+        result = deployment_buml_to_json(source)
+        assert result["type"] == "DeploymentDiagram"
+
+    def test_runtime_error_propagates(self):
+        with pytest.raises(RuntimeError):
+            deployment_buml_to_json("raise RuntimeError('boom')")
+
+    def test_multiplicity_survives_full_pipeline(self, multiplicity_deployment_diagram):
+        """The [3] suffix should round-trip through the .py builder cleanly."""
+        model = process_deployment_diagram(multiplicity_deployment_diagram)
+        source = deployment_model_to_code(model)
+        result = deployment_buml_to_json(source)
+        # Find the artifact in the result.
+        artifacts = [e for e in result["elements"].values()
+                     if e["type"] == "DeploymentArtifact"]
+        assert len(artifacts) == 1
+        assert artifacts[0]["name"] == "agent-runtime [3]"

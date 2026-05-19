@@ -229,12 +229,41 @@ def component_buml_to_json(content: str) -> dict:
     """Convert a Component BUML ``.py`` file's source text into a WME
     Component diagram (JSON).
 
-    **Gated on 03-** — needs ``component_model_to_code`` from
-    ``buml_code_builder`` to round-trip. Until 03- lands, this raises
-    ``ConversionError`` to keep the wiring symmetric with
-    ``deployment_buml_to_json`` and avoid silent 500s.
+    Execs ``content`` in a fresh namespace, finds the resulting
+    ``ComponentModel``, and delegates to ``component_object_to_json``.
+    Wraps the four expected exec failure modes (``SyntaxError``,
+    ``NameError``, ``TypeError``, ``ValueError``) into ``ConversionError``
+    so ``@handle_endpoint_errors`` maps them to a 400. Other exception
+    types propagate as 500s — that's the load-bearing distinction
+    between bad-upload and backend-broken (see 03-... §7 / BPMN 04- §5
+    for the full reasoning).
     """
-    raise ConversionError(
-        "component_buml_to_json is gated on the 03- code-builder guide; "
-        "the file-import path for ComponentDiagram is not wired yet."
-    )
+    namespace: dict = {}
+    try:
+        exec(content, namespace)
+    except (SyntaxError, NameError, TypeError, ValueError) as exc:
+        raise ConversionError(
+            f"Component BUML file failed to execute: {exc}"
+        ) from exc
+
+    model = _find_component_model(namespace)
+    if model is None:
+        raise ConversionError(
+            "Component BUML file produced no ComponentModel — expected "
+            "a top-level variable (`component_model = ComponentModel(...)` "
+            "is the convention emitted by `component_model_to_code`)."
+        )
+    return component_object_to_json(model)
+
+
+def _find_component_model(namespace: dict):
+    """Return the ComponentModel from the exec'd namespace, preferring
+    the conventional ``component_model`` variable name; fall back to any
+    ComponentModel instance in the namespace."""
+    candidate = namespace.get("component_model")
+    if isinstance(candidate, ComponentModel):
+        return candidate
+    for value in namespace.values():
+        if isinstance(value, ComponentModel):
+            return value
+    return None

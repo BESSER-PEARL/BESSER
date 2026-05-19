@@ -28,7 +28,11 @@ from besser.BUML.metamodel.uml_component import (
     Subsystem,
     Tool,
 )
+from besser.utilities.buml_code_builder.component_model_builder import (
+    component_model_to_code,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.component_diagram_converter import (
+    component_buml_to_json,
     component_object_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.component_diagram_processor import (
@@ -38,6 +42,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.stereotype
     apply_component_stereotype_tokens,
     extract_permission_scopes,
     tokenise,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 
@@ -258,9 +265,6 @@ class TestProcessComponentDiagram:
         assert tools[0].name == "Calculator"
 
     def test_missing_model_raises(self):
-        from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-            ConversionError,
-        )
         with pytest.raises(ConversionError):
             process_component_diagram({"title": "x"})
 
@@ -431,3 +435,47 @@ class TestStereotypeHelpers:
         assert tokenise("delegates, solution") == ["delegates", "solution"]
         assert tokenise("") == []
         assert tokenise(None) == []
+
+
+# ---------------------------------------------------------------------------
+# component_buml_to_json exec wrapper (03-... §7)
+# ---------------------------------------------------------------------------
+
+class TestComponentBumlToJson:
+    def test_round_trips_via_builder(self, real_component_diagram):
+        """Full pipeline: JSON -> ComponentModel -> .py source -> JSON."""
+        model = process_component_diagram(real_component_diagram)
+        source = component_model_to_code(model)
+        result = component_buml_to_json(source)
+        assert result["type"] == "ComponentDiagram"
+        # ids survive because component_object_to_json reuses layout["id"]
+        # (which the builder emits in .layout = {...} round-trip).
+        in_ids = sorted(real_component_diagram["model"]["elements"].keys())
+        out_ids = sorted(result["elements"].keys())
+        assert in_ids == out_ids
+
+    def test_exec_failure_raises_conversion_error(self):
+        with pytest.raises(ConversionError):
+            component_buml_to_json("raise NameError('boom')")
+
+    def test_missing_model_raises_conversion_error(self):
+        with pytest.raises(ConversionError) as exc_info:
+            component_buml_to_json("x = 1")
+        assert "no ComponentModel" in str(exc_info.value)
+
+    def test_finds_model_under_any_var_name(self):
+        # The wrapper prefers `component_model` but falls back to any
+        # ComponentModel instance in the namespace.
+        source = (
+            "from besser.BUML.metamodel.uml_component import ComponentModel\n"
+            "xyz = ComponentModel(name='Found')\n"
+        )
+        result = component_buml_to_json(source)
+        assert result["type"] == "ComponentDiagram"
+
+    def test_runtime_error_propagates_as_500(self):
+        # RuntimeError is NOT in the four-tuple — it surfaces as a 500
+        # via @handle_endpoint_errors, not a ConversionError 400.
+        # The test here just verifies the exception is not caught.
+        with pytest.raises(RuntimeError):
+            component_buml_to_json("raise RuntimeError('boom')")

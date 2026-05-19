@@ -17,6 +17,8 @@ from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
+from .component_diagram_converter import component_buml_to_json
+from .deployment_diagram_converter import deployment_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,15 @@ SECTION_CONFIG = {
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
     'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
+    'component_model': ('COMPONENT', 'ComponentDiagram', 'Component Diagram'),
+    'deployment_model': ('DEPLOYMENT', 'DeploymentDiagram', 'Deployment Diagram'),
 }
 
 # All known section header keywords used as boundary markers
-ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN']
+ALL_SECTION_KEYWORDS = [
+    'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
+    'COMPONENT', 'DEPLOYMENT',
+]
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -194,6 +201,12 @@ def _convert_section(
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
+        elif model_name == "component_model":
+            model = component_buml_to_json(section_code)
+
+        elif model_name == "deployment_model":
+            model = deployment_buml_to_json(section_code)
+
         else:
             logger.warning("Unknown model name '%s', skipping conversion", model_name)
             return None
@@ -240,6 +253,14 @@ SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
         '.add_layer(', '.add_tensor_op(', '.add_sub_nn(',
         '.add_configuration(', '.add_train_data(', '.add_test_data(',
     )),
+    ('ComponentDiagram', (
+        'componentmodel(', '.add_component(', '.add_relationship(',
+        'agentcategory.', 'agenticedge(',
+    )),
+    ('DeploymentDiagram', (
+        'deploymentmodel(', '.add_artifact(', 'deploymentrelation(',
+        'communicationpath(',
+    )),
 ]
 
 _SINGLE_DIAGRAM_DEFAULT_TITLES = {
@@ -250,6 +271,8 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'GUINoCodeDiagram': 'GUI Diagram',
     'QuantumCircuitDiagram': 'Quantum Circuit Diagram',
     'NNDiagram': 'NN Diagram',
+    'ComponentDiagram': 'Component Diagram',
+    'DeploymentDiagram': 'Deployment Diagram',
 }
 
 
@@ -275,7 +298,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         raise ValueError(
             "No models defined in 'models=[...]' and the file was not recognized "
             "as a single-diagram BUML file. Supported single-diagram types: "
-            "ClassDiagram, AgentDiagram, StateMachineDiagram, GUINoCodeDiagram, NNDiagram."
+            "ClassDiagram, AgentDiagram, StateMachineDiagram, GUINoCodeDiagram, "
+            "NNDiagram, ComponentDiagram, DeploymentDiagram."
         )
 
     title = _SINGLE_DIAGRAM_DEFAULT_TITLES[diagram_type]
@@ -291,6 +315,10 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             model = gui_buml_to_json(content)
         elif diagram_type == 'NNDiagram':
             model = nn_buml_to_json(content)
+        elif diagram_type == 'ComponentDiagram':
+            model = component_buml_to_json(content)
+        elif diagram_type == 'DeploymentDiagram':
+            model = deployment_buml_to_json(content)
         else:
             raise ValueError(f"Unsupported single-diagram type: {diagram_type}")
     except (SyntaxError, ValueError, TypeError) as e:
@@ -313,6 +341,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "ComponentDiagram": "ComponentDiagram",
+        "DeploymentDiagram": "DeploymentDiagram",
     }
 
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
@@ -458,6 +488,8 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "ComponentDiagram": "ComponentDiagram",
+        "DeploymentDiagram": "DeploymentDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

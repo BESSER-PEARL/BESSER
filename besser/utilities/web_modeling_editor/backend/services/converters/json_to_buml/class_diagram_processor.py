@@ -14,9 +14,40 @@ from besser.BUML.metamodel.structural import (
     Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass,
     Metadata, Parameter, MethodImplementationType, Type
 )
+from besser.BUML.metamodel.structural.structural import (
+    _role_name_matches_class,
+    _stem_role_name,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
 )
+
+# Common verb-derived role aliases that indicate an *intentional* role name
+# rather than an auto-generated class-derived one. When a role end's name
+# matches one of these, we suppress the stale-role warning even if other
+# heuristics fire, because the user clearly chose a domain-specific alias
+# (e.g. ``borrower`` on a ``Member`` end, ``assignee`` on a ``User`` end).
+_INTENTIONAL_ROLE_ALIASES = frozenset({
+    "assignee",
+    "assigner",
+    "author",
+    "borrower",
+    "creator",
+    "editor",
+    "owner",
+    "manager",
+    "leader",
+    "follower",
+    "reviewer",
+    "approver",
+    "requester",
+    "recipient",
+    "sender",
+    "parent",
+    "child",
+    "supervisor",
+    "subordinate",
+})
 
 
 def parse_method_signature_from_code(
@@ -637,6 +668,138 @@ def _process_constraints(
     domain_model.constraints = all_constraints
 
 
+def _looks_class_derived_role(
+    role_name: str,
+    suffix_tag: str,
+    target_class_name: str,
+    end_property: Property,
+    class_names: set[str],
+) -> bool:
+    """Heuristically decide whether ``role_name`` *looks like* an auto-generated
+    class-derived role name (so a mismatch with the target class is suspicious),
+    as opposed to an intentional domain alias (e.g. ``borrower`` on a ``Member``
+    end) which the user clearly chose on purpose.
+
+    The decision is intentionally conservative -- the goal is a useful
+    informational signal, not perfect classification. Heuristics:
+
+    1. Common verb-derived aliases (``assignee``, ``owner``, ``creator``, ...)
+       are treated as intentional and *never* trigger the warning.
+    2. If the singular stem of the role name is a substring of any class name
+       in the model (case-insensitive), the role is probably class-derived.
+       For example, ``members`` (stem ``member``) is class-derived if any
+       class name contains ``member``.
+    3. If the role name is plural (``suffix_tag != ""``) *and* the end's
+       multiplicity allows many (max > 1), the plural form mirrors the
+       auto-naming pattern produced by both the JSON converter
+       (``Class.name.lower()``) and a likely-pluralised refinement -- treat
+       it as class-derived.
+    """
+    # 1. Skip well-known intentional aliases.
+    if role_name.lower() in _INTENTIONAL_ROLE_ALIASES:
+        return False
+
+    stem, _ = _stem_role_name(role_name)
+    stem_lower = stem.lower()
+    if not stem_lower:
+        return False
+
+    # 2. Stem is a substring of any class name in the model -> probably
+    # derived from a class name (possibly a renamed class that left behind
+    # this role, or a class whose name partly overlaps).
+    for cls_name in class_names:
+        if not cls_name:
+            continue
+        if stem_lower in cls_name.lower():
+            # Skip the trivial case where the stem matches the *target*
+            # class -- that's already handled by ``_role_name_matches_class``
+            # and would never reach this helper.
+            if cls_name.lower() == target_class_name.lower():
+                continue
+            return True
+
+    # 3. Plural role name on a ``*-many`` end mirrors auto-naming
+    # conventions like ``members`` for a ``0..*`` end pointing to ``Member``.
+    if suffix_tag:
+        try:
+            max_mult = getattr(end_property.multiplicity, "max", 1)
+        except Exception:
+            max_mult = 1
+        if isinstance(max_mult, int) and max_mult > 1:
+            return True
+
+    return False
+
+
+def _warn_potentially_stale_role_names(
+    domain_model: DomainModel,
+    all_warnings: list[str],
+) -> None:
+    """Walk every association and warn when an end's role name *looks* stale.
+
+    Background: when the visual editor renames a class, it sends a fresh
+    JSON model to this processor, which rebuilds the BUML model from scratch
+    via ``Class.__init__`` -- bypassing the role-name propagation that the
+    ``Class.name`` *setter* performs in the metamodel (see
+    ``_role_name_matches_class`` and its caller in ``structural.py``). If
+    the editor (or any other JSON producer) forgot to update role names in
+    the relationship JSON to track the rename, the BUML model ends up with
+    stale role names like ``members`` on an end pointing to ``User`` (after
+    a Member->User rename).
+
+    This pass is **informational only**: we *log a warning* but do **NOT**
+    auto-rename. Auto-renaming would clobber intentional aliases such as
+    ``borrower`` on a ``Member`` end -- the JSON-side rename (e.g.
+    ``probe_evolution.rename_class``) is the safer point to fix the
+    rename, and a human reviewer can act on the warning when it fires.
+
+    The role-vs-class matching rule mirrors the metamodel's
+    ``_role_name_matches_class`` heuristic exactly (case-insensitive stem
+    compare, conservative English plural stripping). The "looks
+    class-derived" judgment that filters out intentional aliases is in
+    ``_looks_class_derived_role``.
+    """
+    class_names = {
+        t.name for t in domain_model.types
+        if isinstance(t, Class)
+    }
+    for association in domain_model.associations:
+        for end in association.ends:
+            target = end.type
+            if not isinstance(target, Class):
+                continue
+            role_name = end.name
+            if not role_name:
+                continue
+
+            matches, _ = _role_name_matches_class(role_name, target.name)
+            if matches:
+                # Role name already aligns with the target class -- no
+                # rename has gone stale here.
+                continue
+
+            stem, suffix_tag = _stem_role_name(role_name)
+            if not _looks_class_derived_role(
+                role_name, suffix_tag, target.name, end, class_names,
+            ):
+                # Probably an intentional alias (e.g. ``borrower`` ->
+                # ``Member``). Stay quiet.
+                continue
+
+            msg = (
+                f"Association '{association.name}' end role '{role_name}' "
+                f"(stem '{stem}') points to class '{target.name}' but the "
+                f"role name does not match the target class name. This "
+                f"often indicates a stale role name left behind by a "
+                f"class rename in the visual editor (the editor rebuilds "
+                f"the model via Class.__init__, which bypasses the role "
+                f"propagation in Class.name). Review and update the role "
+                f"in the diagram JSON if appropriate."
+            )
+            logger.warning(msg)
+            all_warnings.append(msg)
+
+
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     """Process Class Diagram specific elements."""
     title = json_data.get('title', '')
@@ -685,6 +848,25 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         association_class_candidates, association_by_id,
         elements, domain_model, all_warnings,
     )
+
+    # Stale-role-name detection.
+    #
+    # The metamodel's ``Class.name`` setter (BESSER commit 7a62486d) keeps
+    # role names in sync with class renames -- e.g. renaming ``Member`` to
+    # ``User`` rewrites a ``members`` end-role to ``users``. But the visual
+    # editor never calls that setter: when the user renames a class in the
+    # UI, the editor POSTs a fresh JSON model and we rebuild the BUML model
+    # via ``Class.__init__`` here. If the editor (or any other JSON
+    # producer) forgets to update the relationship JSON's ``role`` fields,
+    # the freshly built model carries stale role names.
+    #
+    # This pass is **informational**: we emit a warning when an end's role
+    # name does not match its target class via the metamodel's matching
+    # heuristic and the role *looks* class-derived. We deliberately do NOT
+    # auto-rename -- doing so would clobber intentional aliases like
+    # ``borrower`` on a ``Member`` end. A human reviewer can act on the
+    # warning when it fires.
+    _warn_potentially_stale_role_names(domain_model, all_warnings)
 
     # Process OCL constraints
     _process_constraints(elements, domain_model, all_warnings)

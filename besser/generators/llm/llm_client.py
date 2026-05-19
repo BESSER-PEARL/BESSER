@@ -761,6 +761,15 @@ class OpenAIProvider(LLMProvider):
                     tok_key: self._max_tokens,
                     "messages": api_messages,
                     "stream": True,
+                    # OpenAI omits the usage object from streaming
+                    # responses by default. Without this flag, every
+                    # chunk has ``chunk.usage is None`` and the
+                    # ``UsageTracker.record(...)`` call below is never
+                    # reached — cost stays frozen at whatever the
+                    # non-streaming Phase 1 / gap-analyzer calls
+                    # already recorded. Requesting the usage chunk
+                    # restores per-turn cost tracking.
+                    "stream_options": {"include_usage": True},
                 }
                 if openai_tools:
                     kwargs["tools"] = openai_tools

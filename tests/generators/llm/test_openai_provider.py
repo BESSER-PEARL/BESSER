@@ -481,6 +481,139 @@ class TestOpenAIProviderStream:
         assert done_event["stop_reason"] == "end_turn"
         assert done_event["content"][0].text == "Hello world"
 
+    def test_stream_requests_usage_chunk(self):
+        """OpenAI streaming must opt into the trailing usage chunk via
+        ``stream_options={"include_usage": True}`` — without it, every
+        chunk's ``usage`` is None and the UsageTracker stays at zero,
+        which makes the SSE cost emitter report a frozen $0.00 cost
+        across all customise-loop turns. Regression test for that bug.
+        """
+        provider = _make_openai_provider()
+
+        chunk = SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="hi", tool_calls=None),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+        provider._client.chat.completions.create.return_value = iter([chunk])
+
+        list(provider.chat_stream(system="sys", messages=[], tools=[]))
+
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs.get("stream_options") == {"include_usage": True}
+
+    def test_stream_records_usage_from_trailing_chunk(self):
+        """When OpenAI emits a trailing usage-only chunk (the API does
+        this when ``include_usage`` is set), the provider must call
+        ``UsageTracker.record(...)`` so cost reflects the streaming
+        call. Without recording, ``estimated_cost`` stays at $0.00
+        and the SSE cost emitter looks frozen.
+        """
+        provider = _make_openai_provider()
+
+        text_chunk = SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="hello", tool_calls=None),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+        # OpenAI's trailing usage-only chunk has empty choices and
+        # populated usage.
+        usage_chunk = SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(
+                prompt_tokens=1000,
+                completion_tokens=500,
+                prompt_tokens_details=None,
+            ),
+        )
+        provider._client.chat.completions.create.return_value = iter(
+            [text_chunk, usage_chunk]
+        )
+
+        list(provider.chat_stream(system="sys", messages=[], tools=[]))
+
+        assert provider.usage.api_calls == 1
+        assert provider.usage.input_tokens == 1000
+        assert provider.usage.output_tokens == 500
+        assert provider.usage.estimated_cost > 0
+
+    def test_streaming_cost_grows_across_turns(self):
+        """End-to-end regression for the frozen-cost bug: simulate a
+        multi-turn customise loop where each turn streams a response
+        with a trailing usage chunk. ``estimated_cost`` must grow
+        monotonically — not freeze at the first turn's value.
+        """
+        provider = _make_openai_provider()
+
+        def _streamed_turn(in_tokens: int, out_tokens: int):
+            text_chunk = SimpleNamespace(
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content="ok", tool_calls=None),
+                    finish_reason="stop",
+                )],
+                usage=None,
+            )
+            usage_chunk = SimpleNamespace(
+                choices=[],
+                usage=SimpleNamespace(
+                    prompt_tokens=in_tokens,
+                    completion_tokens=out_tokens,
+                    prompt_tokens_details=None,
+                ),
+            )
+            return iter([text_chunk, usage_chunk])
+
+        # 5 turns, each adding 1000 in + 500 out tokens
+        provider._client.chat.completions.create.side_effect = [
+            _streamed_turn(1000, 500) for _ in range(5)
+        ]
+
+        costs = []
+        for _ in range(5):
+            list(provider.chat_stream(system="sys", messages=[], tools=[]))
+            costs.append(provider.usage.estimated_cost)
+
+        # Strictly monotonically increasing across turns
+        for prev, curr in zip(costs, costs[1:]):
+            assert curr > prev, (
+                f"Cost froze across turns (got {costs}); the customise "
+                "loop is invisible to the cost tracker again."
+            )
+        assert provider.usage.input_tokens == 5000
+        assert provider.usage.output_tokens == 2500
+        assert provider.usage.api_calls == 5
+
+
+class TestUsageTrackerAccumulation:
+    """Tracker-level invariant: repeated ``record()`` calls must
+    accumulate. This documents the expected behaviour the streaming
+    bug violated indirectly (by never calling ``record()`` at all).
+    """
+
+    def test_record_accumulates_across_calls(self):
+        tracker = UsageTracker("gpt-4o")
+        usage = SimpleNamespace(
+            input_tokens=1000,
+            output_tokens=500,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+
+        costs = []
+        for _ in range(5):
+            tracker.record(usage)
+            costs.append(tracker.estimated_cost)
+
+        for prev, curr in zip(costs, costs[1:]):
+            assert curr == pytest.approx(2 * prev) or curr > prev
+        assert tracker.api_calls == 5
+        assert tracker.input_tokens == 5000
+        assert tracker.output_tokens == 2500
+
 
 # ======================================================================
 # OpenAI import error

@@ -28,6 +28,9 @@ import uuid
 
 from besser.BUML.metamodel.bpmn import (
     Activity,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
     Association,
     BPMNConnectingObject,
     BPMNModel,
@@ -77,6 +80,7 @@ logger = logging.getLogger(__name__)
 # distinct WME ``elements[id]["type"]`` string.
 _TYPE_FOR_CLASS = {
     Task: "BPMNTask",
+    AgenticTask: "BPMNTask",          # SEAA'25 subclass: same WME element type
     Transaction: "BPMNTransaction",   # checked before SubProcess (subclass)
     SubProcess: "BPMNSubprocess",
     "CallActivity": "BPMNCallActivity",  # resolved below
@@ -84,11 +88,13 @@ _TYPE_FOR_CLASS = {
     IntermediateEvent: "BPMNIntermediateEvent",
     EndEvent: "BPMNEndEvent",
     Gateway: "BPMNGateway",
+    AgenticGateway: "BPMNGateway",    # SEAA'25 subclass: same WME element type
     DataObject: "BPMNDataObject",
     DataStore: "BPMNDataStore",
     TextAnnotation: "BPMNAnnotation",
     Group: "BPMNGroup",
     Lane: "BPMNSwimlane",
+    AgenticLane: "BPMNSwimlane",      # SEAA'25 subclass: same WME element type
     Participant: "BPMNPool",
 }
 
@@ -115,6 +121,46 @@ _FLOW_TYPE_FOR_CLASS = {
     MessageFlow: "message",
     Association: "association",
     DataAssociation: "data association",
+}
+
+
+# WME's BPMNTask / BPMNGateway / BPMNSwimlane always serialise these SEAA'25
+# fields with hard defaults when the element is not agentic. Mirror exactly so
+# BESSER-emitted JSON matches WME's own JSON byte-for-byte on non-agentic
+# elements. The values are taken from WME's `dev/bpmn`
+# packages/editor/.../bpmn-{task,gateway,swimlane}.ts ``default*`` statics.
+_WME_TASK_DEFAULTS = {
+    "isAgentic": False,
+    "reflectionMode": "none",
+    "trustScore": 0,
+    # `collaborationMode` is a WME extension beyond paper §4.2 Fig 3b. BESSER
+    # doesn't store it (01-... §6.5 Q-E); emitted as a placeholder so WME's
+    # deserialiser keeps the field present.
+    "collaborationMode": "voting",
+}
+_WME_GATEWAY_DEFAULTS = {
+    "isAgentic": False,
+    "gatewayRole": "diverging",
+    "collaborationMode": "voting",
+    # WME's hard default; emitted unconditionally so the JSON shape stays
+    # WME-compatible even for non-agentic gateways (which have no merging
+    # strategy concept). BESSER's diverging AgenticGateway stores None and
+    # also emits this placeholder (03-... §3.3 decision).
+    "mergingStrategy": "majority",
+    "trustScore": 0,
+}
+_WME_LANE_DEFAULTS = {
+    "isAgentic": False,
+    "role": "worker",
+    "trustScore": 0,
+}
+_WME_FLOW_AGENTIC_DEFAULTS = {
+    # AgenticMessageFlow is out of scope (01-... Q-D / §6.5). WME's BPMNFlow
+    # always carries these fields; emit defaults so the JSON shape stays
+    # WME-compatible.
+    "isAgentic": False,
+    "collaborationMode": "voting",
+    "mergingStrategy": "majority",
 }
 
 
@@ -315,6 +361,36 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
     if isinstance(obj, Gateway):
         entry["gatewayType"] = obj.gateway_type.value
 
+    # SEAA'25 agentic fields — every Task / Gateway / Lane entry carries
+    # them in WME's JSON shape (defaulted when the element is not agentic).
+    if isinstance(obj, Task):
+        entry.update(_WME_TASK_DEFAULTS)
+        if isinstance(obj, AgenticTask):
+            entry["isAgentic"] = True
+            entry["reflectionMode"] = obj.reflection_mode.value
+            entry["trustScore"] = obj.trust_score
+            # `collaborationMode` stays at the WME placeholder ("voting") --
+            # BESSER doesn't store it (01-... §6.5 Q-E).
+    if isinstance(obj, Gateway):
+        entry.update(_WME_GATEWAY_DEFAULTS)
+        if isinstance(obj, AgenticGateway):
+            entry["isAgentic"] = True
+            entry["gatewayRole"] = obj.gateway_role.value
+            entry["collaborationMode"] = obj.collaboration_mode.value
+            # mergingStrategy: emit the agentic value when MERGING (non-None);
+            # on DIVERGING gateways (None in the metamodel) leave the WME
+            # placeholder "majority" from _WME_GATEWAY_DEFAULTS so the JSON
+            # shape stays byte-identical to WME's own export (03-... §3.3).
+            if obj.merging_strategy is not None:
+                entry["mergingStrategy"] = obj.merging_strategy.value
+            entry["trustScore"] = obj.trust_score
+    if isinstance(obj, Lane):
+        entry.update(_WME_LANE_DEFAULTS)
+        if isinstance(obj, AgenticLane):
+            entry["isAgentic"] = True
+            entry["role"] = obj.role.value
+            entry["trustScore"] = obj.trust_score
+
     return entry
 
 
@@ -375,6 +451,11 @@ def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
     }
     if isinstance(flow, SequenceFlow):
         entry["isDefault"] = flow.is_default
+
+    # AgenticMessageFlow is out of scope (01-... Q-D). WME's BPMNFlow always
+    # carries these fields; emit WME defaults so the JSON shape stays
+    # WME-compatible regardless of flow class.
+    entry.update(_WME_FLOW_AGENTIC_DEFAULTS)
 
     relationships[id_for(flow)] = entry
 

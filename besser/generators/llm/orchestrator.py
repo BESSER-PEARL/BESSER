@@ -146,9 +146,22 @@ def _classify_issue(message: str) -> ValidationIssue:
             return ValidationIssue("style", text)
         return ValidationIssue("warning", text)
 
-    # tsc errors are usually warnings (often missing @types packages,
-    # not actual code bugs). Treat them as warnings unless they're
-    # clearly fatal — keeping it simple for v1.
+    # Per-project toolchain failures (tsc / cargo / kotlinc) are
+    # blockers: they mean the artifact does not compile on its own
+    # toolchain, which is the per-project compile-pass criterion the
+    # bench checks. The Phase 3 fix loop must drive these to zero.
+    # ``tsc info`` / ``cargo info`` etc. (informational lines our
+    # collectors emit when the binary is missing or the project has
+    # no errors) are NOT prefixed this way — only real error lines
+    # land here.
+    if (text.startswith("tsc [")
+            or text.startswith("cargo [")
+            or text.startswith("kotlinc [")):
+        return ValidationIssue("blocker", text)
+
+    # Legacy ``tsc `` (no bracket) prefix — kept as a soft warning so
+    # any caller that constructs strings outside the collector path
+    # doesn't trip the fix loop unexpectedly.
     if text.startswith("tsc "):
         return ValidationIssue("warning", text)
 
@@ -160,6 +173,15 @@ _READONLY_TOOLS = frozenset({"read_file", "list_files", "search_in_files", "chec
 
 # Maximum workers for parallel tool execution
 _MAX_PARALLEL_WORKERS = 4
+
+# Phase 3 toolchain-fix outer cap. The LLM gets up to this many
+# (collect → fix-loop → re-collect) iterations before we accept the
+# remaining toolchain errors and move on. Each iteration is the
+# existing 5-turn LLM fix loop, so the worst-case extra cost is
+# 3 × 5 = 15 LLM turns. Kept low to bound the bill — if tsc / cargo
+# / kotlinc errors don't converge in 3 rounds, more rounds aren't
+# going to help.
+_MAX_TOOLCHAIN_FIX_ITERATIONS = 3
 
 
 class LLMOrchestrator:
@@ -1291,11 +1313,25 @@ class LLMOrchestrator:
         Lightweight validation of generated output. If issues found,
         give the LLM a few turns to fix them.
 
-        Checks (no network, no Docker, instant):
+        Checks (no network, no Docker, instant unless the toolchain
+        runs — tsc / cargo / kotlinc each have their own timeout):
         - Python syntax on all .py files
         - Dockerfiles reference files that exist
         - package.json exists if Dockerfile uses npm
         - npm ci -> npm install (common LLM mistake)
+        - ``ruff`` lint (if installed)
+        - ``tsc --noEmit`` on every tsconfig (if tsc installed)
+        - ``cargo check`` on every Cargo.toml (if cargo installed)
+        - ``kotlinc`` on every Kotlin source root (if kotlinc installed)
+
+        Per-project toolchain failures (tsc / cargo / kotlinc) feed
+        into a bounded fix loop: the orchestrator runs up to
+        ``_MAX_TOOLCHAIN_FIX_ITERATIONS`` (collect → 5-turn LLM fix →
+        re-collect) rounds before accepting whatever remains. This
+        closes the gap where Phase 3 used to surface tsc errors as
+        warnings (no fix attempt) and never invoked cargo / kotlinc
+        at all, leaving the per-project compile-pass at 0/n for TS /
+        Rust / Kotlin runs.
         """
         # Skip if runtime budget is exhausted
         if self._start_time is not None:
@@ -1353,21 +1389,197 @@ class LLMOrchestrator:
             )
             return
 
-        fix_prompt = (
-            "Post-generation validation found these BLOCKER issues "
-            "(syntax / dependency / missing-file). Fix every one — they "
-            "prevent the app from running:\n\n"
-            + "\n".join(f"- {i.message}" for i in blockers_before)
-            + "\n\nUse modify_file or write_file as needed. Do NOT touch "
+        # Outer cap: up to _MAX_TOOLCHAIN_FIX_ITERATIONS rounds of
+        # (LLM-fix → re-validate). Each round is the existing 5-turn
+        # fix loop, so worst-case extra cost is bounded at 3 × 5 = 15
+        # LLM turns. Toolchain blockers (tsc / cargo / kotlinc) are
+        # the typical reason for multiple rounds: the LLM fixes one
+        # type error and uncovers the next downstream of it.
+        current_blockers = blockers_before
+        prev_blocker_count = len(blockers_before)
+        last_issues = list(issues)
+
+        for attempt in range(_MAX_TOOLCHAIN_FIX_ITERATIONS):
+            is_first_attempt = attempt == 0
+            self._trace.write(
+                EVENT_PHASE_ENTER,
+                phase="phase3_fix_attempt",
+                attempt=attempt + 1,
+                blockers=len(current_blockers),
+            )
+            self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
+
+            # Re-validate. The bench's per-project compile-pass score
+            # only cares about a clean toolchain, so re-running these
+            # is what actually drives the metric.
+            issues_after = self._collect_validation_issues()
+            last_issues = issues_after
+            blockers_after = [i for i in issues_after if i.severity == "blocker"]
+            self._trace.write(
+                EVENT_PHASE_EXIT,
+                phase="phase3_fix_attempt",
+                attempt=attempt + 1,
+                blockers_remaining=len(blockers_after),
+            )
+
+            if not blockers_after:
+                logger.info(
+                    "Phase 3: All blockers fixed after %d attempt(s) "
+                    "(%d non-blocker remain).",
+                    attempt + 1, len(issues_after),
+                )
+                self._validation_issues = list(issues_after)
+                return
+
+            if len(blockers_after) > len(blockers_before):
+                # Fixes made BLOCKERS worse than the original state →
+                # rollback to pre-Phase-3 and stop. Comparing against
+                # blockers_before (the pre-Phase-3 baseline), not the
+                # previous attempt, so a single transient regression
+                # mid-loop doesn't trigger the rollback.
+                logger.warning(
+                    "Phase 3: Fixes made blockers worse (%d -> %d). "
+                    "Rolling back to keep Phase 2 work.",
+                    len(blockers_before), len(blockers_after),
+                )
+                self._restore_snapshot()
+                self._validation_issues = self._collect_validation_issues()
+                for issue in self._validation_issues:
+                    logger.warning("  Unfixed [%s]: %s", issue.severity, issue.message)
+                return
+
+            if len(blockers_after) >= prev_blocker_count:
+                # No progress this round (same or more blockers than
+                # we started this attempt with). Spending another
+                # 5 turns isn't going to help — exit early instead of
+                # exhausting the iteration budget.
+                logger.warning(
+                    "Phase 3: Attempt %d made no progress (%d -> %d "
+                    "blockers); ending fix loop early.",
+                    attempt + 1, prev_blocker_count, len(blockers_after),
+                )
+                break
+
+            prev_blocker_count = len(blockers_after)
+            current_blockers = blockers_after
+
+        # We get here either by ending the loop early (no progress)
+        # or by exhausting the attempt cap. Record whatever the final
+        # state is so the recipe surfaces it.
+        self._validation_issues = list(last_issues)
+        remaining_blockers = [
+            i for i in last_issues if i.severity == "blocker"
+        ]
+        if remaining_blockers:
+            logger.warning(
+                "Phase 3: %d blocker(s) remain after %d attempt(s); "
+                "accepting as-is.",
+                len(remaining_blockers), _MAX_TOOLCHAIN_FIX_ITERATIONS,
+            )
+            for issue in last_issues:
+                logger.warning("  [%s] %s", issue.severity, issue.message)
+
+    def _invoke_phase3_fix_loop(
+        self,
+        blockers: list[ValidationIssue],
+        is_first_attempt: bool,
+    ) -> None:
+        """Run one 5-turn LLM fix loop against ``blockers``.
+
+        Factored out of ``_run_phase3_validation`` so the outer
+        toolchain-fix iteration cap can call it more than once. Each
+        invocation builds a fresh prompt (so the LLM doesn't see
+        stale context from a previous attempt) and exits as soon as
+        the LLM emits ``end_turn`` or hits the per-loop turn budget.
+
+        The prompt always reproduces the current blocker list verbatim
+        — including any ``tsc [...]:`` / ``cargo [...]:`` /
+        ``kotlinc [...]:`` lines. When toolchain blockers are present,
+        a high-salience reminder is appended instructing the LLM to
+        re-run the toolchain via ``run_command`` after each edit, so
+        the model verifies its own fixes instead of stopping at the
+        first plausible-looking change.
+        """
+        if not blockers:
+            return
+
+        toolchain_blockers = [
+            i for i in blockers
+            if i.message.startswith(("tsc [", "cargo [", "kotlinc ["))
+        ]
+        other_blockers = [
+            i for i in blockers if i not in toolchain_blockers
+        ]
+
+        prompt_parts: list[str] = []
+        if is_first_attempt:
+            prompt_parts.append(
+                "Post-generation validation found these BLOCKER issues "
+                "(syntax / dependency / missing-file / toolchain). Fix "
+                "every one — they prevent the app from running:"
+            )
+        else:
+            prompt_parts.append(
+                "After your previous fixes, these BLOCKER issues "
+                "still remain. Fix every one:"
+            )
+
+        prompt_parts.append("")
+        prompt_parts.extend(f"- {i.message}" for i in blockers)
+        prompt_parts.append("")
+        prompt_parts.append(
+            "Use modify_file or write_file as needed. Do NOT touch "
             "anything unrelated."
         )
-        system = "You are fixing validation errors in generated code. Fix each issue concisely."
+
+        # When the blockers include toolchain errors, instruct the LLM
+        # to drive the toolchain itself with run_command — that's the
+        # only way to know whether a fix actually compiles, and it's
+        # the bench's per-project compile-pass criterion. We do this
+        # as additional text in the same user turn (vs. a separate
+        # message) so the LLM sees the request as part of the brief.
+        if toolchain_blockers:
+            cmds = self._toolchain_commands_for(toolchain_blockers)
+            cmd_lines = "\n".join(f"  - {c}" for c in cmds)
+            prompt_parts.append("")
+            prompt_parts.append(
+                "After each edit, re-run the relevant toolchain check "
+                "using run_command to confirm the error is gone:"
+            )
+            prompt_parts.append(cmd_lines)
+            prompt_parts.append(
+                "Keep iterating (edit -> re-run) until the toolchain "
+                "reports zero errors. Do not declare done while any "
+                "compile / type error is still reported."
+            )
+
+        fix_prompt = "\n".join(prompt_parts)
+        system = (
+            "You are fixing validation errors in generated code. "
+            "Fix each issue concisely. When the report contains "
+            "toolchain errors (tsc / cargo / kotlinc), you MUST "
+            "verify your fix by re-running the toolchain with "
+            "run_command — do not declare done based on the diff alone."
+        )
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
 
-        for turn in range(5):  # max 5 fix turns
+        # Inject a high-salience reminder as a separate user message
+        # right after the prompt. Matches the pattern used by the
+        # per-file modify-loop guard: a <system-reminder>-tagged block
+        # the LLM sees at response-time, not buried inside the prompt.
+        if toolchain_blockers:
+            reminder = self._build_toolchain_reminder(toolchain_blockers)
+            messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": reminder}],
+            })
+
+        for turn in range(5):  # max 5 fix turns per attempt
             self.total_turns += 1
             try:
-                response = self.client.chat(system=system, messages=messages, tools=self.tools)
+                response = self.client.chat(
+                    system=system, messages=messages, tools=self.tools,
+                )
             except Exception as exc:
                 # Surface the failure instead of silently exiting the fix
                 # loop — callers and logs need to see why validation bailed.
@@ -1375,48 +1587,108 @@ class LLMOrchestrator:
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn + 1, exc,
                 )
-                break
+                return
             if response["stop_reason"] == "end_turn":
-                break
+                return
             if response["stop_reason"] == "tool_use":
                 messages.append({"role": "assistant", "content": response["content"]})
                 tool_results = []
                 for block in response["content"]:
                     if hasattr(block, "type") and block.type == "tool_use":
-                        result = self.executor.execute(getattr(block, "name", ""), getattr(block, "input", {}))
-                        tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
+                        result = self.executor.execute(
+                            getattr(block, "name", ""),
+                            getattr(block, "input", {}),
+                        )
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        })
                 messages.append({"role": "user", "content": tool_results})
 
-        # Re-evaluate against blocker count specifically. Style/warning
-        # changes don't justify a rollback — only a worse blocker count.
-        issues_after = self._collect_validation_issues()
-        blockers_after = [i for i in issues_after if i.severity == "blocker"]
-        if not blockers_after:
-            logger.info(
-                "Phase 3: All blockers fixed (%d non-blocker remain).",
-                len(issues_after),
-            )
-            self._validation_issues = list(issues_after)
-        elif len(blockers_after) > len(blockers_before):
-            # Fixes made BLOCKERS worse → rollback to pre-Phase-3 state.
-            logger.warning(
-                "Phase 3: Fixes made blockers worse (%d -> %d). "
-                "Rolling back to keep Phase 2 work.",
-                len(blockers_before), len(blockers_after),
-            )
-            self._restore_snapshot()
-            self._validation_issues = self._collect_validation_issues()
-            for issue in self._validation_issues:
-                logger.warning("  Unfixed [%s]: %s", issue.severity, issue.message)
-        else:
-            self._validation_issues = list(issues_after)
-            if issues_after:
-                logger.warning(
-                    "Phase 3: %d issues remain after fixes (%d blocker)",
-                    len(issues_after), len(blockers_after),
+    def _toolchain_commands_for(
+        self, toolchain_blockers: list[ValidationIssue]
+    ) -> list[str]:
+        """Pick the right re-run command for each toolchain in the report.
+
+        Looks at the prefix on each blocker message (``tsc [...]:``,
+        ``cargo [...]:``, ``kotlinc [...]:``) and returns the matching
+        command (with the project sub-path) the LLM should invoke via
+        ``run_command`` to verify its fix. The list is deduplicated so
+        the same command isn't suggested twice for a multi-error report.
+        """
+        commands: list[str] = []
+        seen: set[str] = set()
+        for issue in toolchain_blockers:
+            msg = issue.message
+            # Extract the bracketed sub-path: ``tsc [frontend]:`` -> ``frontend``
+            match = _re.match(r"(tsc|cargo|kotlinc) \[([^\]]+)\]:", msg)
+            if not match:
+                continue
+            tool, path = match.group(1), match.group(2)
+            if tool == "tsc":
+                # ``npx tsc --noEmit`` works whether or not tsc is on
+                # PATH globally — npm projects nearly always have it
+                # installed locally as a devDependency.
+                cmd = (
+                    f"run_command: command='npx tsc --noEmit', "
+                    f"working_dir='{path}'"
                 )
-                for issue in issues_after:
-                    logger.warning("  [%s] %s", issue.severity, issue.message)
+            elif tool == "cargo":
+                cmd = (
+                    f"run_command: command='cargo check', "
+                    f"working_dir='{path}'"
+                )
+            elif tool == "kotlinc":
+                # The .kt files under the module root, compiled to
+                # /dev/null. The bench uses kotlinc directly too.
+                cmd = (
+                    f"run_command: command='kotlinc -nowarn "
+                    f"-d /tmp/out $(find {path} -name \"*.kt\")', "
+                    f"working_dir='.'"
+                )
+            else:  # pragma: no cover - defensive
+                continue
+            if cmd not in seen:
+                commands.append(cmd)
+                seen.add(cmd)
+        return commands
+
+    def _build_toolchain_reminder(
+        self, toolchain_blockers: list[ValidationIssue]
+    ) -> str:
+        """High-salience reminder text for the toolchain-fix loop.
+
+        Mirrors the shape of ``_build_modify_loop_reminder`` (the
+        per-file modify-loop guard the LLM already recognises) so the
+        model treats the toolchain errors with the same urgency as a
+        rewrite-or-quit warning. The verbatim error lines are quoted
+        in the reminder so they sit in the model's working memory
+        right before its next response.
+        """
+        # Cap the reminder body so a runaway report (e.g. 100 type
+        # errors after a single missing import) doesn't blow out the
+        # context window. The full list is already in the prompt.
+        lines = [i.message for i in toolchain_blockers[:8]]
+        bulleted = "\n".join(f"  - {ln}" for ln in lines)
+        more = (
+            f"\n  - (+{len(toolchain_blockers) - 8} more — see prompt for full list)"
+            if len(toolchain_blockers) > 8 else ""
+        )
+        return (
+            "<system-reminder>"
+            "The generated project does not compile on its own toolchain. "
+            "The bench's per-project compile-pass score is currently 0 "
+            "for this run because of these errors:\n"
+            f"{bulleted}{more}\n\n"
+            "You MUST drive these to zero. After EACH edit, invoke "
+            "run_command with the appropriate toolchain check (npx tsc "
+            "--noEmit / cargo check / kotlinc) and read the output. "
+            "Only call end_turn once the toolchain reports zero errors, "
+            "or after you have made a clear good-faith attempt that the "
+            "remaining errors require dependencies you cannot add."
+            "</system-reminder>"
+        )
 
     def _collect_validation_issues(self) -> list[ValidationIssue]:
         """Collect all validation issues from the output directory.
@@ -1526,12 +1798,15 @@ class LLMOrchestrator:
                     except Exception:
                         pass  # pip not available or timeout — skip
 
-        # ``ruff`` and ``tsc`` are best-effort static checks — they skip
-        # silently if the binary isn't on PATH. Both catch classes of bug
-        # (dead imports, type errors) that would otherwise only surface
-        # at runtime, burning LLM turns.
+        # ``ruff``, ``tsc``, ``cargo``, and ``kotlinc`` are best-effort
+        # static checks — each skips silently if the binary isn't on
+        # PATH. They catch the per-project compile errors that would
+        # otherwise only surface at deploy time (and which are the
+        # remaining gap in the bench's per-project compile-pass score).
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._collect_cargo_issues())
+        raw_issues.extend(self._collect_kotlinc_issues())
 
         return [_classify_issue(s) for s in raw_issues]
 
@@ -1626,6 +1901,207 @@ class LLMOrchestrator:
                 issues.append(f"tsc [{rel}]: {line}")
             if len(err_lines) > 10:
                 issues.append(f"tsc [{rel}]: (+{len(err_lines) - 10} more errors truncated)")
+        return issues
+
+    def _collect_cargo_issues(self) -> list[str]:
+        """Run ``cargo check`` for any Rust crate in the workspace.
+
+        Mirrors ``_collect_tsc_issues`` for the Rust toolchain. Looks
+        for ``Cargo.toml`` files at any depth (skipping the snapshot
+        dir and any ``target/`` build output) and runs ``cargo check
+        --message-format=short`` per crate. Skips silently if ``cargo``
+        is not on PATH — matches the soft-skip pattern the bench uses
+        when the toolchain isn't installed on the run host.
+
+        ``cargo check`` is used in preference to ``cargo build``: it
+        runs the front-end and type-checker without producing artifacts,
+        which is what the per-project compile-pass criterion actually
+        cares about and is ~3-5× faster.
+        """
+        import shutil as _shutil
+        import subprocess
+
+        cargo_bin = _shutil.which("cargo") or _shutil.which("cargo.exe")
+        if not cargo_bin:
+            return []
+
+        crates: list[str] = []
+        for root, _, files in os.walk(self.output_dir):
+            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
+            if rel_root.startswith(_SNAPSHOT_DIR):
+                continue
+            # ``target/`` is the cargo build cache — running cargo
+            # inside it is meaningless. Also skip any vendored deps.
+            parts = rel_root.split("/")
+            if "target" in parts or "vendor" in parts:
+                continue
+            if "Cargo.toml" in files:
+                crates.append(root)
+
+        if not crates:
+            return []
+
+        issues: list[str] = []
+        for crate_dir in crates:
+            rel = os.path.relpath(crate_dir, self.output_dir).replace("\\", "/") or "."
+            try:
+                result = subprocess.run(
+                    [
+                        cargo_bin, "check",
+                        "--message-format=short",
+                        "--quiet",
+                    ],
+                    capture_output=True, text=True, timeout=180,
+                    cwd=crate_dir,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+
+            # cargo emits diagnostics on stderr in short format like:
+            #   src/main.rs:12:5: error[E0308]: mismatched types
+            err_lines = []
+            for ln in (result.stderr or "").splitlines():
+                s = ln.strip()
+                if not s:
+                    continue
+                if s.startswith("error") or ": error" in s:
+                    err_lines.append(s)
+            if not err_lines and result.returncode == 0:
+                continue
+            if not err_lines:
+                # Non-zero exit with no parseable error lines (rare —
+                # network failure resolving deps, missing rustc, etc.).
+                # Surface a single summary line so the LLM can decide
+                # whether to address it.
+                summary = (result.stderr or "").strip().splitlines()
+                tail = summary[-1] if summary else "cargo check failed with no output"
+                issues.append(f"cargo [{rel}]: {tail[:200]}")
+                continue
+            for line in err_lines[:10]:
+                issues.append(f"cargo [{rel}]: {line}")
+            if len(err_lines) > 10:
+                issues.append(
+                    f"cargo [{rel}]: (+{len(err_lines) - 10} more errors truncated)"
+                )
+        return issues
+
+    def _collect_kotlinc_issues(self) -> list[str]:
+        """Run ``kotlinc`` against ``.kt`` sources in the workspace.
+
+        Kotlin / Spring projects from Phase 0.5 ship with a Gradle
+        build, but invoking the Gradle wrapper would pull the network
+        on first run and is far too slow for an inner-loop check. We
+        instead run the standalone ``kotlinc`` compiler on the
+        ``src/main/kotlin`` tree with no class-path (Spring annotations
+        and missing imports still surface as compile errors).
+
+        Limitations (documented for the caller, not bugs):
+          - Type references to external Maven deps will show up as
+            unresolved-reference errors. That's the right call here —
+            it tells the LLM the import / dep listing is wrong, and
+            the project will fail Gradle in the same way.
+          - We only walk one source root per Kotlin module to keep
+            the invocation cheap. Multi-module projects compile one
+            module at a time.
+
+        Soft-skips when ``kotlinc`` is not on PATH (no warning in the
+        recipe — the bench host either has it or doesn't).
+        """
+        import shutil as _shutil
+        import subprocess
+
+        kotlinc_bin = (
+            _shutil.which("kotlinc")
+            or _shutil.which("kotlinc.bat")
+            or _shutil.which("kotlinc.cmd")
+        )
+        if not kotlinc_bin:
+            return []
+
+        # Locate Kotlin source roots. We look for ``src/main/kotlin``
+        # under any directory containing a Gradle build file, which is
+        # the convention every Phase 0.5 Kotlin template lands in.
+        modules: list[str] = []
+        for root, dirs, files in os.walk(self.output_dir):
+            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
+            if rel_root.startswith(_SNAPSHOT_DIR):
+                continue
+            parts = rel_root.split("/")
+            if "build" in parts or ".gradle" in parts:
+                # Don't recurse into build output / Gradle caches.
+                dirs[:] = []
+                continue
+            has_gradle = (
+                "build.gradle.kts" in files
+                or "build.gradle" in files
+            )
+            if not has_gradle:
+                continue
+            src_main_kotlin = os.path.join(root, "src", "main", "kotlin")
+            if os.path.isdir(src_main_kotlin):
+                modules.append(src_main_kotlin)
+
+        if not modules:
+            return []
+
+        issues: list[str] = []
+        for src_root in modules:
+            module_rel = (
+                os.path.relpath(src_root, self.output_dir).replace("\\", "/") or "."
+            )
+            # Collect every .kt file under the source root. Limited to
+            # 200 sources per invocation to keep the command line in
+            # bounds on Windows; if a project exceeds that, the rest
+            # are skipped (and the LLM still sees the first batch).
+            kt_files: list[str] = []
+            for kt_root, _, kt_files_in_dir in os.walk(src_root):
+                for fname in kt_files_in_dir:
+                    if fname.endswith(".kt"):
+                        kt_files.append(os.path.join(kt_root, fname))
+                        if len(kt_files) >= 200:
+                            break
+                if len(kt_files) >= 200:
+                    break
+            if not kt_files:
+                continue
+
+            try:
+                result = subprocess.run(
+                    [kotlinc_bin, "-nowarn", "-d", os.devnull, *kt_files],
+                    capture_output=True, text=True, timeout=180,
+                    cwd=self.output_dir,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+
+            # kotlinc reports diagnostics on stderr as
+            #   /abs/path/Foo.kt:12:5: error: unresolved reference: Bar
+            err_lines = []
+            for ln in (result.stderr or "").splitlines():
+                s = ln.strip()
+                if not s or ": warning:" in s:
+                    continue
+                if ": error:" in s or s.startswith("error:"):
+                    # Strip the absolute path prefix so the LLM sees
+                    # the location relative to the workspace.
+                    err_lines.append(
+                        s.replace(self.output_dir + os.sep, "")
+                         .replace(self.output_dir + "/", "")
+                    )
+            if not err_lines and result.returncode == 0:
+                continue
+            if not err_lines:
+                tail = (result.stderr or "").strip().splitlines()
+                summary = tail[-1] if tail else "kotlinc failed with no output"
+                issues.append(f"kotlinc [{module_rel}]: {summary[:200]}")
+                continue
+            for line in err_lines[:10]:
+                issues.append(f"kotlinc [{module_rel}]: {line}")
+            if len(err_lines) > 10:
+                issues.append(
+                    f"kotlinc [{module_rel}]: "
+                    f"(+{len(err_lines) - 10} more errors truncated)"
+                )
         return issues
 
     # ==================================================================

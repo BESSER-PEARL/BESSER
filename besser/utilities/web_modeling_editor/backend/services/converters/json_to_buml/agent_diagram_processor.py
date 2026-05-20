@@ -31,10 +31,6 @@ from besser.BUML.metamodel.state_machine.agent import (
     DBReply,
     RAGVectorStore,
     RAGTextSplitter,
-    LLMOpenAI,
-    LLMHuggingFace,
-    LLMHuggingFaceAPI,
-    LLMReplicate,
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
@@ -233,9 +229,6 @@ def process_agent_diagram(json_data):
 
     # First pass: Process intents, primitives, and comments
     intent_count = 0
-    # Track ref-resolution requests for ReasoningState until after primitives
-    # are registered on the agent.
-    pending_reasoning_refs: list = []
     for element_id, element in elements.items():
         element_type = element.get("type")
         if element_type == "Comments":
@@ -403,13 +396,9 @@ def process_agent_diagram(json_data):
         if element.get("fallback_message") is not None:
             kwargs["fallback_message"] = element.get("fallback_message")
         rs = agent.new_reasoning_state(**kwargs)
-        # Optional ref lists carried by the JSON node. The metamodel's
-        # ReasoningState does not currently store per-state subsets, so we
-        # attach them as instance attributes for downstream consumers.
-        for ref_field in ("tool_refs", "skill_refs", "workspace_refs"):
-            ref_value = element.get(ref_field)
-            if isinstance(ref_value, list):
-                pending_reasoning_refs.append((rs, ref_field, list(ref_value)))
+        # Tools, skills and workspaces are registered at the agent level and
+        # shared by every reasoning state; the metamodel has no per-state
+        # subset concept, so no per-state ref lists are parsed here.
         states_by_id[element_id] = rs
         return rs
 
@@ -770,34 +759,6 @@ def process_agent_diagram(json_data):
                 # Append to existing description
                 existing_desc = agent.metadata.description or ""
                 agent.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
-
-    # Resolve ReasoningState ref lists by name now that all primitives are
-    # registered on the agent. Stored as plain attributes since the metamodel
-    # does not yet carry per-state subsets.
-    if pending_reasoning_refs:
-        tool_lookup = {t.name: t for t in agent.tools}
-        skill_lookup = {s.name: s for s in agent.skills}
-        workspace_lookup = {w.name: w for w in agent.workspaces}
-        ref_lookup = {
-            "tool_refs": tool_lookup,
-            "skill_refs": skill_lookup,
-            "workspace_refs": workspace_lookup,
-        }
-        for state_obj, ref_field, names in pending_reasoning_refs:
-            lookup = ref_lookup[ref_field]
-            resolved = []
-            for ref_name in names:
-                if not isinstance(ref_name, str):
-                    continue
-                target = lookup.get(ref_name)
-                if target is None:
-                    raise ValueError(
-                        f"AgentReasoningState '{state_obj.name}' references "
-                        f"{ref_field[:-5]} '{ref_name}' which is not "
-                        f"registered on agent '{agent.name}'."
-                    )
-                resolved.append(target)
-            setattr(state_obj, ref_field, resolved)
 
     # Apply default LLM from the customization config block (if set).
     # The customization tab persists which registered LLM is the default;

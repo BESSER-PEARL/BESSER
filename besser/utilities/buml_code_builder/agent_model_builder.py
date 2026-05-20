@@ -163,19 +163,6 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 f.write(f"    num_previous_messages={rag.num_previous_messages},\n")
                 f.write(")\n\n")
 
-        # Check if an LLM is necessary
-        llm_required = False
-        for state in model.states:
-            if state.body:
-                if hasattr(state.body, 'actions') and isinstance(state.body.actions[0], LLMReply):
-                    llm_required = True
-                    break
-
-            if state.fallback_body:
-                if hasattr(state.fallback_body, 'actions') and isinstance(state.fallback_body.actions[0], LLMReply):
-                    llm_required = True
-                    break
-
         # Emit explicit LLM definitions via Agent.new_llm — every consumer
         # (reasoning states, replies, RAG, IC config) references its LLM by
         # name, so the registered list must round-trip exactly.
@@ -211,7 +198,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             f.write("\n")
 
         if not llms:
-            f.write(f"default_llm = None\n\n")
+            f.write("default_llm = None\n\n")
 
         # Write states
         f.write("# STATES\n")

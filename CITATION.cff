@@ -67,8 +67,8 @@ keywords:
   - Language modeling
   - Smart software
 license: MIT
-version: 7.1.0
-date-released: '2026-04-13'
+version: 7.7.2
+date-released: '2026-05-20'
 preferred-citation:
   type: conference-paper
   authors:

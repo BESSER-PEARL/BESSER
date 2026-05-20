@@ -391,8 +391,8 @@ agent.new_tool({{ tool.name }}, description={{ tool.description | string | tojso
 ##############################
 {% for skill in agent.skills %}
 agent.new_skill(
-    name={{ skill.name | string | tojson }},
-    content={{ skill.content | string | tojson }}{% if skill.description %},
+    {{ skill.content | string | tojson }},
+    name={{ skill.name | string | tojson }}{% if skill.description %},
     description={{ skill.description | string | tojson }}{% endif %}
 )
 {% endfor %}

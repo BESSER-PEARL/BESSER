@@ -3,9 +3,12 @@ Version 7.8.0
 
 Minor release headlined by **agent reasoning state support** and
 **multi-LLM configuration** in the BAF (BESSER Agent Framework) code
-generator.  The changes are entirely contained in the BAF generator
-template and the agent-model code builder; no metamodel or API contract
-changes.
+generator.  It adds new agent metamodel classes (``ReasoningState``,
+``Tool``, ``Skill``, ``Workspace``) and multi-LLM factory methods on
+``Agent`` (``new_llm``, ``set_default_llm``, ``new_tool``, ``new_skill``,
+``new_workspace``, ``new_reasoning_state``), surfaced through the BAF
+generator template, the agent-model code builder, and the JSON↔B-UML
+converters.
 
 Agent Reasoning State and Multi-LLM Support
 --------------------------------------------------
@@ -50,10 +53,11 @@ Reasoning State support
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 * Added code generation for ``ReasoningState`` objects: the generator
-  detects reasoning states in the agent model, instantiates them with
-  the appropriate LLM reference and configuration, and emits the
-  necessary import (``from besser.agent.core.reasoning.reasoning_state
-  import ReasoningState``).
+  detects reasoning states in the agent model and emits a
+  ``new_reasoning_state(...)`` call with the appropriate LLM reference
+  (falling back to ``default_llm``) and configuration
+  (``max_steps``, ``enable_task_planning``, ``stream_steps``,
+  ``system_prompt``, ``fallback_message``).
 
 Internal refactoring
 ~~~~~~~~~~~~~~~~~~~~
@@ -61,7 +65,7 @@ Internal refactoring
 * Updated imports in ``besser/utilities/buml_code_builder/agent_model_builder.py``
   to include ``ReasoningState``, ``Tool``, ``Skill``, and ``Workspace``
   as well as the helper functions required by the new generation logic.
-* The BAF generator template (``besser/generators/baf/templates/``) has
-  been refactored for improved modularity, readability, and
+* The BAF generator template (``besser/generators/agents/templates/``)
+  has been refactored for improved modularity, readability, and
   extensibility.
 

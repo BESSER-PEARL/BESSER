@@ -2016,6 +2016,14 @@ class Agent(StateMachine):
                     f"Tool '{tool.name}' code must contain at least one "
                     f"top-level 'def' definition."
                 )
+            # The tool name is emitted as a bare function reference in the
+            # generated agent (``agent.new_tool(<name>, ...)``), so it must be
+            # a valid Python identifier matching the callable defined in code.
+            if not (isinstance(tool.name, str) and tool.name.isidentifier()):
+                errors.append(
+                    f"Tool name '{tool.name}' must be a valid Python "
+                    f"identifier matching the function defined in its code."
+                )
 
         # Skill: must have non-empty content.
         for skill in self.skills:

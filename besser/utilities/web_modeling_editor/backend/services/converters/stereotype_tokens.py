@@ -23,6 +23,7 @@ from typing import Optional
 
 from besser.BUML.metamodel.uml_component import (
     AgentCategory,
+    AgenticComponent,
     AgenticEdgeKind,
     Component,
     Locality as ComponentLocality,
@@ -115,13 +116,33 @@ def parse_agentic_edge_kind(raw: Optional[str]) -> Optional[AgenticEdgeKind]:
     return None
 
 
-def apply_component_stereotype_tokens(component: Component, raw: Optional[str]) -> None:
-    """Apply WME stereotype tokens to a Component (or Skill / Tool / Subsystem).
+def stereotype_has_agentic_tokens(raw: Optional[str]) -> bool:
+    """True if the stereotype string carries any token that requires an
+    ``AgenticComponent`` (an agent-category token or a human-actor token).
 
-    Sets typed slots (``agent_category``, ``locality``, ``is_human``) per the
-    token tables in 02-... §3.3. Unknown tokens land in
-    ``component.stereotypes`` as free-form passthrough. Default tokens
-    (``"component"`` / ``"subsystem"``) are consumed silently.
+    The processor uses this to decide whether to build an ``AgenticComponent``
+    or a plain ``Component`` (04-... base/agentic split). ``locality`` tokens
+    are *not* agentic -- they set ``Component.locality`` and keep the element a
+    plain ``Component``.
+    """
+    for token in tokenise(raw):
+        if token in AGENT_CATEGORY_TOKENS or token in HUMAN_ACTOR_TOKENS:
+            return True
+    return False
+
+
+def apply_component_stereotype_tokens(component: Component, raw: Optional[str]) -> None:
+    """Apply WME stereotype tokens to a Component (or AgenticComponent / Skill /
+    Tool / Subsystem).
+
+    Sets typed slots per the token tables in 02-... §3.3: ``locality`` on any
+    ``Component``; ``agent_category`` / ``is_human`` only on an
+    ``AgenticComponent`` (04-... base/agentic split -- the processor builds an
+    ``AgenticComponent`` when agentic tokens are present, so in practice the
+    agent tokens always land on one). Unknown tokens -- and agent tokens that
+    somehow reach a non-agentic element -- land in ``component.stereotypes`` as
+    free-form passthrough. Default tokens (``"component"`` / ``"subsystem"``)
+    are consumed silently.
 
     No-op if ``raw`` is empty / missing.
     """
@@ -133,13 +154,19 @@ def apply_component_stereotype_tokens(component: Component, raw: Optional[str]) 
         if token in COMPONENT_DEFAULT_STEREOTYPES:
             continue
         if token in AGENT_CATEGORY_TOKENS:
-            component.agent_category = AgentCategory(token)
+            if isinstance(component, AgenticComponent):
+                component.agent_category = AgentCategory(token)
+            else:
+                leftovers.append(token)
             continue
         if token in LOCALITY_TOKENS:
             component.locality = ComponentLocality(token)
             continue
         if token in HUMAN_ACTOR_TOKENS:
-            component.is_human = True
+            if isinstance(component, AgenticComponent):
+                component.is_human = True
+            else:
+                leftovers.append(token)
             continue
         if token in {"skill", "tool"}:
             # Subtype promotion is handled by the processor at construction
@@ -231,11 +258,12 @@ def format_component_stereotype(component: Component) -> str:
     the field entirely (compact round-trip with omitting-style real exports).
     """
     parts = []
-    if component.agent_category is not AgentCategory.NONE:
+    if (isinstance(component, AgenticComponent)
+            and component.agent_category is not AgentCategory.NONE):
         parts.append(component.agent_category.value)
     if component.locality is not ComponentLocality.LOCAL:
         parts.append(component.locality.value)
-    if component.is_human:
+    if isinstance(component, AgenticComponent) and component.is_human:
         parts.append("human")
     for extra in component.stereotypes:
         if extra and extra not in parts:

@@ -9,6 +9,7 @@ cross-diagram-ref dot-assignment per Q1=a).
 from typing import Optional
 
 from besser.BUML.metamodel.uml_component import (
+    AgenticComponent,
     AgenticEdge,
     Component,
     ComponentDependency,
@@ -83,10 +84,11 @@ def _emit_layout_line(var_name: str, layout: Optional[dict]) -> Optional[str]:
 def _collect_imports(model: ComponentModel) -> list:
     """Return the metamodel symbols this model actually needs imported.
 
-    Always include ``ComponentModel``. Pull in concrete classes only when
+    Always include the model class (``ComponentModel`` or, for an agentic
+    model, ``AgenticComponentModel``). Pull in concrete classes only when
     used so the emitted ``.py`` doesn't carry dead imports.
     """
-    needed = {"ComponentModel"}
+    needed = {type(model).__name__}
     has_agent_category = False
     has_locality_nondefault = False
     has_agentic_edge_kind = False
@@ -98,16 +100,18 @@ def _collect_imports(model: ComponentModel) -> list:
             needed.add("Skill")
         elif isinstance(c, Tool):
             needed.add("Tool")
+        elif isinstance(c, AgenticComponent):
+            needed.add("AgenticComponent")
         else:
             needed.add("Component")
-        if c.agent_category.name != "NONE":
+        if isinstance(c, AgenticComponent) and c.agent_category.name != "NONE":
             has_agent_category = True
         if c.locality.name != "LOCAL":
             has_locality_nondefault = True
 
     if model.interfaces:
         needed.add("Interface")
-    if model.permissions:
+    if getattr(model, "permissions", None):
         needed.add("Permission")
 
     for rel in model.relationships:
@@ -131,7 +135,8 @@ def _collect_imports(model: ComponentModel) -> list:
 
     ordered_classes = [
         c for c in (
-            "ComponentModel", "Component", "Subsystem", "Skill", "Tool",
+            "ComponentModel", "AgenticComponentModel",
+            "Component", "Subsystem", "AgenticComponent", "Skill", "Tool",
             "Interface", "Permission",
             "InterfaceProvided", "InterfaceRequired",
             "ComponentDependency", "AgenticEdge",
@@ -152,12 +157,15 @@ def _emit_component(component: Component, var_name: str, dispenser: _NameDispens
     lines = []
     class_name = type(component).__name__
     args = [f"name='{_escape_python_string(component.name)}'"]
-    if component.agent_category.name != "NONE":
-        args.append(f"agent_category=AgentCategory.{component.agent_category.name}")
+    if isinstance(component, AgenticComponent):
+        if component.agent_category.name != "NONE":
+            args.append(
+                f"agent_category=AgentCategory.{component.agent_category.name}"
+            )
+        if component.is_human:
+            args.append("is_human=True")
     if component.locality.name != "LOCAL":
         args.append(f"locality=Locality.{component.locality.name}")
-    if component.is_human:
-        args.append("is_human=True")
     if component.stereotypes:
         args.append(f"stereotypes={_emit_str_list(component.stereotypes)}")
     lines.append(f"{var_name} = {class_name}({', '.join(args)})")
@@ -165,7 +173,7 @@ def _emit_component(component: Component, var_name: str, dispenser: _NameDispens
     # Cross-diagram refs (Q1=a — dot-assignment, omitted when empty).
     if component.realizes:
         lines.append(f"{var_name}.realizes = {_emit_str_list(component.realizes)}")
-    if component.process_model_refs:
+    if isinstance(component, AgenticComponent) and component.process_model_refs:
         lines.append(
             f"{var_name}.process_model_refs = "
             f"{_emit_str_list(component.process_model_refs)}"
@@ -285,8 +293,9 @@ def component_model_to_code(model: ComponentModel,
     lines.append("")
 
     # ----- Model constructor -----
+    model_class = type(model).__name__
     lines.append(
-        f"{model_var_name} = ComponentModel("
+        f"{model_var_name} = {model_class}("
         f"name='{_escape_python_string(model.name)}')"
     )
     lines.append("")
@@ -325,8 +334,8 @@ def component_model_to_code(model: ComponentModel,
             lines.append(f"{model_var_name}.add_interface({var})")
             lines.append("")
 
-    # ----- Permissions (Step 6).
-    permissions_sorted = sort_by_timestamp(model.permissions)
+    # ----- Permissions (Step 6) -- AgenticComponentModel only.
+    permissions_sorted = sort_by_timestamp(getattr(model, "permissions", set()))
     if permissions_sorted:
         lines.append("# --- Permissions ---")
         for permission in permissions_sorted:

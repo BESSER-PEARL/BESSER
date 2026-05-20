@@ -8,9 +8,11 @@ emission, banner stability, determinism.
 import pytest
 
 from besser.BUML.metamodel.uml_component import (
+    AgentCategory,
+    AgenticComponent,
+    AgenticComponentModel,
     AgenticEdge,
     AgenticEdgeKind,
-    AgentCategory,
     Component,
     ComponentDependency,
     ComponentModel,
@@ -57,15 +59,15 @@ class TestComponentModelBuilder:
         assert isinstance(next(iter(rebuilt.relationships)), ComponentDependency)
 
     def test_agentic_edge_with_permissions_round_trips(self):
-        a = Component(name="Solver", agent_category=AgentCategory.SOLUTION)
-        b = Component(name="Worker", agent_category=AgentCategory.SOLUTION)
+        a = AgenticComponent(name="Solver", agent_category=AgentCategory.SOLUTION)
+        b = AgenticComponent(name="Worker", agent_category=AgentCategory.SOLUTION)
         p1 = Permission(name="p1", scope="repo:read")
         p2 = Permission(name="p2", scope="repo:write")
         edge = AgenticEdge(
             source=a, target=b, kind=AgenticEdgeKind.DELEGATES,
             permissions=[p1, p2],
         )
-        model = ComponentModel(
+        model = AgenticComponentModel(
             name="Delegation", components={a, b},
             permissions={p1, p2}, relationships={edge},
         )
@@ -131,10 +133,10 @@ class TestComponentModelBuilder:
         assert rebuilt_c.layout == {"id": "u1", "bounds": {"x": 1}}
 
     def test_cross_diagram_refs_via_dot_assignment(self):
-        c = Component(name="X")
+        c = AgenticComponent(name="X")
         c.realizes = ["class-uuid-1"]
         c.process_model_refs = ["bpmn-uuid-1", "bpmn-uuid-2"]
-        model = ComponentModel(name="m", components={c})
+        model = AgenticComponentModel(name="m", components={c})
         source = component_model_to_code(model)
         assert ".realizes = ['class-uuid-1']" in source
         assert ".process_model_refs = ['bpmn-uuid-1', 'bpmn-uuid-2']" in source

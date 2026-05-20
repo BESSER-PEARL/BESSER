@@ -14,6 +14,8 @@ import pytest
 
 from besser.BUML.metamodel.uml_component import (
     AgentCategory,
+    AgenticComponent,
+    AgenticComponentModel,
     AgenticEdge,
     AgenticEdgeKind,
     Component,
@@ -140,7 +142,7 @@ def agentic_component_diagram():
                     "name": "WorkerAgent", "type": "Component",
                     "owner": "elem-consensus-group",
                     "bounds": {"x": 420, "y": 180, "width": 160, "height": 80},
-                    "stereotype": "component", "displayStereotype": True,
+                    "stereotype": "collaboration", "displayStereotype": True,
                 },
             },
             "relationships": {
@@ -226,9 +228,12 @@ class TestProcessComponentDiagram:
 
     def test_agentic_edge_with_permissions(self, agentic_component_diagram):
         model = process_component_diagram(agentic_component_diagram)
+        # An agentic diagram yields an AgenticComponentModel.
+        assert isinstance(model, AgenticComponentModel)
         # OrchestratorAgent has agent_category=SOLUTION
         agents = [c for c in model.components
-                  if c.agent_category is AgentCategory.SOLUTION]
+                  if isinstance(c, AgenticComponent)
+                  and c.agent_category is AgentCategory.SOLUTION]
         assert len(agents) == 1
         assert agents[0].name == "OrchestratorAgent"
         # One AgenticEdge with kind=DELEGATES and two permissions
@@ -282,12 +287,12 @@ class TestComponentObjectToJson:
         assert out["assessments"] == {}
 
     def test_emits_component_with_typed_stereotype(self):
-        component = Component(
+        component = AgenticComponent(
             name="Agent",
             agent_category=AgentCategory.SOLUTION,
             locality=Locality.EXTERNAL,
         )
-        model = ComponentModel(name="m", components={component})
+        model = AgenticComponentModel(name="m", components={component})
         out = component_object_to_json(model)
         # Find the emitted Component entry.
         entries = [e for e in out["elements"].values()
@@ -299,14 +304,14 @@ class TestComponentObjectToJson:
         assert "external" in stereotype.split()
 
     def test_agentic_edge_emits_dependency_with_kind_and_permissions(self):
-        a = Component(name="A", agent_category=AgentCategory.SOLUTION)
-        b = Component(name="B", agent_category=AgentCategory.SOLUTION)
+        a = AgenticComponent(name="A", agent_category=AgentCategory.SOLUTION)
+        b = AgenticComponent(name="B", agent_category=AgentCategory.SOLUTION)
         p = Permission(name="r1", scope="r1")
         edge = AgenticEdge(
             source=a, target=b, kind=AgenticEdgeKind.DELEGATES,
             permissions=[p],
         )
-        model = ComponentModel(
+        model = AgenticComponentModel(
             name="m", components={a, b},
             permissions={p}, relationships={edge},
         )
@@ -390,7 +395,6 @@ class TestStereotypeHelpers:
         c = Component(name="X")
         # Both empty-string and None should leave the component untouched.
         apply_component_stereotype_tokens(c, "")
-        assert c.agent_category is AgentCategory.NONE
         assert c.stereotypes == []
         apply_component_stereotype_tokens(c, None)
         assert c.stereotypes == []
@@ -409,7 +413,7 @@ class TestStereotypeHelpers:
         assert c.stereotypes == ["weirdo"]
 
     def test_case_insensitive_and_guillemets_stripped(self):
-        c = Component(name="X")
+        c = AgenticComponent(name="X")
         apply_component_stereotype_tokens(c, "«SOLUTION»")
         assert c.agent_category is AgentCategory.SOLUTION
 

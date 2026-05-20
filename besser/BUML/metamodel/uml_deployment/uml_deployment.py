@@ -80,13 +80,19 @@ class NodeKind(Enum):
 
 
 class Locality(Enum):
-    """Where a Node / Artifact is hosted, generalised from a binary ``«external»``
-    stereotype per NR-5 of the requirements review.
+    """Where a Node / Artifact is hosted.
 
-    Mirrors the same-named enum in ``uml_component`` -- the locality
-    classification is meaningful at any of the three levels (Component,
-    Artifact, Node). Kept as a separate class so each metamodel is
-    independently usable.
+    A BESSER **general profile addition** (NR-5 of the requirements review) --
+    *not* part of UML 2.5.1: the spec defines no ``«external»`` standard
+    stereotype and no locality concept (verified against uml-2-5-1-formal-
+    17-12-05 -- Clause 22 Standard Profile, Clause 19 Deployments). UML 2.5.1
+    Clause 19 explicitly anticipates profiles adding deployment stereotypes
+    (e.g. ``«concurrencyMode»``); ``Locality`` is exactly such a profile
+    stereotype. It is **non-agentic** -- it classifies any deployment -- so it
+    stays in the base metamodel.
+
+    Mirrors the same-named enum in ``uml_component`` -- defined once per
+    metamodel so each is independently usable; same semantics.
 
     * ``LOCAL`` -- owned and hosted by us.
     * ``EXTERNAL`` -- third-party API or service we don't own.

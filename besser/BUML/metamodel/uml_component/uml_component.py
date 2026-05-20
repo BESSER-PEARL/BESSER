@@ -1,37 +1,37 @@
-"""UML Component metamodel for B-UML.
+"""UML Component metamodel for B-UML -- vanilla UML 2.5 base.
 
 A first-class B-UML model for UML Component diagrams, alongside ``structural`` /
 ``state_machine`` / ``gui`` / ``bpmn``. Implements the design in
 ``.claude/component-deployment/01-component-deployment-design.md`` (reviewed and
-locked 2026-05-18).
+locked 2026-05-18; the base/agentic split is ``04-...``, 2026-05-20).
+
+This module is **pure UML 2.5 Component modelling**. The agentic-swarm
+stereotype profile is a separate extension in ``agentic.py`` (decision D11,
+revised by ``04-``: the profile was originally baked in here; it now lives in
+its own module, mirroring ``bpmn/bpmn.py`` + ``bpmn/agentic.py``). The package
+``__init__.py`` re-exports both, so ``from besser.BUML.metamodel.uml_component
+import *`` is unchanged for downstream callers.
 
 Hierarchy::
 
-    Element -> NamedElement -> ComponentElement -> {Component, Interface, Permission,
+    Element -> NamedElement -> ComponentElement -> {Component, Interface,
                                                     ComponentRelationship}
                             -> Model -> ComponentModel
 
     Component <|-- Subsystem (a Component that is also a container)
-    Component <|-- Skill
-    Component <|-- Tool
 
     ComponentRelationship <|-- InterfaceProvided
                           <|-- InterfaceRequired
-                          <|-- ComponentDependency <|-- AgenticEdge
+                          <|-- ComponentDependency
 
-Growth path (01-... §3.5) -- constructs designed but intentionally NOT implemented yet.
-Each becomes a plain attribute when pulled into scope; no restructuring is needed:
+Growth path (01-... §3.5) -- constructs designed but intentionally NOT implemented yet:
 
 * UML ``Realization`` as a distinct relationship class (currently absorbed into
   ``Component.realizes: List[str]`` of structural ``Class`` IDs).
 * ``«autoscale»`` policy attributes (sibling to NR-6 in the requirements review).
-* AgentGroup as a resource grouping (NR-6) -- reuse ``Subsystem`` as the structural
-  cluster + an ``Artifact`` (deployment side) that manifests the Subsystem.
 
-The agentic stereotype profile (decision D3, hybrid) carries the swarm intent via
-typed discriminator attributes for the load-bearing distinctions (``AgentCategory``,
-``Locality``, ``AgenticEdgeKind``, ``is_human``) plus a free-form ``stereotypes:
-List[str]`` passthrough on every element for the long tail.
+``Locality`` (below) is a BESSER general profile addition (NR-5) -- see its
+docstring. Everything else in this module is vanilla UML 2.5.
 """
 
 from enum import Enum
@@ -41,31 +41,21 @@ from besser.BUML.metamodel.structural import Model, NamedElement
 
 
 # ---------------------------------------------------------------------------
-# Enumerations (decision D3 -- plain enum.Enum; .value strings match the WME
-# stereotype strings so converters can map by value)
+# Enumerations
 # ---------------------------------------------------------------------------
 
-class AgentCategory(Enum):
-    """The agent's role in a multi-agent governance pattern.
-
-    ``NONE`` marks a non-agent Component (a plain UML Component, an external
-    dependency, a Skill, a Tool). The other four values describe agent roles
-    common to multi-agent governance patterns (Solution does domain work,
-    Supervision evaluates / approves, Consensus mediates merge / decision,
-    Collaboration orchestrates dispatch). Not tied to any specific agent
-    framework or taxonomy -- worked examples (e.g. MOSAICO UNP) are
-    use-case-level illustrations only.
-    """
-    NONE = "none"
-    SOLUTION = "solution"
-    SUPERVISION = "supervision"
-    CONSENSUS = "consensus"
-    COLLABORATION = "collaboration"
-
-
 class Locality(Enum):
-    """Where a Component / Artifact / Node is hosted, generalised from a
-    binary ``«external»`` stereotype per NR-5 of the requirements review.
+    """Where a Component / Artifact / Node is hosted.
+
+    A BESSER **general profile addition** (NR-5 of the requirements review) --
+    *not* part of UML 2.5.1: the spec defines no ``«external»`` standard
+    stereotype and no locality concept (verified against uml-2-5-1-formal-
+    17-12-05 -- Clause 22 Standard Profile, Clause 19 Deployments). UML 2.5.1
+    Clause 19 explicitly anticipates profiles adding deployment stereotypes
+    (e.g. ``«concurrencyMode»``); ``Locality`` is exactly such a profile
+    stereotype. It is **non-agentic** -- it classifies any deployment -- so it
+    stays in the base metamodel rather than the ``agentic.py`` extension, and
+    is shared (defined once per metamodel) with ``uml_deployment``.
 
     * ``LOCAL`` -- owned and hosted by us.
     * ``EXTERNAL`` -- third-party API or service we don't own.
@@ -74,38 +64,6 @@ class Locality(Enum):
     LOCAL = "local"
     EXTERNAL = "external"
     HYBRID = "hybrid"
-
-
-class AgenticEdgeKind(Enum):
-    """The kind of an ``AgenticEdge`` -- a typed dependency between agents
-    and / or capabilities.
-
-    Agent <-> agent kinds (carry permissions per A-4 of the requirements review)::
-        DELEGATES, SUPERVISES, REVISES, COLLABORATES
-
-    Agent -> capability kinds::
-        HAS (-> Skill), USES (-> Tool), GRANTED (-> Permission)
-
-    Capability <-> capability kinds::
-        IMPLEMENTS (Tool -> Skill)
-    """
-    DELEGATES = "delegates"
-    SUPERVISES = "supervises"
-    REVISES = "revises"
-    COLLABORATES = "collaborates"
-    HAS = "has"
-    USES = "uses"
-    GRANTED = "granted"
-    IMPLEMENTS = "implements"
-
-
-# Edge kinds that conceptually flow between two agents.
-_AGENT_TO_AGENT_KINDS = frozenset({
-    AgenticEdgeKind.DELEGATES,
-    AgenticEdgeKind.SUPERVISES,
-    AgenticEdgeKind.REVISES,
-    AgenticEdgeKind.COLLABORATES,
-})
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +91,6 @@ def _checked_str_list(values, label: str) -> List[str]:
                 f"{label} must contain str entries, got {type(value).__name__}"
             )
     return result
-
-
-def _is_agent_endpoint(component: "Component") -> bool:
-    """True if a Component is a valid agent-edge endpoint (agent or human)."""
-    return component.agent_category is not AgentCategory.NONE or component.is_human
 
 
 # ---------------------------------------------------------------------------
@@ -227,75 +180,41 @@ class ComponentElement(NamedElement):
 
 
 # ---------------------------------------------------------------------------
-# Components (decision D11 -- everything-is-a-Component; Skill / Tool / Subsystem
-# subclass it. Permission is a separate ComponentElement per A-4.)
+# Components (Subsystem subclasses Component; the agentic subclasses
+# AgenticComponent / Skill / Tool live in agentic.py)
 # ---------------------------------------------------------------------------
 
 class Component(ComponentElement):
     """A UML Component -- the canonical node in a Component diagram.
 
-    The "everything is a Component" base. ``Skill`` / ``Tool`` / ``Subsystem``
-    subclass this so they pick up the same container / relationship machinery.
+    The base UML 2.5 Component. ``Subsystem`` subclasses it (a Component that is
+    also a container). The agentic-swarm subclasses ``AgenticComponent`` /
+    ``Skill`` / ``Tool`` live in ``agentic.py``.
 
     Args:
         name (str): The component label.
-        agent_category (AgentCategory): The agent's role. ``NONE`` (default) for
-            non-agent components (plain UML Components, external dependencies,
-            Skills, Tools).
         locality (Locality): Where the component is hosted (NR-5). ``LOCAL`` by
             default.
-        is_human (bool): True for a ``«actor / human»`` component (Human Developer
-            in the swarm scenarios). Default False.
         realizes (List[str]): Cross-diagram IDs of structural ``Class`` es this
             component realizes (UML Realization). Default ``[]``.
-        process_model_refs (List[str]): Cross-diagram IDs of BPMN ``Process`` es
-            this component participates in (D3 drill-down). Default ``[]``.
         stereotypes, layout, metadata, timestamp: Inherited from ComponentElement.
 
     Attributes:
-        agent_category (AgentCategory): The agent role.
         locality (Locality): Hosting locality.
-        is_human (bool): Whether this is a human ``«actor / human»`` component.
         realizes (List[str]): Cross-diagram Class IDs.
-        process_model_refs (List[str]): Cross-diagram BPMN Process IDs.
         parent (Subsystem | None): The containing Subsystem (set by the
             ``Subsystem`` container, or None if at model root).
     """
 
-    def __init__(self, name: str = "", agent_category: AgentCategory = None,
-                 locality: Locality = None, is_human: bool = False,
-                 realizes: List[str] = None, process_model_refs: List[str] = None,
+    def __init__(self, name: str = "", locality: Locality = None,
+                 realizes: List[str] = None,
                  stereotypes: List[str] = None, layout: dict = None,
                  metadata=None, timestamp=None):
         super().__init__(name=name, stereotypes=stereotypes, layout=layout,
                          metadata=metadata, timestamp=timestamp)
-        self.agent_category = (agent_category
-                               if agent_category is not None else AgentCategory.NONE)
         self.locality = locality if locality is not None else Locality.LOCAL
-        self.is_human = is_human
         self.realizes = realizes if realizes is not None else []
-        self.process_model_refs = (process_model_refs
-                                   if process_model_refs is not None else [])
         self.__parent: Optional["Subsystem"] = None
-
-    @property
-    def agent_category(self) -> AgentCategory:
-        """AgentCategory: Get the agent role."""
-        return self.__agent_category
-
-    @agent_category.setter
-    def agent_category(self, agent_category: AgentCategory):
-        """AgentCategory: Set the agent role.
-
-        Raises:
-            TypeError: if not an AgentCategory.
-        """
-        if not isinstance(agent_category, AgentCategory):
-            raise TypeError(
-                f"agent_category must be an AgentCategory, "
-                f"got {type(agent_category).__name__}"
-            )
-        self.__agent_category = agent_category
 
     @property
     def locality(self) -> Locality:
@@ -314,22 +233,6 @@ class Component(ComponentElement):
         self.__locality = locality
 
     @property
-    def is_human(self) -> bool:
-        """bool: Whether this is a human ``«actor / human»`` component."""
-        return self.__is_human
-
-    @is_human.setter
-    def is_human(self, is_human: bool):
-        """bool: Set whether this is a human ``«actor / human»`` component.
-
-        Raises:
-            TypeError: if not a bool.
-        """
-        if not isinstance(is_human, bool):
-            raise TypeError(f"is_human must be a bool, got {type(is_human).__name__}")
-        self.__is_human = is_human
-
-    @property
     def realizes(self) -> List[str]:
         """List[str]: Cross-diagram IDs of structural Classes this component realizes."""
         return self.__realizes
@@ -342,22 +245,6 @@ class Component(ComponentElement):
             TypeError: if not a list of str.
         """
         self.__realizes = _checked_str_list(realizes, "realizes")
-
-    @property
-    def process_model_refs(self) -> List[str]:
-        """List[str]: Cross-diagram IDs of BPMN Processes this component participates in."""
-        return self.__process_model_refs
-
-    @process_model_refs.setter
-    def process_model_refs(self, process_model_refs: List[str]):
-        """List[str]: Set the cross-diagram BPMN Process IDs.
-
-        Raises:
-            TypeError: if not a list of str.
-        """
-        self.__process_model_refs = _checked_str_list(
-            process_model_refs, "process_model_refs"
-        )
 
     @property
     def parent(self) -> Optional["Subsystem"]:
@@ -392,14 +279,10 @@ class Subsystem(Component):
     """
 
     def __init__(self, name: str = "", children: set = None,
-                 agent_category: AgentCategory = None, locality: Locality = None,
-                 is_human: bool = False, realizes: List[str] = None,
-                 process_model_refs: List[str] = None,
+                 locality: Locality = None, realizes: List[str] = None,
                  stereotypes: List[str] = None, layout: dict = None,
                  metadata=None, timestamp=None):
-        super().__init__(name=name, agent_category=agent_category, locality=locality,
-                         is_human=is_human, realizes=realizes,
-                         process_model_refs=process_model_refs,
+        super().__init__(name=name, locality=locality, realizes=realizes,
                          stereotypes=stereotypes, layout=layout,
                          metadata=metadata, timestamp=timestamp)
         self.__children: set = set()
@@ -451,27 +334,8 @@ class Subsystem(Component):
             self.__children.discard(child)
 
 
-class Skill(Component):
-    """A capability an agent can exercise (per supervisor directive D1).
-
-    Subclassed from ``Component`` for typed ``isinstance`` checks and future
-    generator targeting (NR-4: skill -> workspace artifact at code-gen time).
-    The agent-only fields inherited from ``Component`` (``agent_category``,
-    ``is_human``, ``process_model_refs``) should stay at their defaults on a
-    Skill -- ``ComponentModel.validate()`` warns (W6) if a user sets them.
-    """
-
-
-class Tool(Component):
-    """A concrete external integration an agent can call (per directive D1).
-
-    Like ``Skill``, the agent-only inherited fields should stay at their
-    defaults on a Tool (W6 warns otherwise).
-    """
-
-
 # ---------------------------------------------------------------------------
-# Interfaces and permissions
+# Interfaces
 # ---------------------------------------------------------------------------
 
 class Interface(ComponentElement):
@@ -480,53 +344,6 @@ class Interface(ComponentElement):
     (decision D11 -- separate class, not inlined on Component, matching UML 2.5
     and Apollon's wire shape).
     """
-
-
-class Permission(ComponentElement):
-    """A named permission token -- an authority a Component may carry on an
-    ``AgenticEdge`` (decision D11, per A-4 of the requirements review).
-
-    Unlike Skill / Tool, ``Permission`` is *not* a Component subclass: it never
-    appears as a Component-typed endpoint of an `InterfaceProvided` /
-    `InterfaceRequired` / plain `ComponentDependency`. It is only referenced from
-    (a) the target of an ``AgenticEdge`` with ``kind=GRANTED``, or (b) the
-    ``permissions`` list of an ``AgenticEdge`` between two agents.
-
-    Args:
-        name (str): The permission label.
-        scope (str): The permission scope, e.g. ``"repo:merge:approve"``.
-            Must be a non-empty string (validated construction-time).
-        stereotypes, layout, metadata, timestamp: Inherited from ComponentElement.
-
-    Attributes:
-        scope (str): The permission scope.
-    """
-
-    def __init__(self, name: str = "", scope: str = "",
-                 stereotypes: List[str] = None, layout: dict = None,
-                 metadata=None, timestamp=None):
-        super().__init__(name=name, stereotypes=stereotypes, layout=layout,
-                         metadata=metadata, timestamp=timestamp)
-        self.scope = scope
-
-    @property
-    def scope(self) -> str:
-        """str: Get the permission scope."""
-        return self.__scope
-
-    @scope.setter
-    def scope(self, scope: str):
-        """str: Set the permission scope.
-
-        Raises:
-            TypeError: if scope is not a str.
-        """
-        if not isinstance(scope, str):
-            raise TypeError(f"scope must be a str, got {type(scope).__name__}")
-        self.__scope = scope
-
-    def __repr__(self):
-        return f"Permission(name='{self.name}', scope='{self.scope}')"
 
 
 # ---------------------------------------------------------------------------
@@ -665,165 +482,6 @@ class ComponentDependency(ComponentRelationship):
             )
 
 
-class AgenticEdge(ComponentDependency):
-    """A typed agentic dependency between agents and / or capabilities (decision
-    D11 / Q11=c).
-
-    The eight kinds (``AgenticEdgeKind``) cover the supervisor's directive D1
-    edge set (``«delegates»``, ``«supervises»``, ``«revises»``, ``«collaborates»``),
-    the agent -> capability wiring (``«has»``, ``«uses»``, ``«granted»``) and the
-    capability composition (``«implements»``).
-
-    Construction-time endpoint type rules (TypeError if violated)::
-
-        DELEGATES / SUPERVISES / REVISES / COLLABORATES: Component -> Component
-        HAS:        Component -> Skill
-        USES:       Component -> Tool
-        GRANTED:    Component -> Permission
-        IMPLEMENTS: Tool -> Skill
-
-    Runtime agentic-state rules (``ComponentModel.validate()`` errors E5..E10)::
-
-        for agent-to-agent kinds, both endpoints must satisfy
-        ``agent_category != NONE OR is_human``.
-
-    Permissions attribute: only carried meaningfully on agent-to-agent kinds.
-    W3 warns if non-agent-to-agent kinds carry non-empty ``permissions``.
-
-    Args:
-        source: The relationship's source element (see endpoint table above).
-        target: The relationship's target element.
-        kind (AgenticEdgeKind): The edge kind.
-        permissions (List[Permission]): Permissions conferred on this edge
-            (meaningful for agent <-> agent kinds; empty by default).
-        name, stereotypes, layout, metadata, timestamp: Inherited.
-
-    Attributes:
-        kind (AgenticEdgeKind): The edge kind.
-        permissions (List[Permission]): The permissions list.
-    """
-
-    def __init__(self, source, target, kind: AgenticEdgeKind,
-                 permissions: List["Permission"] = None,
-                 name: str = "", stereotypes: List[str] = None,
-                 layout: dict = None, metadata=None, timestamp=None):
-        if not isinstance(kind, AgenticEdgeKind):
-            raise TypeError(
-                f"kind must be an AgenticEdgeKind, got {type(kind).__name__}"
-            )
-        # Set kind BEFORE source/target so _check_endpoint can read it.
-        self.__kind = kind
-        self.__permissions: List["Permission"] = []
-        super().__init__(source=source, target=target, name=name,
-                         stereotypes=stereotypes, layout=layout,
-                         metadata=metadata, timestamp=timestamp)
-        self.permissions = permissions if permissions is not None else []
-
-    @property
-    def kind(self) -> AgenticEdgeKind:
-        """AgenticEdgeKind: Get the edge kind."""
-        return self.__kind
-
-    @kind.setter
-    def kind(self, kind: AgenticEdgeKind):
-        """AgenticEdgeKind: Set the edge kind. Re-validates the current
-        (source, target) against the new kind.
-
-        Raises:
-            TypeError: if not an AgenticEdgeKind, or if the current source/target
-                are not consistent with the new kind.
-        """
-        if not isinstance(kind, AgenticEdgeKind):
-            raise TypeError(
-                f"kind must be an AgenticEdgeKind, got {type(kind).__name__}"
-            )
-        previous, self.__kind = self.__kind, kind
-        try:
-            # Re-check endpoints if both already set (mid-construction skip).
-            if self.source is not None:
-                self._check_endpoint(self.source, "source")
-            if self.target is not None:
-                self._check_endpoint(self.target, "target")
-        except TypeError:
-            self.__kind = previous
-            raise
-
-    @property
-    def permissions(self) -> List["Permission"]:
-        """List[Permission]: Get the permissions list."""
-        return self.__permissions
-
-    @permissions.setter
-    def permissions(self, permissions: List["Permission"]):
-        """List[Permission]: Set the permissions list.
-
-        Raises:
-            TypeError: if any element is not a Permission.
-        """
-        permissions = list(permissions)
-        for permission in permissions:
-            if not isinstance(permission, Permission):
-                raise TypeError(
-                    f"permissions must contain Permission instances, "
-                    f"got {type(permission).__name__}"
-                )
-        self.__permissions = permissions
-
-    def _check_endpoint(self, endpoint, role: str):
-        """Per-kind construction-time endpoint type rule."""
-        kind = self.__kind
-        if kind == AgenticEdgeKind.HAS:
-            if role == "source" and not isinstance(endpoint, Component):
-                raise TypeError(
-                    f"AgenticEdge[HAS] source must be a Component, "
-                    f"got {type(endpoint).__name__}"
-                )
-            if role == "target" and not isinstance(endpoint, Skill):
-                raise TypeError(
-                    f"AgenticEdge[HAS] target must be a Skill, "
-                    f"got {type(endpoint).__name__}"
-                )
-        elif kind == AgenticEdgeKind.USES:
-            if role == "source" and not isinstance(endpoint, Component):
-                raise TypeError(
-                    f"AgenticEdge[USES] source must be a Component, "
-                    f"got {type(endpoint).__name__}"
-                )
-            if role == "target" and not isinstance(endpoint, Tool):
-                raise TypeError(
-                    f"AgenticEdge[USES] target must be a Tool, "
-                    f"got {type(endpoint).__name__}"
-                )
-        elif kind == AgenticEdgeKind.GRANTED:
-            if role == "source" and not isinstance(endpoint, Component):
-                raise TypeError(
-                    f"AgenticEdge[GRANTED] source must be a Component, "
-                    f"got {type(endpoint).__name__}"
-                )
-            if role == "target" and not isinstance(endpoint, Permission):
-                raise TypeError(
-                    f"AgenticEdge[GRANTED] target must be a Permission, "
-                    f"got {type(endpoint).__name__}"
-                )
-        elif kind == AgenticEdgeKind.IMPLEMENTS:
-            if role == "source" and not isinstance(endpoint, Tool):
-                raise TypeError(
-                    f"AgenticEdge[IMPLEMENTS] source must be a Tool, "
-                    f"got {type(endpoint).__name__}"
-                )
-            if role == "target" and not isinstance(endpoint, Skill):
-                raise TypeError(
-                    f"AgenticEdge[IMPLEMENTS] target must be a Skill, "
-                    f"got {type(endpoint).__name__}"
-                )
-        else:  # agent <-> agent kinds -- type check only (state check at validate)
-            if not isinstance(endpoint, Component):
-                raise TypeError(
-                    f"AgenticEdge[{kind.name}] {role} must be a Component, "
-                    f"got {type(endpoint).__name__}"
-                )
-
-
 # ---------------------------------------------------------------------------
 # Root model
 # ---------------------------------------------------------------------------
@@ -831,34 +489,35 @@ class AgenticEdge(ComponentDependency):
 class ComponentModel(Model):
     """The root of a UML Component model -- a first-class B-UML model.
 
+    Pure UML 2.5: holds components, interfaces, and relationships. The agentic
+    extension subclass ``AgenticComponentModel`` (in ``agentic.py``) adds the
+    ``permissions`` collection and the agentic validation rules.
+
     Like ``BPMNModel``, ``ComponentModel`` does not populate the inherited
     ``Model.elements`` set; it exposes its own typed accessors.
 
     Args:
         name (str): The model name (free text; relaxed like ``ComponentElement``).
-        components (set[Component]): All components (incl. Subsystems, Skills,
-            Tools) in this model. Subsystem children also count here.
+        components (set[Component]): All components (incl. Subsystems) in this
+            model. Subsystem children also count here.
         interfaces (set[Interface]): Interfaces in this model.
-        permissions (set[Permission]): Permissions in this model.
         relationships (set[ComponentRelationship]): All relationships in this
-            model (incl. ``InterfaceProvided`` / ``InterfaceRequired`` / plain
-            ``ComponentDependency`` / ``AgenticEdge``).
+            model (``InterfaceProvided`` / ``InterfaceRequired`` / plain
+            ``ComponentDependency``).
 
     Attributes:
-        components, interfaces, permissions, relationships: as above.
+        components, interfaces, relationships: as above.
     """
 
     def __init__(self, name: str, components: set = None,
-                 interfaces: set = None, permissions: set = None,
+                 interfaces: set = None,
                  relationships: set = None, metadata=None, timestamp=None):
         super().__init__(name=name, metadata=metadata, timestamp=timestamp)
         self.__components: set = set()
         self.__interfaces: set = set()
-        self.__permissions: set = set()
         self.__relationships: set = set()
         self.components = components if components is not None else set()
         self.interfaces = interfaces if interfaces is not None else set()
-        self.permissions = permissions if permissions is not None else set()
         self.relationships = relationships if relationships is not None else set()
 
     @NamedElement.name.setter
@@ -937,36 +596,6 @@ class ComponentModel(Model):
         self.__interfaces.discard(interface)
 
     @property
-    def permissions(self) -> set:
-        """set[Permission]: Get the permissions in this model."""
-        return self.__permissions
-
-    @permissions.setter
-    def permissions(self, permissions: set):
-        """set[Permission]: Set the permissions in this model.
-
-        Raises:
-            TypeError: if any element is not a Permission.
-        """
-        self.__permissions = _checked_set(permissions, Permission, "permissions")
-
-    def add_permission(self, permission: "Permission"):
-        """Add a permission.
-
-        Raises:
-            TypeError: if permission is not a Permission.
-        """
-        if not isinstance(permission, Permission):
-            raise TypeError(
-                f"permission must be a Permission, got {type(permission).__name__}"
-            )
-        self.__permissions.add(permission)
-
-    def remove_permission(self, permission: "Permission"):
-        """Remove a permission."""
-        self.__permissions.discard(permission)
-
-    @property
     def relationships(self) -> set:
         """set[ComponentRelationship]: Get the relationships in this model."""
         return self.__relationships
@@ -1015,10 +644,6 @@ class ComponentModel(Model):
             _collect(component)
         return result
 
-    def agentic_edges(self) -> set:
-        """set[AgenticEdge]: Convenience -- every AgenticEdge in this model."""
-        return {r for r in self.__relationships if isinstance(r, AgenticEdge)}
-
     # --- validation --------------------------------------------------------
 
     def validate(self, raise_exception: bool = True) -> dict:
@@ -1035,10 +660,7 @@ class ComponentModel(Model):
 
         self._validate_endpoint_references(errors)
         self._validate_relationship_endpoint_types(errors)
-        self._validate_agentic_state(errors)
-        self._validate_permission_membership(errors)
         self._validate_unique_component_names(errors)
-        self._validate_permission_scopes(errors)
         self._validate_subsystem_membership(errors)
         self._warn_structural_smells(warnings)
 
@@ -1048,10 +670,11 @@ class ComponentModel(Model):
         return result
 
     def _all_elements(self) -> set:
-        """set[ComponentElement]: Every element a relationship may reference."""
-        return (self.all_components()
-                | self.__interfaces
-                | self.__permissions)
+        """set[ComponentElement]: Every element a relationship may reference.
+
+        ``AgenticComponentModel`` overrides this to also include permissions.
+        """
+        return self.all_components() | self.__interfaces
 
     def _validate_endpoint_references(self, errors: list):
         """E1: every relationship's source / target is reachable in this model."""
@@ -1070,52 +693,17 @@ class ComponentModel(Model):
                     )
 
     def _validate_relationship_endpoint_types(self, errors: list):
-        """E2-E4 + E6-E9: per-kind endpoint type rules.
+        """E2-E4: per-kind endpoint type rules for the base relationship kinds.
 
-        Construction-time setters already enforce these, but a user could mutate
-        ``kind`` post-construction (re-validated by the setter) or assemble an
-        invalid model by manually wiring ``source`` / ``target`` through the
-        private slots. validate() is the second line of defence.
+        Construction-time setters already enforce these; validate() is the
+        second line of defence against a model assembled by wiring ``source`` /
+        ``target`` through the private slots. ``AgenticEdge`` (a
+        ``ComponentDependency`` subclass) is skipped here -- ``type(rel) is
+        ComponentDependency`` excludes it -- and re-checked by
+        ``AgenticComponentModel``.
         """
         for rel in self.__relationships:
-            if isinstance(rel, AgenticEdge):
-                kind = rel.kind
-                if kind == AgenticEdgeKind.HAS:
-                    if not (isinstance(rel.source, Component)
-                            and isinstance(rel.target, Skill)):
-                        errors.append(
-                            f"AgenticEdge[HAS] '{rel.name}' must be "
-                            f"Component -> Skill."
-                        )
-                elif kind == AgenticEdgeKind.USES:
-                    if not (isinstance(rel.source, Component)
-                            and isinstance(rel.target, Tool)):
-                        errors.append(
-                            f"AgenticEdge[USES] '{rel.name}' must be "
-                            f"Component -> Tool."
-                        )
-                elif kind == AgenticEdgeKind.GRANTED:
-                    if not (isinstance(rel.source, Component)
-                            and isinstance(rel.target, Permission)):
-                        errors.append(
-                            f"AgenticEdge[GRANTED] '{rel.name}' must be "
-                            f"Component -> Permission."
-                        )
-                elif kind == AgenticEdgeKind.IMPLEMENTS:
-                    if not (isinstance(rel.source, Tool)
-                            and isinstance(rel.target, Skill)):
-                        errors.append(
-                            f"AgenticEdge[IMPLEMENTS] '{rel.name}' must be "
-                            f"Tool -> Skill."
-                        )
-                else:  # agent <-> agent
-                    if not (isinstance(rel.source, Component)
-                            and isinstance(rel.target, Component)):
-                        errors.append(
-                            f"AgenticEdge[{kind.name}] '{rel.name}' must connect "
-                            f"two Components."
-                        )
-            elif isinstance(rel, InterfaceProvided):
+            if isinstance(rel, InterfaceProvided):
                 if not (isinstance(rel.source, Component)
                         and isinstance(rel.target, Interface)):
                     errors.append(
@@ -1129,43 +717,12 @@ class ComponentModel(Model):
                         f"InterfaceRequired '{rel.name}' must be "
                         f"Component -> Interface."
                     )
-            elif isinstance(rel, ComponentDependency):
+            elif type(rel) is ComponentDependency:
                 if not (isinstance(rel.source, Component)
                         and isinstance(rel.target, Component)):
                     errors.append(
                         f"ComponentDependency '{rel.name}' must connect "
                         f"two Components."
-                    )
-
-    def _validate_agentic_state(self, errors: list):
-        """E5: agent-to-agent edges require both endpoints to be agents
-        (``agent_category != NONE`` OR ``is_human``)."""
-        for edge in self.agentic_edges():
-            if edge.kind in _AGENT_TO_AGENT_KINDS:
-                if not (isinstance(edge.source, Component)
-                        and _is_agent_endpoint(edge.source)):
-                    errors.append(
-                        f"AgenticEdge[{edge.kind.name}] '{edge.name}' source "
-                        f"'{edge.source.name}' is not an agent "
-                        f"(agent_category=NONE and is_human=False)."
-                    )
-                if not (isinstance(edge.target, Component)
-                        and _is_agent_endpoint(edge.target)):
-                    errors.append(
-                        f"AgenticEdge[{edge.kind.name}] '{edge.name}' target "
-                        f"'{edge.target.name}' is not an agent "
-                        f"(agent_category=NONE and is_human=False)."
-                    )
-
-    def _validate_permission_membership(self, errors: list):
-        """E10: every ``Permission`` carried by an ``AgenticEdge`` is in this
-        model's permissions set."""
-        for edge in self.agentic_edges():
-            for permission in edge.permissions:
-                if permission not in self.__permissions:
-                    errors.append(
-                        f"AgenticEdge[{edge.kind.name}] '{edge.name}' carries "
-                        f"Permission '{permission.name}' which is not in the model."
                     )
 
     def _validate_unique_component_names(self, errors: list):
@@ -1183,14 +740,6 @@ class ComponentModel(Model):
             else:
                 seen[name] = component
 
-    def _validate_permission_scopes(self, errors: list):
-        """E12: ``Permission.scope`` is non-empty."""
-        for permission in self.__permissions:
-            if permission.scope == "":
-                errors.append(
-                    f"Permission '{permission.name}' has an empty scope."
-                )
-
     def _validate_subsystem_membership(self, errors: list):
         """E13: ``Component.parent``, if set, points at a Subsystem that is in
         the model's components."""
@@ -1203,62 +752,14 @@ class ComponentModel(Model):
                 )
 
     def _warn_structural_smells(self, warnings: list):
-        """W1-W7: non-blocking structural smells.
+        """W7: non-blocking structural smell (base UML).
 
-        W1: agent component with zero outgoing HAS / USES edges.
-        W2: agent component with zero process_model_refs.
-        W3: non-agent-to-agent edge carrying non-empty permissions (NR-3).
-        W4: dangling Component.realizes ID (cross-diagram, can't be checked here
-            -- left as a project-level promotion in 04-).
-        W5: dangling Component.process_model_refs (same -- project-level).
-        W6: Skill / Tool with agent-only fields set non-default.
         W7: Interface with no incoming InterfaceProvided / InterfaceRequired.
+
+        The agentic smells (W1 agent with no «has»/«uses», W2 agent in no BPMN
+        process, W3 permissions on a non-agent-to-agent edge) live in
+        ``AgenticComponentModel`` in ``agentic.py``.
         """
-        # Build outgoing-by-kind index.
-        outgoing_by_kind: dict = {}
-        for edge in self.agentic_edges():
-            outgoing_by_kind.setdefault(edge.source, set()).add(edge.kind)
-
-        for component in self.all_components():
-            if isinstance(component, (Skill, Tool)):
-                # W6 -- agent fields should be default on Skill / Tool.
-                if component.agent_category is not AgentCategory.NONE:
-                    warnings.append(
-                        f"{type(component).__name__} '{component.name}' has "
-                        f"agent_category={component.agent_category.name}; "
-                        f"agent-only fields should be default on Skill / Tool."
-                    )
-                if component.is_human:
-                    warnings.append(
-                        f"{type(component).__name__} '{component.name}' has "
-                        f"is_human=True; agent-only fields should be default "
-                        f"on Skill / Tool."
-                    )
-                continue
-            if _is_agent_endpoint(component):
-                # W1 -- agent with no HAS / USES outgoing.
-                kinds = outgoing_by_kind.get(component, set())
-                if not (kinds & {AgenticEdgeKind.HAS, AgenticEdgeKind.USES}):
-                    warnings.append(
-                        f"Component '{component.name}' is an agent but has no "
-                        f"outgoing «has» / «uses» edges."
-                    )
-                # W2 -- agent with no process_model_refs.
-                if not component.process_model_refs:
-                    warnings.append(
-                        f"Component '{component.name}' is an agent but appears in "
-                        f"no BPMN process (process_model_refs is empty)."
-                    )
-
-        # W3 -- non-agent-to-agent kinds carrying permissions.
-        for edge in self.agentic_edges():
-            if edge.permissions and edge.kind not in _AGENT_TO_AGENT_KINDS:
-                warnings.append(
-                    f"AgenticEdge[{edge.kind.name}] '{edge.name}' carries "
-                    f"{len(edge.permissions)} permission(s); permissions are "
-                    f"meaningful only on agent <-> agent kinds."
-                )
-
         # W7 -- orphan interface.
         used_interfaces: set = set()
         for rel in self.__relationships:
@@ -1275,5 +776,4 @@ class ComponentModel(Model):
         return (f"ComponentModel(name='{self.name}', "
                 f"components={len(self.components)}, "
                 f"interfaces={len(self.interfaces)}, "
-                f"permissions={len(self.permissions)}, "
                 f"relationships={len(self.relationships)})")

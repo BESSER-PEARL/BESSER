@@ -9,6 +9,8 @@ import logging
 from typing import Optional
 
 from besser.BUML.metamodel.uml_component import (
+    AgenticComponent,
+    AgenticComponentModel,
     AgenticEdge,
     Component,
     ComponentDependency,
@@ -28,6 +30,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.stereotype
     extract_permission_scopes,
     parse_agentic_edge_kind,
     parse_component_node_subtype,
+    stereotype_has_agentic_tokens,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
@@ -70,13 +73,30 @@ def process_component_diagram(json_data: dict) -> ComponentModel:
 
     components = {obj for obj in nodes_by_id.values() if isinstance(obj, Component)}
     interfaces = {obj for obj in nodes_by_id.values() if isinstance(obj, Interface)}
+    permissions = set(permissions_by_scope.values())
+    relationships_set = set(relationship_objects)
 
+    # A diagram carrying any agentic element yields an AgenticComponentModel;
+    # a pure-UML diagram yields a plain ComponentModel (04-... base/agentic
+    # split). Skill / Tool count as agentic-notation vocabulary.
+    is_agentic = (
+        bool(permissions)
+        or any(isinstance(c, (AgenticComponent, Skill, Tool)) for c in components)
+        or any(isinstance(r, AgenticEdge) for r in relationships_set)
+    )
+    if is_agentic:
+        return AgenticComponentModel(
+            name=name,
+            components=components,
+            interfaces=interfaces,
+            permissions=permissions,
+            relationships=relationships_set,
+        )
     return ComponentModel(
         name=name,
         components=components,
         interfaces=interfaces,
-        permissions=set(permissions_by_scope.values()),
-        relationships=set(relationship_objects),
+        relationships=relationships_set,
     )
 
 
@@ -130,6 +150,10 @@ def _build_component_node(elem_id: str, elem: dict) -> Optional[ComponentElement
             obj = Skill(name=name)
         elif subtype == "Tool":
             obj = Tool(name=name)
+        elif stereotype_has_agentic_tokens(stereotype):
+            # An agent-category or human-actor token promotes a bare Component
+            # to AgenticComponent (04-... base/agentic split).
+            obj = AgenticComponent(name=name)
         else:
             obj = Component(name=name)
         apply_component_stereotype_tokens(obj, stereotype)

@@ -1,18 +1,19 @@
 """Shared fixtures for the UML Component metamodel tests.
 
 Three reusable, well-formed models. ``minimal_component_model`` and
-``agent_swarm_model`` validate cleanly (no errors); ``agent_swarm_model`` is
-intentionally complete enough to round-trip the UNP-style worked example
-from the thesis milestone -- agents in MOSAICO categories, skills, tools,
-a permission, a human, agentic edges, and a subsystem.
+``subsystem_model`` are pure-UML ``ComponentModel``s; ``agent_swarm_model`` is
+an ``AgenticComponentModel`` -- intentionally complete enough to round-trip the
+UNP-style worked example from the thesis milestone (agents in agent
+categories, skills, tools, a permission, a human, agentic edges).
 """
 
 import pytest
 
 from besser.BUML.metamodel.uml_component import (
-    AgentCategory, AgenticEdge, AgenticEdgeKind, Component, ComponentDependency,
-    ComponentModel, Interface, InterfaceProvided, InterfaceRequired, Locality,
-    Permission, Skill, Subsystem, Tool,
+    AgentCategory, AgenticComponent, AgenticComponentModel, AgenticEdge,
+    AgenticEdgeKind, Component, ComponentDependency, ComponentModel, Interface,
+    InterfaceProvided, InterfaceRequired, Locality, Permission, Skill,
+    Subsystem, Tool,
 )
 
 
@@ -33,20 +34,22 @@ def minimal_component_model() -> ComponentModel:
 
 
 @pytest.fixture
-def agent_swarm_model() -> ComponentModel:
-    """A simplified MOSAICO UNP-style swarm: one Solution agent, one Supervision
+def agent_swarm_model() -> AgenticComponentModel:
+    """A simplified UNP-style swarm: one Solution agent, one Supervision
     agent, one human, one skill, one tool, one permission, full wiring."""
-    advisor = Component(
+    advisor = AgenticComponent(
         "code_advisor",
         agent_category=AgentCategory.SOLUTION,
         process_model_refs=["proc_unp"],
     )
-    supervisor = Component(
+    supervisor = AgenticComponent(
         "reviewer_supervisor",
         agent_category=AgentCategory.SUPERVISION,
         process_model_refs=["proc_unp"],
     )
-    human = Component("developer", is_human=True, process_model_refs=["proc_unp"])
+    human = AgenticComponent(
+        "developer", is_human=True, process_model_refs=["proc_unp"]
+    )
     llm = Component(
         "llm_endpoint",
         locality=Locality.EXTERNAL,
@@ -72,7 +75,7 @@ def agent_swarm_model() -> ComponentModel:
     )
     llm_dep = ComponentDependency(advisor, llm, name="advisor_uses_llm")
 
-    return ComponentModel(
+    return AgenticComponentModel(
         "agent_swarm_model",
         components={advisor, supervisor, human, llm, skill_search, tool_git},
         permissions={permission_approve},

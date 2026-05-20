@@ -1,0 +1,67 @@
+Version 7.8.0
+=============
+
+Minor release headlined by **agent reasoning state support** and
+**multi-LLM configuration** in the BAF (BESSER Agent Framework) code
+generator.  The changes are entirely contained in the BAF generator
+template and the agent-model code builder; no metamodel or API contract
+changes.
+
+Agent Reasoning State and Multi-LLM Support
+--------------------------------------------------
+
+BAF Generator — multi-LLM handling
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Introduced a unified ``default_llm`` variable in generated agent code,
+  replacing the previous ``reply_llm`` approach.  The variable is set
+  dynamically from the agent configuration or the first available LLM;
+  if no LLM is configured it is set to ``None`` so that a clear
+  ``AttributeError`` is raised at runtime rather than producing a silent
+  no-op.
+* All LLM invocations (``DBReply``, ``LLMReply``, intent-classifier, and
+  fallback actions) now resolve the LLM **by name** at runtime, falling
+  back to ``default_llm`` when no explicit override is provided.  This
+  makes it straightforward to run different actions against different
+  models in the same agent.
+* The intent-classifier LLM selection uses a prioritised search across
+  the per-classifier config and the agent-level defaults, ensuring
+  consistent fallback behaviour when the classifier does not declare its
+  own model.
+
+RAG improvements
+~~~~~~~~~~~~~~~~
+
+* RAG (Retrieval-Augmented Generation) configurations now resolve their
+  LLM at runtime via ``llm_name``, falling back to ``default_llm`` when
+  not explicitly set.  The separate ``rag_llm`` variable that previously
+  appeared in generated code is no longer emitted, reducing boilerplate
+  and potential inconsistencies.
+
+Tools, Skills, and Workspaces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Generated agent initialisation code now registers agent **tools**,
+  **skills**, and **workspaces** with the agent instance, completing the
+  round-trip from B-UML agent model to runnable BAF code for these
+  component types.
+
+Reasoning State support
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* Added code generation for ``ReasoningState`` objects: the generator
+  detects reasoning states in the agent model, instantiates them with
+  the appropriate LLM reference and configuration, and emits the
+  necessary import (``from besser.agent.core.reasoning.reasoning_state
+  import ReasoningState``).
+
+Internal refactoring
+~~~~~~~~~~~~~~~~~~~~
+
+* Updated imports in ``besser/utilities/buml_code_builder/agent_model_builder.py``
+  to include ``ReasoningState``, ``Tool``, ``Skill``, and ``Workspace``
+  as well as the helper functions required by the new generation logic.
+* The BAF generator template (``besser/generators/baf/templates/``) has
+  been refactored for improved modularity, readability, and
+  extensibility.
+

@@ -46,6 +46,61 @@ When generated, a data folder named after the RAG element is created
 (e.g. ``"Knowledge Base"`` produces ``knowledge_base/``). Place your PDF
 documents in this folder before running the agent.
 
+Multiple LLMs
+~~~~~~~~~~~~~
+
+An agent can register more than one LLM and reference each by name. Add an
+LLM with ``agent.new_llm()``:
+
+.. code-block:: python
+
+    fast = agent.new_llm(name='fast', provider='openai', parameters={'model': 'gpt-4o-mini'})
+    big = agent.new_llm(name='big', provider='openai', parameters={'model': 'gpt-4o'})
+
+``provider`` selects the concrete wrapper: ``openai`` → ``LLMOpenAI``,
+``huggingface`` → ``LLMHuggingFace``, ``huggingface_api`` →
+``LLMHuggingFaceAPI``, ``replicate`` → ``LLMReplicate``. ``parameters`` is a
+free-form dict passed to the wrapper (e.g. the model id). Optional
+``num_previous_messages`` (default 1) and ``global_context`` are also supported.
+
+The first LLM registered becomes the default. Change the default with
+``agent.set_default_llm('big')``. Any consumer — ``LLMReply``, ``DBReply``,
+``RAGReply`` and reasoning states — uses the default unless it specifies its
+own ``llm_name``. Every ``llm_name`` reference must resolve to a registered
+LLM; this is checked by ``agent.validate()``.
+
+Reasoning states
+~~~~~~~~~~~~~~~~
+
+A ``ReasoningState`` is a state whose body is an autonomous reasoning loop
+driven by an LLM (using the agent's tools, skills and workspaces). Create one
+with ``agent.new_reasoning_state()``:
+
+.. code-block:: python
+
+    assistant = agent.new_reasoning_state(
+        name='assistant',
+        llm='big',                  # registered LLM name; omit to use the default
+        max_steps=8,                # max reasoning iterations
+        enable_task_planning=True,
+        stream_steps=True,
+        system_prompt='You are a helpful assistant.',
+        fallback_message='Sorry, I could not complete that.',
+    )
+
+The body of a reasoning state is supplied automatically by the factory; the
+metamodel rejects manual ``set_body`` / ``set_fallback_body`` calls on it.
+
+Tools, skills and workspaces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reasoning states draw on three agent-level primitives, shared by every
+reasoning state:
+
+- **Tools** (``agent.new_tool(name, description, code)``) — callable functions the agent can invoke. ``code`` holds the Python implementation.
+- **Skills** (``agent.new_skill(name, content, description)``) — reusable instruction snippets injected into the reasoning context.
+- **Workspaces** (``agent.new_workspace(name, path, description, writable, max_read_bytes)``) — file-system locations the agent may read from (and write to when ``writable``).
+
 .. image:: ../../img/agent_mm.png
   :width: 1600
   :alt: Agent metamodel

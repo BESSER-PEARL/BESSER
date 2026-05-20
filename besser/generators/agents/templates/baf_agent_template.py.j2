@@ -288,7 +288,7 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% set ic_config_set = namespace(value=false) %}
 {% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='{{ ic_llm_ns.name }}',
+    llm_name={{ ic_llm_ns.name | string | tojson }},
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
@@ -323,9 +323,9 @@ agent.set_default_ic_config(ic_config)
 # LLMs
 {% set default_llm_ns = namespace(name=None) %}
 {% for llm in agent.llms %}
-{{ llm.name | replace('-', '_') | replace('.', '_') | replace(' ', '_') }} = {{ llm.__class__.__name__ }}(
+{{ safe_var_name(llm.name) }} = {{ llm.__class__.__name__ }}(
     agent=agent,
-    name='{{ llm.name }}',
+    name={{ llm.name | string | tojson }},
     {% if llm.parameters %}
     parameters={{ llm.parameters }},
     {% else %}
@@ -342,7 +342,7 @@ agent.set_default_ic_config(ic_config)
 {% set default_llm_ns.name = llm.name %}
 {% endif %}
 {% endfor %}
-default_llm = {{ default_llm_ns.name | replace('-', '_') | replace('.', '_') | replace(' ', '_') }}
+default_llm = {{ safe_var_name(default_llm_ns.name) }}
 {% set has_default_llm_state.value = true %}
 {% endif %}
 {% if not has_default_llm_state.value %}
@@ -365,7 +365,7 @@ agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
 {% if not ic_config_set.value %}
 # Default to LLM-based intent classification (avoids PyTorch dependency)
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='{{ ic_llm_ns.name }}',
+    llm_name={{ ic_llm_ns.name | string | tojson }},
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
@@ -533,7 +533,7 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
 {{ state.name }} = new_reasoning_state(
     agent=agent,
     {% if state.llm %}
-    llm={{ state.llm | replace('-', '_') | replace('.', '_') | replace(' ', '_') }},
+    llm={{ safe_var_name(state.llm) }},
     {% else %}
     llm=default_llm,
     {% endif %}

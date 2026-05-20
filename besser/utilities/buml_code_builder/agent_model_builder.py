@@ -181,7 +181,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     f"{llm_var} = {model_var_name}.new_llm(\n"
                     f"    name={repr(llm.name)},\n"
                     f"    provider={repr(provider)},\n"
-                    f"    parameters={repr(params)},\n"
+                    f"    parameters={repr(dict(sorted(params.items())))},\n"
                 )
                 num_prev = getattr(llm, 'num_previous_messages', None)
                 if num_prev is not None and num_prev != 1:

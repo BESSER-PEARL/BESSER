@@ -7,7 +7,7 @@ generator.  The changes are entirely contained in the BAF generator
 template and the agent-model code builder; no metamodel or API contract
 changes.
 
-Agent Reasoning State and Multi-LLM Support (new)
+Agent Reasoning State and Multi-LLM Support
 --------------------------------------------------
 
 BAF Generator — multi-LLM handling
@@ -65,8 +65,3 @@ Internal refactoring
   been refactored for improved modularity, readability, and
   extensibility.
 
-Related
--------
-
-* Pull request: `#541 — Agent reasoning State and multi-LLM support
-  <https://github.com/BESSER-PEARL/BESSER/pull/541>`_

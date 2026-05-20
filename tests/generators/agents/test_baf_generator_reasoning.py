@@ -108,6 +108,10 @@ class TestBAFGeneratorReasoning:
             code = f.read()
         assert "agent.new_skill(" in code
         assert "GreetByName" in code
+        # BAF's new_skill takes the skill text as the positional ``source``
+        # argument, not a ``content=`` kwarg (which would raise TypeError).
+        assert "content=" not in code
+        assert "Always greet the user by name when introduced." in code
 
     def test_emits_workspace_registration(self, reasoning_agent_model, tmp_path):
         path = _generate(reasoning_agent_model, str(tmp_path))

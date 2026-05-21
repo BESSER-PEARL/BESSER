@@ -95,6 +95,12 @@ from datetime import datetime
         {%- else %}
         {{ module_details[0] }}
         {%- endif -%}
+        {%- elif module_name.endswith("activ") %}
+        {%- if module_details[0].startswith("DEF:") %}
+        {{ module_details[0][4:] }}
+        {%- elif not module_details[0].startswith("CALL:") %}
+        {{ module_details[0] }}
+        {%- endif %}
         {%- endif -%}
         {%- endfor %}
 {% endmacro -%}
@@ -104,8 +110,14 @@ from datetime import datetime
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
         {{ module_details[1] }} = {{ module_details[0] }}
-    {%- elif module_name.endswith("nn") %} 
+    {%- elif module_name.endswith("nn") %}
         {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+    {%- elif module_name.endswith("activ") %}
+        {%- if module_details[0].startswith("CALL:") %}
+        {{ module_details[1] }} = self.{{ module_details[0][5:] }}({{ module_details[2] }})
+        {%- elif not module_details[0].startswith("DEF:") %}
+        {{ module_details[1] }} = self.{{ module_name }}({{ module_details[2] }})
+        {%- endif %}
     {%- else %}
         {%- if "layers.ZeroPadding" in module_details[0] %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}_pad({{ module_details[2] }})

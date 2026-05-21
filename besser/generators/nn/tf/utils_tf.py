@@ -35,6 +35,9 @@ class SetupLayerSyntax:
         self.modules_details: dict = modules_details
         self.permute_out: bool | None = None
         self.permute_in: bool | None = None
+        # Track shared activation layers
+        if not hasattr(self, '_shared_activations'):
+            SetupLayerSyntax._shared_activations = {}
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -49,12 +52,36 @@ class SetupLayerSyntax:
             )
         elif cls_name == "FlattenLayer":
             lyr = f"{lyr}.Flatten()"
+        elif cls_name == "GeneralLayer":
+            # GeneralLayer with only actv_func (standalone activation)
+            lyr = f"self.{lyr_name} = layers.Activation('{self.layer.actv_func}')"
         else: #cls_name == "EmbeddingLayer"
             lyr = (
                 f"{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "
                 f"output_dim={self.layer.embedding_dim})"
             )
         return lyr
+
+    def setup_standalone_activation(self, out_var, in_var):
+        """It defines the syntax for standalone activation layer."""
+        actv_func = self.layer.actv_func
+
+        # Use shared activation layer
+        if actv_func not in SetupLayerSyntax._shared_activations:
+            shared_name = f"activation_{actv_func}"
+            SetupLayerSyntax._shared_activations[actv_func] = shared_name
+            # Add shared activation definition (DEF: to skip forward generation)
+            syntax = f"self.{shared_name} = layers.Activation('{actv_func}')"
+            self.modules_details[shared_name + "_activ"] = [f"DEF:{syntax}", None, None]
+
+        # Add call entry for this specific activation
+        shared_name = SetupLayerSyntax._shared_activations[actv_func]
+        lyr_name = self.layer.name
+        actv_call_key = f"{lyr_name}_activ"
+        self.modules_details[actv_call_key] = [f"CALL:{shared_name}", out_var, in_var]
+
+        # Return None to signal handle_layer not to add _layer entry
+        return None
 
     def setup_layer_modifier(self):
         """It defines the syntax of layers' modifiers."""
@@ -71,6 +98,33 @@ class SetupLayerSyntax:
         else: #cls_name == "DropoutLayer"
             lyr = f"{lyr}.Dropout(rate={self.layer.rate})"
         return lyr
+
+    def add_separate_activation_if_needed(self, out_var, in_var):
+        """Add separate activation for layers that don't support activation param."""
+        cls_name = self.layer.__class__.__name__
+        parent_cls = self.layer.__class__.mro()[1].__name__
+
+        # BatchNorm, LayerNorm, Dropout, Embedding, Pooling don't support activation
+        unsupported = parent_cls in ["NormalizationLayer", "LayerModifier"] or \
+                     cls_name in ["EmbeddingLayer", "PoolingLayer", "FlattenLayer"]
+
+        if unsupported and self.layer.actv_func:
+            actv_func = self.layer.actv_func
+
+            # Use shared activation layer
+            if actv_func not in SetupLayerSyntax._shared_activations:
+                shared_name = f"activation_{actv_func}"
+                SetupLayerSyntax._shared_activations[actv_func] = shared_name
+                # Add shared activation definition (DEF: to skip forward generation)
+                syntax = f"self.{shared_name} = layers.Activation('{actv_func}')"
+                self.modules_details[shared_name + "_activ"] = [f"DEF:{syntax}", None, None]
+
+            # Add call reference for this layer
+            shared_name = SetupLayerSyntax._shared_activations[actv_func]
+            lyr_name = self.layer.name
+            actv_call_key = f"{lyr_name}_activ"
+            # Use CALL: prefix to indicate this is a call to shared activation
+            self.modules_details[actv_call_key] = [f"CALL:{shared_name}", out_var, out_var]
 
     def setup_rnn(self):
         """It defines the syntax of rnn layers."""

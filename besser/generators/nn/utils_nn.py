@@ -59,6 +59,8 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
             return modules_details[f"{lyr_input}_layer"][1]
         if f"{lyr_input}_nn" in modules_names:
             return  modules_details[f"{lyr_input}_nn"]["in_out_variable"]
+        if f"{lyr_input}_activ" in modules_names:
+            return modules_details[f"{lyr_input}_activ"][1]
         #module.name_module_input+"_op" in my_keys
         return modules_details[f"{lyr_input}_op"][1]
     return prev_out_var
@@ -204,7 +206,8 @@ def initialize_layer_vars(layer: Layer):
 
 def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
                      layer: Layer, modules_details: dict,
-                     actv_func_synt: str | bool ):
+                     actv_func_synt: str | bool,
+                     out_var: str = None, in_var: str = None):
     """
     It retrieves the syntax of the layer (and the activation
     function in the case of PyTorch) from the ´setup_layer_cls´ class.
@@ -217,6 +220,8 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
             attributes.
         actv_func_synt (str | bool): Whether to get the syntax of
             the actvation function.
+        out_var (str): Output variable for standalone activations.
+        in_var (str): Input variable for standalone activations.
 
     Returns:
         The syntax of the layer and its activation function (if relevant) and
@@ -225,12 +230,17 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
     """
     setup = setup_layer_cls(layer, modules_details)
     parent_class = layer.__class__.mro()[1].__name__
+    cls_name = layer.__class__.__name__
+
     if (parent_class == "ConvolutionalLayer" or parent_class == "CNN"):
         layer_synt = setup.setup_cnn()
     elif parent_class == "RNN":
         layer_synt = setup.setup_rnn()
     elif parent_class == "GeneralLayer":
         layer_synt = setup.setup_general_layer()
+    elif cls_name == "GeneralLayer":
+        # Standalone activation layer created from functional API
+        layer_synt = setup.setup_standalone_activation(out_var, in_var)
     else: #(parent_class == "LayerModifier" or
            #parent_class == "NormalizationLayer")
         layer_synt = setup.setup_layer_modifier()
@@ -279,7 +289,7 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         )
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
-        setup_layer, layer, modules_details, actv_func_syntax
+        setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer
     )
 
     if setup.permute_in and channel_last:
@@ -289,11 +299,18 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
             sequential=is_seq, is_subnn=is_subnn
         )
 
-    modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                              in_layer, layer]
+    # Only add _layer entry if layer_synt is not None (standalone activations return None)
+    if layer_synt is not None:
+        modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                  in_layer, layer]
     if actv_func_syntax:
         modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv,
                                                   in_actv]
+
+    # TF-specific: Add separate activation for BatchNorm/LayerNorm
+    if hasattr(setup, 'add_separate_activation_if_needed'):
+        setup.add_separate_activation_if_needed(out_actv, in_actv)
+
     if setup.permute_out and channel_last:
         dim = setup.dim
         setup.add_permute(layer.name, dim, out_layer, permute_in = False,

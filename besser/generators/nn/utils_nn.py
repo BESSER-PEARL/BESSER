@@ -292,12 +292,13 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer
     )
 
-    if setup.permute_in and channel_last:
-        dim = setup.dim
-        setup.add_permute(
-            layer.name, dim, in_layer, permute_in=True,
-            sequential=is_seq, is_subnn=is_subnn
-        )
+    if setup.permute_in and hasattr(setup, 'add_permute'):
+        if channel_last is None or channel_last:
+            dim = setup.dim
+            setup.add_permute(
+                layer.name, dim, in_layer, permute_in=True,
+                sequential=is_seq, is_subnn=is_subnn
+            )
 
     # Only add _layer entry if layer_synt is not None (standalone activations return None)
     if layer_synt is not None:
@@ -311,10 +312,11 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
     if hasattr(setup, 'add_separate_activation_if_needed'):
         setup.add_separate_activation_if_needed(out_actv, in_actv)
 
-    if setup.permute_out and channel_last:
-        dim = setup.dim
-        setup.add_permute(layer.name, dim, out_layer, permute_in = False,
-                          sequential=is_seq, is_subnn=is_subnn)
+    if setup.permute_out and hasattr(setup, 'add_permute'):
+        if channel_last is None or channel_last:
+            dim = setup.dim
+            setup.add_permute(layer.name, dim, out_layer, permute_in = False,
+                              sequential=is_seq, is_subnn=is_subnn)
 
 
 

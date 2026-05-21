@@ -83,6 +83,49 @@ class SetupLayerSyntax:
         # Return None to signal handle_layer not to add _layer entry
         return None
 
+    def add_permute(self, lyr_name: str, dim: str, in_var_layer: str,
+                    permute_in: bool = True, sequential: bool = False,
+                    is_subnn: bool = False):
+        """
+        It adds transpose operation for CNN layers that need permutation.
+
+        Args:
+            lyr_name (str): the name of the layer.
+            dim (str): the dimensionality of the layer ('1', '2' or '3').
+            in_var_layer (str): the input variable notation of the layer.
+            permute_in (bool): Whether to permute the input of the layer.
+            sequential (bool): Whether the layer is in a seq architecture.
+            is_subnn (bool): Whether the layer is in a subnn model.
+
+        Returns:
+            None, but stores the transpose tensorop in modules_details.
+        """
+        if permute_in:
+            perm_name = f"{lyr_name}_in_op"
+        else:
+            perm_name = f"{lyr_name}_out_op"
+
+        if dim is None:
+            perm_dim = [0, 2, 1]
+        else:
+            if dim == "1":
+                perm_dim = [0, 2, 1]
+            elif dim == "2":
+                if permute_in:
+                    perm_dim = [0, 3, 1, 2]
+                else:
+                    perm_dim = [0, 2, 3, 1]
+            else:
+                if permute_in:
+                    perm_dim = [0, 4, 1, 2, 3]
+                else:
+                    perm_dim = [0, 2, 3, 4, 1]
+
+        perm_str = ', '.join(map(str, perm_dim))
+        transpose_syntax = f"tf.transpose({in_var_layer}, perm=[{perm_str}])"
+
+        self.modules_details[perm_name] = [transpose_syntax, in_var_layer]
+
     def setup_layer_modifier(self):
         """It defines the syntax of layers' modifiers."""
         cls_name = self.layer.__class__.__name__
@@ -184,6 +227,9 @@ class SetupLayerSyntax:
         kernel = utils.format_value(self.layer.kernel_dim)
         stride = utils.format_value(self.layer.stride_dim)
         pad_amount = self.layer.padding_amount
+        self.permute_in = self.layer.permute_in
+        self.permute_out = self.layer.permute_out
+        self.dim = dim
         lyr = ""
         if pad_amount != 0:
             lyr = (
@@ -209,6 +255,10 @@ class SetupLayerSyntax:
         """
         pl_type = self.layer.pooling_type
         dim = self.layer.dimension[-2:-1]
+        self.dim = dim
+        self.permute_in = self.layer.permute_in
+        self.permute_out = self.layer.permute_out
+
         if pl_type == "max" or pl_type == "average":
             pl = "MaxPool" if pl_type == "max" else "AveragePooling"
             kernel = utils.format_value(self.layer.kernel_dim)

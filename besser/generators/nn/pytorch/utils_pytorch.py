@@ -69,7 +69,7 @@ class SetupLayerSyntax:
             if cls_name == "BatchNormLayer":
                 dim = self.layer.dimension[0]
                 num_f = self.layer.num_features
-                lyr = f"{lyr}.BatchNorm(){dim}d(num_features={num_f})"
+                lyr = f"{lyr}.BatchNorm{dim}d(num_features={num_f})"
             else: #cls_name == "LayerNormLayer"
                 norm_shape = self.layer.normalized_shape
                 lyr = f"{lyr}.LayerNorm(normalized_shape={norm_shape})"

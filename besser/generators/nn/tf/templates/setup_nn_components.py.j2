@@ -109,7 +109,7 @@ from datetime import datetime
     {%- else %}
         {%- if "layers.ZeroPadding" in module_details[0] %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}_pad({{ module_details[2] }})
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[1] }})
         {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
             {%- if module_details[-1].return_type == "hidden" %}
                 {%- if module_details[-1].__class__.__name__ == "LSTMLayer" and module_details[-1].bidirectional %}

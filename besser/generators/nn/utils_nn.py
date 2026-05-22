@@ -226,7 +226,8 @@ def initialize_layer_vars(layer: Layer):
 def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
                      layer: Layer, modules_details: dict,
                      actv_func_synt: str | bool,
-                     out_var: str = None, in_var: str = None):
+                     out_var: str = None, in_var: str = None,
+                     is_subnn: bool = False):
     """
     It retrieves the syntax of the layer (and the activation
     function in the case of PyTorch) from the ´setup_layer_cls´ class.
@@ -241,13 +242,14 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
             the actvation function.
         out_var (str): Output variable for standalone activations.
         in_var (str): Input variable for standalone activations.
+        is_subnn (bool): if the layer is inside a subnn model.
 
     Returns:
         The syntax of the layer and its activation function (if relevant) and
         the class instance.
 
     """
-    setup = setup_layer_cls(layer, modules_details)
+    setup = setup_layer_cls(layer, modules_details, is_subnn=is_subnn)
     parent_class = layer.__class__.mro()[1].__name__
     cls_name = layer.__class__.__name__
 
@@ -308,7 +310,8 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         )
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
-        setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer
+        setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer,
+        is_subnn=is_subnn
     )
 
     if setup.permute_in and hasattr(setup, 'add_permute'):

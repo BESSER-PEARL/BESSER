@@ -30,9 +30,10 @@ class SetupLayerSyntax:
         None, but stores the layers and their attributes in the
         modules_details dictionary.
     """
-    def __init__(self, layer: Layer, modules_details: dict):
+    def __init__(self, layer: Layer, modules_details: dict, is_subnn: bool = False):
         self.layer: Layer = layer
         self.modules_details: dict = modules_details
+        self.is_subnn: bool = is_subnn
         self.permute_out: bool | None = None
         self.permute_in: bool | None = None
         # Track shared activation layers
@@ -65,8 +66,14 @@ class SetupLayerSyntax:
     def setup_standalone_activation(self, out_var, in_var):
         """It defines the syntax for standalone activation layer."""
         actv_func = self.layer.actv_func
+        lyr_name = self.layer.name
 
-        # Use shared activation layer
+        # Inside Sequential blocks, use direct layer call instead of shared activation
+        if self.is_subnn:
+            # Direct layer definition for use in Sequential
+            return f"self.{lyr_name} = layers.Activation('{actv_func}')"
+
+        # For standalone activations outside Sequential, use shared activation pattern
         if actv_func not in SetupLayerSyntax._shared_activations:
             shared_name = f"activation_{actv_func}"
             SetupLayerSyntax._shared_activations[actv_func] = shared_name
@@ -76,7 +83,6 @@ class SetupLayerSyntax:
 
         # Add call entry for this specific activation
         shared_name = SetupLayerSyntax._shared_activations[actv_func]
-        lyr_name = self.layer.name
         actv_call_key = f"{lyr_name}_activ"
         self.modules_details[actv_call_key] = [f"CALL:{shared_name}", out_var, in_var]
 

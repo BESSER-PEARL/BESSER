@@ -129,6 +129,10 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             else:
                 # Normal case: use output variable
                 out_vars.append(layer_details[1])
+        elif layer_name+"_activ" in my_keys:
+            # Standalone activation layer (GeneralLayer)
+            activ_details = modules_details[layer_name + "_activ"]
+            out_vars.append(activ_details[1])
         else:
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars

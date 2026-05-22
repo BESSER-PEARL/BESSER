@@ -136,7 +136,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
     def _add_action_elements_to_state(state_id: str, action_data: Any, fallback: bool = False) -> None:
         element_type = "AgentStateFallbackBody" if fallback else "AgentStateBody"
-        state_key = "fallbackBodies" if fallback else "bodies"
+        state_key = "fallbackActions" if fallback else "actions"
 
         if not isinstance(action_data, list):
             return
@@ -160,14 +160,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "text",
+                    "actionType": "TextReplyAction",
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "llm":
                 body_id = str(uuid.uuid4())
                 elements[body_id] = {
                     "id": body_id,
-                    "name": action.get("prompt") or "AI response 🪄",
+                    "name": action.get("prompt") or "AI response",
                     "type": element_type,
                     "owner": state_id,
                     "bounds": {
@@ -176,7 +176,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "llm",
+                    "actionType": "LLMReplyAction",
                     "llm_name": action.get("llm_name", "") or "",
                 }
                 elements[state_id][state_key].append(body_id)
@@ -199,7 +199,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "rag",
+                    "actionType": "RAGReplyAction",
                     "ragDatabaseName": rag_db_name,
                 }
                 elements[state_id][state_key].append(body_id)
@@ -224,7 +224,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "db_reply",
+                    "actionType": "DBAction",
                     "dbSelectionType": db_selection_type,
                     "dbCustomName": db_custom_name,
                     "dbQueryMode": db_query_mode,
@@ -780,6 +780,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "id": state_id,
                         "name": state_name,
                         "type": "AgentReasoningState",
+                        "stateType": "reasoning",
                         "owner": None,
                         "bounds": {
                             "x": states_x,
@@ -844,6 +845,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "id": state_id,
                         "name": state_name,
                         "type": "AgentState",
+                        "stateType": "standard",
                         "owner": None,
                         "bounds": {
                             "x": states_x,
@@ -851,8 +853,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "width": 160,
                             "height": 100,
                         },
-                        "bodies": [],
-                        "fallbackBodies": [],
+                        "actions": [],
+                        "fallbackActions": [],
                     }
 
                     # Update position for next element
@@ -881,6 +883,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "id": state_id,
                         "name": state_name,
                         "type": "AgentState",
+                        "stateType": "standard",
                         "owner": None,
                         "bounds": {
                             "x": states_x,
@@ -888,8 +891,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "width": 160,
                             "height": 100,
                         },
-                        "bodies": [],
-                        "fallbackBodies": [],
+                        "actions": [],
+                        "fallbackActions": [],
                     }
 
                     # Update position for next element
@@ -1173,14 +1176,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                                 "width": 159,
                                                 "height": 30,
                                             },
-                                            "replyType": "text"
+                                            "actionType": "TextReplyAction",
                                         }
-                                        elements[state["id"]]["bodies"].append(body_id)
+                                        elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "llm":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "AI response",
                                         "type": "AgentStateBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -1189,9 +1192,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
                                     }
-                                    elements[state["id"]]["bodies"].append(body_id)
+                                    elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "code":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
@@ -1205,15 +1208,15 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "code"
+                                        "actionType": "CustomCodeAction",
                                     }
-                                    elements[state["id"]]["bodies"].append(body_id)
+                                    elements[state["id"]]["actions"].append(body_id)
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "AI response",
                                         "type": "AgentStateBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -1222,9 +1225,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
                                     }
-                                    elements[state["id"]]["bodies"].append(body_id)
+                                    elements[state["id"]]["actions"].append(body_id)
                                 elif isinstance(actions[function_name], list):
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=False)
                                 else:
@@ -1242,9 +1245,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                                 "width": 159,
                                                 "height": 30,
                                             },
-                                            "replyType": "text"
+                                            "actionType": "TextReplyAction",
                                         }
-                                        elements[state["id"]]["bodies"].append(body_id)
+                                        elements[state["id"]]["actions"].append(body_id)
 
 
                             else:
@@ -1314,14 +1317,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                                 "width": 159,
                                                 "height": 30,
                                             },
-                                            "replyType": "text"
+                                            "actionType": "TextReplyAction",
                                         }
-                                        elements[state["id"]]["fallbackBodies"].append(body_id)
+                                        elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "llm":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "AI response",
                                         "type": "AgentStateFallbackBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -1330,9 +1333,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "code":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
@@ -1346,16 +1349,16 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "code"
+                                        "actionType": "CustomCodeAction",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
 
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "AI response",
                                         "type": "AgentStateFallbackBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -1364,9 +1367,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif isinstance(actions[function_name], list):
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=True)
                                 else:
@@ -1382,9 +1385,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "text"
+                                        "actionType": "TextReplyAction",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
 
                             else:
                                 # Fallback if function not found

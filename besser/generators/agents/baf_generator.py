@@ -157,6 +157,12 @@ class BAFGenerator(GeneratorInterface):
             else:
                 return None
 
+        def extract_function_name(code: str) -> str:
+            if not code:
+                return ''
+            match = re.search(r'def\s+(\w+)\s*\(', code)
+            return match.group(1) if match else ''
+
         def rag_slug(name: str, index: int) -> str:
             slug = (name or '').strip().lower().replace(' ', '_').replace('-', '_')
             if not slug:
@@ -180,6 +186,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
+        env.globals['extract_function_name'] = extract_function_name
         # Shared helper so generated identifiers match the code builder and are
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name

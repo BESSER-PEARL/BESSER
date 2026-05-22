@@ -282,18 +282,25 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             state_var = state_var_names[state.name]
             f.write(f"# {state.name} state\n")
             # Write body function if it exists
-            if state.body:
-                # Check if the body has a messages attribute
-                if hasattr(state.body, 'actions') and state.body.actions:
-                    if isinstance(state.body.actions[0], AgentReply):
-                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
-                        for action in state.body.actions:
-                            f.write(f"{state_var}_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_body({state_var}_body)\n")
-                    elif isinstance(state.body.actions[0], LLMReply):
-                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
-                        for action in state.body.actions:
+            if state.body and hasattr(state.body, 'actions') and state.body.actions:
+                # Check if this is a custom code body (singleton, emitted before Body creation)
+                if any(isinstance(a, CustomCodeAction) for a in state.body.actions):
+                    # CustomCodeAction is always a singleton in a custom body
+                    action = next(a for a in state.body.actions if isinstance(a, CustomCodeAction))
+                    f.write(f"{action.to_code()}\n")
+                    function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
+                    function_name = function_match.group(1) if function_match else f"custom_action_{safe_var_name(action.name)}"
+                    f.write(
+                        f"CustomCodeAction_{state_var} = "
+                        f"CustomCodeAction(callable={function_name})\n"
+                    )
+                    f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
+                    f.write(f"{state_var}_body.add_action(CustomCodeAction_{state_var})\n")
+                else:
+                    # Predefined body: dispatch each action individually by its own type
+                    f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
+                    for action in state.body.actions:
+                        if isinstance(action, LLMReply):
                             kwargs = []
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
@@ -303,24 +310,14 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 kwargs.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_body.add_action(LLMReply({args}))\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_body({state_var}_body)\n")
-                    elif isinstance(state.body.actions[0], RAGReply):
-                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
-                        for action in state.body.actions:
+                        elif isinstance(action, RAGReply):
                             rag_name = _escape_python_string(action.rag_db_name or '')
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
-                                f.write(
-                                    f"{state_var}_body.add_action(RAGReply('{rag_name}', prompt='{_escape_python_string(prompt)}'))\n"
-                                )
+                                f.write(f"{state_var}_body.add_action(RAGReply('{rag_name}', prompt='{_escape_python_string(prompt)}'))\n")
                             else:
                                 f.write(f"{state_var}_body.add_action(RAGReply('{rag_name}'))\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_body({state_var}_body)\n")
-                    elif isinstance(state.body.actions[0], DBReply):
-                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
-                        for action in state.body.actions:
+                        elif isinstance(action, DBReply):
                             db_args = []
                             if getattr(action, 'db_selection_type', 'default') != 'default':
                                 db_args.append(f"db_selection_type={action.db_selection_type!r}")
@@ -337,37 +334,31 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_body.add_action(DBReply({args}))\n" if args else f"{state_var}_body.add_action(DBReply())\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_body({state_var}_body)\n")
-                    elif isinstance(state.body.actions[0], CustomCodeAction):
-                        action = state.body.actions[0]
-                        f.write(f"{action.to_code()}\n")
-                        function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
-                        if function_match:
-                            function_name = function_match.group(1)
-                        else:
-                            function_name = f"custom_action_{safe_var_name(action.name)}"
-                        f.write(
-                            f"CustomCodeAction_{state_var} = "
-                            f"CustomCodeAction(callable={function_name})\n"
-                        )
-                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
-                        f.write(f"{state_var}_body.add_action(CustomCodeAction_{state_var})\n")
-                        f.write(f"{state_var}.set_body({state_var}_body)\n")
+                        elif isinstance(action, AgentReply):
+                            f.write(f"{state_var}_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
+                f.write("\n")
+                f.write(f"{state_var}.set_body({state_var}_body)\n")
 
             # Write fallback body function if it exists
-            if state.fallback_body:
-                # Check if the fallback body has a messages attribute
-                if hasattr(state.fallback_body, 'actions') and state.fallback_body.actions:
-                    if isinstance(state.fallback_body.actions[0], AgentReply):
-                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
-                        for action in state.fallback_body.actions:
-                            f.write(f"{state_var}_fallback_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
-                    elif isinstance(state.fallback_body.actions[0], LLMReply):
-                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
-                        for action in state.fallback_body.actions:
+            if state.fallback_body and hasattr(state.fallback_body, 'actions') and state.fallback_body.actions:
+                # Check if this is a custom code fallback body (singleton, emitted before Body creation)
+                if any(isinstance(a, CustomCodeAction) for a in state.fallback_body.actions):
+                    # CustomCodeAction is always a singleton in a custom body
+                    action = next(a for a in state.fallback_body.actions if isinstance(a, CustomCodeAction))
+                    f.write(f"{action.to_code()}\n")
+                    function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
+                    function_name = function_match.group(1) if function_match else f"custom_action_{safe_var_name(action.name)}"
+                    f.write(
+                        f"CustomCodeAction_{state_var}_fallback = "
+                        f"CustomCodeAction(callable={function_name})\n"
+                    )
+                    f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
+                    f.write(f"{state_var}_fallback_body.add_action(CustomCodeAction_{state_var}_fallback)\n")
+                else:
+                    # Predefined fallback body: dispatch each action individually by its own type
+                    f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
+                    for action in state.fallback_body.actions:
+                        if isinstance(action, LLMReply):
                             kwargs = []
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
@@ -377,24 +368,14 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 kwargs.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_fallback_body.add_action(LLMReply({args}))\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
-                    elif isinstance(state.fallback_body.actions[0], RAGReply):
-                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
-                        for action in state.fallback_body.actions:
+                        elif isinstance(action, RAGReply):
                             rag_name = _escape_python_string(action.rag_db_name or '')
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
-                                f.write(f"{state_var}_fallback_body.add_action(\n")
-                                f.write(f"    RAGReply('{rag_name}', prompt='{_escape_python_string(prompt)}')\n")
-                                f.write(")\n")
+                                f.write(f"{state_var}_fallback_body.add_action(RAGReply('{rag_name}', prompt='{_escape_python_string(prompt)}'))\n")
                             else:
                                 f.write(f"{state_var}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
-                    elif isinstance(state.fallback_body.actions[0], DBReply):
-                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
-                        for action in state.fallback_body.actions:
+                        elif isinstance(action, DBReply):
                             db_args = []
                             if getattr(action, 'db_selection_type', 'default') != 'default':
                                 db_args.append(f"db_selection_type={action.db_selection_type!r}")
@@ -411,23 +392,10 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state_var}_fallback_body.add_action(DBReply())\n")
-                        f.write("\n")
-                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
-                    elif isinstance(state.fallback_body.actions[0], CustomCodeAction):
-                        action = state.fallback_body.actions[0]
-                        f.write(f"{action.to_code()}\n")
-                        function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
-                        if function_match:
-                            function_name = function_match.group(1)
-                        else:
-                            function_name = f"custom_action_{safe_var_name(action.name)}"
-                        f.write(
-                            f"CustomCodeAction_{state_var}_fallback = "
-                            f"CustomCodeAction(callable={function_name})\n"
-                        )
-                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
-                        f.write(f"{state_var}_fallback_body.add_action(CustomCodeAction_{state_var}_fallback)\n")
-                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
+                        elif isinstance(action, AgentReply):
+                            f.write(f"{state_var}_fallback_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
+                f.write("\n")
+                f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
 
             # Write transitions
             for transition in state.transitions:

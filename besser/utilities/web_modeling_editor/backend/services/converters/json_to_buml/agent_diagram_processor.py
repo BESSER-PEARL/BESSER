@@ -36,108 +36,104 @@ from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 
 
-def _collect_body_messages(body_elements, elements, language, source_language, translate_text,
-                           serialize_db_reply_payload=None):
+# Maps old informal "replyType" values to new metamodel class names used in "actionType".
+_REPLY_TYPE_TO_ACTION_TYPE = {
+    "text": "TextReplyAction",
+    "llm": "LLMReplyAction",
+    "rag": "RAGReplyAction",
+    "db_reply": "DBAction",
+    "code": "CustomCodeAction",
+}
+
+
+def _resolve_action_type(element: dict) -> str:
     """
-    Collect and classify body messages from body element IDs.
+    Return the normalized actionType string for an action element.
+    Supports both new 'actionType' (metamodel class name) and old 'replyType' (backward compat).
+    """
+    action_type = element.get("actionType")
+    if action_type:
+        return action_type
+    reply_type = element.get("replyType", "")
+    return _REPLY_TYPE_TO_ACTION_TYPE.get(reply_type, "")
+
+
+def _build_body_from_action_elements(body_name, action_element_ids, elements,
+                                     language, source_language, translate_text,
+                                     build_db_reply_fn=None):
+    """
+    Build a Body object from an ordered list of action element IDs using per-element dispatch.
+
+    Each element is classified by its 'actionType' field (new schema, metamodel class name)
+    or its legacy 'replyType' field (backward compat). Actions are added to the body in the
+    order they appear in action_element_ids, preserving execution order.
 
     Args:
-        body_elements: List of body element IDs to process
-        elements: Dict of all elements keyed by ID
-        language: Target translation language (or None)
-        source_language: Source language for translation (or None)
-        translate_text: Translation function
-        serialize_db_reply_payload: Optional function to serialize DB reply payloads
+        body_name: Name for the Body object.
+        action_element_ids: Ordered list of action element IDs.
+        elements: Dict of all diagram elements keyed by ID.
+        language: Target translation language (or None).
+        source_language: Source language for translation (or None).
+        translate_text: Translation function.
+        build_db_reply_fn: Optional callable to build a DBReply from an element dict.
 
     Returns:
-        List of classified message strings (prefixed with LLM:/RAG:/DB:/CODE: or plain text)
+        A Body object with one action per element, or None if no actions were added.
     """
-    messages = []
-    for body_id in body_elements:
-        body_element = elements.get(body_id)
-        if not body_element:
-            continue
-
-        reply_type = body_element.get("replyType")
-        body_content = body_element.get("name", "")
-
-        if reply_type == "text":
-            msg = sanitize_text(body_content)
-            if language:
-                msg = translate_text(msg, language, source_language)
-            messages.append(msg)
-        elif reply_type == "llm":
-            llm_payload = {
-                "prompt": sanitize_text(body_content),
-                "llm_name": sanitize_text(body_element.get("llm_name", "") or ""),
-            }
-            messages.append(f"LLM:{json_lib.dumps(llm_payload)}")
-        elif reply_type == "rag":
-            rag_name = sanitize_text(body_element.get("ragDatabaseName", ""))
-            if not rag_name:
-                rag_name = sanitize_text(body_content)
-            if rag_name:
-                messages.append(f"RAG:{rag_name}")
-        elif reply_type == "db_reply":
-            if serialize_db_reply_payload:
-                messages.append(serialize_db_reply_payload(body_element))
-        elif reply_type == "code":
-            messages.append(f"CODE:{sanitize_text(body_content)}")
-
-    return messages
-
-
-def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
-    """
-    Build a Body object from classified messages.
-
-    Args:
-        body_name: Name for the Body object
-        messages: List of classified message strings (from _collect_body_messages)
-        build_db_reply_fn: Optional function to build a DBReply from a deserialized payload dict
-
-    Returns:
-        A Body object with appropriate actions, or None if messages is empty
-    """
-    if not messages:
+    if not action_element_ids:
         return None
 
-    has_db = any(m.startswith("DB:") for m in messages)
-    has_rag = any(m.startswith("RAG:") for m in messages)
-    has_llm = any(m.startswith("LLM:") for m in messages)
-    has_code = any(m.startswith("CODE:") for m in messages)
-
     body = Body(body_name)
+    action_added = False
 
-    if has_db and build_db_reply_fn:
-        db_replies = [json_lib.loads(m.split(":", 1)[1]) for m in messages if m.startswith("DB:")]
-        for db_reply in db_replies:
-            body.add_action(build_db_reply_fn(db_reply))
-    elif has_rag:
-        rag_names = [m.split(":", 1)[1] for m in messages if m.startswith("RAG:")]
-        for rag_db_name in rag_names:
-            body.add_action(RAGReply(rag_db_name=rag_db_name))
-    elif has_llm:
-        for m in messages:
-            if not m.startswith("LLM:"):
-                continue
-            payload_str = m.split(":", 1)[1]
-            try:
-                payload = json_lib.loads(payload_str)
-            except (ValueError, TypeError):
-                payload = {"prompt": payload_str, "llm_name": ""}
-            prompt = payload.get("prompt") or None
-            llm_name = payload.get("llm_name") or None
+    for element_id in action_element_ids:
+        element = elements.get(element_id)
+        if not element:
+            continue
+
+        action_type = _resolve_action_type(element)
+        content = element.get("name", "")
+
+        if action_type == "TextReplyAction":
+            msg = sanitize_text(content)
+            if language:
+                msg = translate_text(msg, language, source_language)
+            body.add_action(AgentReply(message=msg))
+            action_added = True
+
+        elif action_type == "LLMReplyAction":
+            # Support both "llmPrompt" (new schema) and using "name" as prompt (old schema)
+            prompt_raw = element.get("llmPrompt") or element.get("name", "")
+            prompt = sanitize_text(prompt_raw) or None
+            # Support "llmName" (new schema key) and "llm_name" (legacy key)
+            llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
+            llm_name = sanitize_text(llm_name_raw) or None
             body.add_action(LLMReply(prompt=prompt, llm_name=llm_name))
-    elif has_code:
-        code_contents = [m[5:] for m in messages if m.startswith("CODE:")]
-        for code_content in code_contents:
-            body.add_action(CustomCodeAction(source=code_content))
-    else:
-        for message in messages:
-            body.add_action(AgentReply(message=message))
+            action_added = True
 
-    return body
+        elif action_type == "RAGReplyAction":
+            rag_name = sanitize_text(element.get("ragDatabaseName", ""))
+            if not rag_name:
+                rag_name = sanitize_text(content)
+            if rag_name:
+                body.add_action(RAGReply(rag_db_name=rag_name))
+                action_added = True
+
+        elif action_type == "DBAction":
+            if build_db_reply_fn:
+                body.add_action(build_db_reply_fn(element))
+                action_added = True
+
+        elif action_type == "CustomCodeAction":
+            # Raw source code must not be sanitized — sanitize_text escapes single quotes
+            # which would corrupt string literals inside the user's Python function.
+            body.add_action(CustomCodeAction(source=content))
+            action_added = True
+
+        else:
+            logger.warning("Unknown actionType '%s' on element '%s'; skipping.", action_type, element_id)
+
+    return body if action_added else None
 
 
 def process_agent_diagram(json_data):
@@ -180,16 +176,6 @@ def process_agent_diagram(json_data):
             llm_name=sanitize_text(element.get("llm_name", "")) or None,
         )
 
-    def serialize_db_reply_payload(element: dict) -> str:
-        payload = {
-            "dbSelectionType": element.get("dbSelectionType", "default") or "default",
-            "dbCustomName": element.get("dbCustomName", "") or "",
-            "dbQueryMode": element.get("dbQueryMode", "llm_query") or "llm_query",
-            "dbOperation": element.get("dbOperation", "any") or "any",
-            "dbSqlQuery": element.get("dbSqlQuery", "") or "",
-            "llm_name": element.get("llm_name", "") or "",
-        }
-        return f"DB:{json_lib.dumps(payload)}"
     """Process Agent Diagram specific elements and return an Agent model."""
     # Create the agent model
     title = json_data.get('title', 'Generated_Agent')
@@ -304,14 +290,13 @@ def process_agent_diagram(json_data):
             )
             continue
         elif element_type == "AgentReasoningState":
-            # Reasoning states are created in the state-construction passes
-            # below (alongside AgentState).
+            # Reasoning states are created in the state-construction passes below.
             continue
         elif element_type == "AgentIntent":
             intent_name = element.get("name")
             training_sentences = []
             intent_description = element.get("intent_description", None)
-            # Collect training sentences
+            # Collect training sentences — AgentIntent still uses "bodies" for sentence IDs.
             for body_id in element.get("bodies", []):
                 body_element = elements.get(body_id)
                 if body_element:
@@ -356,6 +341,20 @@ def process_agent_diagram(json_data):
             )
             rag_dbs_by_id[element_id] = rag_config
             rag_dbs_by_name[rag_name] = rag_config
+
+    def _is_reasoning_element(element: dict) -> bool:
+        """Return True if this element represents a ReasoningState (old or new schema)."""
+        if element.get("type") == "AgentReasoningState":
+            return True
+        if element.get("type") == "AgentState" and element.get("stateType") == "reasoning":
+            return True
+        return False
+
+    def _is_standard_state_element(element: dict) -> bool:
+        """Return True if this element represents a standard AgentState."""
+        if element.get("type") == "AgentState":
+            return element.get("stateType", "standard") != "reasoning"
+        return False
 
     # First identify the initial state
     initial_state_id = None
@@ -402,64 +401,52 @@ def process_agent_diagram(json_data):
         states_by_id[element_id] = rs
         return rs
 
+    def _build_standard_state(element_id: str, element: dict, is_initial: bool):
+        """Create a standard AgentState and its body/fallback body from the new schema."""
+        state_name = element.get("name", "")
+        agent_state = agent.new_state(name=state_name, initial=is_initial)
+        states_by_id[element_id] = agent_state
+
+        # Resolve action element IDs — new key "actions", backward-compat key "bodies"
+        action_ids = element.get("actions", element.get("bodies", []))
+        body = _build_body_from_action_elements(
+            f"{state_name}_body", action_ids, elements,
+            language, source_language, translate_text,
+            build_db_reply_fn=build_db_reply,
+        )
+        if body:
+            agent_state.set_body(body)
+
+        # Only attach a fallback body if fallbackBodyEnabled is absent (legacy) or True
+        fallback_enabled = element.get("fallbackBodyEnabled", True)
+        if fallback_enabled:
+            fallback_ids = element.get("fallbackActions", element.get("fallbackBodies", []))
+            fallback_body = _build_body_from_action_elements(
+                f"{state_name}_fallback_body", fallback_ids, elements,
+                language, source_language, translate_text,
+                build_db_reply_fn=build_db_reply,
+            )
+            if fallback_body:
+                agent_state.set_fallback_body(fallback_body)
+
+        return agent_state
+
     # Process the initial state first if found
     if initial_state_id:
         element = elements.get(initial_state_id)
-        state_name = element.get("name", "")
-
-        if element.get("type") == "AgentReasoningState":
+        if _is_reasoning_element(element):
             _build_reasoning_state(initial_state_id, element, is_initial=True)
         else:
-            agent_state = agent.new_state(name=state_name, initial=True)
-            states_by_id[initial_state_id] = agent_state
-
-            # Process state bodies
-            body_messages = _collect_body_messages(
-                element.get("bodies", []), elements, language, source_language, translate_text,
-                serialize_db_reply_payload=serialize_db_reply_payload
-            )
-            body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
-            if body:
-                agent_state.set_body(body)
-
-            # Process fallback bodies
-            fallback_messages = _collect_body_messages(
-                element.get("fallbackBodies", []), elements, language, source_language, translate_text,
-                serialize_db_reply_payload=serialize_db_reply_payload
-            )
-            fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
-            if fallback_body:
-                agent_state.set_fallback_body(fallback_body)
+            _build_standard_state(initial_state_id, element, is_initial=True)
 
     # Now process the rest of the states (including reasoning states)
     for element_id, element in elements.items():
-        if element.get("type") == "AgentReasoningState" and element_id != initial_state_id:
-            _build_reasoning_state(element_id, element, is_initial=False)
+        if element_id == initial_state_id:
             continue
-        if element.get("type") == "AgentState" and element_id != initial_state_id:
-            # Create state and add to agent
-            state_name = element.get("name", "")
-
-            agent_state = agent.new_state(name=state_name, initial=False)
-            states_by_id[element_id] = agent_state
-
-            # Process state bodies
-            body_messages = _collect_body_messages(
-                element.get("bodies", []), elements, language, source_language, translate_text,
-                serialize_db_reply_payload=serialize_db_reply_payload
-            )
-            body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
-            if body:
-                agent_state.set_body(body)
-
-            # Process fallback bodies
-            fallback_messages = _collect_body_messages(
-                element.get("fallbackBodies", []), elements, language, source_language, translate_text,
-                serialize_db_reply_payload=serialize_db_reply_payload
-            )
-            fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
-            if fallback_body:
-                agent_state.set_fallback_body(fallback_body)
+        if _is_reasoning_element(element):
+            _build_reasoning_state(element_id, element, is_initial=False)
+        elif _is_standard_state_element(element):
+            _build_standard_state(element_id, element, is_initial=False)
 
     # Build intent lookup dict for O(1) resolution during transition processing.
     # Intent names are unique case-insensitively in BUML (see Agent._validate_state_intent_name_collisions),

@@ -118,6 +118,31 @@ identifier safety, numerical bounds, dataset consistency) and the
 :doc:`generators/pytorch` / :doc:`generators/tensorflow` for the generator
 details.
 
+Component and Deployment Diagrams
+---------------------------------
+
+The editor supports UML 2.5 **Component** and **Deployment** diagrams as two
+distinct diagram types. They back the :doc:`UML Component
+<buml_language/model_types/uml_component>` and :doc:`UML Deployment
+<buml_language/model_types/uml_deployment>` metamodels.
+
+- A **Component diagram** holds components, subsystems, and interfaces wired
+  by provided/required-interface and dependency relationships.
+- A **Deployment diagram** holds nodes and artifacts; an artifact's
+  multiplicity on a node is written as a ``[N]`` / ``[N..M]`` suffix on the
+  artifact name.
+- The **agentic profile** is carried through the editor's *stereotype*
+  field: a component stereotyped ``solution`` / ``supervision`` /
+  ``consensus`` / ``collaboration`` becomes an agent; ``skill`` / ``tool``
+  promote a component to that capability subtype; a dependency stereotyped
+  ``delegates`` / ``has`` / ``uses`` / … becomes a typed agentic edge. A
+  dependency can also carry a permission suffix, e.g.
+  ``delegates {permission: repo:merge:approve}``.
+
+Both diagram types round-trip losslessly: ``/export-buml`` produces BUML
+Python and ``/get-json-model`` reads it back. See
+:doc:`web_editor_backend` for the endpoints.
+
 Backend API Reference
 ---------------------
 

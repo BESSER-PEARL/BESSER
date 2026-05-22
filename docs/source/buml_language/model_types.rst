@@ -10,6 +10,8 @@ Model types
   model_types/gui
   model_types/ocl
   model_types/deployment
+  model_types/uml_component
+  model_types/uml_deployment
   model_types/state_machine
   model_types/agent
   model_types/feature_model

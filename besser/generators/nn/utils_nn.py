@@ -417,7 +417,8 @@ def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str):
     return out_var
 
 def handle_tensorop(tensorop: TensorOp, modules_details: dict,
-                    get_tensorop_syntax: callable, out_var: str | None = None):
+                    get_tensorop_syntax: callable, out_var: str | None = None,
+                    referenced_tensorops: set | None = None):
     """
     It populates the `modules_details` dictionary with tensorop's
     information: Its syntax and output variable.
@@ -427,6 +428,8 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         out_var (str | None): The output variable of the tensorop.
+        referenced_tensorops (set | None): Set of tensorop names that are
+            referenced by other tensorops and need unique variable names.
 
     Returns:
         None, but stores the tensorop details in the modules_details dict.
@@ -439,7 +442,13 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
         else:
             prev_module = list(modules_details.keys())[-1]
             prev_out_var = get_previous_out_var(modules_details, prev_module)
-            out_var = get_tensorop_out_var(tensorop, prev_out_var)
+
+            # If this tensorop is referenced by other operations, give it a unique variable
+            if referenced_tensorops and tensorop.name in referenced_tensorops:
+                # Create a unique intermediate variable name
+                out_var = f"_{tensorop.name}"
+            else:
+                out_var = get_tensorop_out_var(tensorop, prev_out_var)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var]
 

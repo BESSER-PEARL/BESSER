@@ -99,6 +99,18 @@ class NNCodeGenerator(GeneratorInterface):
         is_seq = False
         if self.generation_type == "sequential":
             is_seq = True
+
+        # First pass: identify tensorops that are referenced by other tensorops
+        referenced_tensorops = set()
+        for module in self.model.modules:
+            if module.__class__.__name__ == "TensorOp":
+                if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
+                    for item in module.layers_of_tensors:
+                        # If item is a string starting with "op_", it's a tensorop reference
+                        if isinstance(item, str) and item.startswith("op_"):
+                            referenced_tensorops.add(item)
+
+        # Second pass: process modules
         for module in self.model.modules:
             module_type = module.__class__.__name__
             if module_type == "NN":
@@ -119,7 +131,8 @@ class NNCodeGenerator(GeneratorInterface):
                 )
             else:
                 handle_tensorop(
-                    module, modules_details, self.get_tensorop_syntax
+                    module, modules_details, self.get_tensorop_syntax,
+                    referenced_tensorops=referenced_tensorops
                 )
         if actv_func:
             adjust_actv_func_name(modules_details)

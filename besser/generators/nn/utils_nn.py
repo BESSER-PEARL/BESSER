@@ -91,7 +91,8 @@ def add_in_out_var_to_subnn(modules_details: dict):
     modules_details[last_module]["in_out_variable"] = in_out_var
 
 
-def get_layers_output_for_tensorops(layers_names: list, modules_details: dict):
+def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
+                                     actual_vars: list = None):
     """
     It retrieves the output variables of the layers in `layers_name`
     list to use them as input of the tensorop.
@@ -100,6 +101,7 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict):
         layers_names (list): Names of layers on which the tensorop is applied.
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
+        actual_vars (list): Component types ("output" or "hidden") for RNN layers.
 
     Returns:
         The output variables of the layers in 'layers_names'.
@@ -107,9 +109,23 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict):
     """
     my_keys = list(modules_details.keys())
     out_vars = []
-    for layer_name in layers_names:
+    for i, layer_name in enumerate(layers_names):
         if layer_name+"_layer" in my_keys:
-            out_vars.append(modules_details[layer_name + "_layer"][1])
+            layer_details = modules_details[layer_name + "_layer"]
+            # Check if this layer has return_type="both" and we have actual_vars info
+            if (len(layer_details) > 4 and actual_vars and i < len(actual_vars)):
+                # actual_vars contains "output" or "hidden" flags
+                if actual_vars[i] == "hidden":
+                    # Use hidden variable (element [4])
+                    out_vars.append(layer_details[4])
+                else:
+                    # Use output variable (element [1]), but slice to get last timestep
+                    # For RNN with return_sequences=True, we need [:, -1, :] to get last timestep
+                    out_var = layer_details[1]
+                    out_vars.append(f"{out_var}[:, -1, :]")
+            else:
+                # Normal case: use output variable
+                out_vars.append(layer_details[1])
         else:
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars
@@ -302,8 +318,15 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 
     # Only add _layer entry if layer_synt is not None (standalone activations return None)
     if layer_synt is not None:
-        modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                  in_layer, layer]
+        # For RNNs with return_type="both", add hidden variable as 5th element
+        if (hasattr(layer, 'return_type') and layer.return_type == "both"):
+            # Generate hidden variable name
+            hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
+            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                      in_layer, layer, hidden_var]
+        else:
+            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                      in_layer, layer]
     if actv_func_syntax:
         modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv,
                                                   in_actv]
@@ -344,18 +367,29 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     if tns_type == "reshape":
         params = ', '.join([str(i) for i in tensorop.reshape_dim])
     elif tns_type == "concatenate":
+        actual_vars = getattr(tensorop, 'actual_vars', None)
         tensors = get_layers_output_for_tensorops(tensorop.layers_of_tensors,
-                                                  modules_details)
+                                                  modules_details,
+                                                  actual_vars)
         params = ', '.join(tensors)
     elif tns_type == "transpose":
         params = ", ".join([str(i) for i in tensorop.transpose_dim])
     elif tns_type == "permute":
         params = ", ".join([str(i) for i in tensorop.permute_dim])
+    elif tns_type == "mean":
+        # Mean operates on prev_out_var, no additional params needed
+        params = ""
+    elif tns_type == "squeeze" or tns_type == "unsqueeze":
+        # Squeeze/unsqueeze operate on prev_out_var, no additional params needed
+        params = ""
     else:
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):
+            # Check if we need to use actual_vars for output vs hidden selection
+            actual_vars = getattr(tensorop, 'actual_vars', None)
             tensors = get_layers_output_for_tensorops(tensors,
-                                                      modules_details)
+                                                      modules_details,
+                                                      actual_vars)
 
         params = ', '.join([str(i) for i in tensors])
     return prev_out_var, params

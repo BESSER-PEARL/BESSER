@@ -60,15 +60,19 @@ class TensorOp(NamedElement):
                  reshape_dim: List[int] = None,
                  transpose_dim: List[int] = None,
                  permute_dim: List[int] = None,
-                 input_reused: bool = False):
+                 reduce_dim: int = None,
+                 input_reused: bool = False,
+                 actual_vars: List[str] = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
         self.reshape_dim: List[int] = reshape_dim
         self.transpose_dim: List[int] = transpose_dim
         self.permute_dim: List[int] = permute_dim
+        self.reduce_dim: int = reduce_dim
         self.input_reused: bool = input_reused
         self.tns_type: str = tns_type
+        self.actual_vars: List[str] = actual_vars  # For RNN hidden state tracking
 
     @property
     def tns_type(self) -> str:
@@ -87,7 +91,8 @@ class TensorOp(NamedElement):
         """
         if tns_type not in [
             'reshape', 'concatenate', 'multiply',
-            'matmultiply', 'permute', 'transpose'
+            'matmultiply', 'permute', 'transpose', 'mean', 'squeeze', 'unsqueeze',
+            'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide'
         ]:
             raise ValueError("Invalid value of tensorOp type")
         elif tns_type == 'reshape' and self.reshape_dim is None:
@@ -112,6 +117,19 @@ class TensorOp(NamedElement):
         elif tns_type == 'transpose' and self.transpose_dim is None:
             raise ValueError("transpose_dim parameter cannot be None when \
                              type is 'transpose'")
+        elif tns_type == 'mean' and self.reduce_dim is None:
+            raise ValueError("reduce_dim parameter cannot be None when \
+                             type is 'mean'")
+        elif tns_type == 'squeeze':
+            # squeeze can have None reduce_dim to squeeze all dims of size 1
+            pass
+        elif tns_type == 'unsqueeze' and self.reduce_dim is None:
+            raise ValueError("reduce_dim parameter cannot be None when \
+                             type is 'unsqueeze'")
+        elif tns_type in ['binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide']:
+            if self.layers_of_tensors is None:
+                raise ValueError("layers_of_tensors parameter cannot be None \
+                                 for binary operations")
 
         self.__tns_type = tns_type
 
@@ -1485,7 +1503,7 @@ class RNN(Layer):
     def return_type(self) -> str:
         """
         str: Whether to return the hidden states, the last output in
-            the output sequence or the full sequence.
+            the output sequence, the full sequence, or both output and hidden.
         """
         return self.__return_type
 
@@ -1493,13 +1511,13 @@ class RNN(Layer):
     def return_type(self, return_type: str):
         """
         str: Whether to return the hidden states, the last output in
-            the output sequence or the full sequence.
+            the output sequence, the full sequence, or both output and hidden.
         Raises:
             ValueError: If the return_type is none of these:
-            'hidden', 'last', or 'full'.
+            'hidden', 'last', 'full', or 'both'.
         """
 
-        if return_type not in ['hidden', 'last', 'full']:
+        if return_type not in ['hidden', 'last', 'full', 'both']:
             raise ValueError ("Invalid return type")
         self.__return_type = return_type
 

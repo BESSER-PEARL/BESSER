@@ -182,6 +182,8 @@ class SetupLayerSyntax:
 
         if self.layer.return_type == "full":
             lyr = f"{lyr}, return_sequences=True)"
+        elif self.layer.return_type == "both":
+            lyr = f"{lyr}, return_sequences=True, return_state=True)"
         elif self.layer.return_type == "hidden":
             lyr = f"{lyr}, return_state=True)"
         else:
@@ -332,6 +334,26 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{params}])"
     elif tns_type == "multiply":
         ts_op_synt = f"tf.math.multiply({params})"
+    elif tns_type == "mean":
+        axis = tensorop.reduce_dim
+        ts_op_synt = f"tf.reduce_mean({prev_out_var}, axis={axis})"
+    elif tns_type == "squeeze":
+        if tensorop.reduce_dim is not None:
+            axis = tensorop.reduce_dim
+            ts_op_synt = f"tf.squeeze({prev_out_var}, axis={axis})"
+        else:
+            ts_op_synt = f"tf.squeeze({prev_out_var})"
+    elif tns_type == "unsqueeze":
+        axis = tensorop.reduce_dim
+        ts_op_synt = f"tf.expand_dims({prev_out_var}, axis={axis})"
+    elif tns_type == "binop_add":
+        ts_op_synt = f"{params[0]} + {params[1]}" if isinstance(params, list) else f"tf.add({params})"
+    elif tns_type == "binop_subtract":
+        ts_op_synt = f"{params[0]} - {params[1]}" if isinstance(params, list) else f"tf.subtract({params})"
+    elif tns_type == "binop_multiply":
+        ts_op_synt = f"{params[0]} * {params[1]}" if isinstance(params, list) else f"tf.multiply({params})"
+    elif tns_type == "binop_divide":
+        ts_op_synt = f"{params[0]} / {params[1]}" if isinstance(params, list) else f"tf.divide({params})"
     else:
         ts_op_synt = f"tf.matmul({params})"
     return ts_op_synt

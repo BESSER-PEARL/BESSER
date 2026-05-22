@@ -283,6 +283,26 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"{prev_out_var}.permute({params})"
     elif tns_type == "multiply":
         ts_op_synt = f"torch.mul({params})"
+    elif tns_type == "mean":
+        dim = tensorop.reduce_dim
+        ts_op_synt = f"{prev_out_var}.mean(dim={dim})"
+    elif tns_type == "squeeze":
+        if tensorop.reduce_dim is not None:
+            dim = tensorop.reduce_dim
+            ts_op_synt = f"{prev_out_var}.squeeze({dim})"
+        else:
+            ts_op_synt = f"{prev_out_var}.squeeze()"
+    elif tns_type == "unsqueeze":
+        dim = tensorop.reduce_dim
+        ts_op_synt = f"{prev_out_var}.unsqueeze({dim})"
+    elif tns_type == "binop_add":
+        ts_op_synt = f"{params.split(', ')[0]} + {params.split(', ')[1]}" if ', ' in params else f"torch.add({params})"
+    elif tns_type == "binop_subtract":
+        ts_op_synt = f"{params.split(', ')[0]} - {params.split(', ')[1]}" if ', ' in params else f"torch.subtract({params})"
+    elif tns_type == "binop_multiply":
+        ts_op_synt = f"{params.split(', ')[0]} * {params.split(', ')[1]}" if ', ' in params else f"torch.multiply({params})"
+    elif tns_type == "binop_divide":
+        ts_op_synt = f"{params.split(', ')[0]} / {params.split(', ')[1]}" if ', ' in params else f"torch.divide({params})"
     else:
         ts_op_synt = f"torch.matmul({params})"
     return ts_op_synt

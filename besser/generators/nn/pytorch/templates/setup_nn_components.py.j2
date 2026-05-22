@@ -108,19 +108,30 @@ from torch import nn
     {%- else %}
         {%- if module_name.endswith("activ") %}
         {{ module_details[1] }} = self.{{ module_details[0].split('.', 1)[1].split('=', 1)[0].strip() }}({{ module_details[2] }})
-        {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
-            {%- if module_details[-1].return_type == "hidden" %}
-                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" %}
+        {%- elif module_details[3].__class__.mro()[1].__name__ == "RNN" %}
+            {%- if module_details[3].return_type == "both" %}
+                {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
+        {{ module_details[1] }}, ({{ module_details[4] }}, _) = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- else %}
+        {{ module_details[1] }}, {{ module_details[4] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- endif -%}
+                {%- if module_details[3].bidirectional %}
+        {{ module_details[4] }} = torch.cat(({{ module_details[4] }}[-2], {{ module_details[4] }}[-1]), dim=1)
+                {%- else %}
+        {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                {%- endif -%}
+            {%- elif module_details[3].return_type == "hidden" %}
+                {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
         _, ({{ module_details[1] }}, _) = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
                 {%- else %}
         _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
                 {%- endif -%}
-                {%- if module_details[-1].bidirectional %}
+                {%- if module_details[3].bidirectional %}
         {{ module_details[1] }} = torch.cat(({{ module_details[1] }}[-2], {{ module_details[1] }}[-1]), dim=1)
                 {%- else %}
         {{ module_details[1] }} = {{ module_details[1] }}[-1]
                 {%- endif -%}
-            {%- elif module_details[-1].return_type == "full" %}
+            {%- elif module_details[3].return_type == "full" %}
         {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
             {%- else %}
         {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})

@@ -110,7 +110,10 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
     my_keys = list(modules_details.keys())
     out_vars = []
     for i, layer_name in enumerate(layers_names):
-        if layer_name+"_layer" in my_keys:
+        # Handle numeric constants directly
+        if isinstance(layer_name, (int, float)):
+            out_vars.append(str(layer_name))
+        elif layer_name+"_layer" in my_keys:
             layer_details = modules_details[layer_name + "_layer"]
             # Check if this layer has return_type="both" and we have actual_vars info
             if (len(layer_details) > 4 and actual_vars and i < len(actual_vars)):

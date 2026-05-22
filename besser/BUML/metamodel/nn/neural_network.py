@@ -62,7 +62,8 @@ class TensorOp(NamedElement):
                  permute_dim: List[int] = None,
                  reduce_dim: int = None,
                  input_reused: bool = False,
-                 actual_vars: List[str] = None):
+                 actual_vars: List[str] = None,
+                 subscript_indices: str = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
@@ -71,8 +72,9 @@ class TensorOp(NamedElement):
         self.permute_dim: List[int] = permute_dim
         self.reduce_dim: int = reduce_dim
         self.input_reused: bool = input_reused
+        self.actual_vars: List[str] = actual_vars
+        self.subscript_indices: str = subscript_indices
         self.tns_type: str = tns_type
-        self.actual_vars: List[str] = actual_vars  # For RNN hidden state tracking
 
     @property
     def tns_type(self) -> str:
@@ -92,7 +94,7 @@ class TensorOp(NamedElement):
         if tns_type not in [
             'reshape', 'concatenate', 'multiply',
             'matmultiply', 'permute', 'transpose', 'mean', 'squeeze', 'unsqueeze',
-            'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide'
+            'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'subscript'
         ]:
             raise ValueError("Invalid value of tensorOp type")
         elif tns_type == 'reshape' and self.reshape_dim is None:
@@ -130,6 +132,13 @@ class TensorOp(NamedElement):
             if self.layers_of_tensors is None:
                 raise ValueError("layers_of_tensors parameter cannot be None \
                                  for binary operations")
+        elif tns_type == 'subscript':
+            if self.subscript_indices is None:
+                raise ValueError("subscript_indices parameter cannot be None when \
+                                 type is 'subscript'")
+            if self.layers_of_tensors is None or len(self.layers_of_tensors) == 0:
+                raise ValueError("layers_of_tensors parameter cannot be None or empty \
+                                 for subscript operations")
 
         self.__tns_type = tns_type
 

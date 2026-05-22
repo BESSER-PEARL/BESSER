@@ -392,6 +392,13 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     elif tns_type == "squeeze" or tns_type == "unsqueeze":
         # Squeeze/unsqueeze operate on prev_out_var, no additional params needed
         params = ""
+    elif tns_type == "subscript":
+        # Subscript operates on prev_out_var, pattern is in subscript_indices
+        # Get prev_out_var from the source layer/op
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            prev_out_var = get_layers_output_for_tensorops([source_layer], modules_details)[0]
+        params = ""
     else:
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):

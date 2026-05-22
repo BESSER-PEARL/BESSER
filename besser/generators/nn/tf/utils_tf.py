@@ -360,6 +360,10 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"{params[0]} * {params[1]}" if isinstance(params, list) else f"tf.multiply({params})"
     elif tns_type == "binop_divide":
         ts_op_synt = f"{params[0]} / {params[1]}" if isinstance(params, list) else f"tf.divide({params})"
+    elif tns_type == "subscript":
+        # General subscripting/slicing operation
+        # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")
+        ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
     else:
         ts_op_synt = f"tf.matmul({params})"
     return ts_op_synt

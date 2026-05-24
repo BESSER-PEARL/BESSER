@@ -55,6 +55,9 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     modules_names = list(modules_details.keys())
     lyr_input = layer.name_module_input
     if lyr_input is not None:
+        # Special case: INPUT marker for network input
+        if lyr_input == 'INPUT':
+            return 'x'
         if f"{lyr_input}_layer" in modules_names:
             return modules_details[f"{lyr_input}_layer"][1]
         if f"{lyr_input}_nn" in modules_names:
@@ -373,6 +376,26 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     else:
         prev_module = list(modules_details.keys())[-1]
         prev_out_var = get_previous_out_var(modules_details, prev_module)
+
+    # Check if tensorop has name_module_input set (similar to layers)
+    if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
+        if tensorop.name_module_input == 'INPUT':
+            # Use dedicated variable for preserved input
+            # Generator will need to add: inp = x at the start
+            prev_out_var = 'inp'
+        else:
+            # Use get_input_var logic for tensorops too
+            lyr_input = tensorop.name_module_input
+            modules_names = list(modules_details.keys())
+            if f"{lyr_input}_layer" in modules_names:
+                prev_out_var = modules_details[f"{lyr_input}_layer"][1]
+            elif f"{lyr_input}_nn" in modules_names:
+                prev_out_var = modules_details[f"{lyr_input}_nn"]["in_out_variable"]
+            elif f"{lyr_input}_activ" in modules_names:
+                prev_out_var = modules_details[f"{lyr_input}_activ"][1]
+            elif f"{lyr_input}_op" in modules_names:
+                prev_out_var = modules_details[f"{lyr_input}_op"][1]
+
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
         params = ', '.join([str(i) for i in tensorop.reshape_dim])
@@ -394,10 +417,18 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         params = ""
     elif tns_type == "subscript":
         # Subscript operates on prev_out_var, pattern is in subscript_indices
-        # Get prev_out_var from the source layer/op
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            prev_out_var = get_layers_output_for_tensorops([source_layer], modules_details)[0]
+        # Only override prev_out_var if name_module_input wasn't already set
+        if not (hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None):
+            if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+                source_layer = tensorop.layers_of_tensors[0]
+                if source_layer == 'INPUT':
+                    prev_out_var = 'inp'
+                elif (source_layer + "_layer" in modules_details or
+                      source_layer + "_op" in modules_details or
+                      source_layer + "_activ" in modules_details):
+                    prev_out_var = get_layers_output_for_tensorops([source_layer], modules_details)[0]
+                else:
+                    prev_out_var = source_layer
         params = ""
     else:
         tensors = tensorop.layers_of_tensors
@@ -464,7 +495,7 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
             else:
                 out_var = get_tensorop_out_var(tensorop, prev_out_var)
 
-    modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var]
+    modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
 
 
 def preprocess_image(image_path: str, target_size: tuple):

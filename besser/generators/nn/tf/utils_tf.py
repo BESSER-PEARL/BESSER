@@ -343,6 +343,9 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "mean":
         axis = tensorop.reduce_dim
         ts_op_synt = f"tf.reduce_mean({prev_out_var}, axis={axis})"
+    elif tns_type == "max":
+        axis = tensorop.reduce_dim
+        ts_op_synt = f"tf.reduce_max({prev_out_var}, axis={axis})"
     elif tns_type == "squeeze":
         if tensorop.reduce_dim is not None:
             axis = tensorop.reduce_dim

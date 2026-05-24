@@ -410,7 +410,24 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     elif tns_type == "permute":
         params = ", ".join([str(i) for i in tensorop.permute_dim])
     elif tns_type == "mean":
-        # Mean operates on prev_out_var, no additional params needed
+        # Mean operates on prev_out_var, but may have layers_of_tensors set
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            modules_names = list(modules_details.keys())
+            if f"{source_layer}_layer" in modules_names:
+                prev_out_var = modules_details[f"{source_layer}_layer"][1]
+            elif f"{source_layer}_op" in modules_names:
+                prev_out_var = modules_details[f"{source_layer}_op"][1]
+        params = ""
+    elif tns_type == "max":
+        # Max operates on prev_out_var, but may have layers_of_tensors set
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            modules_names = list(modules_details.keys())
+            if f"{source_layer}_layer" in modules_names:
+                prev_out_var = modules_details[f"{source_layer}_layer"][1]
+            elif f"{source_layer}_op" in modules_names:
+                prev_out_var = modules_details[f"{source_layer}_op"][1]
         params = ""
     elif tns_type == "squeeze" or tns_type == "unsqueeze":
         # Squeeze/unsqueeze operate on prev_out_var, no additional params needed

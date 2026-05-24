@@ -93,7 +93,7 @@ class TensorOp(NamedElement):
         """
         if tns_type not in [
             'reshape', 'concatenate', 'multiply',
-            'matmultiply', 'permute', 'transpose', 'mean', 'squeeze', 'unsqueeze',
+            'matmultiply', 'permute', 'transpose', 'mean', 'max', 'squeeze', 'unsqueeze',
             'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'subscript'
         ]:
             raise ValueError("Invalid value of tensorOp type")

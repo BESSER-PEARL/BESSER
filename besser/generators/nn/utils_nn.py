@@ -136,6 +136,11 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             # Standalone activation layer (GeneralLayer)
             activ_details = modules_details[layer_name + "_activ"]
             out_vars.append(activ_details[1])
+        elif any(k.startswith(layer_name + "_") and k.endswith("_nn") for k in my_keys):
+            # Sub-network (Sequential) - has format: name_N_nn where N is a counter
+            nn_key = next(k for k in my_keys if k.startswith(layer_name + "_") and k.endswith("_nn"))
+            nn_details = modules_details[nn_key]
+            out_vars.append(nn_details["in_out_variable"])
         else:
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars

@@ -446,6 +446,17 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                                                   actual_vars)
         params = ', '.join(tensors)
     elif tns_type == "transpose":
+        # Transpose may have layers_of_tensors set
+        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            source_layer = tensorop.layers_of_tensors[0]
+            if source_layer == 'INPUT':
+                prev_out_var = 'inp'
+            else:
+                modules_names = list(modules_details.keys())
+                if f"{source_layer}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
+                elif f"{source_layer}_op" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_op"][1]
         params = ", ".join([str(i) for i in tensorop.transpose_dim])
     elif tns_type == "permute":
         params = ", ".join([str(i) for i in tensorop.permute_dim])

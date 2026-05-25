@@ -348,7 +348,19 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         axis = tensorop.concatenate_dim
         ts_op_synt = f"tf.concat([{params}], axis={axis})"
     elif tns_type == "transpose":
-        ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{params}])"
+        # PyTorch transpose(dim0, dim1) swaps two dims - convert to full perm
+        transpose_dims = tensorop.transpose_dim
+        if len(transpose_dims) == 2:
+            # Assume 3D tensor (batch, dim1, dim2) - most common case
+            # Create full permutation by swapping the two specified dims
+            dim0, dim1 = transpose_dims
+            perm = list(range(3))
+            perm[dim0], perm[dim1] = perm[dim1], perm[dim0]
+            perm_str = ", ".join(map(str, perm))
+            ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{perm_str}])"
+        else:
+            # Fallback for other cases
+            ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{params}])"
     elif tns_type == "permute":
         ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{params}])"
     elif tns_type == "multiply":

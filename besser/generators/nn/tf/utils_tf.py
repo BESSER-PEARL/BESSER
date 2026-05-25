@@ -57,10 +57,25 @@ class SetupLayerSyntax:
             # GeneralLayer with only actv_func (standalone activation)
             lyr = f"self.{lyr_name} = layers.Activation('{self.layer.actv_func}')"
         else: #cls_name == "EmbeddingLayer"
-            lyr = (
-                f"{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "
-                f"output_dim={self.layer.embedding_dim})"
-            )
+            padding_idx = self.layer.padding_idx
+            mask_zero = "True" if padding_idx is not None else "False"
+
+            # If padding_idx != 0, add remapping layer
+            if padding_idx is not None and padding_idx != 0:
+                remap_lyr = (
+                    f"self.{lyr_name}_remap = layers.Lambda("
+                    f"lambda x: tf.where(x == {padding_idx}, 0, "
+                    f"tf.where(x == 0, {padding_idx}, x)))#"
+                )
+                lyr = (
+                    f"{remap_lyr}{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "
+                    f"output_dim={self.layer.embedding_dim}, mask_zero={mask_zero})"
+                )
+            else:
+                lyr = (
+                    f"{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "
+                    f"output_dim={self.layer.embedding_dim}, mask_zero={mask_zero})"
+                )
         return lyr
 
     def setup_standalone_activation(self, out_var, in_var):

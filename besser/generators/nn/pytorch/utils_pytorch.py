@@ -55,7 +55,11 @@ class SetupLayerSyntax:
         else: #cls_name == "EmbeddingLayer"
             nm = self.layer.num_embeddings
             dm = self.layer.embedding_dim
-            lyr = f"{lyr}.Embedding(num_embeddings={nm}, embedding_dim={dm})"
+            padding_idx = self.layer.padding_idx
+            if padding_idx is not None:
+                lyr = f"{lyr}.Embedding(num_embeddings={nm}, embedding_dim={dm}, padding_idx={padding_idx})"
+            else:
+                lyr = f"{lyr}.Embedding(num_embeddings={nm}, embedding_dim={dm})"
 
         return lyr
 

@@ -1938,6 +1938,8 @@ class EmbeddingLayer(GeneralLayer):
         actv_func (str): The type of the activation function.
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
+        padding_idx (int): If specified, the entries at padding_idx are masked
+            and do not contribute to the gradient. Default is None.
         name_module_input (str): The name of the layer from which
             the inputs originate.
         input_reused (bool): Whether the input to this layer is reused
@@ -1950,17 +1952,19 @@ class EmbeddingLayer(GeneralLayer):
             of the activation function.
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
+        padding_idx (int): If specified, the entries at padding_idx are masked.
         name_module_input (str): Inherited from Layer. The name of
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
     """
     def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
-                 actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
+                 padding_idx: int = None, actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
         super().__init__(name, actv_func, name_module_input, input_reused)
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
+        self.padding_idx: int = padding_idx
 
     @property
     def num_embeddings(self) -> int:
@@ -1982,10 +1986,20 @@ class EmbeddingLayer(GeneralLayer):
         """int: Set the size of each embedding vector."""
         self.__embedding_dim = embedding_dim
 
+    @property
+    def padding_idx(self) -> int:
+        """int: Get the padding index."""
+        return self.__padding_idx
+
+    @padding_idx.setter
+    def padding_idx(self, padding_idx: int):
+        """int: Set the padding index."""
+        self.__padding_idx = padding_idx
+
     def __repr__(self):
         return (
             f'EmbeddingLayer({self.name}, {self.actv_func}, '
-            f'{self.num_embeddings}, {self.embedding_dim}, '
+            f'{self.num_embeddings}, {self.embedding_dim}, {self.padding_idx}, '
             f'{self.name_module_input}, {self.input_reused})'
         )
 

@@ -142,8 +142,17 @@ class SetupLayerSyntax:
             if cls_name == "BatchNormLayer":
                 lyr = f"{lyr}.BatchNormalization()"
             else: #cls_name == "LayerNormLayer"
+                # PyTorch LayerNorm(shape) vs TensorFlow LayerNormalization(axis):
+                # PyTorch takes dimension size, TF takes axis index
+                # nn.LayerNorm([d1, d2, ..., dn]) normalizes over last n dimensions
+                # LayerNormalization should use axis=[-n, ..., -1]
                 norm_shape = self.layer.normalized_shape
-                lyr = f"{lyr}.LayerNormalization(axis={norm_shape})"
+                if isinstance(norm_shape, list):
+                    num_axes = len(norm_shape)
+                    axis_indices = list(range(-num_axes, 0))
+                    lyr = f"{lyr}.LayerNormalization(axis={axis_indices})"
+                else:
+                    lyr = f"{lyr}.LayerNormalization(axis=-1)"
         else: #cls_name == "DropoutLayer"
             lyr = f"{lyr}.Dropout(rate={self.layer.rate})"
         return lyr

@@ -199,13 +199,17 @@ class SetupLayerSyntax:
         kernel = utils.format_value(self.layer.kernel_dim)
         stride = utils.format_value(self.layer.stride_dim)
         pad = self.layer.padding_amount
+        dilation = utils.format_value(self.layer.dilation)
+        groups = self.layer.groups
+        bias = self.layer.bias
         self.permute_in = self.layer.permute_in
         self.permute_out = self.layer.permute_out
         self.dim = dim
         lyr = (
             f"self.{lyr_name} = nn.Conv{dim}d(in_channels={in_chan}, "
             f"out_channels={out_chan}, kernel_size={kernel}, "
-            f"stride={stride}, padding={pad})"
+            f"stride={stride}, padding={pad}, dilation={dilation}, "
+            f"groups={groups}, bias={bias})"
         )
         return lyr
 

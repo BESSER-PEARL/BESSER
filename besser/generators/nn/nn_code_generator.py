@@ -100,19 +100,6 @@ class NNCodeGenerator(GeneratorInterface):
         if self.generation_type == "sequential":
             is_seq = True
 
-        # DEBUG: Show modules order
-        print("\n=== DEBUG: Processing modules in order ===")
-        for i, mod in enumerate(self.model.modules):
-            mod_type = mod.__class__.__name__
-            mod_name = mod.name
-            if mod_type == 'TensorOp':
-                print(f"{i}: {mod_name} ({mod_type}: {mod.tns_type})")
-            else:
-                print(f"{i}: {mod_name} ({mod_type})")
-                if hasattr(mod, 'name_module_input') and mod.name_module_input:
-                    print(f"   -> name_module_input: {mod.name_module_input}")
-        print("=" * 50)
-
         # First pass: identify tensorops that are referenced by other tensorops
         referenced_tensorops = set()
         for module in self.model.modules:

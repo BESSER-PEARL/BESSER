@@ -495,6 +495,9 @@ class ConvolutionalLayer(CNN):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
+        dilation (List[int]): Spacing between kernel elements. Default is [1].
+        groups (int): Number of blocked connections from input to output channels. Default is 1.
+        bias (bool): If True, adds a learnable bias to the output. Default is True.
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
             PyTorch model equivalent to TensorFlow model.
@@ -524,6 +527,9 @@ class ConvolutionalLayer(CNN):
             added to the input.
         padding_type (str): Inherited from CNN. The type of padding
             applied to the input.
+        dilation (List[int]): Spacing between kernel elements.
+        groups (int): Number of blocked connections from input to output channels.
+        bias (bool): If True, adds a learnable bias to the output.
         permute_in (bool): Inherited from CNN. Whether the dimensions of
             the input need to be permuted. Relevant for PyTorch. It is
             used to make PyTorch model equivalent to TensorFlow model.
@@ -539,6 +545,7 @@ class ConvolutionalLayer(CNN):
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int], in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
+                 dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
                  permute_out: bool = False):
@@ -547,6 +554,9 @@ class ConvolutionalLayer(CNN):
                          input_reused, permute_in, permute_out)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
+        self.dilation: List[int] = dilation if dilation is not None else [1]
+        self.groups: int = groups
+        self.bias: bool = bias
 
     @property
     def in_channels(self) -> int:
@@ -572,12 +582,43 @@ class ConvolutionalLayer(CNN):
         """
         self.__out_channels = out_channels
 
+    @property
+    def dilation(self) -> List[int]:
+        """List[int]: Get the spacing between kernel elements."""
+        return self.__dilation
+
+    @dilation.setter
+    def dilation(self, dilation: List[int]):
+        """List[int]: Set the spacing between kernel elements."""
+        self.__dilation = dilation
+
+    @property
+    def groups(self) -> int:
+        """int: Get the number of blocked connections from input to output channels."""
+        return self.__groups
+
+    @groups.setter
+    def groups(self, groups: int):
+        """int: Set the number of blocked connections from input to output channels."""
+        self.__groups = groups
+
+    @property
+    def bias(self) -> bool:
+        """bool: Get whether the layer uses bias."""
+        return self.__bias
+
+    @bias.setter
+    def bias(self, bias: bool):
+        """bool: Set whether the layer uses bias."""
+        self.__bias = bias
+
 
     def __repr__(self):
         return (
             f'ConvolutionaLayer({self.name}, {self.kernel_dim}, '
             f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, '
-            f'{self.padding_amount}, {self.padding_type}, {self.actv_func}, '
+            f'{self.padding_amount}, {self.padding_type}, {self.dilation}, '
+            f'{self.groups}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, '
             f'{self.permute_in}, {self.permute_out})'
         )

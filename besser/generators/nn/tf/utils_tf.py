@@ -248,6 +248,9 @@ class SetupLayerSyntax:
         pad_type = self.layer.padding_type
         kernel = utils.format_value(self.layer.kernel_dim)
         stride = utils.format_value(self.layer.stride_dim)
+        dilation = utils.format_value(self.layer.dilation)
+        groups = self.layer.groups
+        use_bias = "True" if self.layer.bias else "False"
         pad_amount = self.layer.padding_amount
         self.permute_in = self.layer.permute_in
         self.permute_out = self.layer.permute_out
@@ -261,7 +264,8 @@ class SetupLayerSyntax:
         lyr = (
             f"{lyr}self.{lyr_name} = layers.Conv{dim}D(filters={filters}, "
             f"kernel_size={kernel}, strides={stride}, "
-            f"padding='{pad_type}', activation={actv_func})"
+            f"padding='{pad_type}', dilation_rate={dilation}, groups={groups}, "
+            f"use_bias={use_bias}, activation={actv_func})"
         )
         return lyr
 

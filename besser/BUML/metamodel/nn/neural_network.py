@@ -1349,6 +1349,8 @@ class DropoutLayer(LayerModifier):
         name (str): The name of the layer.
         rate (float): It represents a float between 0 and 1. Fraction of
             the input units to drop.
+        dimension (str | None): The dimensionality for spatial dropout
+            ('1', '2', '3'). None for regular element-wise dropout.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
@@ -1359,15 +1361,17 @@ class DropoutLayer(LayerModifier):
             the layer.
         rate (float): It represents a float between 0 and 1. Fraction of
             the input units to drop.
+        dimension (str | None): The dimensionality for spatial dropout.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, rate: float, name_module_input: str = None,
-                 input_reused: bool = False):
+    def __init__(self, name: str, rate: float, dimension: str | None = None,
+                 name_module_input: str = None, input_reused: bool = False):
         super().__init__(name, None, name_module_input, input_reused)
         self.rate: float = rate
+        self.dimension: str | None = dimension
 
     @property
     def rate(self) -> float:

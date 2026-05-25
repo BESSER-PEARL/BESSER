@@ -154,7 +154,11 @@ class SetupLayerSyntax:
                 else:
                     lyr = f"{lyr}.LayerNormalization(axis=-1)"
         else: #cls_name == "DropoutLayer"
-            lyr = f"{lyr}.Dropout(rate={self.layer.rate})"
+            # Use SpatialDropout for 1D/2D/3D variants, regular Dropout otherwise
+            if hasattr(self.layer, 'dimension') and self.layer.dimension:
+                lyr = f"{lyr}.SpatialDropout{self.layer.dimension}D(rate={self.layer.rate})"
+            else:
+                lyr = f"{lyr}.Dropout(rate={self.layer.rate})"
         return lyr
 
     def add_separate_activation_if_needed(self, out_var, in_var):

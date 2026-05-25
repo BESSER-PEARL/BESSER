@@ -74,7 +74,11 @@ class SetupLayerSyntax:
                 norm_shape = self.layer.normalized_shape
                 lyr = f"{lyr}.LayerNorm(normalized_shape={norm_shape})"
         else: #cls_name == "DropoutLayer"
-            lyr = f"{lyr}.Dropout(p={self.layer.rate})"
+            # Use Dropout1d/2d/3d for spatial variants, regular Dropout otherwise
+            if hasattr(self.layer, 'dimension') and self.layer.dimension:
+                lyr = f"{lyr}.Dropout{self.layer.dimension}d(p={self.layer.rate})"
+            else:
+                lyr = f"{lyr}.Dropout(p={self.layer.rate})"
         return lyr
 
     def add_permute(self, lyr_name: str, dim: str, in_var_layer: str,

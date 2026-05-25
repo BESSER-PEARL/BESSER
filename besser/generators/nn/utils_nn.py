@@ -570,6 +570,9 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
             if referenced_tensorops and tensorop.name in referenced_tensorops:
                 # Create a unique intermediate variable name
                 out_var = f"_{tensorop.name}"
+            # Binary operations always get unique _op_ prefix to avoid conflicts
+            elif tensorop.tns_type.startswith("binop_"):
+                out_var = f"_{tensorop.name}"
             else:
                 out_var = get_tensorop_out_var(tensorop, prev_out_var, modules_details)
 

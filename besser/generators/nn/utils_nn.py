@@ -164,7 +164,7 @@ def initialize_tensorop_var(tensorop: TensorOp):
     return out_var
 
 
-def get_out_var_input_reused(prev_out_var: str):
+def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
     """
     It sets the output variable of the module in the case the output
     of the previous module is reused (therefore, they need to be
@@ -172,6 +172,7 @@ def get_out_var_input_reused(prev_out_var: str):
 
     Arguments:
         prev_out_var (str): The previous output variable.
+        modules_details (dict): Dict of existing modules to find next available var.
     Returns:
         The current output variable.
 
@@ -179,7 +180,30 @@ def get_out_var_input_reused(prev_out_var: str):
     if prev_out_var == "x":
         out_var = "x_1"
     else:
-        out_var = f"x_{int(prev_out_var.split('_')[-1])+1}"
+        # Try to extract the number from x_N pattern
+        parts = prev_out_var.split('_')
+        try:
+            # If the last part is a number, increment it
+            num = int(parts[-1])
+            out_var = f"x_{num + 1}"
+        except ValueError:
+            # If prev_out_var doesn't follow x_N pattern (e.g., 'b', 't', 'last')
+            # Find the next available x_N by scanning existing variables
+            if modules_details:
+                max_num = 0
+                for module_details in modules_details.values():
+                    if isinstance(module_details, list) and len(module_details) > 1:
+                        var = module_details[1]  # Output variable
+                        if isinstance(var, str) and var.startswith('x_'):
+                            try:
+                                num = int(var.split('_')[1])
+                                max_num = max(max_num, num)
+                            except (ValueError, IndexError):
+                                pass
+                out_var = f"x_{max_num + 1}"
+            else:
+                # Fallback if modules_details not provided
+                out_var = "x_1"
     return out_var
 
 
@@ -200,7 +224,7 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
     """
     out_var_actv, in_var_actv = None, None
     if layer.input_reused:
-        out_var_layer = get_out_var_input_reused(prev_out_var)
+        out_var_layer = get_out_var_input_reused(prev_out_var, modules_details)
     else:
         out_var_layer = prev_out_var
     in_var_layer = get_input_var(layer, modules_details,
@@ -403,6 +427,17 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
 
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
+        # If reshape has layers_of_tensors set, use it to determine source variable
+        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            source_layer = tensorop.layers_of_tensors[0]
+            if source_layer == 'INPUT':
+                prev_out_var = 'inp'
+            else:
+                modules_names = list(modules_details.keys())
+                if f"{source_layer}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
+                elif f"{source_layer}_op" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_op"][1]
         params = ', '.join([str(i) for i in tensorop.reshape_dim])
     elif tns_type == "concatenate":
         actual_vars = getattr(tensorop, 'actual_vars', None)
@@ -458,6 +493,10 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                 else:
                     prev_out_var = source_layer
         params = ""
+    elif tns_type == "shape_dim":
+        # Shape extraction: layers_of_tensors[0] contains the actual variable name, not a layer name
+        # Use it directly without resolving through modules_details
+        params = ""
     else:
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):
@@ -471,22 +510,29 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     return prev_out_var, params
 
 
-def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str):
+def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str, modules_details: dict = None):
     """
     It sets the output variable of tensorop.
 
     Arguments:
         tensorop (TensorOp): The BUML tensorop object.
         prev_out_var (str): previous output variable.
+        modules_details (dict): Dict of existing modules to find next available var.
 
     Returns:
         - The current output variable.
 
     """
     if tensorop.input_reused is True:
-        out_var  = get_out_var_input_reused(prev_out_var)
+        out_var  = get_out_var_input_reused(prev_out_var, modules_details)
     else:
-        out_var = prev_out_var
+        # If prev_out_var doesn't follow the standard x or x_N pattern (e.g., it's 'b', 't', 'last'),
+        # don't reuse it - generate a new x_N variable instead
+        if prev_out_var != "x" and not (prev_out_var.startswith("x_") and prev_out_var.split('_')[-1].isdigit()):
+            # Non-standard variable, generate new x_N
+            out_var = get_out_var_input_reused(prev_out_var, modules_details)
+        else:
+            out_var = prev_out_var
     return out_var
 
 def handle_tensorop(tensorop: TensorOp, modules_details: dict,
@@ -510,7 +556,11 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
     """
     ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
     if out_var is None:
-        if len(modules_details) == 0:
+        # For shape_dim TensorOps, use the TensorOp name as the output variable
+        # (e.g., 'b' for extracting batch size, 't' for sequence length)
+        if tensorop.tns_type == "shape_dim":
+            out_var = tensorop.name
+        elif len(modules_details) == 0:
             out_var  = initialize_tensorop_var(tensorop)
         else:
             prev_module = list(modules_details.keys())[-1]
@@ -521,7 +571,7 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
                 # Create a unique intermediate variable name
                 out_var = f"_{tensorop.name}"
             else:
-                out_var = get_tensorop_out_var(tensorop, prev_out_var)
+                out_var = get_tensorop_out_var(tensorop, prev_out_var, modules_details)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
 

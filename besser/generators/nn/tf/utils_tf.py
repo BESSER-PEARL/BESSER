@@ -339,7 +339,7 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
-        ts_op_synt = f"tf.reshape({prev_out_var}, {params})"
+        ts_op_synt = f"tf.reshape({prev_out_var}, [{params}])"
     elif tns_type == "concatenate":
         axis = tensorop.concatenate_dim
         ts_op_synt = f"tf.concat([{params}], axis={axis})"
@@ -376,6 +376,11 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         # General subscripting/slicing operation
         # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")
         ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
+    elif tns_type == "shape_dim":
+        # Extract shape dimension (e.g., b = tf.shape(x)[0])
+        source_var = tensorop.layers_of_tensors[0]
+        dim_index = tensorop.reduce_dim
+        ts_op_synt = f"tf.shape({source_var})[{dim_index}]"
     else:
         ts_op_synt = f"tf.matmul({params})"
     return ts_op_synt

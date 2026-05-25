@@ -144,10 +144,11 @@ class SetupLayerSyntax:
         bd = self.layer.bidirectional
         drp = self.layer.dropout
         btch = self.layer.batch_first
+        bs = self.layer.bias
         lyr = (
             f"self.{lyr_name} = nn.{layer_type}(input_size={in_sz}, "
             f"hidden_size={h_sz}, bidirectional={bd}, dropout={drp}, "
-            f"batch_first={btch})"
+            f"batch_first={btch}, bias={bs})"
         )
         return lyr
 

@@ -17,6 +17,7 @@
 
 {%- macro print_imports(model, modules_details, generation_type) %}
 {%- set si = namespace(sequential_imported=False) -%}
+{%- set tfa_needed = namespace(value=False) -%}
 {% if generation_type == "sequential"%}from keras.models import Sequential{%- set si.sequential_imported = True -%} {% endif %}
 import tensorflow as tf
 from keras import layers
@@ -25,11 +26,16 @@ from keras import layers
 {% if model.train_data is not none %}
 from datetime import datetime
 {% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report
-{%- else -%}from sklearn.metrics import mean_absolute_error{%- endif %} 
+{%- else -%}from sklearn.metrics import mean_absolute_error{%- endif %}
 {% if model.train_data.input_format == "csv" %}import pandas as pd{%- endif %}
 {%- endif %}
 {%- for module_name, module_details in modules_details.items() -%}
-{%- if module_name.endswith("layer") %}{% if module_details[0].split("=")[1].strip().startswith("tfa") %}import tensorflow_addons as tfa{% endif %}{% endif %}{% endfor %}
+{%- if module_name.endswith("layer") and module_details[0].split("=")[1].strip().startswith("tfa") -%}
+{%- set tfa_needed.value = True -%}
+{%- endif -%}
+{%- endfor -%}
+{% if tfa_needed.value %}import tensorflow_addons as tfa
+{% endif -%}
 {% if model.train_data.input_format == "images" %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}
 {% endmacro -%}
 

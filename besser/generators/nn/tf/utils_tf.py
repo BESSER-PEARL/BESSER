@@ -194,9 +194,10 @@ class SetupLayerSyntax:
         cls_name = self.layer.__class__.__name__
         lyr_name = self.layer.name
         layer_type = cls_name[:-5]
+        use_bias_str = "True" if self.layer.bias else "False"
         lyr = (
             f"layers.{layer_type}(units={self.layer.hidden_size}, "
-            f"activation={actv_func}, dropout={self.layer.dropout}"
+            f"activation={actv_func}, use_bias={use_bias_str}, dropout={self.layer.dropout}"
         )
 
         if self.layer.return_type == "full":

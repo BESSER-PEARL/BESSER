@@ -1409,6 +1409,7 @@ class RNN(Layer):
         batch_first (bool): If True, the input and output tensors are
             provided as (batch, seq, feature) instead of (seq, batch,
             feature). Only relevant to PyTorch.
+        bias (bool): If True, the layer uses bias weights. Default is True.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
@@ -1432,6 +1433,7 @@ class RNN(Layer):
         batch_first (bool): If True, the input and output tensors are
             provided as (batch, seq, feature) instead of (seq, batch,
             feature). Only relevant to PyTorch.
+        bias (bool): If True, the layer uses bias weights.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -1441,13 +1443,14 @@ class RNN(Layer):
     """
     def __init__(self, name: str, hidden_size: int, return_type: str = "full",
                  input_size: int = None, bidirectional: bool = False,
-                 dropout: float = 0.0, batch_first: bool = True,
+                 dropout: float = 0.0, batch_first: bool = True, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
         super().__init__(name, actv_func, name_module_input, input_reused)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
         self.batch_first: bool = batch_first
+        self.bias: bool = bias
         self.input_size: int = input_size
         self.hidden_size: int = hidden_size
         self.return_type: str = return_type
@@ -1513,6 +1516,16 @@ class RNN(Layer):
         self.__batch_first = batch_first
 
     @property
+    def bias(self) -> bool:
+        """bool: Get whether the layer uses bias weights."""
+        return self.__bias
+
+    @bias.setter
+    def bias(self, bias: bool):
+        """bool: Set whether the layer uses bias weights."""
+        self.__bias = bias
+
+    @property
     def return_type(self) -> str:
         """
         str: Whether to return the hidden states, the last output in
@@ -1538,7 +1551,7 @@ class RNN(Layer):
         return (
             f'RNN({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.actv_func}, '
+            f'{self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused})'
         )
 

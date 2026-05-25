@@ -281,7 +281,7 @@ class Layer(NamedElement):
     def actv_func(self, actv_func: str):
         """str: Set the actv_func."""
         #if actv_func is not None and actv_func not in [
-        #    'relu', 'leaky_relu', 'sigmoid', 'softmax', 'tanh'
+        #    'relu', 'leaky_relu', 'sigmoid', 'softmax', 'tanh', 'gelu'
         #]:
         #    raise ValueError("Invalid value of actv_func")
         self.__actv_func = actv_func

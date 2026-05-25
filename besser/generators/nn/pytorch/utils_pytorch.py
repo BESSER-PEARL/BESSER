@@ -152,7 +152,7 @@ class SetupLayerSyntax:
         """It defines the syntax of activation functions."""
         lyr = None
         activs = {"relu": "ReLU", "leaky_relu": "LeakyReLU",
-                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh"}
+                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh", "gelu": "GELU"}
         if hasattr(self.layer, 'actv_func'):
             actv = self.layer.actv_func
             if actv in activs:

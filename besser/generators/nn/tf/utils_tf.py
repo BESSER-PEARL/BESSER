@@ -208,7 +208,7 @@ class SetupLayerSyntax:
         """
         if hasattr(self.layer, 'actv_func'):
             activ = self.layer.actv_func
-            list_func = ["relu", "tanh", "sigmoid","softmax", "leaky_relu"]
+            list_func = ["relu", "tanh", "sigmoid", "softmax", "leaky_relu", "gelu"]
             if activ is not None:
                 if activ in list_func:
                     return f"'{self.layer.actv_func}'"

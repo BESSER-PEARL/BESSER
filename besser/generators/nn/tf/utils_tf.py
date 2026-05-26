@@ -426,6 +426,11 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "unsqueeze":
         axis = tensorop.reduce_dim
         ts_op_synt = f"tf.expand_dims({prev_out_var}, axis={axis})"
+    elif tns_type == "normalize":
+        # F.normalize(x, p=2, dim=1) -> tf.nn.l2_normalize(x, axis=1)
+        # Currently only supports L2 normalization (p=2)
+        axis = tensorop.reduce_dim
+        ts_op_synt = f"tf.nn.l2_normalize({prev_out_var}, axis={axis})"
     elif tns_type == "binop_add":
         ts_op_synt = f"{params[0]} + {params[1]}" if isinstance(params, list) else f"tf.add({params})"
     elif tns_type == "binop_subtract":

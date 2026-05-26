@@ -1235,6 +1235,8 @@ class NormalizationLayer(LayerModifier):
 
     Args:
         name (str): The name of the layer.
+        eps (float): Epsilon for numerical stability (default: 1e-5).
+        affine (bool): Whether to learn affine parameters gamma/beta (default: True).
         actv_func (str): The type of the activation function.
         name_module_input (str): The name of the layer from which the
             inputs originate.
@@ -1244,6 +1246,8 @@ class NormalizationLayer(LayerModifier):
     Attributes:
         name (str): Inherited from Layer. It represents the name of
             the layer.
+        eps (float): Epsilon value for numerical stability.
+        affine (bool): Whether to learn affine parameters (gamma/beta).
         actv_func (str): Inherited from Layer. It represents the type of
             the activation function.
         name_module_input (str): Inherited from Layer. The name of the
@@ -1251,11 +1255,37 @@ class NormalizationLayer(LayerModifier):
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
     """
+    def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
+                 actv_func: str = None, name_module_input: str = None,
+                 input_reused: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused)
+        self.eps: float = eps
+        self.affine: bool = affine
+
+    @property
+    def eps(self) -> float:
+        """float: Get the epsilon value for numerical stability."""
+        return self.__eps
+
+    @eps.setter
+    def eps(self, eps: float):
+        """float: Set the epsilon value for numerical stability."""
+        self.__eps = eps
+
+    @property
+    def affine(self) -> bool:
+        """bool: Get whether to learn affine parameters (gamma/beta)."""
+        return self.__affine
+
+    @affine.setter
+    def affine(self, affine: bool):
+        """bool: Set whether to learn affine parameters (gamma/beta)."""
+        self.__affine = affine
 
     def __repr__(self):
         return (
-            f'NormalizationLayer({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'NormalizationLayer({self.name}, {self.eps}, {self.affine}, '
+            f'{self.actv_func}, {self.name_module_input}, {self.input_reused})'
         )
 
 class BatchNormLayer(NormalizationLayer):
@@ -1291,11 +1321,14 @@ class BatchNormLayer(NormalizationLayer):
             this layer is reused as input to another layer.
     """
     def __init__(self, name: str, num_features: int, dimension: str,
-                 actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 eps: float = 1e-5, momentum: float = 0.1, affine: bool = True,
+                 track_running_stats: bool = True, actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
+        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused)
         self.num_features: int = num_features
         self.dimension: str = dimension
+        self.momentum: float = momentum
+        self.track_running_stats: bool = track_running_stats
 
     @property
     def num_features(self) -> int:
@@ -1328,10 +1361,31 @@ class BatchNormLayer(NormalizationLayer):
             raise ValueError ("Invalid data dimensionality")
         self.__dimension = dimension
 
+    @property
+    def momentum(self) -> float:
+        """float: Get the momentum for running mean/variance."""
+        return self.__momentum
+
+    @momentum.setter
+    def momentum(self, momentum: float):
+        """float: Set the momentum for running mean/variance."""
+        self.__momentum = momentum
+
+    @property
+    def track_running_stats(self) -> bool:
+        """bool: Get whether to track running mean/variance."""
+        return self.__track_running_stats
+
+    @track_running_stats.setter
+    def track_running_stats(self, track_running_stats: bool):
+        """bool: Set whether to track running mean/variance."""
+        self.__track_running_stats = track_running_stats
+
     def __repr__(self):
         return (
             f'BatchNormLayer({self.name}, {self.actv_func}, '
-            f'{self.num_features}, {self.dimension}, '
+            f'{self.num_features}, {self.dimension}, {self.eps}, '
+            f'{self.momentum}, {self.affine}, {self.track_running_stats}, '
             f'{self.name_module_input}, {self.input_reused})'
         )
 
@@ -1367,9 +1421,10 @@ class LayerNormLayer(NormalizationLayer):
             this layer is reused as input to another layer.
     """
     def __init__(self, name: str, normalized_shape: List[int],
+                 eps: float = 1e-5, affine: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused)
         self.normalized_shape: List[int] = normalized_shape
 
     @property

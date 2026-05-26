@@ -73,10 +73,23 @@ class SetupLayerSyntax:
             if cls_name == "BatchNormLayer":
                 dim = self.layer.dimension[0]
                 num_f = self.layer.num_features
-                lyr = f"{lyr}.BatchNorm{dim}d(num_features={num_f})"
+                eps = self.layer.eps
+                momentum = self.layer.momentum
+                affine = "True" if self.layer.affine else "False"
+                track_stats = "True" if self.layer.track_running_stats else "False"
+                lyr = (
+                    f"{lyr}.BatchNorm{dim}d(num_features={num_f}, eps={eps}, "
+                    f"momentum={momentum}, affine={affine}, "
+                    f"track_running_stats={track_stats})"
+                )
             else: #cls_name == "LayerNormLayer"
                 norm_shape = self.layer.normalized_shape
-                lyr = f"{lyr}.LayerNorm(normalized_shape={norm_shape})"
+                eps = self.layer.eps
+                elementwise_affine = "True" if self.layer.affine else "False"
+                lyr = (
+                    f"{lyr}.LayerNorm(normalized_shape={norm_shape}, eps={eps}, "
+                    f"elementwise_affine={elementwise_affine})"
+                )
         else: #cls_name == "DropoutLayer"
             # Use Dropout1d/2d/3d for spatial variants, regular Dropout otherwise
             if hasattr(self.layer, 'dimension') and self.layer.dimension:

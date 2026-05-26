@@ -156,19 +156,44 @@ class SetupLayerSyntax:
         lyr = f"self.{lyr_name} = layers"
         if parent_cls == "NormalizationLayer":
             if cls_name == "BatchNormLayer":
-                lyr = f"{lyr}.BatchNormalization()"
+                # Convert PyTorch BatchNorm params to TensorFlow
+                epsilon = self.layer.eps  # Direct mapping
+                momentum = 1 - self.layer.momentum  # INVERT: PyTorch 0.1 -> TF 0.9
+                center = "True" if self.layer.affine else "False"  # Learn beta
+                scale = "True" if self.layer.affine else "False"   # Learn gamma
+
+                # Warn if track_running_stats=False (TF always tracks)
+                if not self.layer.track_running_stats:
+                    print(f"Warning: BatchNorm '{lyr_name}' has track_running_stats=False. "
+                          f"TensorFlow will use running statistics during inference, "
+                          f"which differs from PyTorch behavior (batch stats).")
+
+                lyr = (
+                    f"{lyr}.BatchNormalization(epsilon={epsilon}, momentum={momentum}, "
+                    f"center={center}, scale={scale})"
+                )
             else: #cls_name == "LayerNormLayer"
                 # PyTorch LayerNorm(shape) vs TensorFlow LayerNormalization(axis):
                 # PyTorch takes dimension size, TF takes axis index
                 # nn.LayerNorm([d1, d2, ..., dn]) normalizes over last n dimensions
                 # LayerNormalization should use axis=[-n, ..., -1]
                 norm_shape = self.layer.normalized_shape
+                epsilon = self.layer.eps  # Direct mapping
+                center = "True" if self.layer.affine else "False"  # Learn beta
+                scale = "True" if self.layer.affine else "False"   # Learn gamma
+
                 if isinstance(norm_shape, list):
                     num_axes = len(norm_shape)
                     axis_indices = list(range(-num_axes, 0))
-                    lyr = f"{lyr}.LayerNormalization(axis={axis_indices})"
+                    lyr = (
+                        f"{lyr}.LayerNormalization(axis={axis_indices}, epsilon={epsilon}, "
+                        f"center={center}, scale={scale})"
+                    )
                 else:
-                    lyr = f"{lyr}.LayerNormalization(axis=-1)"
+                    lyr = (
+                        f"{lyr}.LayerNormalization(axis=-1, epsilon={epsilon}, "
+                        f"center={center}, scale={scale})"
+                    )
         else: #cls_name == "DropoutLayer"
             # Use SpatialDropout for 1D/2D/3D variants, regular Dropout otherwise
             if hasattr(self.layer, 'dimension') and self.layer.dimension:

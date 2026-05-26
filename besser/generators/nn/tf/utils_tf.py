@@ -331,7 +331,19 @@ class SetupLayerSyntax:
             kernel = utils.format_value(self.layer.kernel_dim)
             stride = utils.format_value(self.layer.stride_dim)
             pad_type = self.layer.padding_type
-            lyr = (
+
+            # Handle explicit padding with ZeroPadding layer
+            pad_amount = self.layer.padding_amount if hasattr(self.layer, 'padding_amount') else 0
+            lyr = ""
+            if pad_amount != 0:
+                lyr = (
+                    f"self.{lyr_name}_pad = layers.ZeroPadding{dim}D("
+                    f"padding={pad_amount})#"
+                )
+                # When using explicit padding, pooling layer should use 'valid'
+                pad_type = 'valid'
+
+            lyr += (
                 f"self.{lyr_name} = layers.{pl}{dim}D(pool_size={kernel}, "
                 f"strides={stride}, padding='{pad_type}')"
             )

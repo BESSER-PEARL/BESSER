@@ -539,6 +539,10 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                     prev_out_var = modules_details[f"{source_layer}_op"][1]
                 elif f"{source_layer}_activ" in modules_names:
                     prev_out_var = modules_details[f"{source_layer}_activ"][1]
+                else:
+                    # Source not found in modules - use it directly (e.g., variable name 'x')
+                    # Treat as input variable
+                    prev_out_var = 'inp' if source_layer == 'x' else source_layer
         params = ""
     elif tns_type == "normalize":
         # Normalize operates on prev_out_var, resolve from layers_of_tensors

@@ -34,7 +34,15 @@ def get_previous_out_var(modules_details: dict, prev_module: str):
     if isinstance(modules_details[prev_module], dict):
         return modules_details[prev_module]["in_out_variable"]
     else:
-        return modules_details[prev_module][1]
+        # Check if this is an RNN with return_type="both" that uses hidden as output
+        module_data = modules_details[prev_module]
+        if len(module_data) > 4:  # Has hidden variable (element [4])
+            layer_obj = module_data[3]
+            if (hasattr(layer_obj, 'return_type') and layer_obj.return_type == "both" and
+                hasattr(layer_obj, 'use_hidden_as_output') and layer_obj.use_hidden_as_output):
+                # Use hidden variable (element [4]) instead of output variable (element [1])
+                return module_data[4]
+        return module_data[1]
 
 def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     """

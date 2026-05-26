@@ -47,9 +47,10 @@ class SetupLayerSyntax:
         lyr_name = self.layer.name
         lyr = f"self.{lyr_name} = layers"
         if cls_name == "LinearLayer":
+            use_bias = "True" if self.layer.bias else "False"
             lyr = (
                 f"{lyr}.Dense(units={self.layer.out_features}, "
-                f"activation={actv_func})"
+                f"use_bias={use_bias}, activation={actv_func})"
             )
         elif cls_name == "FlattenLayer":
             lyr = f"{lyr}.Flatten()"

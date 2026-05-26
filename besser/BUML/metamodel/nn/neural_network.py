@@ -699,15 +699,16 @@ class Conv1D(ConvolutionalLayer):
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
+                 dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
                  permute_out: bool = False):
         if stride_dim is None:
             stride_dim = [1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
-                         in_channels, padding_amount, padding_type, actv_func,
-                         name_module_input, input_reused, permute_in,
-                         permute_out)
+                         in_channels, padding_amount, padding_type, dilation,
+                         groups, bias, actv_func, name_module_input, input_reused,
+                         permute_in, permute_out)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -818,14 +819,15 @@ class Conv2D(ConvolutionalLayer):
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
+                 dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
                  permute_out: bool = False):
         if stride_dim is None:
             stride_dim = [1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
-                         in_channels, padding_amount, padding_type,
-                         actv_func, name_module_input, input_reused,
+                         in_channels, padding_amount, padding_type, dilation,
+                         groups, bias, actv_func, name_module_input, input_reused,
                          permute_in, permute_out)
 
     @property
@@ -937,14 +939,15 @@ class Conv3D(ConvolutionalLayer):
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
+                 dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
                  permute_out: bool = False):
         if stride_dim is None:
             stride_dim = [1, 1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
-                         in_channels, padding_amount, padding_type,
-                         actv_func, name_module_input, input_reused,
+                         in_channels, padding_amount, padding_type, dilation,
+                         groups, bias, actv_func, name_module_input, input_reused,
                          permute_in, permute_out)
 
     @property
@@ -1847,11 +1850,12 @@ class LinearLayer(GeneralLayer):
             to this layer is reused as input to another layer.
     """
     def __init__(self, name: str, out_features: int, in_features: int = None,
-                 actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
+                 bias: bool = True, actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
         super().__init__(name, actv_func, name_module_input, input_reused)
         self.in_features: int = in_features
         self.out_features: int = out_features
+        self.bias: bool = bias
 
     @property
     def in_features(self) -> int:
@@ -1873,10 +1877,20 @@ class LinearLayer(GeneralLayer):
         """int: Set the size of the output sample."""
         self.__out_features = out_features
 
+    @property
+    def bias(self) -> bool:
+        """bool: Get whether the layer uses bias."""
+        return self.__bias
+
+    @bias.setter
+    def bias(self, bias: bool):
+        """bool: Set whether the layer uses bias."""
+        self.__bias = bias
+
     def __repr__(self):
         return (
             f'LinearLayer({self.name}, {self.actv_func}, '
-            f'{self.out_features}, {self.in_features}, '
+            f'{self.out_features}, {self.in_features}, {self.bias}, '
             f'{self.name_module_input}, {self.input_reused})'
         )
 

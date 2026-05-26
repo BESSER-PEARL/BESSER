@@ -496,7 +496,19 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                     prev_out_var = modules_details[f"{source_layer}_op"][1]
         params = ""
     elif tns_type == "squeeze" or tns_type == "unsqueeze":
-        # Squeeze/unsqueeze operate on prev_out_var, no additional params needed
+        # Squeeze/unsqueeze operate on prev_out_var, but may have layers_of_tensors set
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            if source_layer == 'INPUT':
+                prev_out_var = 'inp'
+            else:
+                modules_names = list(modules_details.keys())
+                if f"{source_layer}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
+                elif f"{source_layer}_op" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_op"][1]
+                elif f"{source_layer}_activ" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
         params = ""
     elif tns_type == "subscript":
         # Subscript operates on prev_out_var, pattern is in subscript_indices
@@ -514,9 +526,58 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                     prev_out_var = source_layer
         params = ""
     elif tns_type == "shape_dim":
-        # Shape extraction: layers_of_tensors[0] contains the actual variable name, not a layer name
-        # Use it directly without resolving through modules_details
+        # Shape extraction: layers_of_tensors[0] contains the source to extract shape from
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            if source_layer == 'INPUT':
+                prev_out_var = 'inp'
+            else:
+                modules_names = list(modules_details.keys())
+                if f"{source_layer}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
+                elif f"{source_layer}_op" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_op"][1]
+                elif f"{source_layer}_activ" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
         params = ""
+    elif tns_type == "normalize":
+        # Normalize operates on prev_out_var, resolve from layers_of_tensors
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            if source_layer == 'INPUT':
+                prev_out_var = 'inp'
+            else:
+                modules_names = list(modules_details.keys())
+                if f"{source_layer}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
+                elif f"{source_layer}_op" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_op"][1]
+                elif f"{source_layer}_activ" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
+        params = ""
+    elif tns_type == "repeat":
+        # Repeat operates on prev_out_var, resolve from layers_of_tensors
+        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
+            source_layer = tensorop.layers_of_tensors[0]
+            if source_layer == 'INPUT':
+                prev_out_var = 'inp'
+            else:
+                modules_names = list(modules_details.keys())
+                if f"{source_layer}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
+                elif f"{source_layer}_op" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_op"][1]
+                elif f"{source_layer}_activ" in modules_names:
+                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
+        # Resolve operation names in repeat_dim (similar to reshape_dim)
+        resolved_multiples = []
+        for mult in tensorop.repeat_dim:
+            if isinstance(mult, str) and f"{mult}_op" in modules_details:
+                # This is an operation name - use its output variable
+                resolved_multiples.append(modules_details[f"{mult}_op"][1])
+            else:
+                resolved_multiples.append(str(mult))
+        params = ', '.join(resolved_multiples)
     else:
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):

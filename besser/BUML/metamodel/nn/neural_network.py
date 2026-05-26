@@ -64,7 +64,8 @@ class TensorOp(NamedElement):
                  shape_dim: int = None,
                  input_reused: bool = False,
                  actual_vars: List[str] = None,
-                 subscript_indices: str = None):
+                 subscript_indices: str = None,
+                 repeat_dim: List[int] = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
@@ -76,6 +77,7 @@ class TensorOp(NamedElement):
         self.input_reused: bool = input_reused
         self.actual_vars: List[str] = actual_vars
         self.subscript_indices: str = subscript_indices
+        self.repeat_dim: List[int] = repeat_dim
         self.tns_type: str = tns_type
 
     @property
@@ -97,7 +99,7 @@ class TensorOp(NamedElement):
             'reshape', 'concatenate', 'multiply',
             'matmultiply', 'permute', 'transpose', 'mean', 'max', 'squeeze', 'unsqueeze',
             'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'subscript', 'shape_dim',
-            'normalize'
+            'normalize', 'repeat'
         ]:
             raise ValueError("Invalid value of tensorOp type")
         elif tns_type == 'reshape' and self.reshape_dim is None:

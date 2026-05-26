@@ -431,6 +431,10 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         # Currently only supports L2 normalization (p=2)
         axis = tensorop.reduce_dim
         ts_op_synt = f"tf.nn.l2_normalize({prev_out_var}, axis={axis})"
+    elif tns_type == "repeat":
+        # PyTorch .repeat(1, t, 1) -> TensorFlow tf.tile(x, [1, t, 1])
+        # params contains resolved repeat counts (variables resolved to their actual names)
+        ts_op_synt = f"tf.tile({prev_out_var}, [{params}])"
     elif tns_type == "binop_add":
         ts_op_synt = f"{params[0]} + {params[1]}" if isinstance(params, list) else f"tf.add({params})"
     elif tns_type == "binop_subtract":

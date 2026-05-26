@@ -33,6 +33,13 @@ from datetime import datetime
 {%- if module_name.endswith("layer") and module_details[0].split("=")[1].strip().startswith("tfa") -%}
 {%- set tfa_needed.value = True -%}
 {%- endif -%}
+{%- if module_name.endswith("nn") -%}
+{%- for subnn_key, subnn_value in module_details.items() -%}
+{%- if subnn_key != "in_out_variable" and "tfa.layers" in subnn_value[0] -%}
+{%- set tfa_needed.value = True -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
 {%- endfor -%}
 {% if tfa_needed.value %}import tensorflow_addons as tfa
 {% endif -%}

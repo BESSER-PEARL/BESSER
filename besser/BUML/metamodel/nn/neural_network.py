@@ -61,6 +61,7 @@ class TensorOp(NamedElement):
                  transpose_dim: List[int] = None,
                  permute_dim: List[int] = None,
                  reduce_dim: int = None,
+                 shape_dim: int = None,
                  input_reused: bool = False,
                  actual_vars: List[str] = None,
                  subscript_indices: str = None):
@@ -71,6 +72,7 @@ class TensorOp(NamedElement):
         self.transpose_dim: List[int] = transpose_dim
         self.permute_dim: List[int] = permute_dim
         self.reduce_dim: int = reduce_dim
+        self.shape_dim: int = shape_dim
         self.input_reused: bool = input_reused
         self.actual_vars: List[str] = actual_vars
         self.subscript_indices: str = subscript_indices
@@ -220,6 +222,16 @@ class TensorOp(NamedElement):
             dimensions for permute operation.
         """
         self.__permute_dim = permute_dim
+
+    @property
+    def shape_dim(self) -> int:
+        """int: Get the dimension index for shape extraction."""
+        return self.__shape_dim
+
+    @shape_dim.setter
+    def shape_dim(self, shape_dim: int):
+        """int: Set the dimension index for shape extraction."""
+        self.__shape_dim = shape_dim
 
     @property
     def input_reused(self) -> bool:

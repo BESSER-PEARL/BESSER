@@ -54,7 +54,8 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     """
     modules_names = list(modules_details.keys())
     lyr_input = layer.name_module_input
-    if lyr_input is not None:
+    # Handle None and False (False means input not reused) - use previous output
+    if lyr_input is not None and lyr_input is not False:
         # Special case: INPUT marker for network input
         if lyr_input == 'INPUT':
             return 'x'
@@ -438,7 +439,15 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                     prev_out_var = modules_details[f"{source_layer}_layer"][1]
                 elif f"{source_layer}_op" in modules_names:
                     prev_out_var = modules_details[f"{source_layer}_op"][1]
-        params = ', '.join([str(i) for i in tensorop.reshape_dim])
+        # Resolve operation names to their actual variable names
+        resolved_dims = []
+        for dim in tensorop.reshape_dim:
+            if isinstance(dim, str) and f"{dim}_op" in modules_details:
+                # This is an operation name - use its output variable
+                resolved_dims.append(modules_details[f"{dim}_op"][1])
+            else:
+                resolved_dims.append(str(dim))
+        params = ', '.join(resolved_dims)
     elif tns_type == "concatenate":
         actual_vars = getattr(tensorop, 'actual_vars', None)
         tensors = get_layers_output_for_tensorops(tensorop.layers_of_tensors,

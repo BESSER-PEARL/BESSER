@@ -414,9 +414,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
     elif tns_type == "shape_dim":
         # Extract shape dimension (e.g., b = tf.shape(x)[0])
-        source_var = tensorop.layers_of_tensors[0]
         dim_index = tensorop.reduce_dim
-        ts_op_synt = f"tf.shape({source_var})[{dim_index}]"
+        ts_op_synt = f"tf.shape({prev_out_var})[{dim_index}]"
     else:
         ts_op_synt = f"tf.matmul({params})"
     return ts_op_synt

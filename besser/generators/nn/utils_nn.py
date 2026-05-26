@@ -74,7 +74,11 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
         if f"{lyr_input}_activ" in modules_names:
             return modules_details[f"{lyr_input}_activ"][1]
         #module.name_module_input+"_op" in my_keys
-        return modules_details[f"{lyr_input}_op"][1]
+        if f"{lyr_input}_op" in modules_names:
+            return modules_details[f"{lyr_input}_op"][1]
+        # Fallback: TensorOp not processed yet, use prev_out_var
+        # This can happen when layers reference TensorOps in parallel operations
+        return prev_out_var
     return prev_out_var
 
 def add_in_out_var_to_subnn(modules_details: dict):

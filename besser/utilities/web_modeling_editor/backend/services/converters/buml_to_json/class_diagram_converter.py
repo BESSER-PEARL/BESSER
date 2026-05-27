@@ -238,6 +238,7 @@ def class_buml_to_json(domain_model):
                         "isId": attr.is_id,
                         "isExternalId": attr.is_external_id,
                         "isDerived": attr.is_derived,
+                        "isInput": bool(attr.metadata.is_input) if attr.metadata else False,
                     }
                     if attr.default_value is not None:
                         attr_element["defaultValue"] = attr.default_value
@@ -341,6 +342,10 @@ def class_buml_to_json(domain_model):
                         quantum_circuit_id = method.quantum_circuit.name
                     if quantum_circuit_id:
                         method_element["quantumCircuitId"] = quantum_circuit_id
+
+                    # Emit isStep flag when the method is marked as the tick-step
+                    if hasattr(method, "metadata") and method.metadata and getattr(method.metadata, "is_step", False):
+                        method_element["isStep"] = True
 
                     elements[method_id] = method_element
                     method_ids.append(method_id)

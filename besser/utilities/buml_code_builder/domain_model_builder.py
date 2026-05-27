@@ -210,8 +210,12 @@ def domain_model_to_code(
                         default_value_str = f', default_value={attr.default_value}'
                 else:
                     default_value_str = ""
+                # Emit metadata only when it carries non-default values (is_input=True)
+                is_input = attr.metadata.is_input if attr.metadata else False
+                attr_metadata_str = ", metadata=Metadata(is_input=True)" if is_input else ""
                 f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                       f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}{default_value_str})\n")
+                       f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}"
+                       f"{is_derived_str}{default_value_str}{attr_metadata_str})\n")
 
             # Write methods
             for method in sort(cls.methods):
@@ -248,6 +252,8 @@ def domain_model_to_code(
                 if method_code:
                     code_literal = _format_method_code_literal(method_code)
                     f.write(f"{cls_var_name}_m_{method_var_name}.code = {code_literal}\n")
+                if getattr(getattr(method, "metadata", None), "is_step", False):
+                    f.write(f"{cls_var_name}_m_{method_var_name}.metadata = Metadata(is_step=True)\n")
                 if impl_type == MethodImplementationType.STATE_MACHINE:
                     f.write("try:\n")
                     f.write(f"    {cls_var_name}_m_{method_var_name}.state_machine = sm\n")
@@ -348,8 +354,11 @@ def domain_model_to_code(
                             default_value_str = f', default_value={attr.default_value}'
                     else:
                         default_value_str = ""
+                    is_input = attr.metadata.is_input if attr.metadata else False
+                    attr_metadata_str = ", metadata=Metadata(is_input=True)" if is_input else ""
                     f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                           f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}{default_value_str})\n")
+                           f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}"
+                           f"{is_derived_str}{default_value_str}{attr_metadata_str})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):

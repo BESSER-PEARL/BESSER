@@ -236,6 +236,7 @@ def _process_classes(
                         is_external_id = attr.get("isExternalId", False)
                         is_derived = attr.get("isDerived", False)
                         default_value = attr.get("defaultValue", None)
+                        is_input = attr.get("isInput", False)
                     else:
                         # Legacy format - parse from name string
                         visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model, type_lookup=type_lookup)
@@ -244,6 +245,7 @@ def _process_classes(
                         is_external_id = False
                         is_derived = False
                         default_value = None
+                        is_input = False
 
                     if not name:  # Skip if no name was returned
                         continue
@@ -253,7 +255,10 @@ def _process_classes(
 
                     # Resolve the attribute type via O(1) lookup
                     type_obj = _resolve_type(attr_type, type_lookup)
-                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_external_id=is_external_id, is_derived=is_derived, default_value=default_value)
+                    attr_metadata = Metadata(is_input=is_input) if is_input else None
+                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional,
+                                         is_id=is_id, is_external_id=is_external_id, is_derived=is_derived,
+                                         default_value=default_value, metadata=attr_metadata)
                     cls.add_attribute(property_)
 
             # Add methods
@@ -332,6 +337,10 @@ def _process_classes(
                         code=method_code,
                         implementation_type=implementation_type
                     )
+
+                    # Mark as tick-step method if flagged in the diagram
+                    if method.get("isStep", False):
+                        method_obj.metadata = Metadata(is_step=True)
 
                     # Store diagram references in a separate mapping for later resolution.
                     # These will be used by project-level processing to link to actual diagrams.

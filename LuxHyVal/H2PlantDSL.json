@@ -77,7 +77,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0011": {
                 "id": "attr_0011",
@@ -99,7 +100,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0012": {
                 "id": "attr_0012",
@@ -121,7 +123,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0013": {
                 "id": "attr_0013",
@@ -143,7 +146,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0014": {
                 "id": "attr_0014",
@@ -165,7 +169,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0015": {
                 "id": "attr_0015",
@@ -187,7 +192,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0016": {
                 "id": "class_0016",
@@ -226,7 +232,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0019": {
                 "id": "attr_0019",
@@ -248,7 +255,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0056": {
                 "id": "class_0056",
@@ -288,7 +296,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0058": {
                 "id": "attr_0058",
@@ -310,7 +319,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0059": {
                 "id": "attr_0059",
@@ -332,7 +342,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0065": {
                 "id": "class_0065",
@@ -385,7 +396,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0068": {
                 "id": "attr_0068",
@@ -407,7 +419,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0069": {
                 "id": "class_0069",
@@ -452,7 +465,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0071": {
                 "id": "attr_0071",
@@ -474,7 +488,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0072": {
                 "id": "attr_0072",
@@ -496,7 +511,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": true
               },
               "attr_0073": {
                 "id": "attr_0073",
@@ -518,7 +534,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0074": {
                 "id": "attr_0074",
@@ -540,7 +557,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0075": {
                 "id": "attr_0075",
@@ -562,7 +580,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0076": {
                 "id": "attr_0076",
@@ -584,7 +603,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0077": {
                 "id": "attr_0077",
@@ -606,7 +626,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0078": {
                 "id": "class_0078",
@@ -647,7 +668,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0080": {
                 "id": "attr_0080",
@@ -669,7 +691,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0081": {
                 "id": "attr_0081",
@@ -691,7 +714,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0082": {
                 "id": "attr_0082",
@@ -713,7 +737,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0086": {
                 "id": "class_0086",
@@ -754,7 +779,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0088": {
                 "id": "attr_0088",
@@ -776,7 +802,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0089": {
                 "id": "attr_0089",
@@ -798,7 +825,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0090": {
                 "id": "attr_0090",
@@ -820,7 +848,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0103": {
                 "id": "class_0103",
@@ -866,7 +895,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0105": {
                 "id": "attr_0105",
@@ -888,7 +918,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0106": {
                 "id": "attr_0106",
@@ -910,7 +941,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0107": {
                 "id": "attr_0107",
@@ -932,7 +964,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0108": {
                 "id": "attr_0108",
@@ -954,7 +987,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0109": {
                 "id": "attr_0109",
@@ -976,7 +1010,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0110": {
                 "id": "attr_0110",
@@ -998,7 +1033,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0111": {
                 "id": "attr_0111",
@@ -1020,7 +1056,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0112": {
                 "id": "attr_0112",
@@ -1042,7 +1079,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0113": {
                 "id": "class_0113",
@@ -1086,7 +1124,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0115": {
                 "id": "attr_0115",
@@ -1108,7 +1147,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0116": {
                 "id": "attr_0116",
@@ -1130,7 +1170,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0117": {
                 "id": "attr_0117",
@@ -1152,7 +1193,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0118": {
                 "id": "attr_0118",
@@ -1174,7 +1216,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0119": {
                 "id": "attr_0119",
@@ -1196,7 +1239,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0120": {
                 "id": "class_0120",
@@ -1238,7 +1282,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0122": {
                 "id": "attr_0122",
@@ -1260,7 +1305,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0123": {
                 "id": "attr_0123",
@@ -1282,7 +1328,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0124": {
                 "id": "attr_0124",
@@ -1304,7 +1351,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0125": {
                 "id": "class_0125",
@@ -1347,7 +1395,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0127": {
                 "id": "attr_0127",
@@ -1369,7 +1418,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0128": {
                 "id": "attr_0128",
@@ -1391,7 +1441,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0129": {
                 "id": "attr_0129",
@@ -1413,7 +1464,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0130": {
                 "id": "attr_0130",
@@ -1435,7 +1487,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0131": {
                 "id": "class_0131",
@@ -1474,7 +1527,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0133": {
                 "id": "attr_0133",
@@ -1496,7 +1550,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0134": {
                 "id": "class_0134",
@@ -1507,7 +1562,7 @@
                   "x": -1531,
                   "y": -763,
                   "width": 240,
-                  "height": 280
+                  "height": 250
                 },
                 "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"#000000\" stroke-width=\"2\"    stroke-linecap=\"round\" stroke-linejoin=\"round\"><ellipse cx=\"32\" cy=\"14\" rx=\"18\" ry=\"5\"/><path d=\"M14 14v36c0 2.8 8 5 18 5s18-2.2   18-5V14\" fill=\"#2196F3\" fill-opacity=\"0.2\"/><ellipse cx=\"32\" cy=\"14\" rx=\"18\" ry=\"5\" fill=\"none\"/><path d=\"M32 4v10M28 56v4M36   56v4\"/></svg>",
                 "attributes": [
@@ -1520,8 +1575,7 @@
                   "1107d5b7-94a0-4fec-801d-444e7e37925d"
                 ],
                 "methods": [
-                  "b0404213-bc3e-46f1-bd8b-6697c69ef49e",
-                  "f3d0593c-bfbe-419a-b708-583c0a7edefb"
+                  "caedb293-5d28-4cdd-a376-cd6790ed0f81"
                 ]
               },
               "attr_0135": {
@@ -1544,7 +1598,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0136": {
                 "id": "attr_0136",
@@ -1566,7 +1621,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0137": {
                 "id": "attr_0137",
@@ -1588,7 +1644,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0138": {
                 "id": "attr_0138",
@@ -1610,7 +1667,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0139": {
                 "id": "attr_0139",
@@ -1632,7 +1690,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0140": {
                 "id": "attr_0140",
@@ -1654,7 +1713,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "1107d5b7-94a0-4fec-801d-444e7e37925d": {
                 "id": "1107d5b7-94a0-4fec-801d-444e7e37925d",
@@ -1676,11 +1736,12 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
-              "b0404213-bc3e-46f1-bd8b-6697c69ef49e": {
-                "id": "b0404213-bc3e-46f1-bd8b-6697c69ef49e",
-                "name": "+ increase(value: float)",
+              "caedb293-5d28-4cdd-a376-cd6790ed0f81": {
+                "id": "caedb293-5d28-4cdd-a376-cd6790ed0f81",
+                "name": "+ update_tank_level()",
                 "type": "ClassMethod",
                 "owner": "class_0134",
                 "bounds": {
@@ -1689,7 +1750,7 @@
                   "width": 239,
                   "height": 30
                 },
-                "code": "def increase(self, value: float):\n    \"\"\"Add your docstring here.\"\"\"\n    # Add your implementation here\n    self.level = min((self.level or 0.0) + value, 100.0)\n",
+                "code": "def update_tank_level(self):\n    \"\"\"Integrate inflow − outflow into level.\n\n    Walks the topology to discover live flow:\n    tank.ports\n      → each port's direction filter\n      → port.incomingStreams (Inlet) or port.outgoingStreams (Outlet)\n      → stream.massFlow (kg/s)\n    \"\"\"\n    inflow_kg_s = 0.0\n    outflow_kg_s = 0.0\n    for p in (self.ports or []):\n        direction = str(getattr(p, 'direction', '')).strip().lower()\n        if direction == 'inlet':\n            for s in (p.incomingStreams or []):\n                inflow_kg_s += float(s.massFlow or 0.0)\n        elif direction == 'outlet':\n            for s in (p.outgoingStreams or []):\n                outflow_kg_s += float(s.massFlow or 0.0)\n    delta_level = (inflow_kg_s - outflow_kg_s)\n    self.level = max(0.0, min(100.0, (self.level or 0.0) + delta_level))\n",
                 "visibility": "public",
                 "attributeType": "str",
                 "implementationType": "code",
@@ -1698,29 +1759,9 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
-              },
-              "f3d0593c-bfbe-419a-b708-583c0a7edefb": {
-                "id": "f3d0593c-bfbe-419a-b708-583c0a7edefb",
-                "name": "+ decrease(value: float)",
-                "type": "ClassMethod",
-                "owner": "class_0134",
-                "bounds": {
-                  "x": -1530.5,
-                  "y": -512.5,
-                  "width": 239,
-                  "height": 30
-                },
-                "code": "def decrease(self, value: float):\n    \"\"\"Add your docstring here.\"\"\"\n    # Add your implementation here\n    self.level = max((self.level or 0.0) - value, 0.0)\n",
-                "visibility": "public",
-                "attributeType": "str",
-                "implementationType": "code",
-                "stateMachineId": "",
-                "quantumCircuitId": "",
-                "isOptional": false,
-                "isDerived": false,
-                "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false,
+                "isStep": true
               },
               "class_0141": {
                 "id": "class_0141",
@@ -1765,7 +1806,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0143": {
                 "id": "attr_0143",
@@ -1787,7 +1829,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0144": {
                 "id": "attr_0144",
@@ -1809,7 +1852,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0145": {
                 "id": "attr_0145",
@@ -1831,7 +1875,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "method_0146": {
                 "id": "method_0146",
@@ -1853,7 +1898,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "method_0147": {
                 "id": "method_0147",
@@ -1875,7 +1921,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0148": {
                 "id": "class_0148",
@@ -1883,8 +1930,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -2184,
-                  "y": -788,
+                  "x": -2187,
+                  "y": -790,
                   "width": 240,
                   "height": 115
                 },
@@ -1902,8 +1949,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0148",
                 "bounds": {
-                  "x": -2183.5,
-                  "y": -747.5,
+                  "x": -2186.5,
+                  "y": -749.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1916,7 +1963,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0150": {
                 "id": "attr_0150",
@@ -1924,8 +1972,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0148",
                 "bounds": {
-                  "x": -2183.5,
-                  "y": -722.5,
+                  "x": -2186.5,
+                  "y": -724.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1938,7 +1986,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0151": {
                 "id": "attr_0151",
@@ -1946,8 +1995,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0148",
                 "bounds": {
-                  "x": -2183.5,
-                  "y": -697.5,
+                  "x": -2186.5,
+                  "y": -699.5,
                   "width": 239,
                   "height": 25
                 },
@@ -1960,7 +2009,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0152": {
                 "id": "class_0152",
@@ -2001,7 +2051,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0154": {
                 "id": "attr_0154",
@@ -2023,7 +2074,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0155": {
                 "id": "attr_0155",
@@ -2045,7 +2097,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0156": {
                 "id": "class_0156",
@@ -2053,8 +2106,8 @@
                 "type": "Class",
                 "owner": null,
                 "bounds": {
-                  "x": -2449,
-                  "y": -792,
+                  "x": -2448,
+                  "y": -787,
                   "width": 240,
                   "height": 115
                 },
@@ -2072,8 +2125,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0156",
                 "bounds": {
-                  "x": -2448.5,
-                  "y": -751.5,
+                  "x": -2447.5,
+                  "y": -746.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2086,7 +2139,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0158": {
                 "id": "attr_0158",
@@ -2094,8 +2148,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0156",
                 "bounds": {
-                  "x": -2448.5,
-                  "y": -726.5,
+                  "x": -2447.5,
+                  "y": -721.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2108,7 +2162,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0159": {
                 "id": "attr_0159",
@@ -2116,8 +2171,8 @@
                 "type": "ClassAttribute",
                 "owner": "class_0156",
                 "bounds": {
-                  "x": -2448.5,
-                  "y": -701.5,
+                  "x": -2447.5,
+                  "y": -696.5,
                   "width": 239,
                   "height": 25
                 },
@@ -2130,7 +2185,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0160": {
                 "id": "class_0160",
@@ -2170,7 +2226,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0162": {
                 "id": "attr_0162",
@@ -2192,7 +2249,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0163": {
                 "id": "class_0163",
@@ -2232,7 +2290,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0165": {
                 "id": "attr_0165",
@@ -2254,7 +2313,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0166": {
                 "id": "class_0166",
@@ -2294,7 +2354,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0168": {
                 "id": "attr_0168",
@@ -2316,7 +2377,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0169": {
                 "id": "class_0169",
@@ -2357,7 +2419,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0171": {
                 "id": "attr_0171",
@@ -2379,7 +2442,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0172": {
                 "id": "attr_0172",
@@ -2401,7 +2465,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0173": {
                 "id": "attr_0173",
@@ -2423,7 +2488,8 @@
                 "isOptional": true,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0174": {
                 "id": "class_0174",
@@ -2463,7 +2529,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0176": {
                 "id": "attr_0176",
@@ -2485,7 +2552,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0177": {
                 "id": "class_0177",
@@ -2527,7 +2595,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0179": {
                 "id": "attr_0179",
@@ -2549,7 +2618,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0180": {
                 "id": "attr_0180",
@@ -2571,7 +2641,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0181": {
                 "id": "attr_0181",
@@ -2593,7 +2664,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0182": {
                 "id": "attr_0182",
@@ -2615,7 +2687,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0183": {
                 "id": "class_0183",
@@ -2657,7 +2730,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0185": {
                 "id": "attr_0185",
@@ -2679,7 +2753,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0186": {
                 "id": "attr_0186",
@@ -2701,7 +2776,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0187": {
                 "id": "attr_0187",
@@ -2723,7 +2799,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0188": {
                 "id": "attr_0188",
@@ -2745,7 +2822,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0189": {
                 "id": "class_0189",
@@ -2784,7 +2862,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0191": {
                 "id": "attr_0191",
@@ -2806,7 +2885,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0192": {
                 "id": "class_0192",
@@ -2851,7 +2931,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0194": {
                 "id": "attr_0194",
@@ -2873,7 +2954,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0195": {
                 "id": "attr_0195",
@@ -2895,7 +2977,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0196": {
                 "id": "attr_0196",
@@ -2917,7 +3000,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0197": {
                 "id": "attr_0197",
@@ -2939,7 +3023,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0198": {
                 "id": "attr_0198",
@@ -2961,7 +3046,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0199": {
                 "id": "attr_0199",
@@ -2983,7 +3069,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0200": {
                 "id": "attr_0200",
@@ -3005,7 +3092,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0201": {
                 "id": "class_0201",
@@ -3046,7 +3134,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0203": {
                 "id": "attr_0203",
@@ -3068,7 +3157,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0204": {
                 "id": "attr_0204",
@@ -3090,7 +3180,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0205": {
                 "id": "attr_0205",
@@ -3112,7 +3203,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "class_0206": {
                 "id": "class_0206",
@@ -3154,7 +3246,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0208": {
                 "id": "attr_0208",
@@ -3176,7 +3269,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0209": {
                 "id": "attr_0209",
@@ -3198,7 +3292,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0210": {
                 "id": "attr_0210",
@@ -3220,7 +3315,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               },
               "attr_0211": {
                 "id": "attr_0211",
@@ -3242,7 +3338,8 @@
                 "isOptional": false,
                 "isDerived": false,
                 "isId": false,
-                "isExternalId": false
+                "isExternalId": false,
+                "isInput": false
               }
             },
             "relationships": {
@@ -3255,7 +3352,7 @@
                   "x": -1813.9000244140625,
                   "y": -1219.3999633789062,
                   "width": 18.899999618530273,
-                  "height": 174.39996337890625
+                  "height": 174.99996376037598
                 },
                 "path": [
                   {
@@ -3302,7 +3399,7 @@
                   "x": -1983.9000244140625,
                   "y": -1219.3999633789062,
                   "width": 18.899999618530273,
-                  "height": 166.39996337890625
+                  "height": 166.99996376037598
                 },
                 "path": [
                   {
@@ -3349,7 +3446,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 18.899999618530273,
-                  "height": 251
+                  "height": 251.60000038146973
                 },
                 "path": [
                   {
@@ -3396,7 +3493,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 1628.8999996185303,
-                  "height": 250
+                  "height": 250.60000038146973
                 },
                 "path": [
                   {
@@ -3451,7 +3548,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 658.8999996185303,
-                  "height": 251
+                  "height": 251.60000038146973
                 },
                 "path": [
                   {
@@ -3506,7 +3603,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 978.8999996185303,
-                  "height": 251
+                  "height": 251.60000038146973
                 },
                 "path": [
                   {
@@ -3561,7 +3658,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 1298.8999996185303,
-                  "height": 251
+                  "height": 251.60000038146973
                 },
                 "path": [
                   {
@@ -3616,7 +3713,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 334.8999996185303,
-                  "height": 250
+                  "height": 250.60000038146973
                 },
                 "path": [
                   {
@@ -3671,7 +3768,7 @@
                   "x": -1732,
                   "y": -1004,
                   "width": 1938.8999996185303,
-                  "height": 251
+                  "height": 251.60000038146973
                 },
                 "path": [
                   {
@@ -3726,7 +3823,7 @@
                   "x": -1732,
                   "y": -487,
                   "width": 290.8999996185303,
-                  "height": 173
+                  "height": 173.60000038146973
                 },
                 "path": [
                   {
@@ -3781,7 +3878,7 @@
                   "x": -1731,
                   "y": -487,
                   "width": 18.899999618530273,
-                  "height": 172
+                  "height": 172.60000038146973
                 },
                 "path": [
                   {
@@ -3828,7 +3925,7 @@
                   "x": -2011,
                   "y": -487,
                   "width": 297.8999996185303,
-                  "height": 178
+                  "height": 178.60000038146973
                 },
                 "path": [
                   {
@@ -3883,7 +3980,7 @@
                   "x": -532,
                   "y": -662,
                   "width": 18.899999618530273,
-                  "height": 311
+                  "height": 311.6000003814697
                 },
                 "path": [
                   {
@@ -3930,7 +4027,7 @@
                   "x": -375,
                   "y": -662,
                   "width": 18.899999618530273,
-                  "height": 311
+                  "height": 311.6000003814697
                 },
                 "path": [
                   {
@@ -3974,15 +4071,15 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -2070.5,
+                  "x": -2072,
                   "y": -962,
                   "width": 18.899999618530273,
-                  "height": 183
+                  "height": 181.60000038146973
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 174
+                    "y": 172
                   },
                   {
                     "x": 5,
@@ -4024,7 +4121,7 @@
                   "x": -2600,
                   "y": -962,
                   "width": 546.8999996185303,
-                  "height": 183
+                  "height": 183.60000038146973
                 },
                 "path": [
                   {
@@ -4076,26 +4173,26 @@
                 "type": "ClassInheritance",
                 "owner": null,
                 "bounds": {
-                  "x": -2334,
+                  "x": -2333,
                   "y": -962,
-                  "width": 280.8999996185303,
-                  "height": 179
+                  "width": 279.8999996185303,
+                  "height": 184.60000038146973
                 },
                 "path": [
                   {
                     "x": 5,
-                    "y": 170
+                    "y": 175
                   },
                   {
                     "x": 5,
-                    "y": 85
+                    "y": 87.5
                   },
                   {
-                    "x": 267,
-                    "y": 85
+                    "x": 266,
+                    "y": 87.5
                   },
                   {
-                    "x": 267,
+                    "x": 266,
                     "y": 0
                   }
                 ],
@@ -4134,7 +4231,7 @@
                   "x": -931,
                   "y": -1039.9998168945312,
                   "width": 817.6999263763428,
-                  "height": 117.99981689453125
+                  "height": 118.59981727600098
                 },
                 "path": [
                   {
@@ -4189,7 +4286,7 @@
                   "x": -931,
                   "y": -1001,
                   "width": 407.8999996185303,
-                  "height": 79
+                  "height": 79.60000038146973
                 },
                 "path": [
                   {
@@ -4244,7 +4341,7 @@
                   "x": -1770.800048828125,
                   "y": -1329.3999633789062,
                   "width": 337.0333819389343,
-                  "height": 222.39996337890625
+                  "height": 222.99996376037598
                 },
                 "path": [
                   {
@@ -4264,7 +4361,7 @@
                   "direction": "Right",
                   "element": "class_0008",
                   "multiplicity": "1",
-                  "role": "",
+                  "role": "equipment",
                   "bounds": {
                     "x": 0,
                     "y": 0,
@@ -4276,7 +4373,7 @@
                   "direction": "Topleft",
                   "element": "class_0086",
                   "multiplicity": "*",
-                  "role": "",
+                  "role": "ports",
                   "bounds": {
                     "x": 0,
                     "y": 0,
@@ -4295,7 +4392,7 @@
                   "x": -1407.3833312988281,
                   "y": -1156,
                   "width": 570.4166641235352,
-                  "height": 85
+                  "height": 85.95000076293945
                 },
                 "path": [
                   {
@@ -4319,7 +4416,7 @@
                   "direction": "Topright",
                   "element": "class_0016",
                   "multiplicity": "0..*",
-                  "role": "",
+                  "role": "outgoingStreams",
                   "bounds": {
                     "x": 0,
                     "y": 0,
@@ -4350,7 +4447,7 @@
                   "x": -1265,
                   "y": -1040,
                   "width": 219,
-                  "height": 48
+                  "height": 48.60000038146973
                 },
                 "path": [
                   {
@@ -4366,7 +4463,7 @@
                   "direction": "Upleft",
                   "element": "class_0016",
                   "multiplicity": "0..*",
-                  "role": "",
+                  "role": "incomingStreams",
                   "bounds": {
                     "x": 0,
                     "y": 0,
@@ -4391,7 +4488,7 @@
             },
             "assessments": {}
           },
-          "lastUpdate": "2026-05-11T14:38:41.853Z"
+          "lastUpdate": "2026-05-27T10:42:14.488Z"
         }
       ],
       "PlatformCustomizationDiagram": [
@@ -4409,13 +4506,13 @@
               },
               "MaterialStream": {
                 "isConnectionClass": true,
-                "edgeColor": "#0ea5e9"
+                "edgeColor": "#0ea5e9",
+                "lineRouting": "smoothstep"
               },
               "EnergyStream": {
-                "isConnectionClass": true,
                 "lineWidth": 3,
-                "targetArrowStyle": "filled_triangle",
-                "edgeColor": "#10b981"
+                "edgeColor": "#10b981",
+                "isConnectionClass": true
               }
             },
             "associationOverrides": {
@@ -4432,7 +4529,7 @@
             },
             "version": "2.0.0"
           },
-          "lastUpdate": "2026-05-05T11:24:04.548Z"
+          "lastUpdate": "2026-05-12T10:50:16.457Z"
         }
       ]
     },
@@ -4442,6 +4539,6 @@
       "collaborationEnabled": false
     }
   },
-  "exportedAt": "2026-05-11T14:38:55.590Z",
+  "exportedAt": "2026-05-27T10:42:30.950Z",
   "version": "2.0.0"
 }

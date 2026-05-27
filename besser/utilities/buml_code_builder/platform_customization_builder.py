@@ -24,6 +24,7 @@ _CLASS_FIELDS = (
     ("default_width", None),
     ("default_height", None),
     ("node_shape", None),
+    ("use_icon", None),
     ("fill_color", None),
     ("border_color", None),
     ("border_width", None),

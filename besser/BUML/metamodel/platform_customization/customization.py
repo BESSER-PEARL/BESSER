@@ -182,6 +182,10 @@ class ClassCustomization:
     label_font_color: Optional[str] = None
 
     node_shape: Optional[NodeShape] = None
+    # When explicitly False and the class has an icon in the class diagram,
+    # the icon is suppressed and shape/fill/border styling is used instead.
+    # None (unset) is treated as True by the generator.
+    use_icon: Optional[bool] = None
     fill_color: Optional[str] = None
     border_color: Optional[str] = None
     border_width: Optional[int] = None

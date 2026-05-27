@@ -3,7 +3,7 @@
  * Main canvas for creating and managing instances using @xyflow/react
  */
 {% raw %}
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -25,7 +25,7 @@ import {
   type EdgeMarker,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Grid3x3, Magnet, Map as MapIcon, Maximize2 } from 'lucide-react';
+import { Grid3x3, Magnet, Map as MapIcon, Settings, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
@@ -1466,12 +1466,30 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     setCreateInstanceModal(null);
   };
 
-  const gridSize = DIAGRAM_STYLE.gridSize ?? 24;
   // Diagram-style values are the *initial* state; user toggles override at
   // runtime via the toolbar panel below the xyflow Controls.
   const [gridVisible, setGridVisible] = useState<boolean>(DIAGRAM_STYLE.gridVisible !== false);
   const [snapEnabled, setSnapEnabled] = useState<boolean>(Boolean(DIAGRAM_STYLE.snapToGrid));
   const [minimapVisible, setMinimapVisible] = useState<boolean>(false);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  // Runtime settings — seeded from generation-time DIAGRAM_STYLE, mutable by operator.
+  const [gridSize, setGridSize] = useState<number>(DIAGRAM_STYLE.gridSize ?? 24);
+  const [bgColor, setBgColor] = useState<string>(DIAGRAM_STYLE.backgroundColor ?? '');
+  const [theme, setTheme] = useState<string>(DIAGRAM_STYLE.theme ?? 'auto');
+
+  // Apply theme changes to the document root so the whole app updates live.
+  useEffect(() => {
+    const root = document.documentElement;
+    const apply = (dark: boolean) => root.classList.toggle('dark', dark);
+    if (theme === 'dark') { apply(true); return; }
+    if (theme === 'light') { apply(false); return; }
+    // 'auto': follow OS preference
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    apply(media.matches);
+    const listener = (e: MediaQueryListEvent) => apply(e.matches);
+    media.addEventListener('change', listener);
+    return () => media.removeEventListener('change', listener);
+  }, [theme]);
 
   const handleFitToView = useCallback(() => {
     // When at least one node is selected, fit just to those; otherwise fit
@@ -1485,7 +1503,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   }, [reactFlow, nodes]);
 
   const wrapperStyle: React.CSSProperties = {};
-  if (DIAGRAM_STYLE.backgroundColor) wrapperStyle.backgroundColor = DIAGRAM_STYLE.backgroundColor;
+  if (bgColor) wrapperStyle.backgroundColor = bgColor;
 
   return (
     <div className="relative flex h-full w-full flex-1" style={wrapperStyle}>
@@ -1518,10 +1536,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         >
           <Controls className="!bg-card !border-border !shadow-sm [&>button]:!bg-card [&>button]:!border-border [&>button:hover]:!bg-accent" />
 
-          {/* Custom toolbar — sits just above the xyflow Controls. Each button
-              toggles a runtime canvas affordance; defaults come from the
-              compiled DIAGRAM_STYLE so the customization still drives the
-              initial look. */}
+          {/* Custom toolbar — merged with the xyflow Controls into a single
+              canvas overlay. Grid / snap / minimap toggles + a gear icon that
+              opens a runtime Settings popover (theme, grid size, bg color).
+              Fit-view lives in the xyflow Controls below — no duplicate here. */}
           <Panel position="bottom-left" className="!bottom-[160px] !left-[15px]">
             <div className="flex flex-col gap-1 rounded-md border border-border bg-card p-1 shadow-sm">
               <button
@@ -1560,15 +1578,100 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
               >
                 <MapIcon className="size-4" />
               </button>
+              {/* Divider */}
+              <span className="mx-1 h-px bg-border" aria-hidden />
+              {/* Settings gear */}
               <button
                 type="button"
-                onClick={handleFitToView}
-                title="Fit view (selection or all)"
-                className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onClick={() => setSettingsOpen((v) => !v)}
+                title="Canvas settings"
+                aria-pressed={settingsOpen}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded transition-colors hover:bg-accent',
+                  settingsOpen ? 'text-primary' : 'text-muted-foreground',
+                )}
               >
-                <Maximize2 className="size-4" />
+                <Settings className="size-4" />
               </button>
             </div>
+
+            {/* Settings popover */}
+            {settingsOpen && (
+              <div className="absolute bottom-0 left-10 w-64 rounded-md border border-border bg-card p-4 shadow-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Canvas Settings</span>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(false)}
+                    className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+
+                {/* Theme */}
+                <div className="space-y-1">
+                  <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Theme</label>
+                  <select
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value)}
+                    className="w-full rounded border border-border bg-background px-2 py-1 text-xs"
+                  >
+                    <option value="auto">Auto (follow OS)</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+
+                {/* Grid size */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Grid size</label>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">{gridSize}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={8}
+                    max={64}
+                    step={2}
+                    value={gridSize}
+                    onChange={(e) => setGridSize(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                {/* Snap to grid */}
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Snap to grid</label>
+                  <input
+                    type="checkbox"
+                    checked={snapEnabled}
+                    onChange={(e) => setSnapEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-border"
+                  />
+                </div>
+
+                {/* Background color */}
+                <div className="space-y-1">
+                  <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Background</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={bgColor && /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#ffffff'}
+                      onChange={(e) => setBgColor(e.target.value)}
+                      className="h-7 w-10 cursor-pointer rounded border border-border"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setBgColor('')}
+                      className="text-[11px] text-muted-foreground hover:text-foreground"
+                    >
+                      clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </Panel>
 
           {minimapVisible && (
@@ -1612,9 +1715,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         </ReactFlow>
       </div>
 
-      {/* Right-side inspector — always reserves the column so canvas
-          width stays stable. Empty state when nothing is selected
-          (mirrors how BESSER's class-diagram inspector works).
+      {/* Right-side inspector — only rendered when an instance is selected so
+          the canvas expands to fill the full width when the panel is closed.
 
           ``key`` forces a full remount whenever the selected instance
           changes. Without it, the form's local useState (instanceName,
@@ -1622,7 +1724,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           clicking a different node: the header reads fresh props but
           the text fields stay stale. Keying by id is the standard
           React workaround for "reset state on prop change". */}
-      {selectedInstance ? (
+      {selectedInstance && (
         <PropertyEditor
           key={selectedInstance.id}
           instance={selectedInstance}
@@ -1634,12 +1736,6 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onSave={handleUpdateInstance}
           onClose={() => setSelectedInstance(null)}
         />
-      ) : (
-        <aside className="flex h-full w-[360px] shrink-0 flex-col items-center justify-center border-l border-border bg-card/40 px-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            Click an instance to inspect its attributes and run methods.
-          </p>
-        </aside>
       )}
 
       {pendingConnection && (

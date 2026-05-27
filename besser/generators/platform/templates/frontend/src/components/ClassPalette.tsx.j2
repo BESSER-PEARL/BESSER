@@ -5,7 +5,45 @@
 {% raw %}
 import React from 'react';
 import { GripVertical, Layers } from 'lucide-react';
-import type { ClassMetadata } from '../types/models';
+import type { ClassMetadata, NodeShape } from '../types/models';
+
+/** Small SVG handle icon for port-class palette tiles. */
+const PortShapeIcon: React.FC<{
+  shape?: NodeShape;
+  fillColor?: string;
+  strokeColor?: string;
+}> = ({ shape, fillColor, strokeColor }) => {
+  const fill = fillColor ?? 'currentColor';
+  const stroke = strokeColor ?? 'currentColor';
+  const sw = 1.5;
+  if (shape === 'diamond') {
+    return (
+      <svg viewBox="0 0 16 16" className="size-5" aria-hidden>
+        <polygon points="8,1 15,8 8,15 1,8" fill={fill} stroke={stroke} strokeWidth={sw} />
+      </svg>
+    );
+  }
+  if (shape === 'rectangle') {
+    return (
+      <svg viewBox="0 0 16 16" className="size-5" aria-hidden>
+        <rect x="2" y="4" width="12" height="8" fill={fill} stroke={stroke} strokeWidth={sw} />
+      </svg>
+    );
+  }
+  if (shape === 'hexagon') {
+    return (
+      <svg viewBox="0 0 16 16" className="size-5" aria-hidden>
+        <polygon points="5,2 11,2 14,8 11,14 5,14 2,8" fill={fill} stroke={stroke} strokeWidth={sw} />
+      </svg>
+    );
+  }
+  /* Default: circle (covers circle, ellipse, rounded_rect, unset) */
+  return (
+    <svg viewBox="0 0 16 16" className="size-5" aria-hidden>
+      <circle cx="8" cy="8" r="6" fill={fill} stroke={stroke} strokeWidth={sw} />
+    </svg>
+  );
+};
 
 interface ClassPaletteProps {
   classes: ClassMetadata[];
@@ -44,11 +82,14 @@ export const ClassPalette: React.FC<ClassPaletteProps> = ({ classes }) => {
             title={`Drag to canvas to create a ${classMetadata.name} instance`}
           >
             <div className="flex size-9 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              {classMetadata.icon ? (
+              {classMetadata.icon && classMetadata.useIcon !== false ? (
                 <div
                   className="flex h-full w-full items-center justify-center [&_svg]:h-6 [&_svg]:w-6"
                   dangerouslySetInnerHTML={{ __html: classMetadata.icon }}
                 />
+              ) : classMetadata.isPort ? (
+                /* Port classes get a small shape icon matching the configured nodeShape */
+                <PortShapeIcon shape={classMetadata.style?.shape} fillColor={classMetadata.style?.fillColor} strokeColor={classMetadata.style?.borderColor} />
               ) : (
                 <span className="text-sm font-bold">
                   {classMetadata.name.charAt(0).toUpperCase()}

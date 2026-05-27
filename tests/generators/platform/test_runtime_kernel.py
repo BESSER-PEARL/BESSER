@@ -624,8 +624,8 @@ class TestInspectorLayout:
         assert "onNodeClick={onNodeClick}" in canvas_src
         # Clicking empty pane closes it
         assert "onPaneClick={onPaneClick}" in canvas_src
-        # Inspector column is always rendered (empty state when nothing selected)
-        assert "Click an instance to inspect" in canvas_src
+        # Inspector is conditionally mounted — canvas expands when nothing is selected
+        assert "selectedInstance &&" in canvas_src
 
     def test_property_editor_remounts_per_selection(self, tmp_path, counter_model):
         """Regression: PropertyEditor must reset its form state when the

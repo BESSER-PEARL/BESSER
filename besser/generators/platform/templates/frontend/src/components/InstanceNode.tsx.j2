@@ -242,7 +242,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
     !!candidatesFor &&
     !!onPickAssociationTarget &&
     !!onCreateAssociationTarget;
-  const hasIcon = Boolean(classMetadata.icon);
+  const hasIcon = Boolean(classMetadata.icon) && classMetadata.useIcon !== false;
   const isContainer = Boolean(classMetadata.isContainer);
   const isResizable = Boolean(classMetadata.isResizable);
   const style = classMetadata.style;

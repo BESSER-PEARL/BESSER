@@ -142,6 +142,7 @@ def _parse_class_customization(data: Dict[str, Any]) -> ClassCustomization:
         default_width=_positive_int_or_none(data.get("defaultWidth")),
         default_height=_positive_int_or_none(data.get("defaultHeight")),
         node_shape=_enum_or_none(NodeShape, data.get("nodeShape")),
+        use_icon=_bool_or_none(data.get("useIcon")),
         fill_color=_str_or_none(data.get("fillColor")),
         border_color=_str_or_none(data.get("borderColor")),
         border_width=_int_in_range_or_none(data.get("borderWidth"), 0, 8),

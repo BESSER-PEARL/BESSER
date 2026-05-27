@@ -132,6 +132,9 @@ export interface DiagramStyle {
 export interface ClassMetadata {
   name: string;
   icon?: string; // SVG icon as plain text
+  /** When false, the icon is suppressed even if present; shape/fill/border are
+   *  used instead.  Unset means true when an icon is present. */
+  useIcon?: boolean;
   /** True when the class is declared abstract — never instantiated directly. */
   isAbstract?: boolean;
   isContainer?: boolean; // container classes render as drop-zone rectangles
@@ -243,6 +246,9 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
     name: '{{ cls.name }}',
     {%- if cls.metadata and cls.metadata.icon %}
     icon: `{{ cls.metadata.icon | safe }}`,
+    {%- if cls_cust and cls_cust.use_icon is not none and not cls_cust.use_icon %}
+    useIcon: false,
+    {%- endif %}
     {%- endif %}
     {%- if cls.is_abstract %}
     isAbstract: true,

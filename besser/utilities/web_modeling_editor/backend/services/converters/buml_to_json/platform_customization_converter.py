@@ -42,6 +42,10 @@ def _class_customization_to_json(cust: ClassCustomization) -> Dict[str, Any]:
     _set_if(out, "defaultWidth", cust.default_width)
     _set_if(out, "defaultHeight", cust.default_height)
     _set_if(out, "nodeShape", _enum_value(cust.node_shape))
+    # useIcon is only emitted when explicitly False — True/None are identical
+    # from the panel's perspective (icon shown by default when present).
+    if getattr(cust, "use_icon", None) is False:
+        out["useIcon"] = False
     _set_if(out, "fillColor", cust.fill_color)
     _set_if(out, "borderColor", cust.border_color)
     _set_if(out, "borderWidth", cust.border_width)

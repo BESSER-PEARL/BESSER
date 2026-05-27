@@ -79,6 +79,14 @@ class Metadata(Element):
         synonyms (List[str]): List of synonyms of the element (None as default).
         icon (str): Icon representing the element (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
+        is_input (bool): When True, marks this property as driven by an external or simulated
+            input source at runtime (e.g. in a Digital Twin platform). Has no effect on
+            structural generators (Django, SQLAlchemy, etc.) — they ignore it the same way
+            they ignore ``synonyms``. Default False.
+        is_step (bool): When True, marks this method as the per-tick simulation step for
+            the Digital Twin scheduler. The scheduler dispatches this method on every
+            instance once per tick instead of relying on a hard-coded ``step`` name
+            convention. Default False.
 
     Attributes:
         description (str): Description of the element (None as default).
@@ -86,15 +94,19 @@ class Metadata(Element):
         synonyms (List[str]): List of synonyms of the element (None as default).
         icon (str): Icon representing the element (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
+        is_input (bool): Runtime input-binding flag (False as default).
+        is_step (bool): Runtime tick-method flag (False as default).
     """
 
     def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None, icon: str = None,
-                 timestamp: datetime = None):
+                 timestamp: datetime = None, is_input: bool = False, is_step: bool = False):
         super().__init__(timestamp)
         self.description: str = description
         self.uri: str = uri
         self.synonyms: List[str] = synonyms
         self.icon: str = icon
+        self.is_input: bool = is_input
+        self.is_step: bool = is_step
 
     @property
     def description(self) -> str:
@@ -136,8 +148,29 @@ class Metadata(Element):
         """str: Set the icon representing the metadata."""
         self.__icon = icon
 
+    @property
+    def is_input(self) -> bool:
+        """bool: Get whether this property is marked as a runtime input source."""
+        return self.__is_input
+
+    @is_input.setter
+    def is_input(self, is_input: bool):
+        """bool: Set the runtime input-binding flag."""
+        self.__is_input = bool(is_input) if is_input is not None else False
+
+    @property
+    def is_step(self) -> bool:
+        """bool: Get whether this method is marked as the per-tick simulation step."""
+        return self.__is_step
+
+    @is_step.setter
+    def is_step(self, is_step: bool):
+        """bool: Set the runtime tick-method flag."""
+        self.__is_step = bool(is_step) if is_step is not None else False
+
     def __repr__(self):
-        return f"Metadata({self.description}, {self.uri}, {self.synonyms}, {self.icon}, {self.timestamp})"
+        return (f"Metadata({self.description}, {self.uri}, {self.synonyms}, {self.icon}, "
+                f"{self.timestamp}, is_input={self.is_input}, is_step={self.is_step})")
 
 
 class NamedElement(Element):

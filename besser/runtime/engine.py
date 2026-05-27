@@ -25,6 +25,7 @@ persist.
 """
 from __future__ import annotations
 
+import inspect
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -120,7 +121,16 @@ class Engine:
                 f"check the implementation_type of the method in the source diagram."
             )
 
-        result = method(**args)
+        # Only forward args that the method actually declares — allows
+        # calling methods that don't accept dt (or any other arg) without
+        # changing the call site.
+        sig = inspect.signature(method)
+        params = sig.parameters
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            filtered_args = args
+        else:
+            filtered_args = {k: v for k, v in args.items() if k in params}
+        result = method(**filtered_args)
 
         # Persist mutated state on EVERY visited instance. With link
         # resolution, a method body can write neighbour attributes
@@ -143,17 +153,22 @@ class Engine:
         class_name: str,
         instance_id: str,
         dt: float = 1.0,
+        method_name: str = "step",
     ) -> Dict[str, Any]:
-        """Convenience: invoke ``step(dt=...)`` on the named instance.
+        """Convenience: invoke the named step method on the named instance.
 
-        Used by the periodic scheduler which ticks every instance with
-        the conventional ``step(self, dt)`` method. Manual per-method
+        ``dt`` is forwarded as a keyword arg but silently dropped if the
+        method does not declare a ``dt`` parameter (handled by the
+        signature-filtering logic in :meth:`invoke`).
+
+        Used by the periodic scheduler which ticks every instance whose
+        class has an ``is_step``-flagged method.  Manual per-method
         buttons in the UI go through ``invoke`` directly.
         """
         return self.invoke(
             class_name=class_name,
             instance_id=instance_id,
-            method_name="step",
+            method_name=method_name,
             args={"dt": dt},
         )
 

@@ -1,0 +1,92 @@
+"""Input bindings router — manage per-instance attribute simulators.
+
+Endpoints
+---------
+GET    /api/bindings/{class_name}/{instance_id}
+           List all bindings for an instance.
+PUT    /api/bindings/{class_name}/{instance_id}/{attribute}
+           Set or replace the binding for one attribute.
+DELETE /api/bindings/{class_name}/{instance_id}/{attribute}
+           Remove the binding for one attribute (attribute reverts to step-only).
+POST   /api/bindings/replay-csv
+           Upload a CSV column to use as a ``replay_csv`` source. Returns
+           the opaque ``source_id`` to reference in the binding params.
+"""
+
+import io
+import csv
+import uuid
+
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from pydantic import BaseModel
+from typing import Any, Optional
+
+from runtime import bindings
+
+router = APIRouter()
+
+
+# ------------------------------------------------------------------ schemas
+
+
+class BindingBody(BaseModel):
+    kind: str
+    params: dict = {}
+
+
+# ------------------------------------------------------------------ CRUD
+
+
+@router.get("/{class_name}/{instance_id}")
+def list_bindings(class_name: str, instance_id: str):
+    """Return all active bindings for the given instance."""
+    return bindings.list_bindings_for_instance(class_name, instance_id)
+
+
+@router.put("/{class_name}/{instance_id}/{attribute}")
+def set_binding(class_name: str, instance_id: str, attribute: str, body: BindingBody):
+    """Set or replace the simulator binding for one attribute slot."""
+    try:
+        bindings.set_binding(class_name, instance_id, attribute, body.kind, body.params)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    # Persist immediately so bindings survive a restart.
+    bindings.save("dt_bindings.json")
+    return {"status": "ok", "class_name": class_name, "instance_id": instance_id,
+            "attribute": attribute, "kind": body.kind, "params": body.params}
+
+
+@router.delete("/{class_name}/{instance_id}/{attribute}")
+def clear_binding(class_name: str, instance_id: str, attribute: str):
+    """Remove the binding for one attribute."""
+    bindings.clear_binding(class_name, instance_id, attribute)
+    bindings.save("dt_bindings.json")
+    return {"status": "cleared"}
+
+
+# ------------------------------------------------------------------ CSV upload
+
+
+@router.post("/replay-csv")
+async def upload_replay_csv(file: UploadFile = File(...)):
+    """Accept a single-column CSV (no header) and register it as a replay source.
+
+    Returns ``{"source_id": "..."}`` — use this in a ``replay_csv`` binding's
+    ``params``: ``{"source_id": "<returned_id>"}``.
+    """
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+    reader = csv.reader(io.StringIO(text))
+    rows = []
+    for row in reader:
+        if row:
+            try:
+                rows.append(float(row[0]))
+            except ValueError:
+                rows.append(row[0])  # keep as string if not numeric
+    if not rows:
+        raise HTTPException(status_code=422, detail="CSV contained no rows.")
+    source_id = str(uuid.uuid4())
+    bindings.load_csv(source_id, rows)
+    bindings.save("dt_bindings.json")
+    return {"source_id": source_id, "row_count": len(rows)}

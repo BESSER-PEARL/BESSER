@@ -1,0 +1,77 @@
+/**
+ * Input bindings API helpers.
+ * Wraps /api/bindings/* endpoints for managing per-attribute simulator sources.
+ */
+{% raw %}
+import apiClient from './client';
+
+// ------------------------------------------------------------------ types
+
+export type BindingKind = 'constant' | 'sine' | 'ramp' | 'replay_csv';
+
+export interface ConstantParams {
+  value: number;
+}
+
+export interface SineParams {
+  amplitude?: number;
+  frequency?: number;
+  offset?: number;
+}
+
+export interface RampParams {
+  start?: number;
+  rate?: number;
+  max_value?: number | null;
+}
+
+export interface ReplayCsvParams {
+  source_id: string;
+}
+
+export type BindingParams = ConstantParams | SineParams | RampParams | ReplayCsvParams | Record<string, unknown>;
+
+export interface Binding {
+  attribute: string;
+  kind: BindingKind;
+  params: BindingParams;
+}
+
+// ------------------------------------------------------------------ CRUD
+
+export async function listBindings(className: string, instanceId: string): Promise<Binding[]> {
+  const res = await apiClient.get<Binding[]>(`/bindings/${className}/${instanceId}`);
+  return res.data;
+}
+
+export async function setBinding(
+  className: string,
+  instanceId: string,
+  attribute: string,
+  kind: BindingKind,
+  params: BindingParams = {},
+): Promise<void> {
+  await apiClient.put(`/bindings/${className}/${instanceId}/${attribute}`, { kind, params });
+}
+
+export async function clearBinding(
+  className: string,
+  instanceId: string,
+  attribute: string,
+): Promise<void> {
+  await apiClient.delete(`/bindings/${className}/${instanceId}/${attribute}`);
+}
+
+// ------------------------------------------------------------------ CSV upload
+
+export async function uploadReplayCsv(file: File): Promise<{ source_id: string; row_count: number }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiClient.post<{ source_id: string; row_count: number }>(
+    '/bindings/replay-csv',
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return res.data;
+}
+{% endraw %}

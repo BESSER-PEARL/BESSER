@@ -1,0 +1,135 @@
+"""Runtime control router — Run / Pause / Step / Reset + history + WebSocket.
+
+Endpoints
+---------
+POST /api/control/run        Start the scheduler (no-op if already running).
+POST /api/control/pause      Pause the scheduler.
+POST /api/control/step       Execute exactly one tick and return deltas.
+POST /api/control/reset      Pause + clear history + reset tick counter.
+GET  /api/control/state      Current {running, tick_count, dt} snapshot.
+PATCH /api/control/dt        Update the tick interval (only when paused).
+GET  /api/control/history    Time-series query for one attribute slot.
+WS   /api/control/ws         WebSocket: receives {tick, deltas} after each tick.
+"""
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+from typing import Optional
+
+from runtime import scheduler, history
+
+router = APIRouter()
+
+# ------------------------------------------------------------------ control
+
+
+@router.post("/run")
+async def run():
+    """Start the scheduler (no-op if already running)."""
+    await scheduler.start()
+    return scheduler.state()
+
+
+@router.post("/pause")
+async def pause():
+    """Pause the scheduler (no-op if not running)."""
+    await scheduler.pause()
+    return scheduler.state()
+
+
+@router.post("/step")
+async def step():
+    """Execute exactly one tick synchronously."""
+    result = await scheduler.step_once()
+    return result
+
+
+@router.post("/reset")
+async def reset():
+    """Pause the scheduler, clear history, and reset tick counter."""
+    await scheduler.reset()
+    return scheduler.state()
+
+
+@router.get("/state")
+def state():
+    """Return current scheduler state."""
+    return scheduler.state()
+
+
+class DtUpdate(BaseModel):
+    dt: float
+
+
+@router.patch("/dt")
+async def update_dt(body: DtUpdate):
+    """Update the tick interval. Scheduler must be paused first."""
+    if scheduler.running:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail="Pause the scheduler before changing dt.")
+    if body.dt <= 0:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="dt must be > 0.")
+    scheduler.dt = body.dt
+    return scheduler.state()
+
+
+# ------------------------------------------------------------------ history
+
+
+@router.get("/history")
+def get_history(
+    class_name: str = Query(..., alias="class"),
+    instance_id: str = Query(..., alias="id"),
+    attribute: str = Query(..., alias="attr"),
+    since_tick: int = Query(0),
+    limit: int = Query(1000, le=5000),
+):
+    """Return up to ``limit`` time-series rows for the given attribute slot."""
+    rows = history.query(
+        class_name=class_name,
+        instance_id=instance_id,
+        attribute=attribute,
+        since_tick=since_tick,
+        limit=limit,
+    )
+    return {"class_name": class_name, "instance_id": instance_id, "attribute": attribute, "rows": rows}
+
+
+# ------------------------------------------------------------------ WebSocket
+
+
+@router.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket):
+    """WebSocket that streams per-tick deltas to connected browsers.
+
+    Each message is JSON: ``{"tick": int, "deltas": [{class_name, instance_id, attribute, value}]}``.
+    The connection is kept alive; the client reconnects automatically via
+    the frontend's ``subscribeWs`` helper.
+    """
+    import asyncio
+    import json
+
+    await websocket.accept()
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=128)
+
+    async def _listener(tick_count: int, deltas: list):
+        try:
+            queue.put_nowait({"tick": tick_count, "deltas": deltas})
+        except asyncio.QueueFull:
+            pass  # slow client — drop oldest delta batch
+
+    scheduler.add_listener(_listener)
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=30)
+                await websocket.send_text(json.dumps(msg))
+            except asyncio.TimeoutError:
+                # Send a heartbeat ping so the browser doesn't close the connection.
+                await websocket.send_text(json.dumps({"heartbeat": True}))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        scheduler.remove_listener(_listener)

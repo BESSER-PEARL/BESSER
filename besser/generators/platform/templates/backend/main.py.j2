@@ -6,15 +6,32 @@ This backend provides REST API endpoints for managing instances of the
 classes defined in the {{ model.name }} domain model.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import instances, export, runtime
+from routers import instances, export, runtime, runtime_control, bindings
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start-up and shutdown lifecycle for the Digital Twin scheduler."""
+    # The scheduler and history singletons are constructed in runtime/__init__.py
+    # when the module is first imported (triggered by the router imports above).
+    # We don't auto-start the scheduler — the operator presses Run explicitly.
+    yield
+    # Shutdown: pause the scheduler and flush the SQLite WAL.
+    from runtime import scheduler, history
+    await scheduler.pause()
+    history.flush()
+
 
 # Create FastAPI application
 app = FastAPI(
     title="{{ model.name }} Instance Editor API",
     description="REST API for managing {{ model.name }} instances",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS
@@ -30,6 +47,8 @@ app.add_middleware(
 app.include_router(instances.router, prefix="/api/instances", tags=["instances"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
 app.include_router(runtime.router, prefix="/api/runtime", tags=["runtime"])
+app.include_router(runtime_control.router, prefix="/api/control", tags=["control"])
+app.include_router(bindings.router, prefix="/api/bindings", tags=["bindings"])
 
 
 @app.get("/")

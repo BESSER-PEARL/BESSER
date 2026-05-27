@@ -279,6 +279,35 @@ class PlatformGenerator(GeneratorInterface):
                 )
             if methods_list:
                 class_methods_registry[cls.name] = methods_list
+
+        # Classes whose tick-step method is flagged with is_step=True in the metadata.
+        # The scheduler dispatches engine.tick(class, id, dt, method_name=...) on every
+        # instance of these classes once per tick.
+        steppable_classes = {}
+        for cls in classes:
+            for m in (getattr(cls, "methods", set()) or set()):
+                if (
+                    getattr(getattr(m, "metadata", None), "is_step", False)
+                    and (getattr(m, "implementation_type", None) is not None)
+                    and getattr(m, "implementation_type").value == "code"
+                    and (getattr(m, "code", "") or "").strip()
+                ):
+                    steppable_classes[cls.name] = m.name
+                    break
+
+        # Per-class registry of attributes flagged as runtime input sources
+        # via ``metadata.is_input = True``. The generated PropertyEditor
+        # renders a simulator-source selector for each of these.
+        input_attributes_registry = {}
+        for cls in classes:
+            input_attrs = [
+                prop.name
+                for prop in sorted(cls.attributes, key=lambda p: p.name)
+                if getattr(getattr(prop, "metadata", None), "is_input", False)
+            ]
+            if input_attrs:
+                input_attributes_registry[cls.name] = input_attrs
+
         return {
             "class_representations": class_representations,
             "port_classes_registry": registries["port_classes"],
@@ -287,6 +316,8 @@ class PlatformGenerator(GeneratorInterface):
             "subclass_registry": subclass_registry,
             "addable_port_classes": addable_port_classes,
             "class_methods_registry": class_methods_registry,
+            "steppable_classes": steppable_classes,
+            "input_attributes_registry": input_attributes_registry,
         }
 
     def generate(self):
@@ -337,7 +368,7 @@ class PlatformGenerator(GeneratorInterface):
         # Generate documentation
         self._generate_docs()
         
-        print(f"✓ Platform generated successfully in: {self.output_dir}")
+        print(f"[OK] Platform generated successfully in: {self.output_dir}")
     
     def _create_directory_structure(self):
         """Creates the necessary directory structure for the platform."""
@@ -456,20 +487,37 @@ class PlatformGenerator(GeneratorInterface):
         with open(os.path.join(dst, 'associations.py'), 'w', encoding='utf-8') as f:
             f.write(associations_source)
 
+        # Build steppable_classes dict from the domain model — needed by the
+        # scheduler bootstrap so it knows which instances to tick and which method to call.
+        _steppable: dict = {}
+        for _cls in self.domain_model.get_classes():
+            for _m in (getattr(_cls, "methods", set()) or set()):
+                if (
+                    getattr(getattr(_m, "metadata", None), "is_step", False)
+                    and (getattr(_m, "implementation_type", None) is not None)
+                    and getattr(_m, "implementation_type").value == "code"
+                    and (getattr(_m, "code", "") or "").strip()
+                ):
+                    _steppable[_cls.name] = _m.name
+                    break
+        steppable_classes_repr = repr(_steppable)
+
         # Override the copied __init__.py with the platform-side bootstrap.
         platform_init = (
             '"""Generated platform bootstrap for the besser4DT runtime kernel.\n'
             '\n'
-            'Wires the generic Engine to this platform\'s singleton\n'
-            '``services.instance_manager`` and to the per-domain\n'
-            '``ASSOCIATION_ENDS`` table so ``from runtime import engine``\n'
-            'returns a ready-to-use, domain-aware instance.\n'
+            'Wires the generic Engine, Scheduler, InputBindings, and HistoryStore\n'
+            'to this platform\'s singleton ``services.instance_manager`` and to\n'
+            'the per-domain ``ASSOCIATION_ENDS`` table.\n'
             '"""\n'
             'from services.instance_manager import instance_manager\n'
             '\n'
             'from .associations import ASSOCIATION_ENDS\n'
+            'from .bindings import InputBindings\n'
             'from .engine import Engine\n'
+            'from .history import HistoryStore\n'
             'from .materialize import AssociationEndMeta, AssociationsIndex, materialize_classes\n'
+            'from .scheduler import Scheduler\n'
             '\n'
             '_by_end = {}\n'
             '_by_assoc = {}\n'
@@ -487,7 +535,25 @@ class PlatformGenerator(GeneratorInterface):
             '    associations_index=_associations_index,\n'
             ')\n'
             '\n'
-            '__all__ = ["Engine", "engine", "materialize_classes"]\n'
+            f'_steppable_classes = {steppable_classes_repr}\n'
+            '\n'
+            'history = HistoryStore(instance_manager=instance_manager)\n'
+            'bindings = InputBindings(instance_manager=instance_manager)\n'
+            'scheduler = Scheduler(\n'
+            '    engine=engine,\n'
+            '    history=history,\n'
+            '    bindings=bindings,\n'
+            '    instance_manager=instance_manager,\n'
+            '    steppable_classes=_steppable_classes,\n'
+            '    dt=1.0,\n'
+            ')\n'
+            '\n'
+            '# Restore persisted bindings if they exist from a previous run.\n'
+            'bindings.load("dt_bindings.json")\n'
+            '\n'
+            '__all__ = ["Engine", "engine", "materialize_classes",\n'
+            '           "Scheduler", "scheduler", "InputBindings", "bindings",\n'
+            '           "HistoryStore", "history"]\n'
         )
         with open(os.path.join(dst, '__init__.py'), 'w', encoding='utf-8') as f:
             f.write(platform_init)
@@ -547,6 +613,20 @@ class PlatformGenerator(GeneratorInterface):
         # Generate runtime router (▶ Tick endpoint — Phase 1.0)
         template = self.env.get_template('backend/routers/runtime.py.j2')
         output_path = os.path.join(routers_dir, 'runtime.py')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render(model=self.domain_model))
+
+        # Generate runtime control router (Run/Pause/Step/Reset + /history + WS)
+        template = self.env.get_template('backend/routers/runtime_control.py.j2')
+        output_path = os.path.join(routers_dir, 'runtime_control.py')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render(model=self.domain_model))
+
+        # Generate input bindings router
+        template = self.env.get_template('backend/routers/bindings.py.j2')
+        output_path = os.path.join(routers_dir, 'bindings.py')
 
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(model=self.domain_model))
@@ -660,12 +740,26 @@ class PlatformGenerator(GeneratorInterface):
         # Generate instances API
         template = self.env.get_template('frontend/src/api/instances.ts.j2')
         output_path = os.path.join(api_dir, 'instances.ts')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(
                 model=self.domain_model,
                 classes=self.domain_model.get_classes()
             ))
+
+        # Generate runtime control API (Run/Pause/Step/Reset/history/WS)
+        template = self.env.get_template('frontend/src/api/runtime.ts.j2')
+        output_path = os.path.join(api_dir, 'runtime.ts')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
+        # Generate bindings API (input source configuration)
+        template = self.env.get_template('frontend/src/api/bindings.ts.j2')
+        output_path = os.path.join(api_dir, 'bindings.ts')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
     
     def _generate_frontend_components(self, frontend_dir):
         """Generates React components."""
@@ -698,7 +792,17 @@ class PlatformGenerator(GeneratorInterface):
         # Generate PropertyEditor component
         template = self.env.get_template('frontend/src/components/PropertyEditor.tsx.j2')
         output_path = os.path.join(components_dir, 'PropertyEditor.tsx')
-        
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render(
+                input_attributes_registry=rep_ctx["input_attributes_registry"],
+                class_methods_registry=rep_ctx["class_methods_registry"],
+            ))
+
+        # Generate HistoryChart component (Recharts time-series for is_input attrs)
+        template = self.env.get_template('frontend/src/components/HistoryChart.tsx.j2')
+        output_path = os.path.join(components_dir, 'HistoryChart.tsx')
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())
         
@@ -769,11 +873,14 @@ class PlatformGenerator(GeneratorInterface):
         """Generates the main App component."""
         template = self.env.get_template('frontend/src/App.tsx.j2')
         output_path = os.path.join(frontend_dir, 'src', 'App.tsx')
+        rep_ctx = self._representation_context()
 
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(
                 model=self.domain_model,
                 customization=self.customization,
+                steppable_classes=rep_ctx["steppable_classes"],
+                input_attributes_registry=rep_ctx["input_attributes_registry"],
             ))
     
     def _generate_frontend_index(self, frontend_dir):

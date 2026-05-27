@@ -1,0 +1,118 @@
+/**
+ * HistoryChart Component
+ * Minimal Recharts line chart for a single instance attribute.
+ * Loads history on mount then appends live deltas from the WebSocket.
+ */
+{% raw %}
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
+import { getHistory } from '../api/runtime';
+import { subscribeWs } from '../api/runtime';
+
+interface ChartPoint {
+  tick: number;
+  value: number;
+}
+
+interface HistoryChartProps {
+  className: string;
+  instanceId: string;
+  attribute: string;
+  /** Max points to show in the rolling window (default 120). */
+  maxPoints?: number;
+}
+
+export const HistoryChart: React.FC<HistoryChartProps> = ({
+  className,
+  instanceId,
+  attribute,
+  maxPoints = 120,
+}) => {
+  const [data, setData] = useState<ChartPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const latestTickRef = useRef(0);
+
+  // Initial load.
+  useEffect(() => {
+    setLoading(true);
+    getHistory(className, instanceId, attribute, 0, maxPoints)
+      .then((res) => {
+        const points: ChartPoint[] = res.rows
+          .filter((r) => typeof r.value === 'number')
+          .map((r) => ({ tick: r.tick_id, value: r.value as number }));
+        setData(points);
+        if (points.length > 0) {
+          latestTickRef.current = points[points.length - 1].tick;
+        }
+      })
+      .catch(() => {/* ignore */})
+      .finally(() => setLoading(false));
+  }, [className, instanceId, attribute]);
+
+  // Live updates via WebSocket deltas.
+  useEffect(() => {
+    const unsub = subscribeWs((msg) => {
+      if (msg.heartbeat || !Array.isArray(msg.deltas)) return;
+      const myDelta = msg.deltas.find(
+        (d) => d.class_name === className && d.instance_id === instanceId && d.attribute === attribute,
+      );
+      if (!myDelta || typeof myDelta.value !== 'number') return;
+      const point: ChartPoint = { tick: msg.tick ?? 0, value: myDelta.value as number };
+      setData((prev) => {
+        const next = [...prev, point];
+        return next.length > maxPoints ? next.slice(next.length - maxPoints) : next;
+      });
+    });
+    return unsub;
+  }, [className, instanceId, attribute, maxPoints]);
+
+  if (loading) {
+    return <p className="text-[10px] text-muted-foreground">Loading chart…</p>;
+  }
+
+  if (data.length === 0) {
+    return <p className="text-[10px] italic text-muted-foreground">No history yet — press Run.</p>;
+  }
+
+  return (
+    <div style={{ width: '100%', height: 80 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -24 }}>
+          <XAxis
+            dataKey="tick"
+            tick={{ fontSize: 9 }}
+            tickLine={false}
+            axisLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 9 }}
+            tickLine={false}
+            axisLine={false}
+            width={40}
+          />
+          <Tooltip
+            contentStyle={{ fontSize: 10, padding: '2px 6px' }}
+            formatter={(v: number) => [v.toFixed(3), attribute]}
+            labelFormatter={(t: number) => `tick ${t}`}
+          />
+          <Line
+            type="monotone"
+            dataKey="value"
+            dot={false}
+            strokeWidth={1.5}
+            stroke="hsl(var(--primary))"
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+{% endraw %}

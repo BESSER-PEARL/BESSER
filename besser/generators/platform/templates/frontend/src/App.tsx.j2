@@ -3,15 +3,18 @@
  * {{ model.name }} Instance Editor
  */
 {% raw %}
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Braces, FileCode2, FolderOpen, RotateCw, Trash2 } from 'lucide-react';
+import {
+  Braces, FileCode2, FolderOpen, Pause, Play, RotateCcw, RotateCw, SkipForward, Trash2,
+} from 'lucide-react';
 import { InstanceCanvas } from './components/InstanceCanvas';
 import { ClassPalette } from './components/ClassPalette';
 import { Button } from './components/ui/button';
 import { DIAGRAM_STYLE, DOMAIN_CLASSES } from './types/models';
 import type { BaseInstance, ExportJsonResponse } from './types/models';
 import * as api from './api/instances';
+import * as runtimeApi from './api/runtime';
 
 const queryClient = new QueryClient();
 
@@ -46,9 +49,14 @@ function AppContent() {
   useDiagramTheme();
   const [instances, setInstances] = useState<BaseInstance[]>([]);
   const [loading, setLoading] = useState(false);
-  // Hidden file input drives the Load Plant flow; the visible button forwards
-  // its click here so users get the native file picker.
+  // Hidden file input drives the Load Plant flow.
   const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  // --- Scheduler state ---
+  const [running, setRunning] = useState(false);
+  const [tickCount, setTickCount] = useState(0);
+  const [dt, setDt] = useState(1.0);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const loadInstances = async () => {
     setLoading(true);
@@ -62,10 +70,93 @@ function AppContent() {
     }
   };
 
+  // Poll scheduler state once on mount; then deltas keep it fresh.
   useEffect(() => {
     loadInstances();
+    runtimeApi.getState().then((s) => {
+      setRunning(s.running);
+      setTickCount(s.tick_count);
+      setDt(s.dt);
+    }).catch(() => {/* backend may not be ready yet */});
   }, []);
 
+  // --- WebSocket for live attribute deltas ---
+  const applyDeltas = useCallback(
+    (deltas: Array<{ class_name: string; instance_id: string; attribute: string; value: unknown }>) => {
+      setInstances((prev) =>
+        prev.map((inst) => {
+          const myDeltas = deltas.filter(
+            (d) => d.class_name === inst.class_name && d.instance_id === inst.id,
+          );
+          if (myDeltas.length === 0) return inst;
+          const newAttrs = { ...inst.attributes };
+          for (const d of myDeltas) newAttrs[d.attribute] = d.value;
+          return { ...inst, attributes: newAttrs };
+        }),
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const unsub = runtimeApi.subscribeWs((msg) => {
+      if (msg.heartbeat) return;
+      setTickCount(msg.tick ?? 0);
+      if (Array.isArray(msg.deltas) && msg.deltas.length > 0) {
+        applyDeltas(msg.deltas);
+      }
+    });
+    return unsub;
+  }, [applyDeltas]);
+{% endraw %}
+{% if steppable_classes %}
+{% raw %}
+  // --- Scheduler controls ---
+  const handleRun = async () => {
+    const s = await runtimeApi.run();
+    setRunning(s.running);
+    setTickCount(s.tick_count);
+  };
+
+  const handlePause = async () => {
+    const s = await runtimeApi.pause();
+    setRunning(s.running);
+    setTickCount(s.tick_count);
+    // Refresh instances to show final state after pause.
+    await loadInstances();
+  };
+
+  const handleStep = async () => {
+    const s = await runtimeApi.stepOnce();
+    setTickCount(s.tick_count);
+    if (Array.isArray(s.deltas) && s.deltas.length > 0) {
+      applyDeltas(s.deltas);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!confirm('Reset will pause the scheduler and clear all history. Continue?')) return;
+    const s = await runtimeApi.reset();
+    setRunning(s.running);
+    setTickCount(s.tick_count);
+    await loadInstances();
+  };
+
+  const handleDtChange = async (newDt: number) => {
+    if (running) {
+      alert('Pause the scheduler before changing the tick interval.');
+      return;
+    }
+    try {
+      await runtimeApi.updateDt(newDt);
+      setDt(newDt);
+    } catch {
+      alert('Invalid dt value.');
+    }
+  };
+{% endraw %}
+{% endif %}
+{% raw %}
   const handleInstanceUpdate = async (instance: BaseInstance) => {
     try {
       await api.updateInstance(instance.class_name, instance.id, {
@@ -153,7 +244,6 @@ function AppContent() {
 
   const handleImportJsonFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    // Reset the input so re-picking the same file re-fires onChange.
     event.target.value = '';
     if (!file) return;
     if (!confirm('Loading a plant replaces all current instances. Continue?')) return;
@@ -206,9 +296,8 @@ function AppContent() {
           </div>
         </div>
 
-        {/* Action toolbar — utility (refresh) | export group | destructive.
-            Visual weight ramps from neutral → muted brand → ghost-destructive. */}
         <div className="flex items-center gap-1">
+          {/* Refresh */}
           <Button
             variant="ghost"
             size="icon"
@@ -222,7 +311,83 @@ function AppContent() {
           </Button>
 
           <span className="mx-1 h-6 w-px bg-border" aria-hidden />
+{% endraw %}
+{% if steppable_classes %}
+{% raw %}
+          {/* ── Simulation controls ── */}
+          <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/30 px-2 py-0.5">
+            {running ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handlePause}
+                title="Pause simulation"
+                className="gap-1.5 text-amber-600 hover:text-amber-700"
+              >
+                <Pause className="size-4" />
+                <span>Pause</span>
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRun}
+                title="Run simulation"
+                className="gap-1.5 text-emerald-600 hover:text-emerald-700"
+              >
+                <Play className="size-4" />
+                <span>Run</span>
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleStep}
+              disabled={running}
+              title="Step — advance one tick"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <SkipForward className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleReset}
+              disabled={running}
+              title="Reset — pause and clear history"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <RotateCcw className="size-4" />
+            </Button>
+            {/* Tick counter */}
+            <span className="ml-1 min-w-[3rem] text-right text-[11px] tabular-nums text-muted-foreground">
+              t={tickCount}
+            </span>
+            {/* dt control */}
+            <label className="ml-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+              dt=
+              <input
+                type="number"
+                value={dt}
+                min={0.1}
+                step={0.5}
+                className="w-14 rounded border border-border bg-background px-1 text-right text-[11px]"
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (!isNaN(v) && v > 0) handleDtChange(v);
+                }}
+                disabled={running}
+                title="Tick interval (simulated seconds)"
+              />
+              s
+            </label>
+          </div>
 
+          <span className="mx-1 h-6 w-px bg-border" aria-hidden />
+{% endraw %}
+{% endif %}
+{% raw %}
+          {/* Load / Export */}
           <Button
             variant="outline"
             size="sm"

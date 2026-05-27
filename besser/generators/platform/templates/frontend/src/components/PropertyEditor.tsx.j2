@@ -1,11 +1,12 @@
 /**
  * PropertyEditor Component
- * shadcn Dialog-based editor for instance attributes AND outgoing links.
- * Pre-populates association fields from the instance's current links so the
- * user sees existing relationships and can add / remove them in one place.
+ * Side-panel editor for instance attributes AND outgoing links.
+ * For input-bound attributes (is_input=True in the BESSER model) also
+ * renders a simulator-source selector (constant / sine / ramp / replay_csv)
+ * and a Recharts history chart.
  */
 {% raw %}
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { AlertCircle, Play, X } from 'lucide-react';
 import {
   Dialog,
@@ -27,6 +28,18 @@ import type {
 } from '../types/models';
 import { getEnumerationValues, isAssignableTo } from '../types/models';
 import * as api from '../api/instances';
+import * as bindingsApi from '../api/bindings';
+import type { Binding, BindingKind } from '../api/bindings';
+import { HistoryChart } from './HistoryChart';
+{% endraw %}
+// Per-class list of input-bound attribute names, generated from the BESSER model.
+// Attributes that have metadata.is_input=True will show a simulator-source picker.
+const INPUT_ATTRIBUTES_REGISTRY: Record<string, string[]> = {
+{% for class_name, attrs in input_attributes_registry.items() %}
+  "{{ class_name }}": [{% for a in attrs %}"{{ a }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+{% endfor %}
+};
+{% raw %}
 
 export interface SelectedLink {
   associationName: string;
@@ -174,6 +187,138 @@ const AssociationField: React.FC<AssociationFieldProps> = ({
           <AlertCircle className="size-3" />
           Select at least {minRequired} {minRequired === 1 ? 'item' : 'items'}.
         </p>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// BindingSection — simulator source picker for a single is_input attribute.
+// Loads the current binding on mount; PUT / DELETE on change.
+// ---------------------------------------------------------------------------
+const BINDING_KIND_LABELS: Record<BindingKind, string> = {
+  constant: 'Constant',
+  sine: 'Sine',
+  ramp: 'Ramp',
+  replay_csv: 'Replay CSV',
+};
+
+const BindingSection: React.FC<{
+  className: string;
+  instanceId: string;
+  attribute: string;
+  attrType: string;
+}> = ({ className, instanceId, attribute, attrType }) => {
+  const [binding, setBinding] = useState<Binding | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Load existing binding on mount.
+  useEffect(() => {
+    bindingsApi.listBindings(className, instanceId).then((list) => {
+      const found = list.find((b) => b.attribute === attribute) ?? null;
+      setBinding(found);
+    }).catch(() => {/* ignore */});
+  }, [className, instanceId, attribute]);
+
+  const handleKindChange = async (kind: string) => {
+    if (kind === '') {
+      // Clear binding.
+      setSaving(true);
+      await bindingsApi.clearBinding(className, instanceId, attribute).catch(() => {});
+      setBinding(null);
+      setSaving(false);
+      return;
+    }
+    const defaultParams: Record<string, unknown> =
+      kind === 'constant' ? { value: 0 }
+      : kind === 'sine' ? { amplitude: 1, frequency: 0.1, offset: 0 }
+      : kind === 'ramp' ? { start: 0, rate: 1, max_value: null }
+      : { source_id: '' };
+    setSaving(true);
+    await bindingsApi.setBinding(className, instanceId, attribute, kind as BindingKind, defaultParams).catch(() => {});
+    setBinding({ attribute, kind: kind as BindingKind, params: defaultParams });
+    setSaving(false);
+  };
+
+  const handleParamChange = async (key: string, value: unknown) => {
+    if (!binding) return;
+    const newParams = { ...binding.params, [key]: value };
+    setSaving(true);
+    await bindingsApi.setBinding(className, instanceId, attribute, binding.kind, newParams).catch(() => {});
+    setBinding({ ...binding, params: newParams });
+    setSaving(false);
+  };
+
+  const isNumeric = attrType.toLowerCase().includes('float') || attrType.toLowerCase().includes('int')
+    || attrType.toLowerCase().includes('number') || attrType.toLowerCase().includes('double');
+
+  return (
+    <div className="mt-1.5 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-primary/80">Input source</span>
+        <select
+          value={binding?.kind ?? ''}
+          onChange={(e) => void handleKindChange(e.target.value)}
+          className="h-7 rounded border border-border bg-background px-2 text-xs"
+          disabled={saving}
+        >
+          <option value="">— None (manual) —</option>
+          {Object.entries(BINDING_KIND_LABELS).map(([k, label]) => (
+            <option key={k} value={k}>{label}</option>
+          ))}
+        </select>
+      </div>
+      {binding?.kind === 'constant' && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <Label className="text-xs">Value</Label>
+          <Input
+            type="number"
+            className="h-6 text-xs"
+            value={String(binding.params.value ?? 0)}
+            onChange={(e) => void handleParamChange('value', parseFloat(e.target.value))}
+          />
+        </div>
+      )}
+      {binding?.kind === 'sine' && (
+        <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+          {(['amplitude', 'frequency', 'offset'] as const).map((k) => (
+            <div key={k}>
+              <Label className="text-[10px] capitalize">{k}</Label>
+              <Input
+                type="number"
+                className="h-6 text-xs"
+                value={String((binding.params as Record<string, unknown>)[k] ?? 0)}
+                onChange={(e) => void handleParamChange(k, parseFloat(e.target.value))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {binding?.kind === 'ramp' && (
+        <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+          {(['start', 'rate', 'max_value'] as const).map((k) => (
+            <div key={k}>
+              <Label className="text-[10px] capitalize">{k.replace('_', ' ')}</Label>
+              <Input
+                type="number"
+                className="h-6 text-xs"
+                placeholder={k === 'max_value' ? '∞' : '0'}
+                value={String((binding.params as Record<string, unknown>)[k] ?? '')}
+                onChange={(e) => void handleParamChange(k, e.target.value === '' ? null : parseFloat(e.target.value))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {binding?.kind === 'replay_csv' && (
+        <div className="mt-1.5 text-[10px] text-muted-foreground">
+          source_id: {(binding.params as { source_id?: string }).source_id || '(none — upload via /api/bindings/replay-csv)'}
+        </div>
+      )}
+      {isNumeric && (
+        <div className="mt-2">
+          <HistoryChart className={className} instanceId={instanceId} attribute={attribute} />
+        </div>
       )}
     </div>
   );
@@ -398,6 +543,15 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                           handleAttributeChange(attrMeta.name, value);
                         }}
                         placeholder={`Enter ${attrMeta.name}`}
+                      />
+                    )}
+                    {/* Simulator source picker — shown only for is_input-flagged attrs */}
+                    {(INPUT_ATTRIBUTES_REGISTRY[instance.class_name] ?? []).includes(attrMeta.name) && (
+                      <BindingSection
+                        className={instance.class_name}
+                        instanceId={instance.id}
+                        attribute={attrMeta.name}
+                        attrType={attrMeta.type}
                       />
                     )}
                   </div>

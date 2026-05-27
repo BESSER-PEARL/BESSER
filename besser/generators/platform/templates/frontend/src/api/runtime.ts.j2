@@ -1,0 +1,138 @@
+/**
+ * Runtime control API helpers.
+ * Wraps /api/control/* endpoints and the WebSocket delta channel.
+ */
+{% raw %}
+import apiClient from './client';
+
+// ------------------------------------------------------------------ types
+
+export interface SchedulerState {
+  running: boolean;
+  tick_count: number;
+  dt: number;
+}
+
+export interface StepResult extends SchedulerState {
+  deltas: Array<{
+    class_name: string;
+    instance_id: string;
+    attribute: string;
+    value: unknown;
+  }>;
+}
+
+export interface HistoryRow {
+  tick_id: number;
+  ts: number;
+  value: unknown;
+}
+
+export interface WsMessage {
+  heartbeat?: boolean;
+  tick?: number;
+  deltas?: Array<{
+    class_name: string;
+    instance_id: string;
+    attribute: string;
+    value: unknown;
+  }>;
+}
+
+// ------------------------------------------------------------------ control
+
+export async function run(): Promise<SchedulerState> {
+  const res = await apiClient.post<SchedulerState>('/control/run', {});
+  return res.data;
+}
+
+export async function pause(): Promise<SchedulerState> {
+  const res = await apiClient.post<SchedulerState>('/control/pause', {});
+  return res.data;
+}
+
+export async function stepOnce(): Promise<StepResult> {
+  const res = await apiClient.post<StepResult>('/control/step', {});
+  return res.data;
+}
+
+export async function reset(): Promise<SchedulerState> {
+  const res = await apiClient.post<SchedulerState>('/control/reset', {});
+  return res.data;
+}
+
+export async function getState(): Promise<SchedulerState> {
+  const res = await apiClient.get<SchedulerState>('/control/state');
+  return res.data;
+}
+
+export async function updateDt(dt: number): Promise<SchedulerState> {
+  const res = await apiClient.patch<SchedulerState>('/control/dt', { dt });
+  return res.data;
+}
+
+// ------------------------------------------------------------------ history
+
+export async function getHistory(
+  className: string,
+  instanceId: string,
+  attribute: string,
+  sinceTick = 0,
+  limit = 1000,
+): Promise<{ class_name: string; instance_id: string; attribute: string; rows: HistoryRow[] }> {
+  const res = await apiClient.get('/control/history', {
+    params: { class: className, id: instanceId, attr: attribute, since_tick: sinceTick, limit },
+  });
+  return res.data;
+}
+
+// ------------------------------------------------------------------ WebSocket
+
+/**
+ * Subscribe to the per-tick delta WebSocket.
+ * Returns an unsubscribe function — call it in a useEffect cleanup.
+ *
+ * @example
+ *   useEffect(() => {
+ *     return subscribeWs((msg) => { if (!msg.heartbeat) setTickCount(msg.tick ?? 0); });
+ *   }, []);
+ */
+export function subscribeWs(onMessage: (msg: WsMessage) => void): () => void {
+  // Derive WebSocket URL from the current page's origin.
+  const wsBase = window.location.origin
+    .replace(/^https/, 'wss')
+    .replace(/^http/, 'ws');
+  const url = `${wsBase}/api/control/ws`;
+
+  let ws: WebSocket | null = new WebSocket(url);
+  let stopped = false;
+
+  function connect() {
+    if (stopped) return;
+    ws = new WebSocket(url);
+
+    ws.addEventListener('message', (event) => {
+      try {
+        const msg = JSON.parse(event.data) as WsMessage;
+        onMessage(msg);
+      } catch {
+        // ignore malformed frames
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      if (!stopped) {
+        // Reconnect after a short delay.
+        setTimeout(connect, 3000);
+      }
+    });
+  }
+
+  connect();
+
+  return () => {
+    stopped = true;
+    ws?.close();
+  };
+}
+{% endraw %}

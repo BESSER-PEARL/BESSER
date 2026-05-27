@@ -370,6 +370,40 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     event.dataTransfer.dropEffect = 'copy';
   }, []);
 
+  const rememberEdgeHandles = useCallback(
+    (
+      sourceId: string,
+      targetId: string,
+      associationName: string,
+      sourceHandle?: string | null,
+      targetHandle?: string | null,
+    ) => {
+      if (!sourceHandle && !targetHandle) return;
+      const key = `${sourceId}::${targetId}::${associationName}`;
+      edgeHandlesRef.current.set(key, {
+        sourceHandle: sourceHandle ?? undefined,
+        targetHandle: targetHandle ?? undefined,
+      });
+    },
+    [],
+  );
+
+  /** Pick the side handle ('top'/'right'/'bottom'/'left') with the fewest
+   *  existing edges on `nodeId`, so multiple associations spread around the
+   *  node instead of stacking on the same connection point. */
+  const pickSpreadHandle = useCallback(
+    (nodeId: string, field: 'source' | 'target'): string => {
+      const counts: Record<string, number> = { top: 0, right: 0, bottom: 0, left: 0 };
+      for (const e of reactFlow.getEdges()) {
+        const h = field === 'source' ? e.sourceHandle : e.targetHandle;
+        const n = field === 'source' ? e.source : e.target;
+        if (n === nodeId && h && h in counts) counts[h]++;
+      }
+      return Object.entries(counts).sort(([, a], [, b]) => a - b)[0][0];
+    },
+    [reactFlow],
+  );
+
   React.useEffect(() => {
     // === Port & Connection partitioning =====================================
     // Port-class instances render as Handles on their owner equipment node
@@ -580,8 +614,16 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
             instances.filter(
               (i) => i.id !== instance.id && isAssignableTo(i.class_name, assoc.targetClass),
             ),
-          onPickAssociationTarget: (assoc: AssociationMetadata, target: BaseInstance) =>
-            onLinkCreate(instance.id, target.id, assoc.name),
+          onPickAssociationTarget: (assoc: AssociationMetadata, target: BaseInstance) => {
+            rememberEdgeHandles(
+              instance.id,
+              target.id,
+              assoc.name,
+              pickSpreadHandle(instance.id, 'source'),
+              pickSpreadHandle(target.id, 'target'),
+            );
+            onLinkCreate(instance.id, target.id, assoc.name);
+          },
           onCreateAssociationTarget: (assoc: AssociationMetadata) => {
             const sourcePos = nodePositionsRef.current.get(instance.id) ?? { x: 100, y: 100 };
             setCreateInstanceModal({
@@ -763,7 +805,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     }
 
     setEdges(flowEdges);
-  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges]);
+  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges, rememberEdgeHandles, pickSpreadHandle]);
 
   // Single-click on a node opens the right-side inspector for that
   // instance. Double-click on a connection edge (handled separately
@@ -845,24 +887,6 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       onNodesChange(changes);
     },
     [onNodesChange]
-  );
-
-  const rememberEdgeHandles = useCallback(
-    (
-      sourceId: string,
-      targetId: string,
-      associationName: string,
-      sourceHandle?: string | null,
-      targetHandle?: string | null,
-    ) => {
-      if (!sourceHandle && !targetHandle) return;
-      const key = `${sourceId}::${targetId}::${associationName}`;
-      edgeHandlesRef.current.set(key, {
-        sourceHandle: sourceHandle ?? undefined,
-        targetHandle: targetHandle ?? undefined,
-      });
-    },
-    [],
   );
 
   const onConnect = useCallback(
@@ -997,14 +1021,26 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           (assoc) => isAssignableTo(targetInstance.class_name, assoc.targetClass)
         ) || [];
 
+      // Association edges must use side handles ('top'/'right'/'bottom'/'left').
+      // If the drag started or ended on a port handle (a UUID), discard it so
+      // the edge attaches to the node body, not the port glyph position.
+      const SIDE_SET = new Set(['top', 'right', 'bottom', 'left']);
+      const rawSrc = connection.sourceHandle ?? null;
+      const rawTgt = connection.targetHandle ?? null;
+      const cleanSrc = rawSrc && SIDE_SET.has(rawSrc) ? rawSrc : null;
+      const cleanTgt = rawTgt && SIDE_SET.has(rawTgt) ? rawTgt : null;
+
+      const assocSrcHandle = cleanSrc ?? pickSpreadHandle(connection.source, 'source');
+      const assocTgtHandle = cleanTgt ?? pickSpreadHandle(connection.target, 'target');
+
       if (validAssociations.length === 1) {
         const assocName = validAssociations[0].name;
         rememberEdgeHandles(
           connection.source,
           connection.target,
           assocName,
-          connection.sourceHandle,
-          connection.targetHandle,
+          assocSrcHandle,
+          assocTgtHandle,
         );
         onLinkCreate(connection.source, connection.target, assocName);
       } else if (validAssociations.length > 1) {
@@ -1021,8 +1057,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
             connection.source,
             connection.target,
             assoc.name,
-            connection.sourceHandle,
-            connection.targetHandle,
+            assocSrcHandle,
+            assocTgtHandle,
           );
         }
       } else {
@@ -1045,7 +1081,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         );
       }
     },
-    [instances, availableClasses, onLinkCreate, onInstanceCreate, rememberEdgeHandles]
+    [instances, availableClasses, onLinkCreate, onInstanceCreate, rememberEdgeHandles, pickSpreadHandle]
   );
 
   const handleAssociationSelect = (associationName: string) => {

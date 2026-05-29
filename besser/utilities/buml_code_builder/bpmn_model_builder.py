@@ -12,6 +12,7 @@ emitted modules read the same way as the existing diagram-type builders.
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     Association,
     BPMNModel,
@@ -292,13 +293,24 @@ def _emit_data_association(flow: DataAssociation, process_var: str,
 
 def _emit_message_flow(flow: MessageFlow, dispenser: _NameDispenser,
                        body: list, needed: set) -> None:
-    needed.add("MessageFlow")
     src = dispenser.name_for(flow.source)
     tgt = dispenser.name_for(flow.target)
     parts = [f"source={src}", f"target={tgt}"]
     if flow.name:
         parts.append(f"name={_quoted(flow.name)}")
-    body.append(f"collaboration.add_message_flow(MessageFlow({', '.join(parts)}))")
+    if isinstance(flow, AgenticMessageFlow):
+        # AgenticMessageFlow is a MessageFlow subclass — check it first.
+        # merging_strategy is always non-None (no diverging role), so no None
+        # handling is needed (unlike AgenticGateway).
+        needed.update({"AgenticMessageFlow", "CollaborationMode", "MergingStrategy"})
+        parts.append(f"collaboration_mode=CollaborationMode.{flow.collaboration_mode.name}")
+        parts.append(f"merging_strategy=MergingStrategy.{flow.merging_strategy.name}")
+        parts.append(f"trust_score={flow.trust_score}")
+        ctor = "AgenticMessageFlow"
+    else:
+        needed.add("MessageFlow")
+        ctor = "MessageFlow"
+    body.append(f"collaboration.add_message_flow({ctor}({', '.join(parts)}))")
     _emit_flow_layout_if_present(flow, body)
 
 

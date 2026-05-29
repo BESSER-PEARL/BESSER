@@ -30,6 +30,7 @@ from besser.BUML.metamodel.bpmn import (
     Activity,
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     Association,
     BPMNConnectingObject,
@@ -119,6 +120,7 @@ _DEFAULT_BOUNDS = {
 _FLOW_TYPE_FOR_CLASS = {
     SequenceFlow: "sequence",
     MessageFlow: "message",
+    AgenticMessageFlow: "message",   # SEAA'25 subclass: same WME flowType
     Association: "association",
     DataAssociation: "data association",
 }
@@ -155,12 +157,14 @@ _WME_LANE_DEFAULTS = {
     "trustScore": 0,
 }
 _WME_FLOW_AGENTIC_DEFAULTS = {
-    # AgenticMessageFlow is out of scope (01-... Q-D / §6.5). WME's BPMNFlow
-    # always carries these fields; emit defaults so the JSON shape stays
-    # WME-compatible.
+    # WME's BPMNFlow.serialize() always emits these four fields (defaults
+    # voting / majority / 0 from bpmn-flow.ts static defaults). Emit them on
+    # every flow so the JSON shape stays byte-compatible; AgenticMessageFlow
+    # overrides them with its stored values in _emit_flow (S3).
     "isAgentic": False,
     "collaborationMode": "voting",
     "mergingStrategy": "majority",
+    "trustScore": 0,
 }
 
 
@@ -459,10 +463,15 @@ def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
     if isinstance(flow, SequenceFlow):
         entry["isDefault"] = flow.is_default
 
-    # AgenticMessageFlow is out of scope (01-... Q-D). WME's BPMNFlow always
-    # carries these fields; emit WME defaults so the JSON shape stays
-    # WME-compatible regardless of flow class.
+    # WME's BPMNFlow always carries these fields; emit WME defaults first so
+    # the JSON shape stays WME-compatible regardless of flow class.
     entry.update(_WME_FLOW_AGENTIC_DEFAULTS)
+    # S3: AgenticMessageFlow overrides the defaults with its stored values.
+    if isinstance(flow, AgenticMessageFlow):
+        entry["isAgentic"] = True
+        entry["collaborationMode"] = flow.collaboration_mode.value
+        entry["mergingStrategy"] = flow.merging_strategy.value
+        entry["trustScore"] = flow.trust_score
 
     relationships[id_for(flow)] = entry
 

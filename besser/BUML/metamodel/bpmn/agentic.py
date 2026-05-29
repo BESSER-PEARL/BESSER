@@ -27,7 +27,13 @@ default) is single-statement.
 
 from enum import Enum
 
-from besser.BUML.metamodel.bpmn.bpmn import Gateway, GatewayType, Lane, Task
+from besser.BUML.metamodel.bpmn.bpmn import (
+    Gateway,
+    GatewayType,
+    Lane,
+    MessageFlow,
+    Task,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +594,138 @@ class AgenticLane(Lane):
 
 
 # ---------------------------------------------------------------------------
+# AgenticMessageFlow
+# ---------------------------------------------------------------------------
+
+class AgenticMessageFlow(MessageFlow):
+    """SEAA'25 «AgenticMessageFlow» -- a MessageFlow with collaboration semantics
+    (paper §4.3 / WME 04D1).
+
+    A cross-pool message flow carrying a collaboration mode + merging strategy,
+    used when agents in different pools collaborate. Unlike ``AgenticGateway``
+    there is **no** ``gateway_role`` (a message flow has no diverging/merging
+    axis), so ``merging_strategy`` is always set (never None).
+
+    Invariant (auto-maintained by the setters):
+
+    * **INV-B:** ``merging_strategy`` is in
+      ``_LEGAL_MERGING_STRATEGIES[collaboration_mode]``. Changing
+      ``collaboration_mode`` resets ``merging_strategy`` to the new mode's
+      default if the previous value is no longer legal.
+
+    Args:
+        source, target: Inherited from MessageFlow (Activity/Event endpoints).
+        name (str): The flow label (may be empty).
+        collaboration_mode (CollaborationMode): default VOTING.
+        merging_strategy (MergingStrategy): default
+            ``_DEFAULT_MERGING_STRATEGY[collaboration_mode]`` when omitted.
+            Explicit value validated against ``_LEGAL_MERGING_STRATEGIES``.
+        trust_score (int): 0-100 (default 0).
+        layout, metadata, timestamp: Inherited.
+
+    Attributes:
+        collaboration_mode (CollaborationMode): The collaboration mode.
+        merging_strategy (MergingStrategy): The merging strategy (never None).
+        trust_score (int): The trust score.
+    """
+
+    def __init__(self, source, target, name: str = "",
+                 collaboration_mode: "CollaborationMode" = None,
+                 merging_strategy: "MergingStrategy" = None,
+                 trust_score: int = 0,
+                 layout: dict = None, metadata=None, timestamp=None):
+        super().__init__(source=source, target=target, name=name, layout=layout,
+                         metadata=metadata, timestamp=timestamp)
+        # Initialise private slots before the setters run so they can read
+        # each other safely.
+        self.__collaboration_mode = None
+        self.__merging_strategy = None
+        # collaboration_mode first (so the default lookup works), then
+        # merging_strategy (auto-set to the mode default if omitted).
+        self.collaboration_mode = (collaboration_mode if collaboration_mode is not None
+                                   else CollaborationMode.VOTING)
+        if merging_strategy is None:
+            self.__merging_strategy = _DEFAULT_MERGING_STRATEGY[self.__collaboration_mode]
+        else:
+            self.merging_strategy = merging_strategy
+        self.trust_score = trust_score
+
+    @property
+    def collaboration_mode(self) -> "CollaborationMode":
+        """CollaborationMode: Get the collaboration mode."""
+        return self.__collaboration_mode
+
+    @collaboration_mode.setter
+    def collaboration_mode(self, value: "CollaborationMode"):
+        """CollaborationMode: Set the collaboration mode. Auto-resets
+        ``merging_strategy`` if the current value is no longer legal.
+
+        Raises:
+            TypeError: if not a CollaborationMode.
+        """
+        if not isinstance(value, CollaborationMode):
+            raise TypeError(
+                f"collaboration_mode must be a CollaborationMode, "
+                f"got {type(value).__name__}"
+            )
+        self.__collaboration_mode = value
+        if (self.__merging_strategy is not None
+                and self.__merging_strategy not in _LEGAL_MERGING_STRATEGIES[value]):
+            self.__merging_strategy = _DEFAULT_MERGING_STRATEGY[value]
+
+    @property
+    def merging_strategy(self) -> "MergingStrategy":
+        """MergingStrategy: Get the merging strategy (never None)."""
+        return self.__merging_strategy
+
+    @merging_strategy.setter
+    def merging_strategy(self, value: "MergingStrategy"):
+        """MergingStrategy: Set the merging strategy.
+
+        Raises:
+            TypeError: if not a MergingStrategy (None is not allowed -- a message
+                flow has no diverging role, so the strategy is always set).
+            ValueError: if not legal for the current collaboration_mode (INV-B).
+        """
+        if not isinstance(value, MergingStrategy):
+            raise TypeError(
+                f"merging_strategy must be a MergingStrategy, got {type(value).__name__}"
+            )
+        if value not in _LEGAL_MERGING_STRATEGIES[self.__collaboration_mode]:
+            legal = sorted(s.name for s in _LEGAL_MERGING_STRATEGIES[self.__collaboration_mode])
+            raise ValueError(
+                f"merging_strategy {value.name} is not legal for "
+                f"collaboration_mode {self.__collaboration_mode.name}; "
+                f"legal values: {legal}"
+            )
+        self.__merging_strategy = value
+
+    @property
+    def trust_score(self) -> int:
+        """int: Get the trust score (0-100)."""
+        return self.__trust_score
+
+    @trust_score.setter
+    def trust_score(self, value: int):
+        """int: Set the trust score.
+
+        Raises:
+            TypeError: if not an int.
+            ValueError: if out of [0, 100].
+        """
+        self.__trust_score = _validate_trust_score(value)
+
+    def __repr__(self):
+        source_name = self.source.name if self.source is not None else None
+        target_name = self.target.name if self.target is not None else None
+        return (f"AgenticMessageFlow(name='{self.name}', "
+                f"source='{source_name}', target='{target_name}', "
+                f"collaboration_mode={self.collaboration_mode}, "
+                f"merging_strategy={self.merging_strategy}, "
+                f"trust_score={self.trust_score})")
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -602,4 +740,5 @@ __all__ = [
     "AgenticTask",
     "AgenticGateway",
     "AgenticLane",
+    "AgenticMessageFlow",
 ]

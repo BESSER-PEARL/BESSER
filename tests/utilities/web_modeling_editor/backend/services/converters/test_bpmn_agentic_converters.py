@@ -15,6 +15,7 @@ import pytest
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     BPMNModel,
@@ -295,8 +296,12 @@ def test_I12_import_non_agentic_lane():
     assert not isinstance(lane, AgenticLane)
 
 
-def test_I13_import_message_flow_discards_agentic():
-    """I-13: BPMNFlow with isAgentic=true imports as base MessageFlow (silent discard)."""
+def test_I13_import_message_flow_agentic_now_typed():
+    """I-13 (S3): BPMNFlow with isAgentic=true now imports as AgenticMessageFlow.
+
+    Pre-S3 this asserted a silent discard to base MessageFlow; S3 introduces the
+    AgenticMessageFlow class, so the agentic fields are now preserved.
+    """
     elements = {
         "p1": _node("p1", "BPMNPool", "P1"),
         "p2": _node("p2", "BPMNPool", "P2"),
@@ -308,11 +313,14 @@ def test_I13_import_message_flow_discards_agentic():
     rels = {
         "f1": _flow("f1", "t1", "t2", flow_type="message",
                     isAgentic=True, collaborationMode="debate",
-                    mergingStrategy="majority"),
+                    mergingStrategy="majority", trustScore=33),
     }
     model = process_bpmn_diagram(_envelope(elements, rels))
     [mf] = model.collaboration.message_flows
-    assert type(mf) is MessageFlow
+    assert isinstance(mf, AgenticMessageFlow)
+    assert mf.collaboration_mode == CollaborationMode.DEBATE
+    assert mf.merging_strategy == MergingStrategy.MAJORITY
+    assert mf.trust_score == 33
 
 
 # ===========================================================================
@@ -439,6 +447,7 @@ def test_E8_export_message_flow_emits_isagentic_false():
     assert rel["isAgentic"] is False
     assert rel["collaborationMode"] == "voting"
     assert rel["mergingStrategy"] == "majority"
+    assert rel["trustScore"] == 0  # S3: WME always serialises trustScore on flows
 
 
 # ===========================================================================
@@ -688,3 +697,118 @@ def test_S2_c5_roundtrip_agentic_task_collaboration_mode():
     out = bpmn_object_to_json(model)
     [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNTask")
     assert entry["collaborationMode"] == "role"
+
+
+# ===========================================================================
+# S3 — AgenticMessageFlow (WME 04D1)
+# ===========================================================================
+
+def _two_pool_message_flow(rel_extra):
+    """Two pools, one task each, and a message flow carrying the given extras."""
+    elements = {
+        "p1": _node("p1", "BPMNPool", "P1"),
+        "p2": _node("p2", "BPMNPool", "P2"),
+        "t1": _node("t1", "BPMNTask", "T1", owner="p1",
+                    taskType="default", marker="none"),
+        "t2": _node("t2", "BPMNTask", "T2", owner="p2",
+                    taskType="default", marker="none"),
+    }
+    rels = {"f1": _flow("f1", "t1", "t2", flow_type="message", **rel_extra)}
+    return _envelope(elements, rels)
+
+
+def test_S3_c1_import_agentic_message_flow():
+    """S3-c-1: message flow with isAgentic=true imports as AgenticMessageFlow."""
+    env = _two_pool_message_flow({
+        "isAgentic": True, "collaborationMode": "voting",
+        "mergingStrategy": "majority", "trustScore": 50,
+    })
+    model = process_bpmn_diagram(env)
+    [mf] = model.collaboration.message_flows
+    assert isinstance(mf, AgenticMessageFlow)
+    assert mf.collaboration_mode == CollaborationMode.VOTING
+    assert mf.merging_strategy == MergingStrategy.MAJORITY
+    assert mf.trust_score == 50
+
+
+def test_S3_c2_import_non_agentic_message_flow_still_base():
+    """S3-c-2: a flow with no isAgentic imports as base MessageFlow."""
+    env = _two_pool_message_flow({})
+    model = process_bpmn_diagram(env)
+    [mf] = model.collaboration.message_flows
+    assert type(mf) is MessageFlow
+
+
+def test_S3_c3_import_agentic_message_flow_unknown_mode_raises():
+    """S3-c-3: an unknown collaborationMode raises ConversionError."""
+    env = _two_pool_message_flow({
+        "isAgentic": True, "collaborationMode": "telepathy",
+        "mergingStrategy": "majority", "trustScore": 0,
+    })
+    with pytest.raises(ConversionError, match="Unknown collaborationMode 'telepathy'"):
+        process_bpmn_diagram(env)
+
+
+def test_S3_c4_import_agentic_message_flow_illegal_strategy_raises():
+    """S3-c-4: (voting, fastest) is illegal per the legality table -> ConversionError."""
+    env = _two_pool_message_flow({
+        "isAgentic": True, "collaborationMode": "voting",
+        "mergingStrategy": "fastest", "trustScore": 0,
+    })
+    with pytest.raises(ConversionError, match="Cannot import AgenticMessageFlow"):
+        process_bpmn_diagram(env)
+
+
+def _wrap_message_flow(mf, t1, t2):
+    """Two-pool model carrying a single (agentic or base) message flow."""
+    p1 = Process(name="P1", flow_nodes={t1})
+    p2 = Process(name="P2", flow_nodes={t2})
+    part1 = Participant(name="Pool1", process=p1)
+    part2 = Participant(name="Pool2", process=p2)
+    model = BPMNModel(
+        name="M", processes={p1, p2},
+        collaboration=Collaboration(name="C", participants={part1, part2},
+                                    message_flows={mf}),
+    )
+    return bpmn_object_to_json(model)
+
+
+def test_S3_c5_export_agentic_message_flow():
+    """S3-c-5: AgenticMessageFlow exports with isAgentic=true + the three fields."""
+    t1, t2 = Task(name="T1"), Task(name="T2")
+    mf = AgenticMessageFlow(source=t1, target=t2, name="msg",
+                            collaboration_mode=CollaborationMode.ROLE,
+                            merging_strategy=MergingStrategy.COMPOSED,
+                            trust_score=70)
+    out = _wrap_message_flow(mf, t1, t2)
+    [rel] = out["relationships"].values()
+    assert rel["isAgentic"] is True
+    assert rel["collaborationMode"] == "role"
+    assert rel["mergingStrategy"] == "composed"
+    assert rel["trustScore"] == 70
+
+
+def test_S3_c6_export_non_agentic_message_flow_emits_defaults():
+    """S3-c-6: a base MessageFlow keeps the WME flow defaults (isAgentic=false)."""
+    t1, t2 = Task(name="T1"), Task(name="T2")
+    mf = MessageFlow(source=t1, target=t2, name="msg")
+    out = _wrap_message_flow(mf, t1, t2)
+    [rel] = out["relationships"].values()
+    assert rel["isAgentic"] is False
+    assert rel["collaborationMode"] == "voting"
+    assert rel["mergingStrategy"] == "majority"
+    assert rel["trustScore"] == 0
+
+
+def test_S3_c7_roundtrip_agentic_message_flow():
+    """S3-c-7: JSON -> BUML -> JSON preserves all three agentic flow fields."""
+    env = _two_pool_message_flow({
+        "isAgentic": True, "collaborationMode": "competition",
+        "mergingStrategy": "most-complete", "trustScore": 40,
+    })
+    out = bpmn_object_to_json(process_bpmn_diagram(env))
+    [rel] = out["relationships"].values()
+    assert rel["isAgentic"] is True
+    assert rel["collaborationMode"] == "competition"
+    assert rel["mergingStrategy"] == "most-complete"
+    assert rel["trustScore"] == 40

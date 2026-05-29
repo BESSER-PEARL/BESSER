@@ -19,6 +19,7 @@ import logging
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     Artifact,
@@ -310,6 +311,38 @@ def _build_flow(rel: dict, source, target):
                 )
         return flow
     if flow_type == "message":
+        if rel.get("isAgentic"):
+            # SEAA'25 «AgenticMessageFlow» (WME 04D1). Same enum-validation
+            # shape as AgenticGateway; no gateway_role (a message flow has no
+            # diverging/merging axis), so merging_strategy is always read.
+            try:
+                collaboration = CollaborationMode(
+                    rel.get("collaborationMode", "voting") or "voting"
+                )
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Unknown collaborationMode '{rel.get('collaborationMode')}' "
+                    f"on AgenticMessageFlow '{name}'."
+                ) from exc
+            ms_value = rel.get("mergingStrategy", "majority") or "majority"
+            try:
+                merging = MergingStrategy(ms_value)
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Unknown mergingStrategy '{ms_value}' on AgenticMessageFlow '{name}'."
+                ) from exc
+            trust = _clamp_trust_score(rel.get("trustScore", 0))
+            try:
+                return AgenticMessageFlow(
+                    source=source, target=target, name=name,
+                    collaboration_mode=collaboration, merging_strategy=merging,
+                    trust_score=trust,
+                )
+            except ValueError as exc:
+                # (collaboration_mode, merging_strategy) legality violation (INV-B).
+                raise ConversionError(
+                    f"Cannot import AgenticMessageFlow '{name}': {exc}"
+                ) from exc
         return MessageFlow(source=source, target=target, name=name)
     if flow_type == "association":
         return Association(source=source, target=target, name=name)

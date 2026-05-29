@@ -18,15 +18,19 @@ import pytest
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     BPMNModel,
+    Collaboration,
     CollaborationMode,
     EndEvent,
     Gateway,
     GatewayRole,
     GatewayType,
     MergingStrategy,
+    MessageFlow,
+    Participant,
     Process,
     ReflectionMode,
     SequenceFlow,
@@ -309,6 +313,80 @@ class TestAgenticLane:
         """An AgenticLane with no ref emits no agent_diagram_ref kwarg."""
         source = bpmn_model_to_code(_agentic_lane_model())
         assert "agent_diagram_ref" not in source
+
+
+# ---------------------------------------------------------------------------
+# S3 -- AgenticMessageFlow
+# ---------------------------------------------------------------------------
+
+def _message_flow_model(mf_factory):
+    """Two pools, one task each, joined by the message flow that mf_factory builds.
+
+    ``mf_factory(t1, t2)`` returns a (Agentic)MessageFlow between the two tasks.
+    """
+    t1, t2 = Task(name="Ask"), Task(name="Answer")
+    p1 = Process(name="P1", flow_nodes={t1})
+    p2 = Process(name="P2", flow_nodes={t2})
+    part1 = Participant(name="Pool1", process=p1)
+    part2 = Participant(name="Pool2", process=p2)
+    mf = mf_factory(t1, t2)
+    return BPMNModel(
+        name="MFModel", processes={p1, p2},
+        collaboration=Collaboration(name="C", participants={part1, part2},
+                                    message_flows={mf}),
+    )
+
+
+class TestAgenticMessageFlow:
+    def test_emit_agentic_message_flow(self):  # S3-b-1
+        model = _message_flow_model(lambda t1, t2: AgenticMessageFlow(
+            source=t1, target=t2, name="msg",
+            collaboration_mode=CollaborationMode.VOTING,
+            merging_strategy=MergingStrategy.MINORITY, trust_score=50,
+        ))
+        source = bpmn_model_to_code(model)
+        assert "AgenticMessageFlow(" in source
+        recovered = _find_model(_exec_source(source))
+        [mf] = recovered.collaboration.message_flows
+        assert isinstance(mf, AgenticMessageFlow)
+        assert mf.collaboration_mode == CollaborationMode.VOTING
+        assert mf.merging_strategy == MergingStrategy.MINORITY
+        assert mf.trust_score == 50
+
+    def test_emit_agentic_message_flow_imports(self):  # S3-b-2
+        model = _message_flow_model(lambda t1, t2: AgenticMessageFlow(
+            source=t1, target=t2,
+            collaboration_mode=CollaborationMode.ROLE,
+            merging_strategy=MergingStrategy.COMPOSED,
+        ))
+        block = _import_block(bpmn_model_to_code(model))
+        for name in ("AgenticMessageFlow", "CollaborationMode", "MergingStrategy"):
+            assert name in block, f"expected {name} in import block, got: {block!r}"
+
+    def test_emit_mixed_message_flows(self):  # S3-b-3
+        """A collaboration with both a base and an agentic message flow emits both."""
+        t1, t2, t3, t4 = (Task(name="A"), Task(name="B"),
+                          Task(name="C"), Task(name="D"))
+        p1 = Process(name="P1", flow_nodes={t1, t3})
+        p2 = Process(name="P2", flow_nodes={t2, t4})
+        part1 = Participant(name="Pool1", process=p1)
+        part2 = Participant(name="Pool2", process=p2)
+        base_mf = MessageFlow(source=t1, target=t2, name="plain")
+        agentic_mf = AgenticMessageFlow(source=t3, target=t4, name="agent",
+                                        collaboration_mode=CollaborationMode.VOTING,
+                                        merging_strategy=MergingStrategy.MAJORITY)
+        model = BPMNModel(
+            name="M", processes={p1, p2},
+            collaboration=Collaboration(name="C", participants={part1, part2},
+                                        message_flows={base_mf, agentic_mf}),
+        )
+        source = bpmn_model_to_code(model)
+        assert "AgenticMessageFlow(" in source
+        assert "MessageFlow(source=" in source.replace("AgenticMessageFlow(", "")
+        recovered = _find_model(_exec_source(source))
+        flows = recovered.collaboration.message_flows
+        assert sum(1 for f in flows if isinstance(f, AgenticMessageFlow)) == 1
+        assert sum(1 for f in flows if type(f) is MessageFlow) == 1
 
 
 # ---------------------------------------------------------------------------

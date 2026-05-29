@@ -13,6 +13,7 @@ import pytest
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     CollaborationMode,
@@ -22,6 +23,7 @@ from besser.BUML.metamodel.bpmn import (
     Lane,
     LoopCharacteristics,
     MergingStrategy,
+    MessageFlow,
     ReflectionMode,
     Task,
     TaskType,
@@ -522,6 +524,105 @@ def test_agentic_task_repr_includes_collaboration_mode():
     """__repr__ includes collaboration_mode (S2-mm-5)."""
     t = AgenticTask(name="review", collaboration_mode=CollaborationMode.DEBATE)
     assert "CollaborationMode.DEBATE" in repr(t)
+
+
+# ---------------------------------------------------------------------------
+# AgenticMessageFlow — S3 (WME 04D1)
+# ---------------------------------------------------------------------------
+
+def test_agentic_message_flow_defaults():
+    """Defaults: VOTING / MAJORITY / 0 (S3-mm-1)."""
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"))
+    assert amf.collaboration_mode == CollaborationMode.VOTING
+    assert amf.merging_strategy == MergingStrategy.MAJORITY  # _DEFAULT[VOTING]
+    assert amf.trust_score == 0
+
+
+def test_agentic_message_flow_isinstance_message_flow():
+    """AgenticMessageFlow IS a MessageFlow (S3-mm-2)."""
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"))
+    assert isinstance(amf, MessageFlow)
+    assert isinstance(amf, AgenticMessageFlow)
+
+
+def test_agentic_message_flow_endpoint_check():
+    """Non-Activity/Event endpoint raises TypeError (inherited from MessageFlow) (S3-mm-3)."""
+    bad = Gateway(name="g", gateway_type=GatewayType.EXCLUSIVE)
+    with pytest.raises(TypeError, match="must be an Activity or Event"):
+        AgenticMessageFlow(source=bad, target=Task(name="B"))
+
+
+def test_agentic_message_flow_merging_never_none():
+    """merging_strategy=None auto-defaults; explicit None to the setter raises (S3-mm-4)."""
+    # None at construction -> default for the mode (not None).
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                             collaboration_mode=CollaborationMode.ROLE,
+                             merging_strategy=None)
+    assert amf.merging_strategy == MergingStrategy.LEADER_DRIVEN
+    # Explicit None to the setter is a type error (no diverging role here).
+    with pytest.raises(TypeError, match="merging_strategy must be a MergingStrategy"):
+        amf.merging_strategy = None
+
+
+def test_agentic_message_flow_inv_b_explicit_illegal():
+    """(VOTING, FASTEST) raises ValueError listing legal values (S3-mm-5)."""
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                             collaboration_mode=CollaborationMode.VOTING)
+    with pytest.raises(ValueError, match="not legal for collaboration_mode VOTING"):
+        amf.merging_strategy = MergingStrategy.FASTEST
+
+
+def test_agentic_message_flow_mode_change_resets_illegal():
+    """Switching to a mode that disallows the current strategy auto-resets it (S3-mm-6)."""
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                             collaboration_mode=CollaborationMode.VOTING,
+                             merging_strategy=MergingStrategy.MAJORITY)
+    amf.collaboration_mode = CollaborationMode.COMPETITION
+    assert amf.merging_strategy == MergingStrategy.FASTEST  # _DEFAULT[COMPETITION]
+
+
+def test_agentic_message_flow_mode_change_keeps_legal():
+    """Switching to a mode that still allows the strategy keeps it (S3-mm-7)."""
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                             collaboration_mode=CollaborationMode.VOTING,
+                             merging_strategy=MergingStrategy.MAJORITY)
+    amf.collaboration_mode = CollaborationMode.DEBATE  # debate accepts MAJORITY
+    assert amf.merging_strategy == MergingStrategy.MAJORITY
+
+
+@pytest.mark.parametrize("score", [-1, 101])
+def test_agentic_message_flow_trust_score_out_of_range(score):
+    """Trust score validation shared with the other agentic classes (S3-mm-8)."""
+    with pytest.raises(ValueError, match=r"trust_score must be in \[0, 100\]"):
+        AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                           trust_score=score)
+
+
+def test_agentic_message_flow_trust_score_type_error():
+    """Non-int trust score raises TypeError (S3-mm-8)."""
+    with pytest.raises(TypeError, match="trust_score must be an int"):
+        AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                           trust_score="50")
+
+
+def test_agentic_message_flow_repr():
+    """__repr__ includes endpoints + the three agentic fields (S3-mm-9)."""
+    amf = AgenticMessageFlow(source=Task(name="A"), target=Task(name="B"),
+                             collaboration_mode=CollaborationMode.VOTING,
+                             merging_strategy=MergingStrategy.MINORITY,
+                             trust_score=50)
+    r = repr(amf)
+    assert "AgenticMessageFlow" in r
+    assert "source='A'" in r and "target='B'" in r
+    assert "CollaborationMode.VOTING" in r
+    assert "MergingStrategy.MINORITY" in r
+    assert "trust_score=50" in r
+
+
+def test_agentic_message_flow_in_all():
+    """AgenticMessageFlow is importable from the package root (S3-mm-10)."""
+    from besser.BUML.metamodel.bpmn import AgenticMessageFlow as AMF  # noqa: F401
+    assert AMF is AgenticMessageFlow
 
 
 # ---------------------------------------------------------------------------

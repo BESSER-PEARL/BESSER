@@ -708,6 +708,17 @@ def {{ body_name }}(session: Session):
     {% if speech_enabled %}
     platform.reply_speech(session, message)
     {% endif %}
+    {% elif is_class(action, 'LLMChatReply') %}
+    {% set llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.prompt %}
+    message = {{ llm_ns.name }}.chat(session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ llm_ns.name }}.chat(session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
     {% elif is_class(action, 'RAGReply') %}
     {% set rag_var_name = resolve_rag_var_name(agent, action.rag_db_name) %}
     {% if rag_var_name %}
@@ -763,6 +774,17 @@ def {{ fallback_name }}(session: Session):
     message = {{ llm_ns.name }}.predict(message=session.event.message, session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
     message = {{ llm_ns.name }}.predict(message=session.event.message, session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% elif is_class(action, 'LLMChatReply') %}
+    {% set llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.prompt %}
+    message = {{ llm_ns.name }}.chat(session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ llm_ns.name }}.chat(session=session)
     {% endif %}
     session.reply(message)
     {% if speech_enabled %}

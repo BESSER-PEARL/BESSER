@@ -27,6 +27,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     WildcardEvent,
     AgentReply,
     LLMReply,
+    LLMChatReply,
     RAGReply,
     DBReply,
     RAGVectorStore,
@@ -40,6 +41,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 _REPLY_TYPE_TO_ACTION_TYPE = {
     "text": "TextReplyAction",
     "llm": "LLMReplyAction",
+    "llm_chat": "LLMChatAction",
     "rag": "RAGReplyAction",
     "db_reply": "DBAction",
     "code": "CustomCodeAction",
@@ -110,6 +112,15 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
             llm_name = sanitize_text(llm_name_raw) or None
             body.add_action(LLMReply(prompt=prompt, llm_name=llm_name))
+            action_added = True
+
+        elif action_type == "LLMChatAction":
+            # Keep the same payload keys as LLMReply for frontend symmetry.
+            prompt_raw = element.get("system_message") or element.get("llmPrompt") or ""
+            prompt = sanitize_text(prompt_raw) or None
+            llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
+            llm_name = sanitize_text(llm_name_raw) or None
+            body.add_action(LLMChatReply(prompt=prompt, llm_name=llm_name))
             action_added = True
 
         elif action_type == "RAGReplyAction":

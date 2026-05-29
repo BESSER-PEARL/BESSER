@@ -182,6 +182,25 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "llm_name": action.get("llm_name", "") or "",
                 }
                 elements[state_id][state_key].append(body_id)
+            elif action_type == "llm_chat":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": "LLM Chat",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "LLMChatAction",
+                    "replyType": "llm_chat",
+                    "system_message": action.get("prompt") or "",
+                    "llm_name": action.get("llm_name", "") or "",
+                }
+                elements[state_id][state_key].append(body_id)
             elif action_type == "rag":
                 rag_db_name = action.get("ragDatabaseName") or ""
                 rag_prompt = action.get("prompt") or ""
@@ -550,6 +569,17 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             actions[body_var] = [llm_action]
                         else:
                             actions[body_var].append(llm_action)
+                    elif node.value.args[0].func.id == 'LLMChatReply':
+                        llm_chat_action: Dict[str, Any] = {"type": "llm_chat"}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_chat_action["llm_name"] = kw.value.value
+                            elif kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_chat_action["prompt"] = kw.value.value
+                        if body_var not in actions:
+                            actions[body_var] = [llm_chat_action]
+                        else:
+                            actions[body_var].append(llm_chat_action)
                     elif node.value.args[0].func.id == 'RAGReply':
                         rag_db_name = ""
                         rag_prompt = ""

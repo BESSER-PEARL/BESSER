@@ -73,6 +73,29 @@ class LLMReply(Action):
         return f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
 
 
+class LLMChatReply(Action):
+    """Primitive action that represents sending a chat-style reply using an LLM.
+
+    Args:
+        prompt (str, optional): Additional system prompt injected in the chat call.
+        llm_name (str, optional): Name of the LLM (registered on the agent via
+            :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
+            the generator fall back to the agent's default LLM.
+
+    Attributes:
+        prompt (str | None): Optional system prompt used by ``llm.chat(...)``.
+        llm_name (str | None): Name of the LLM used for this reply.
+    """
+
+    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+        super().__init__()
+        self.prompt: Optional[str] = prompt
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
+
+
 class RAGReply(Action):
     """Primitive action that represents sending a reply using a configured RAG pipeline.
 
@@ -1972,9 +1995,9 @@ class Agent(StateMachine):
                 if body is None or not getattr(body, "actions", None):
                     continue
                 for action in body.actions:
-                    if isinstance(action, LLMReply):
+                    if isinstance(action, (LLMReply, LLMChatReply)):
                         _check(
-                            f"State '{state.name}' {label} LLMReply",
+                            f"State '{state.name}' {label} {action.__class__.__name__}",
                             action.llm_name,
                         )
                     elif isinstance(action, DBReply) and action.db_query_mode == "llm_query":

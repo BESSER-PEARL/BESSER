@@ -7,7 +7,7 @@ This module generates Python code for BUML agent models.
 import os
 from re import search
 from besser.BUML.metamodel.state_machine.agent import (
-    Agent, AgentReply, LLMReply, RAGReply, DBReply,
+    Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply,
     ReasoningState, llm_provider_key,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
@@ -49,7 +49,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         )
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "
-            "Agent, AgentReply, LLMReply, RAGReply, DBReply, "
+            "Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter, "
             "Tool, Skill, Workspace, ReasoningState, "
@@ -311,6 +311,16 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 kwargs.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_body.add_action(LLMReply({args}))\n")
+                        elif isinstance(action, LLMChatReply):
+                            kwargs = []
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                kwargs.append(f"llm_name={repr(llm_name)}")
+                            args = ", ".join(kwargs)
+                            f.write(f"{state_var}_body.add_action(LLMChatReply({args}))\n")
                         elif isinstance(action, RAGReply):
                             rag_name = _escape_python_string(action.rag_db_name or '')
                             prompt = getattr(action, 'prompt', None)
@@ -369,6 +379,16 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 kwargs.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_fallback_body.add_action(LLMReply({args}))\n")
+                        elif isinstance(action, LLMChatReply):
+                            kwargs = []
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                kwargs.append(f"llm_name={repr(llm_name)}")
+                            args = ", ".join(kwargs)
+                            f.write(f"{state_var}_fallback_body.add_action(LLMChatReply({args}))\n")
                         elif isinstance(action, RAGReply):
                             rag_name = _escape_python_string(action.rag_db_name or '')
                             prompt = getattr(action, 'prompt', None)

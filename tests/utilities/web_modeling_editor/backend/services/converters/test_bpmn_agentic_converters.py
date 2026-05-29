@@ -173,8 +173,8 @@ def test_I4_import_agentic_task_unknown_reflection_raises():
         process_bpmn_diagram(_envelope(elements, {}))
 
 
-def test_I5_import_agentic_task_discards_collaboration_mode():
-    """I-5: AgenticTask discards collaborationMode (WME extension beyond paper §4.2)."""
+def test_I5_import_agentic_task_stores_collaboration_mode():
+    """I-5 (S2): AgenticTask now STORES collaborationMode (04D1 D-D1; was discarded pre-S2)."""
     elements = {
         "t1": _node(
             "t1", "BPMNTask", "Review", taskType="default", marker="none",
@@ -185,8 +185,7 @@ def test_I5_import_agentic_task_discards_collaboration_mode():
     model = process_bpmn_diagram(_envelope(elements, {}))
     [task] = next(iter(model.processes)).flow_nodes
     assert isinstance(task, AgenticTask)
-    # Metamodel doesn't store collaboration_mode for tasks.
-    assert not hasattr(task, "collaboration_mode")
+    assert task.collaboration_mode == CollaborationMode.COMPETITION
 
 
 def test_I6_import_agentic_gateway_diverging():
@@ -329,7 +328,7 @@ def test_E1_export_agentic_task():
     assert entry["isAgentic"] is True
     assert entry["reflectionMode"] == "cross"
     assert entry["trustScore"] == 85
-    assert entry["collaborationMode"] == "voting"  # WME placeholder
+    assert entry["collaborationMode"] == "voting"  # default VOTING (now a stored value, S2)
     assert entry["taskType"] == "user"
 
 
@@ -627,3 +626,65 @@ def test_S1_c7_roundtrip_agentic_lane_with_ref():
     assert lane_entry["agentDiagramRef"] == _REF
     # Lane-only: the ref must never leak onto a task entry.
     assert "agentDiagramRef" not in task_entry
+
+
+# ===========================================================================
+# S2 — AgenticTask.collaboration_mode (WME 04D1 D-D1, paper deviation)
+# ===========================================================================
+
+def test_S2_c1_import_agentic_task_stores_collaboration_mode():
+    """S2-c-1: collaborationMode='debate' imports onto the task (mirror of WME fixture)."""
+    elements = {
+        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+                    isAgentic=True, reflectionMode="cross", trustScore=80,
+                    collaborationMode="debate"),
+    }
+    model = process_bpmn_diagram(_envelope(elements, {}))
+    [task] = next(iter(model.processes)).flow_nodes
+    assert isinstance(task, AgenticTask)
+    assert task.collaboration_mode == CollaborationMode.DEBATE
+
+
+def test_S2_c2_import_agentic_task_unknown_collaboration_mode_raises():
+    """S2-c-2: an unknown collaborationMode on a task raises ConversionError."""
+    elements = {
+        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+                    isAgentic=True, reflectionMode="none", trustScore=0,
+                    collaborationMode="telepathy"),
+    }
+    with pytest.raises(ConversionError, match="Unknown collaborationMode 'telepathy'"):
+        process_bpmn_diagram(_envelope(elements, {}))
+
+
+def test_S2_c3_import_agentic_task_default_collaboration_mode():
+    """S2-c-3: absent collaborationMode defaults to VOTING."""
+    elements = {
+        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+                    isAgentic=True, reflectionMode="none", trustScore=0),
+    }
+    model = process_bpmn_diagram(_envelope(elements, {}))
+    [task] = next(iter(model.processes)).flow_nodes
+    assert task.collaboration_mode == CollaborationMode.VOTING
+
+
+def test_S2_c4_export_agentic_task_emits_stored_collaboration_mode():
+    """S2-c-4: export emits the stored value, not a fixed placeholder."""
+    task = AgenticTask(name="Review", task_type=TaskType.USER,
+                       reflection_mode=ReflectionMode.CROSS, trust_score=80,
+                       collaboration_mode=CollaborationMode.DEBATE)
+    out = _process_with_node(task)
+    [entry] = out["elements"].values()
+    assert entry["collaborationMode"] == "debate"
+
+
+def test_S2_c5_roundtrip_agentic_task_collaboration_mode():
+    """S2-c-5: a non-voting collaborationMode round-trips JSON -> BUML -> JSON."""
+    elements = {
+        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+                    isAgentic=True, reflectionMode="self", trustScore=30,
+                    collaborationMode="role"),
+    }
+    model = process_bpmn_diagram(_envelope(elements, {}))
+    out = bpmn_object_to_json(model)
+    [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNTask")
+    assert entry["collaborationMode"] == "role"

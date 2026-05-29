@@ -176,6 +176,10 @@ class AgenticTask(Task):
         reflection_mode (ReflectionMode): The reflection mode (default ``NONE``,
             meaning «AgenticTask» without a reflective loop).
         trust_score (int): The trust score, 0-100 (default 0).
+        collaboration_mode (CollaborationMode): The task's collaboration mode
+            (default ``VOTING``). A WME 04D1 D-D1 extension **beyond** paper
+            §4.2 Fig 3b -- independent of any gateway; no merging-strategy
+            invariant applies to a task's collaboration mode.
         task_type (TaskType): Inherited from Task.
         loop_characteristics (LoopCharacteristics): Inherited from Activity.
         layout (dict): Inherited (opaque DI passthrough).
@@ -184,10 +188,13 @@ class AgenticTask(Task):
     Attributes:
         reflection_mode (ReflectionMode): The reflection mode.
         trust_score (int): The trust score.
+        collaboration_mode (CollaborationMode): The collaboration mode.
     """
 
     def __init__(self, name: str = "", reflection_mode: "ReflectionMode" = None,
-                 trust_score: int = 0, task_type=None, loop_characteristics=None,
+                 trust_score: int = 0,
+                 collaboration_mode: "CollaborationMode" = None,
+                 task_type=None, loop_characteristics=None,
                  layout: dict = None, metadata=None, timestamp=None):
         super().__init__(name=name, task_type=task_type,
                          loop_characteristics=loop_characteristics,
@@ -195,6 +202,8 @@ class AgenticTask(Task):
         self.reflection_mode = (reflection_mode if reflection_mode is not None
                                 else ReflectionMode.NONE)
         self.trust_score = trust_score
+        self.collaboration_mode = (collaboration_mode if collaboration_mode is not None
+                                   else CollaborationMode.VOTING)
 
     @property
     def reflection_mode(self) -> "ReflectionMode":
@@ -229,10 +238,34 @@ class AgenticTask(Task):
         """
         self.__trust_score = _validate_trust_score(value)
 
+    @property
+    def collaboration_mode(self) -> "CollaborationMode":
+        """CollaborationMode: Get the task's collaboration mode.
+
+        WME 04D1 D-D1 extension beyond paper §4.2 -- independent of any gateway;
+        no merging-strategy invariant applies to a task's collaboration mode.
+        """
+        return self.__collaboration_mode
+
+    @collaboration_mode.setter
+    def collaboration_mode(self, value: "CollaborationMode"):
+        """CollaborationMode: Set the task's collaboration mode.
+
+        Raises:
+            TypeError: if not a CollaborationMode.
+        """
+        if not isinstance(value, CollaborationMode):
+            raise TypeError(
+                f"collaboration_mode must be a CollaborationMode, "
+                f"got {type(value).__name__}"
+            )
+        self.__collaboration_mode = value
+
     def __repr__(self):
         return (f"AgenticTask(name='{self.name}', "
                 f"reflection_mode={self.reflection_mode}, "
-                f"trust_score={self.trust_score})")
+                f"trust_score={self.trust_score}, "
+                f"collaboration_mode={self.collaboration_mode})")
 
 
 # ---------------------------------------------------------------------------

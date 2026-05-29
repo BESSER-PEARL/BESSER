@@ -484,6 +484,47 @@ def test_agentic_lane_repr_includes_ref():
 
 
 # ---------------------------------------------------------------------------
+# AgenticTask.collaboration_mode — S2 (WME 04D1 D-D1; paper deviation)
+# ---------------------------------------------------------------------------
+
+def test_agentic_task_collaboration_mode_default_voting():
+    """Default collaboration_mode is VOTING (S2-mm-1)."""
+    t = AgenticTask(name="review")
+    assert t.collaboration_mode == CollaborationMode.VOTING
+
+
+@pytest.mark.parametrize("mode", list(CollaborationMode))
+def test_agentic_task_collaboration_mode_setter(mode):
+    """Setter accepts every CollaborationMode member (S2-mm-2)."""
+    t = AgenticTask(name="t", collaboration_mode=mode)
+    assert t.collaboration_mode == mode
+
+
+def test_agentic_task_collaboration_mode_type_error():
+    """Non-CollaborationMode raises TypeError (S2-mm-3)."""
+    with pytest.raises(TypeError, match="collaboration_mode must be a CollaborationMode"):
+        AgenticTask(name="t", collaboration_mode="voting")
+
+
+def test_agentic_task_collaboration_mode_independent():
+    """collaboration_mode is independent — no merging-strategy machinery on the task (S2-mm-4)."""
+    t = AgenticTask(name="t", reflection_mode=ReflectionMode.SELF, trust_score=40)
+    t.collaboration_mode = CollaborationMode.COMPETITION
+    # Setting it does not disturb the other fields, and the task has no
+    # gateway_role / merging_strategy attributes.
+    assert t.reflection_mode == ReflectionMode.SELF
+    assert t.trust_score == 40
+    assert not hasattr(t, "merging_strategy")
+    assert not hasattr(t, "gateway_role")
+
+
+def test_agentic_task_repr_includes_collaboration_mode():
+    """__repr__ includes collaboration_mode (S2-mm-5)."""
+    t = AgenticTask(name="review", collaboration_mode=CollaborationMode.DEBATE)
+    assert "CollaborationMode.DEBATE" in repr(t)
+
+
+# ---------------------------------------------------------------------------
 # Backward compatibility (T-bc-1)
 # ---------------------------------------------------------------------------
 

@@ -184,6 +184,24 @@ class TestAgenticTask:
         # should appear in the import list.
         assert "Task," not in block.replace("AgenticTask,", "")
 
+    def test_emit_agentic_task_collaboration_mode(self):  # S2-b-1
+        """A non-voting collaboration_mode round-trips through exec'd code."""
+        t = AgenticTask(name="Review", task_type=TaskType.USER,
+                        reflection_mode=ReflectionMode.CROSS, trust_score=80,
+                        collaboration_mode=CollaborationMode.DEBATE)
+        model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={t})})
+        source = bpmn_model_to_code(model)
+        assert "collaboration_mode=CollaborationMode.DEBATE" in source
+        recovered = _find_model(_exec_source(source))
+        node = next(iter(recovered.all_flow_nodes()))
+        assert isinstance(node, AgenticTask)
+        assert node.collaboration_mode == CollaborationMode.DEBATE
+
+    def test_emit_agentic_task_imports_collaboration_mode(self):  # S2-b-2
+        """The emitted import block contains CollaborationMode for an AgenticTask."""
+        source = bpmn_model_to_code(_agentic_task_model())
+        assert "CollaborationMode" in _import_block(source)
+
 
 # ---------------------------------------------------------------------------
 # B-3 / B-4 / B-5 / B-6 -- AgenticGateway

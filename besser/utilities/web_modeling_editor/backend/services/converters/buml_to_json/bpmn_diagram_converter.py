@@ -133,9 +133,9 @@ _WME_TASK_DEFAULTS = {
     "isAgentic": False,
     "reflectionMode": "none",
     "trustScore": 0,
-    # `collaborationMode` is a WME extension beyond paper §4.2 Fig 3b. BESSER
-    # doesn't store it (01-... §6.5 Q-E); emitted as a placeholder so WME's
-    # deserialiser keeps the field present.
+    # `collaborationMode` is a WME deviation beyond paper §4.2 Fig 3b. As of
+    # S2, AgenticTask stores it (overridden in _emit_node). This default
+    # applies to non-agentic Tasks, which have no collaboration_mode of their own.
     "collaborationMode": "voting",
 }
 _WME_GATEWAY_DEFAULTS = {
@@ -369,8 +369,10 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             entry["isAgentic"] = True
             entry["reflectionMode"] = obj.reflection_mode.value
             entry["trustScore"] = obj.trust_score
-            # `collaborationMode` stays at the WME placeholder ("voting") --
-            # BESSER doesn't store it (01-... §6.5 Q-E).
+            # S2: collaborationMode is now stored on AgenticTask (04D1 D-D1
+            # deviation beyond paper §4.2). Emit the real value, not the
+            # _WME_TASK_DEFAULTS placeholder.
+            entry["collaborationMode"] = obj.collaboration_mode.value
     if isinstance(obj, Gateway):
         entry.update(_WME_GATEWAY_DEFAULTS)
         if isinstance(obj, AgenticGateway):

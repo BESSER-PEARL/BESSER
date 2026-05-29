@@ -158,8 +158,8 @@ def _build_node(elem: dict):
                 ) from exc
             if elem.get("isAgentic"):
                 # SEAA'25 «AgenticTask» (paper §4.2 Fig 3b). WME's
-                # `collaborationMode` field on Task is an extension beyond the
-                # paper -- read and discarded (see 01-... §6.5).
+                # `collaborationMode` on Task is a deviation beyond the paper
+                # (04D1 D-D1); BESSER stores it as an independent field (S2).
                 reflection_value = elem.get("reflectionMode", "none") or "none"
                 try:
                     reflection = ReflectionMode(reflection_value)
@@ -167,10 +167,18 @@ def _build_node(elem: dict):
                     raise ConversionError(
                         f"Unknown reflectionMode '{reflection_value}' on AgenticTask '{name}'."
                     ) from exc
+                collab_value = elem.get("collaborationMode", "voting") or "voting"
+                try:
+                    collaboration = CollaborationMode(collab_value)
+                except ValueError as exc:
+                    raise ConversionError(
+                        f"Unknown collaborationMode '{collab_value}' on AgenticTask '{name}'."
+                    ) from exc
                 trust = _clamp_trust_score(elem.get("trustScore", 0))
                 return AgenticTask(
                     name=name, task_type=task_type, loop_characteristics=loop,
                     reflection_mode=reflection, trust_score=trust,
+                    collaboration_mode=collaboration,
                 )
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
         # SubProcess / Transaction / CallActivity all take the same args (no

@@ -229,10 +229,13 @@ def _emit_lane(lane, process_var: str, dispenser: _NameDispenser,
     var = dispenser.name_for(lane)
     if isinstance(lane, AgenticLane):
         needed.update({"AgenticLane", "AgentRole"})
+        ref_kwarg = ""
+        if lane.agent_diagram_ref is not None:
+            ref_kwarg = f", agent_diagram_ref={_quoted(lane.agent_diagram_ref)}"
         body.append(
             f"{var} = AgenticLane(name={_quoted(lane.name)}, "
             f"role=AgentRole.{lane.role.name}, "
-            f"trust_score={lane.trust_score})"
+            f"trust_score={lane.trust_score}{ref_kwarg})"
         )
     else:
         needed.add("Lane")

@@ -263,7 +263,11 @@ def _build_node(elem: dict):
                     f"Unknown role '{role_value}' on AgenticLane '{name}'."
                 ) from exc
             trust = _clamp_trust_score(elem.get("trustScore", 0))
-            return AgenticLane(name=name, role=role, trust_score=trust)
+            # WME 08: optional opaque AgentDiagram id. Empty string / absent → None.
+            # No UUID validation (audit OQ-2) — pass through verbatim.
+            agent_ref = elem.get("agentDiagramRef") or None
+            return AgenticLane(name=name, role=role, trust_score=trust,
+                               agent_diagram_ref=agent_ref)
         return Lane(name=name)
     if elem_type == "BPMNPool":
         # Build the Pool's Process eagerly so pass 2 containment can attach to it.

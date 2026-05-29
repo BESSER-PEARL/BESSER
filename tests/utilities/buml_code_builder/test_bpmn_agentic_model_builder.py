@@ -272,6 +272,26 @@ class TestAgenticLane:
         for name in ("AgenticLane", "AgentRole"):
             assert name in block, f"expected {name} in import block, got: {block!r}"
 
+    def test_emit_agentic_lane_with_ref(self):  # S1-b-1
+        """An AgenticLane with agent_diagram_ref round-trips through exec'd code."""
+        t = Task(name="Code")
+        lane = AgenticLane(name="Reviewer", role=AgentRole.MANAGER,
+                           trust_score=75, agent_diagram_ref="ref-123",
+                           flow_nodes={t})
+        p = Process(name="P", flow_nodes={t}, lanes={lane})
+        model = BPMNModel(name="RefModel", processes={p})
+        source = bpmn_model_to_code(model)
+        assert "agent_diagram_ref='ref-123'" in source
+        recovered = _find_model(_exec_source(source))
+        rec_lane = next(iter(next(iter(recovered.processes)).lanes))
+        assert isinstance(rec_lane, AgenticLane)
+        assert rec_lane.agent_diagram_ref == "ref-123"
+
+    def test_emit_agentic_lane_without_ref_omits_kwarg(self):  # S1-b-2
+        """An AgenticLane with no ref emits no agent_diagram_ref kwarg."""
+        source = bpmn_model_to_code(_agentic_lane_model())
+        assert "agent_diagram_ref" not in source
+
 
 # ---------------------------------------------------------------------------
 # B-9 / B-10 -- mixed model + vanilla model

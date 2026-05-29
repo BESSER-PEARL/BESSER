@@ -446,6 +446,44 @@ def test_agentic_lane_relaxed_name():
 
 
 # ---------------------------------------------------------------------------
+# AgenticLane.agent_diagram_ref — S1 (WME 08 cross-diagram link)
+# ---------------------------------------------------------------------------
+
+def test_agentic_lane_agent_diagram_ref_default_none():
+    """Constructed without the kwarg → agent_diagram_ref is None (S1-mm-1)."""
+    lane = AgenticLane(name="Reviewer")
+    assert lane.agent_diagram_ref is None
+
+
+def test_agentic_lane_agent_diagram_ref_str():
+    """Accepts an arbitrary string (e.g. a UUID) verbatim — opaque (S1-mm-2)."""
+    ref = "3f0a1c2d-4e5b-4f6a-9012-3456789abcde"
+    lane = AgenticLane(name="Reviewer", agent_diagram_ref=ref)
+    assert lane.agent_diagram_ref == ref
+
+
+def test_agentic_lane_agent_diagram_ref_none_allowed():
+    """Explicit None is accepted (S1-mm-3)."""
+    lane = AgenticLane(name="Reviewer", agent_diagram_ref=None)
+    assert lane.agent_diagram_ref is None
+
+
+@pytest.mark.parametrize("value", [123, 0.5, ["x"], {"a": 1}, True])
+def test_agentic_lane_agent_diagram_ref_type_error(value):
+    """Non-str / non-None raises TypeError (S1-mm-4)."""
+    with pytest.raises(TypeError, match="agent_diagram_ref must be a str or None"):
+        AgenticLane(name="Reviewer", agent_diagram_ref=value)
+
+
+def test_agentic_lane_repr_includes_ref():
+    """__repr__ includes agent_diagram_ref (S1-mm-5)."""
+    lane = AgenticLane(name="Reviewer", role=AgentRole.MANAGER, trust_score=90,
+                       agent_diagram_ref="ref-123")
+    r = repr(lane)
+    assert "agent_diagram_ref='ref-123'" in r
+
+
+# ---------------------------------------------------------------------------
 # Backward compatibility (T-bc-1)
 # ---------------------------------------------------------------------------
 

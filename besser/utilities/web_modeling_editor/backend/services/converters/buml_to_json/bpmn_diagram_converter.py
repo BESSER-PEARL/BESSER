@@ -390,6 +390,11 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             entry["isAgentic"] = True
             entry["role"] = obj.role.value
             entry["trustScore"] = obj.trust_score
+            # WME 08: emit agentDiagramRef only when set (optional field;
+            # WME's exporter drops it when undefined). Lane-only — never on
+            # tasks / gateways.
+            if obj.agent_diagram_ref is not None:
+                entry["agentDiagramRef"] = obj.agent_diagram_ref
 
     return entry
 

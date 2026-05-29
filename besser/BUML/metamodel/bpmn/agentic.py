@@ -468,6 +468,9 @@ class AgenticLane(Lane):
         name (str): The lane label (inherited; may be empty).
         role (AgentRole): The profile role (default WORKER).
         trust_score (int): 0-100 (default 0).
+        agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
+            lane's agent is defined by (SEAA'25 cross-diagram link, WME 08).
+            Default None. Pass-through -- no UUID validation, no resolution.
         flow_nodes (set[FlowNode]): Inherited from Lane.
         layout (dict): Inherited.
         metadata, timestamp: Inherited.
@@ -475,15 +478,18 @@ class AgenticLane(Lane):
     Attributes:
         role (AgentRole): The agent profile role.
         trust_score (int): The trust score.
+        agent_diagram_ref (str | None): The AgentDiagram reference.
     """
 
     def __init__(self, name: str = "", role: "AgentRole" = None,
-                 trust_score: int = 0, flow_nodes: set = None,
+                 trust_score: int = 0, agent_diagram_ref: str = None,
+                 flow_nodes: set = None,
                  layout: dict = None, metadata=None, timestamp=None):
         super().__init__(name=name, flow_nodes=flow_nodes, layout=layout,
                          metadata=metadata, timestamp=timestamp)
         self.role = role if role is not None else AgentRole.WORKER
         self.trust_score = trust_score
+        self.agent_diagram_ref = agent_diagram_ref
 
     @property
     def role(self) -> "AgentRole":
@@ -518,9 +524,34 @@ class AgenticLane(Lane):
         """
         self.__trust_score = _validate_trust_score(value)
 
+    @property
+    def agent_diagram_ref(self):
+        """str | None: Get the opaque id of the AgentDiagram this lane's agent
+        is defined by (SEAA'25 cross-diagram link, WME 08). ``None`` when unset."""
+        return self.__agent_diagram_ref
+
+    @agent_diagram_ref.setter
+    def agent_diagram_ref(self, value):
+        """str | None: Set the AgentDiagram reference.
+
+        Opaque pass-through -- no UUID-format check, no typed resolution (the
+        value is whatever id the project assigned the AgentDiagram). A future
+        ``resolve_agent_diagram(project)`` helper can turn it into a typed
+        AgentModel when a consumer wants one; not implemented here.
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"agent_diagram_ref must be a str or None, got {type(value).__name__}"
+            )
+        self.__agent_diagram_ref = value
+
     def __repr__(self):
         return (f"AgenticLane(name='{self.name}', role={self.role}, "
-                f"trust_score={self.trust_score})")
+                f"trust_score={self.trust_score}, "
+                f"agent_diagram_ref={self.agent_diagram_ref!r})")
 
 
 # ---------------------------------------------------------------------------

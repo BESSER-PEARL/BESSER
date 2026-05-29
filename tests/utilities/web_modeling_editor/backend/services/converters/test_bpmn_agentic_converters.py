@@ -544,3 +544,86 @@ def test_R5_roundtrip_mixed_diagram():
     assert by_name["Agent"]["reflectionMode"] == "self"
     assert by_name["Agent"]["trustScore"] == 50
     assert by_name["PlainGw"]["isAgentic"] is False
+
+
+# ===========================================================================
+# S1 — AgenticLane.agent_diagram_ref (WME 08 cross-diagram link)
+# ===========================================================================
+
+_REF = "3f0a1c2d-4e5b-4f6a-9012-3456789abcde"
+
+
+def _lane_elements(extra):
+    """Pool + one agentic swimlane carrying the given extra fields."""
+    return {
+        "p1": _node("p1", "BPMNPool", "Pool"),
+        "l1": _node("l1", "BPMNSwimlane", "AgentReviewer", owner="p1",
+                    isAgentic=True, role="manager", trustScore=90, **extra),
+    }
+
+
+def test_S1_c1_import_agentic_lane_with_agent_diagram_ref():
+    """S1-c-1: agentDiagramRef on the swimlane imports onto the AgenticLane."""
+    model = process_bpmn_diagram(_envelope(_lane_elements({"agentDiagramRef": _REF}), {}))
+    [participant] = model.collaboration.participants
+    [lane] = participant.process.lanes
+    assert isinstance(lane, AgenticLane)
+    assert lane.agent_diagram_ref == _REF
+
+
+def test_S1_c2_import_agentic_lane_empty_ref_is_none():
+    """S1-c-2: an empty-string agentDiagramRef imports as None."""
+    model = process_bpmn_diagram(_envelope(_lane_elements({"agentDiagramRef": ""}), {}))
+    [participant] = model.collaboration.participants
+    [lane] = participant.process.lanes
+    assert lane.agent_diagram_ref is None
+
+
+def test_S1_c3_import_agentic_lane_absent_ref_is_none():
+    """S1-c-3: no agentDiagramRef key → agent_diagram_ref is None."""
+    model = process_bpmn_diagram(_envelope(_lane_elements({}), {}))
+    [participant] = model.collaboration.participants
+    [lane] = participant.process.lanes
+    assert lane.agent_diagram_ref is None
+
+
+def test_S1_c4_export_agentic_lane_with_ref_emits_field():
+    """S1-c-4: an AgenticLane with a ref emits agentDiagramRef in the JSON entry."""
+    out = _wrap_lane(AgenticLane(name="AgentReviewer", role=AgentRole.MANAGER,
+                                 trust_score=90, agent_diagram_ref=_REF))
+    lane_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNSwimlane")
+    assert lane_entry["agentDiagramRef"] == _REF
+
+
+def test_S1_c5_export_agentic_lane_without_ref_omits_field():
+    """S1-c-5: an AgenticLane with no ref omits agentDiagramRef entirely (WME-08 behaviour)."""
+    out = _wrap_lane(AgenticLane(name="AgentReviewer", role=AgentRole.MANAGER,
+                                 trust_score=90))
+    lane_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNSwimlane")
+    assert "agentDiagramRef" not in lane_entry
+
+
+def test_S1_c6_export_non_agentic_lane_no_ref():
+    """S1-c-6: a base Lane never carries agentDiagramRef."""
+    out = _wrap_lane(Lane(name="Plain"))
+    lane_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNSwimlane")
+    assert "agentDiagramRef" not in lane_entry
+
+
+def test_S1_c7_roundtrip_agentic_lane_with_ref():
+    """S1-c-7: JSON → BUML → JSON preserves agentDiagramRef; task does NOT pick it up."""
+    elements = _lane_elements({"agentDiagramRef": _REF})
+    elements["t1"] = _node("t1", "BPMNTask", "Review", owner="l1",
+                           taskType="user", marker="none",
+                           isAgentic=True, reflectionMode="cross", trustScore=80)
+    out = bpmn_object_to_json(process_bpmn_diagram(_envelope(elements, {})))
+    lane_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNSwimlane")
+    task_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNTask")
+    assert lane_entry["agentDiagramRef"] == _REF
+    # Lane-only: the ref must never leak onto a task entry.
+    assert "agentDiagramRef" not in task_entry

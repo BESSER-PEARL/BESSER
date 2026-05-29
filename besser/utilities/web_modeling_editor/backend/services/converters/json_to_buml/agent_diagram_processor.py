@@ -102,8 +102,9 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             action_added = True
 
         elif action_type == "LLMReplyAction":
-            # Support both "llmPrompt" (new schema) and using "name" as prompt (old schema)
-            prompt_raw = element.get("llmPrompt") or element.get("name", "")
+            # Prefer dedicated system_message field; fall back to legacy llmPrompt key.
+            # Never use name — it is a display label ("LLM Reply"), not the system message.
+            prompt_raw = element.get("system_message") or element.get("llmPrompt") or ""
             prompt = sanitize_text(prompt_raw) or None
             # Support "llmName" (new schema key) and "llm_name" (legacy key)
             llm_name_raw = element.get("llm_name") or element.get("llmName") or ""

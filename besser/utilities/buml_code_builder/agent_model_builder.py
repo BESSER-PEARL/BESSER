@@ -159,6 +159,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 f.write(f"    vector_store={vector_var},\n")
                 f.write(f"    splitter={splitter_var},\n")
                 f.write(f"    llm_name={repr(rag.llm_name)},\n")
+                f.write(f"    llm_prompt={repr(getattr(rag, 'llm_prompt', None))},\n")
                 f.write(f"    k={rag.k},\n")
                 f.write(f"    num_previous_messages={rag.num_previous_messages},\n")
                 f.write(")\n\n")

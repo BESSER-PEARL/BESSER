@@ -217,7 +217,7 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     {% endif %}
     {% set vector_var = rag_slug ~ '_vector_store' %}
     {% set splitter_var = rag_slug ~ '_splitter' %}
-    {% set rag_var = rag_slug ~ '_rag' %}
+    {% set rag_var = safe_var_name(rag.name) %}
     {% if rag.vector_store and rag.vector_store.persist_directory %}
         {% set persist_dir = rag.vector_store.persist_directory %}
     {% else %}
@@ -243,6 +243,7 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     vector_store={{ vector_var }},
     splitter={{ splitter_var }},
     llm_name='{{ ((rag.llm_name if rag.llm_name else (agent.default_llm_name if agent.default_llm_name else '')) | string) | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    llm_prompt={% if rag.llm_prompt %}'{{ rag.llm_prompt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% else %}None{% endif %},
     k={{ rag.k if rag.k is not none else 4 }},
     num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
 )
@@ -708,10 +709,19 @@ def {{ body_name }}(session: Session):
     platform.reply_speech(session, message)
     {% endif %}
     {% elif is_class(action, 'RAGReply') %}
+    {% set rag_var_name = resolve_rag_var_name(agent, action.rag_db_name) %}
+    {% if rag_var_name %}
+    {% if action.prompt %}
+    rag_message = {{ rag_var_name }}.run(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = {{ rag_var_name }}.run(session.event.message)
+    {% endif %}
+    {% else %}
     {% if action.prompt %}
     rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
     rag_message = session.run_rag(session.event.message)
+    {% endif %}
     {% endif %}
     platform.reply_rag(session, rag_message)
     {% elif is_class(action, 'DBReply') %}
@@ -759,10 +769,19 @@ def {{ fallback_name }}(session: Session):
     platform.reply_speech(session, message)
     {% endif %}
     {% elif is_class(action, 'RAGReply') %}
+    {% set rag_var_name = resolve_rag_var_name(agent, action.rag_db_name) %}
+    {% if rag_var_name %}
+    {% if action.prompt %}
+    rag_message = {{ rag_var_name }}.run(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = {{ rag_var_name }}.run(session.event.message)
+    {% endif %}
+    {% else %}
     {% if action.prompt %}
     rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
     rag_message = session.run_rag(session.event.message)
+    {% endif %}
     {% endif %}
     platform.reply_rag(session, rag_message)
     {% elif is_class(action, 'DBReply') %}

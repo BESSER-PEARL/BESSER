@@ -597,7 +597,15 @@ class RAG(NamedElement):
 
         vector_store = Chroma(...)
         splitter = RecursiveCharacterTextSplitter(...)
-        rag = RAG(agent=agent, vector_store=vector_store, splitter=splitter, llm_name='gpt-4o-mini', k=4, num_previous_messages=0)
+        rag = RAG(
+            agent=agent,
+            vector_store=vector_store,
+            splitter=splitter,
+            llm_name='gpt-4o-mini',
+            llm_prompt='Use only trusted corpus facts.',
+            k=4,
+            num_previous_messages=0,
+        )
 
     Args:
         name (str): Logical name of the RAG resource.
@@ -605,6 +613,7 @@ class RAG(NamedElement):
         vector_store (RAGVectorStore): Vector store definition.
         splitter (RAGTextSplitter): Chunking strategy definition.
         llm_name (str): Identifier of the LLM used to synthesize answers.
+        llm_prompt (str | None): Optional prefix instructions injected before each RAG prompt.
         k (int): Number of chunks retrieved per question.
         num_previous_messages (int): Conversation context depth forwarded to the LLM.
     """
@@ -616,6 +625,7 @@ class RAG(NamedElement):
             vector_store: RAGVectorStore,
             splitter: RAGTextSplitter,
             llm_name: str,
+            llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
     ):
@@ -624,6 +634,7 @@ class RAG(NamedElement):
         self.vector_store: RAGVectorStore = vector_store
         self.splitter: RAGTextSplitter = splitter
         self.llm_name: str = llm_name
+        self.llm_prompt: Optional[str] = llm_prompt
         self.k: int = k
         self.num_previous_messages: int = num_previous_messages
 
@@ -1768,6 +1779,7 @@ class Agent(StateMachine):
             vector_store: RAGVectorStore,
             splitter: RAGTextSplitter,
             llm_name: str,
+            llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
     ) -> RAG:
@@ -1781,6 +1793,7 @@ class Agent(StateMachine):
             vector_store=vector_store,
             splitter=splitter,
             llm_name=llm_name,
+            llm_prompt=llm_prompt,
             k=k,
             num_previous_messages=num_previous_messages,
         )

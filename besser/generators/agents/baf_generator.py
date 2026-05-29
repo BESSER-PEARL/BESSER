@@ -168,6 +168,30 @@ class BAFGenerator(GeneratorInterface):
             if not slug:
                 slug = f"rag_{index}"
             return slug
+
+        def resolve_rag_var_name(agent: Agent, rag_db_name: str) -> str:
+            """Return the generated RAG variable name for ``rag_db_name``.
+
+            The template falls back to ``session.run_rag(...)`` when this helper
+            returns an empty string.
+            """
+            if not rag_db_name:
+                logger.warning(
+                    "RAGReply in agent '%s' has empty rag_db_name. Falling back to session.run_rag().",
+                    agent.name,
+                )
+                return ''
+
+            for rag in agent.rags:
+                if rag.name == rag_db_name:
+                    return safe_var_name(rag.name)
+
+            logger.warning(
+                "RAGReply in agent '%s' references unknown rag_db_name '%s'. Falling back to session.run_rag().",
+                agent.name,
+                rag_db_name,
+            )
+            return ''
         generate_personalized_assets = self.generation_mode in (
             GenerationMode.FULL,
             GenerationMode.PERSONALIZED_ONLY,
@@ -190,6 +214,7 @@ class BAFGenerator(GeneratorInterface):
         # Shared helper so generated identifiers match the code builder and are
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
+        env.globals['resolve_rag_var_name'] = resolve_rag_var_name
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")

@@ -116,8 +116,10 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             rag_name = sanitize_text(element.get("ragDatabaseName", ""))
             if not rag_name:
                 rag_name = sanitize_text(content)
+            rag_prompt_raw = element.get("prompt") or ""
+            rag_prompt = sanitize_text(rag_prompt_raw) or None
             if rag_name:
-                body.add_action(RAGReply(rag_db_name=rag_name))
+                body.add_action(RAGReply(rag_db_name=rag_name, prompt=rag_prompt))
                 action_added = True
 
         elif action_type == "DBAction":
@@ -331,14 +333,35 @@ def process_agent_diagram(json_data):
                 chunk_size=1000,
                 chunk_overlap=100,
             )
-            rag_llm_name = sanitize_text((element.get("llm_name") or "").strip()) or ""
+            rag_llm_name = sanitize_text((element.get("llm_name") or element.get("llm") or "").strip()) or ""
+            rag_llm_prompt = sanitize_text((element.get("llm_prompt") or element.get("llmPrompt") or "").strip()) or None
+
+            raw_k = element.get("k")
+            try:
+                rag_k = int(raw_k) if raw_k is not None else 4
+            except (TypeError, ValueError):
+                rag_k = 4
+            if rag_k <= 0:
+                rag_k = 4
+
+            raw_npm = element.get("num_previous_messages")
+            if raw_npm is None:
+                raw_npm = element.get("numPreviousMessages")
+            try:
+                rag_num_previous_messages = int(raw_npm) if raw_npm is not None else 0
+            except (TypeError, ValueError):
+                rag_num_previous_messages = 0
+            if rag_num_previous_messages < 0:
+                rag_num_previous_messages = 0
+
             rag_config = agent.new_rag(
                 name=rag_name,
                 vector_store=vector_store,
                 splitter=splitter,
                 llm_name=rag_llm_name,
-                k=4,
-                num_previous_messages=0,
+                llm_prompt=rag_llm_prompt,
+                k=rag_k,
+                num_previous_messages=rag_num_previous_messages,
             )
             rag_dbs_by_id[element_id] = rag_config
             rag_dbs_by_name[rag_name] = rag_config

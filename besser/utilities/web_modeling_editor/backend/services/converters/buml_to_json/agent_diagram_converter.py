@@ -184,6 +184,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 elements[state_id][state_key].append(body_id)
             elif action_type == "rag":
                 rag_db_name = action.get("ragDatabaseName") or ""
+                rag_prompt = action.get("prompt") or ""
                 display_name = (
                     f"RAG reply using {rag_db_name} database"
                     if rag_db_name
@@ -203,6 +204,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     },
                     "actionType": "RAGReplyAction",
                     "ragDatabaseName": rag_db_name,
+                    "prompt": rag_prompt,
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "db_reply":
@@ -322,6 +324,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     ):
                         rag_name = None
                         rag_llm_name = ""
+                        rag_llm_prompt = ""
+                        rag_k = 4
+                        rag_num_previous_messages = 0
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
@@ -342,6 +347,15 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value.value, str)
                             ):
                                 rag_llm_name = kw.value.value
+                            elif kw.arg == "llm_prompt":
+                                if isinstance(kw.value, ast.Constant):
+                                    rag_llm_prompt = kw.value.value or ""
+                            elif kw.arg == "k":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                                    rag_k = kw.value.value
+                            elif kw.arg == "num_previous_messages":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                                    rag_num_previous_messages = kw.value.value
 
                         if isinstance(rag_name, str) and rag_name.strip():
                             rag_id = str(uuid.uuid4())
@@ -357,6 +371,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     "height": 110,
                                 },
                                 "llm_name": rag_llm_name,
+                                        "llm": rag_llm_name,
+                                "llm_prompt": rag_llm_prompt,
+                                "k": rag_k,
+                                "num_previous_messages": rag_num_previous_messages,
+                                        "numPreviousMessages": rag_num_previous_messages,
                             }
                             if states_x < 200:
                                 states_x += 300
@@ -533,6 +552,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             actions[body_var].append(llm_action)
                     elif node.value.args[0].func.id == 'RAGReply':
                         rag_db_name = ""
+                        rag_prompt = ""
                         if (
                             len(node.value.args[0].args) >= 1
                             and isinstance(node.value.args[0].args[0], ast.Constant)
@@ -546,11 +566,25 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value.value, str)
                             ):
                                 rag_db_name = kw.value.value
+                            elif (
+                                kw.arg == 'prompt'
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                rag_prompt = kw.value.value
 
                         if body_var not in actions:
-                            actions[body_var] = [{"type": "rag", "ragDatabaseName": rag_db_name}]
+                            actions[body_var] = [{
+                                "type": "rag",
+                                "ragDatabaseName": rag_db_name,
+                                "prompt": rag_prompt,
+                            }]
                         else:
-                            actions[body_var].append({"type": "rag", "ragDatabaseName": rag_db_name})
+                            actions[body_var].append({
+                                "type": "rag",
+                                "ragDatabaseName": rag_db_name,
+                                "prompt": rag_prompt,
+                            })
                     elif node.value.args[0].func.id == 'DBReply':
                         db_action = {
                             "type": "db_reply",

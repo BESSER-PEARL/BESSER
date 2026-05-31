@@ -511,7 +511,7 @@ class StateMachine(Model):
         if errors and raise_exception:
             raise ValueError("\n".join(errors))
         return result
-    
+
     def _validate_unreachable_states(self, warnings: list[str]):
         """Validate that all non-initial states have at least one incoming transition."""
 
@@ -526,7 +526,7 @@ class StateMachine(Model):
 
     def _validate_final_states_with_transitions(self, errors: list[str]):
         """Validate that final states have no outgoing transitions."""
-        
+
         for state in self.states:
             if state.final and state.transitions:
                 # Error: final states with outgoing transitions violate the UML specification

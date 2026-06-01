@@ -34,6 +34,18 @@ from baf.nlp.rag.rag import RAG
 {% if has_reasoning_states %}
 from baf.library.state import new_reasoning_state
 {% endif %}
+{% set has_web_crawl_import_ns = namespace(value=false) %}
+{% for state in agent.states %}
+{% for action in (state.body.actions if state.body and state.body.actions else []) %}
+{% if is_class(action, 'WebCrawlLLMReply') and action.run_crawl %}{% set has_web_crawl_import_ns.value = true %}{% endif %}
+{% endfor %}
+{% for action in (state.fallback_body.actions if state.fallback_body and state.fallback_body.actions else []) %}
+{% if is_class(action, 'WebCrawlLLMReply') and action.run_crawl %}{% set has_web_crawl_import_ns.value = true %}{% endif %}
+{% endfor %}
+{% endfor %}
+{% if has_web_crawl_import_ns.value %}
+from baf.utils.web_crawl import crawl_website
+{% endif %}
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
@@ -737,6 +749,34 @@ def {{ body_name }}(session: Session):
     platform.reply_rag(session, rag_message)
     {% elif is_class(action, 'DBReply') %}
 {{ render_db_reply_actions([action], speech_enabled) }}
+    {% elif is_class(action, 'WebCrawlLLMReply') %}
+    {% set web_crawl_llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set web_crawl_llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.run_crawl %}
+    webpages = crawl_website(
+        initial_url='{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        max_depth={{ action.max_depth }},
+        max_pages={{ action.max_pages }},
+        format='{{ action.crawl_format }}'{% if action.base_url_prefix %},
+        base_url_prefix='{{ action.base_url_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}'{% endif %}
+
+    )
+    session.set('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}', webpages)
+    {% else %}
+    webpages = session.get('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    if webpages is None:
+        session.reply('{{ action.no_crawl_error_message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+        return
+    {% endif %}
+    {% if action.system_message_prefix %}
+    system_message = '{{ action.system_message_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}' + str(webpages)
+    {% else %}
+    system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
+    {% endif %}
+    message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}
@@ -808,6 +848,34 @@ def {{ fallback_name }}(session: Session):
     platform.reply_rag(session, rag_message)
     {% elif is_class(action, 'DBReply') %}
 {{ render_db_reply_actions([action], speech_enabled) }}
+    {% elif is_class(action, 'WebCrawlLLMReply') %}
+    {% set web_crawl_llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set web_crawl_llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.run_crawl %}
+    webpages = crawl_website(
+        initial_url='{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        max_depth={{ action.max_depth }},
+        max_pages={{ action.max_pages }},
+        format='{{ action.crawl_format }}'{% if action.base_url_prefix %},
+        base_url_prefix='{{ action.base_url_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}'{% endif %}
+
+    )
+    session.set('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}', webpages)
+    {% else %}
+    webpages = session.get('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    if webpages is None:
+        session.reply('{{ action.no_crawl_error_message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+        return
+    {% endif %}
+    {% if action.system_message_prefix %}
+    system_message = '{{ action.system_message_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}' + str(webpages)
+    {% else %}
+    system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
+    {% endif %}
+    message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}

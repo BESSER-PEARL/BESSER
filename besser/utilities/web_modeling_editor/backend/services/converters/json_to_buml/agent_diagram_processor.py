@@ -30,6 +30,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     LLMChatReply,
     RAGReply,
     DBReply,
+    WebCrawlLLMReply,
     RAGVectorStore,
     RAGTextSplitter,
 )
@@ -45,6 +46,7 @@ _REPLY_TYPE_TO_ACTION_TYPE = {
     "rag": "RAGReplyAction",
     "db_reply": "DBAction",
     "code": "CustomCodeAction",
+    "web_crawl_llm": "WebCrawlLLMAction",
 }
 
 
@@ -136,6 +138,45 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
         elif action_type == "DBAction":
             if build_db_reply_fn:
                 body.add_action(build_db_reply_fn(element))
+                action_added = True
+
+        elif action_type == "WebCrawlLLMAction":
+            initial_url = sanitize_text(element.get("initial_url", ""))
+            max_depth_raw = element.get("max_depth", 2)
+            max_pages_raw = element.get("max_pages", 20)
+            try:
+                max_depth = int(max_depth_raw) if max_depth_raw is not None else 2
+            except (TypeError, ValueError):
+                max_depth = 2
+            try:
+                max_pages = int(max_pages_raw) if max_pages_raw is not None else 20
+            except (TypeError, ValueError):
+                max_pages = 20
+            crawl_format = sanitize_text(element.get("crawl_format", "markdown")) or "markdown"
+            base_url_prefix_raw = element.get("base_url_prefix") or ""
+            base_url_prefix = sanitize_text(base_url_prefix_raw) or None
+            run_crawl_raw = element.get("run_crawl", True)
+            run_crawl = bool(run_crawl_raw) if run_crawl_raw is not None else True
+            no_crawl_error_message = (
+                sanitize_text(element.get("no_crawl_error_message", "No web crawl data is available yet."))
+                or "No web crawl data is available yet."
+            )
+            system_message_prefix_raw = element.get("system_message_prefix") or ""
+            system_message_prefix = sanitize_text(system_message_prefix_raw) or None
+            llm_name_raw = element.get("llm_name") or ""
+            llm_name = sanitize_text(llm_name_raw) or None
+            if initial_url:
+                body.add_action(WebCrawlLLMReply(
+                    initial_url=initial_url,
+                    max_depth=max_depth,
+                    max_pages=max_pages,
+                    crawl_format=crawl_format,
+                    base_url_prefix=base_url_prefix,
+                    run_crawl=run_crawl,
+                    no_crawl_error_message=no_crawl_error_message,
+                    system_message_prefix=system_message_prefix,
+                    llm_name=llm_name,
+                ))
                 action_added = True
 
         elif action_type == "CustomCodeAction":

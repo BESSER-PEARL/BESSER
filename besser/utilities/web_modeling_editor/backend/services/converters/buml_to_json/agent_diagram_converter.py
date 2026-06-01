@@ -256,6 +256,34 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "llm_name": action.get("llm_name", "") or "",
                 }
                 elements[state_id][state_key].append(body_id)
+            elif action_type == "web_crawl_llm":
+                initial_url = action.get("initial_url") or ""
+                display_name = f"Web Crawl + LLM: {initial_url}" if initial_url else "Web Crawl + LLM Reply"
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": display_name,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "WebCrawlLLMAction",
+                    "replyType": "web_crawl_llm",
+                    "initial_url": initial_url,
+                    "max_depth": action.get("max_depth", 2),
+                    "max_pages": action.get("max_pages", 20),
+                    "crawl_format": action.get("crawl_format", "markdown"),
+                    "base_url_prefix": action.get("base_url_prefix", ""),
+                    "run_crawl": action.get("run_crawl", True),
+                    "no_crawl_error_message": action.get("no_crawl_error_message", "No web crawl data is available yet."),
+                    "system_message_prefix": action.get("system_message_prefix", ""),
+                    "llm_name": action.get("llm_name", "") or "",
+                }
+                elements[state_id][state_key].append(body_id)
 
     try:
         # First pass: collect all intents and Agent metadata
@@ -644,6 +672,45 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             actions[body_var] = [db_action]
                         else:
                             actions[body_var].append(db_action)
+                    elif node.value.args[0].func.id == 'WebCrawlLLMReply':
+                        web_crawl_action: Dict[str, Any] = {
+                            "type": "web_crawl_llm",
+                            "initial_url": "",
+                            "max_depth": 2,
+                            "max_pages": 20,
+                            "crawl_format": "markdown",
+                            "base_url_prefix": "",
+                            "run_crawl": True,
+                            "no_crawl_error_message": "No web crawl data is available yet.",
+                            "system_message_prefix": "",
+                            "llm_name": "",
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'initial_url' and isinstance(val, str):
+                                web_crawl_action["initial_url"] = val
+                            elif kw.arg == 'max_depth' and isinstance(val, int) and not isinstance(val, bool):
+                                web_crawl_action["max_depth"] = val
+                            elif kw.arg == 'max_pages' and isinstance(val, int) and not isinstance(val, bool):
+                                web_crawl_action["max_pages"] = val
+                            elif kw.arg == 'crawl_format' and isinstance(val, str):
+                                web_crawl_action["crawl_format"] = val
+                            elif kw.arg == 'base_url_prefix':
+                                web_crawl_action["base_url_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'run_crawl' and isinstance(val, bool):
+                                web_crawl_action["run_crawl"] = val
+                            elif kw.arg == 'no_crawl_error_message' and isinstance(val, str):
+                                web_crawl_action["no_crawl_error_message"] = val
+                            elif kw.arg == 'system_message_prefix':
+                                web_crawl_action["system_message_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'llm_name' and isinstance(val, str):
+                                web_crawl_action["llm_name"] = val
+                        if body_var not in actions:
+                            actions[body_var] = [web_crawl_action]
+                        else:
+                            actions[body_var].append(web_crawl_action)
                 elif isinstance(node.value.args[0], ast.Name):
                     # Handle references to CustomCodeAction variables
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'

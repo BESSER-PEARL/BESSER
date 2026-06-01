@@ -7,8 +7,8 @@ This module generates Python code for BUML agent models.
 import os
 from re import search
 from besser.BUML.metamodel.state_machine.agent import (
-    Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply,
-    ReasoningState, llm_provider_key,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply,
+    WebCrawlLLMReply, ReasoningState, llm_provider_key,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
@@ -50,6 +50,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "
             "Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply, "
+            "WebCrawlLLMReply, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter, "
             "Tool, Skill, Workspace, ReasoningState, "
@@ -345,6 +346,25 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_body.add_action(DBReply({args}))\n" if args else f"{state_var}_body.add_action(DBReply())\n")
+                        elif isinstance(action, WebCrawlLLMReply):
+                            wc_args = [f"initial_url={repr(action.initial_url)}"]
+                            if action.max_depth != 2:
+                                wc_args.append(f"max_depth={action.max_depth!r}")
+                            if action.max_pages != 20:
+                                wc_args.append(f"max_pages={action.max_pages!r}")
+                            if action.crawl_format != 'markdown':
+                                wc_args.append(f"crawl_format={action.crawl_format!r}")
+                            if action.base_url_prefix:
+                                wc_args.append(f"base_url_prefix={repr(action.base_url_prefix)}")
+                            if not action.run_crawl:
+                                wc_args.append("run_crawl=False")
+                            if action.no_crawl_error_message != 'No web crawl data is available yet.':
+                                wc_args.append(f"no_crawl_error_message={repr(action.no_crawl_error_message)}")
+                            if action.system_message_prefix:
+                                wc_args.append(f"system_message_prefix={repr(action.system_message_prefix)}")
+                            if getattr(action, 'llm_name', None):
+                                wc_args.append(f"llm_name={repr(action.llm_name)}")
+                            f.write(f"{state_var}_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
                         elif isinstance(action, AgentReply):
                             f.write(f"{state_var}_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
                 f.write("\n")
@@ -413,6 +433,25 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state_var}_fallback_body.add_action(DBReply())\n")
+                        elif isinstance(action, WebCrawlLLMReply):
+                            wc_args = [f"initial_url={repr(action.initial_url)}"]
+                            if action.max_depth != 2:
+                                wc_args.append(f"max_depth={action.max_depth!r}")
+                            if action.max_pages != 20:
+                                wc_args.append(f"max_pages={action.max_pages!r}")
+                            if action.crawl_format != 'markdown':
+                                wc_args.append(f"crawl_format={action.crawl_format!r}")
+                            if action.base_url_prefix:
+                                wc_args.append(f"base_url_prefix={repr(action.base_url_prefix)}")
+                            if not action.run_crawl:
+                                wc_args.append("run_crawl=False")
+                            if action.no_crawl_error_message != 'No web crawl data is available yet.':
+                                wc_args.append(f"no_crawl_error_message={repr(action.no_crawl_error_message)}")
+                            if action.system_message_prefix:
+                                wc_args.append(f"system_message_prefix={repr(action.system_message_prefix)}")
+                            if getattr(action, 'llm_name', None):
+                                wc_args.append(f"llm_name={repr(action.llm_name)}")
+                            f.write(f"{state_var}_fallback_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
                         elif isinstance(action, AgentReply):
                             f.write(f"{state_var}_fallback_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
                 f.write("\n")

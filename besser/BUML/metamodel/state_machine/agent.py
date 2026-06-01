@@ -117,6 +117,76 @@ class RAGReply(Action):
         return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
 
 
+class WebCrawlLLMReply(Action):
+    """Crawls a website (or reuses a cached result) and queries an LLM with the content.
+
+    Args:
+        initial_url (str): Target URL. Used as BFS start point when run_crawl=True,
+            or as the session-key suffix when run_crawl=False.
+        max_depth (int): Maximum link depth to follow. Used only when run_crawl=True.
+        max_pages (int): Maximum number of pages to fetch. Used only when run_crawl=True.
+        crawl_format (str): Output format for crawled content ("markdown" or "html").
+        base_url_prefix (str, optional): Only URLs starting with this prefix are included.
+            Used only when run_crawl=True.
+        run_crawl (bool): When True, the crawl runs and its result is stored in the session
+            under the key ``f"web_crawl_{initial_url}"``. When False, reads from that key.
+        no_crawl_error_message (str): Reply sent when run_crawl=False and no cached result
+            is found in the session.
+        system_message_prefix (str, optional): Prepended to the crawl result when building
+            the LLM system message. Defaults to a generic instruction when None.
+        llm_name (str, optional): Name of the LLM to use. Falls back to the agent default.
+
+    Attributes:
+        initial_url (str): Target URL.
+        max_depth (int): Maximum link depth.
+        max_pages (int): Maximum number of pages.
+        crawl_format (str): Output format ("markdown" or "html").
+        base_url_prefix (str | None): Optional URL prefix filter.
+        run_crawl (bool): Whether to execute the crawl.
+        no_crawl_error_message (str): Error reply when no cached data exists.
+        system_message_prefix (str | None): Prefix for the LLM system message.
+        llm_name (str | None): Name of the LLM to use.
+    """
+
+    def __init__(
+        self,
+        initial_url: str = "",
+        max_depth: int = 2,
+        max_pages: int = 20,
+        crawl_format: str = "markdown",
+        base_url_prefix: Optional[str] = None,
+        run_crawl: bool = True,
+        no_crawl_error_message: str = "No web crawl data is available yet.",
+        system_message_prefix: Optional[str] = None,
+        llm_name: Optional[str] = None,
+    ):
+        super().__init__()
+        self.initial_url: str = initial_url
+        self.max_depth: int = max_depth
+        self.max_pages: int = max_pages
+        self.crawl_format: str = crawl_format
+        self.base_url_prefix: Optional[str] = base_url_prefix
+        self.run_crawl: bool = run_crawl
+        self.no_crawl_error_message: str = no_crawl_error_message
+        self.system_message_prefix: Optional[str] = system_message_prefix
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return (
+            "WebCrawlLLMReply("
+            f"initial_url={self.initial_url!r}, "
+            f"max_depth={self.max_depth!r}, "
+            f"max_pages={self.max_pages!r}, "
+            f"crawl_format={self.crawl_format!r}, "
+            f"base_url_prefix={self.base_url_prefix!r}, "
+            f"run_crawl={self.run_crawl!r}, "
+            f"no_crawl_error_message={self.no_crawl_error_message!r}, "
+            f"system_message_prefix={self.system_message_prefix!r}, "
+            f"llm_name={self.llm_name!r}"
+            ")"
+        )
+
+
 class DBReply(Action):
     """Primitive action that represents fetching information from a database.
 

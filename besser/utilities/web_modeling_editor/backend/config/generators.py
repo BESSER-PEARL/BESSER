@@ -73,12 +73,12 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
 
     "test_case": GeneratorInfo(
-            generator_class=TestGenerator,
-            output_type="file",
-            file_extension=".py",
-            category="object_oriented",
-            requires_class_diagram=True
-        ),
+        generator_class=TestGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="object_oriented",
+        requires_class_diagram=True
+    ),
 
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
@@ -261,10 +261,10 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-    elif generator_type == "test_case":
-        return "test_cases.py"
     if generator_type == "python":
         return "classes.py"
+    elif generator_type == "test_case":
+        return "test_cases.py"
     elif generator_type == "pydantic":
         return "pydantic_classes.py"
     elif generator_type == "sqlalchemy":

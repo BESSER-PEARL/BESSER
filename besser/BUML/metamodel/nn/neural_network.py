@@ -93,12 +93,12 @@ class TensorOp(NamedElement):
         Raises:
             ValueError: If the type is not one of the allowed options:
             'reshape', 'concatenate', 'multiply', 'matmultiply',
-            'permute' and transpose.
+            'permute', 'transpose', and binary operations.
         """
         if tns_type not in [
             'reshape', 'concatenate', 'multiply',
             'matmultiply', 'permute', 'transpose', 'mean', 'max', 'squeeze', 'unsqueeze',
-            'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'subscript', 'shape_dim',
+            'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'binop_floor_divide', 'subscript', 'shape_dim',
             'normalize', 'repeat'
         ]:
             raise ValueError("Invalid value of tensorOp type")

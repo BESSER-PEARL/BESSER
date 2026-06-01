@@ -239,20 +239,6 @@ def process_agent_diagram(json_data):
 
     agent = Agent(title)
 
-    # Add default configuration properties
-    agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', '0.0.0.0'))
-    agent.add_property(ConfigProperty('websocket_platform', 'websocket.port', 8765))
-    agent.add_property(ConfigProperty('websocket_platform', 'streamlit.host', '0.0.0.0'))
-    agent.add_property(ConfigProperty('websocket_platform', 'streamlit.port', 5000))
-    agent.add_property(ConfigProperty('nlp', 'nlp.language', 'en'))
-    agent.add_property(ConfigProperty('nlp', 'nlp.region', 'US'))
-    agent.add_property(ConfigProperty('nlp', 'nlp.timezone', 'Europe/Madrid'))
-    agent.add_property(ConfigProperty('nlp', 'nlp.pre_processing', True))
-    agent.add_property(ConfigProperty('nlp', 'nlp.intent_threshold', 0.4))
-    agent.add_property(ConfigProperty('nlp', 'nlp.openai.api_key', 'YOUR-API-KEY'))
-    agent.add_property(ConfigProperty('nlp', 'nlp.hf.api_key', 'YOUR-API-KEY'))
-    agent.add_property(ConfigProperty('nlp', 'nlp.replicate.api_key', 'YOUR-API-KEY'))
-
     # Get elements and relationships from the JSON data
     model_data = json_data.get('model') or {}
     elements = model_data.get('elements') or {}

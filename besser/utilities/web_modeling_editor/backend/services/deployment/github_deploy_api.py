@@ -234,11 +234,13 @@ async def deploy_webapp_to_github(
                 if not generator_info:
                     raise GenerationError("Agent generator is not configured.")
                 generator_class = generator_info.generator_class
+                raw_yaml = agent_diagram_data.get("configYaml")
                 generator = generator_class(
                     agent_model,
                     output_dir=temp_dir,
                     config=agent_config,
                     openai_api_key=extract_openai_api_key(agent_config),
+                    config_yaml=raw_yaml if isinstance(raw_yaml, str) else None,
                 )
                 generator.generate()
 
@@ -397,11 +399,12 @@ async def deploy_webapp_to_github(
         # Uniqueness enforcement and BUML conversion live in the shared helper.
         agent_models: list = []
         agent_configs: dict = {}
+        agent_config_yamls: dict = {}
         has_agent_components = _has_agent_components(gui_model)
         if has_agent_components:
             settings = body.get("settings", {}) or {}
             settings_config = settings.get("config") or {}
-            agent_models, agent_configs = collect_agents_from_diagrams(
+            agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
                 _get_all("AgentDiagram"),
                 default_config=settings_config,
             )
@@ -430,6 +433,7 @@ async def deploy_webapp_to_github(
                 output_dir=temp_dir,
                 agent_models=agent_models,
                 agent_configs=agent_configs,
+                agent_config_yamls=agent_config_yamls,
             )
             generator.generate()
 

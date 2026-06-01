@@ -75,11 +75,12 @@ def build_configurations_package(
     agent_model: Any,
     configurations: List[Dict[str, Any]],
     generate_agent_zip_fn: AgentZipGenerator,
+    config_yaml: Optional[str] = None,
 ) -> io.BytesIO:
     """Create a zip containing the base agent plus variants for each configuration."""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as combined_zip:
-        base_buffer, _ = generate_agent_zip_fn(agent_model, None)
+        base_buffer, _ = generate_agent_zip_fn(agent_model, None, config_yaml=config_yaml)
         append_zip_contents(combined_zip, base_buffer)
 
         used_prefixes: Set[str] = set()
@@ -100,7 +101,7 @@ def build_configurations_package(
                 suffix += 1
             used_prefixes.add(unique_name)
 
-            config_buffer, _ = generate_agent_zip_fn(agent_model, sanitized_payload)
+            config_buffer, _ = generate_agent_zip_fn(agent_model, sanitized_payload, config_yaml=config_yaml)
             append_zip_contents(combined_zip, config_buffer, prefix=unique_name)
 
     zip_buffer.seek(0)
@@ -217,17 +218,20 @@ async def handle_multi_language_generation(
                 generator_info = get_generator_info("agent")
                 generator_class = generator_info.generator_class
                 variant_openai_api_key = extract_openai_api_key(new_config)
+                config_yaml = json_data.get('configYaml')
                 if hasattr(agent_module, 'agent'):
                     generator = generator_class(
                         agent_module.agent,
                         config=new_config,
                         openai_api_key=variant_openai_api_key,
+                        config_yaml=config_yaml,
                     )
                 else:
                     generator = generator_class(
                         agent_model,
                         config=new_config,
                         openai_api_key=variant_openai_api_key,
+                        config_yaml=config_yaml,
                     )
                 generator.generate()
                 zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
@@ -246,6 +250,7 @@ def handle_variation_generation(
     base_model_snapshot: Dict[str, Any],
     variation_entries: list,
     generate_agent_files_fn: Callable,
+    config_yaml: Optional[str] = None,
 ) -> Tuple[io.BytesIO, str]:
     """Generate a ZIP containing the base model plus each variation.
 
@@ -264,6 +269,7 @@ def handle_variation_generation(
             base_agent_model,
             config,
             generation_mode=GenerationMode.CODE_ONLY,
+            config_yaml=config_yaml,
         )
         append_zip_contents(zip_file, base_buffer)
 
@@ -290,6 +296,7 @@ def handle_variation_generation(
                 variant_agent_model,
                 entry.get('config'),
                 generation_mode=GenerationMode.CODE_ONLY,
+                config_yaml=config_yaml,
             )
             append_zip_contents(
                 zip_file,
@@ -305,6 +312,7 @@ def handle_configuration_variants(
     json_data: dict,
     configuration_variants: list,
     generate_agent_files_fn: Callable,
+    config_yaml: Optional[str] = None,
 ) -> Tuple[io.BytesIO, str]:
     """Generate a ZIP bundle for each configuration variant.
 
@@ -316,6 +324,7 @@ def handle_configuration_variants(
         agent_model,
         configuration_variants,
         generate_agent_files_fn,
+        config_yaml=config_yaml,
     )
     return bundle_buffer, "agent_output.zip"
 
@@ -324,6 +333,7 @@ def handle_personalized_agent(
     json_data: dict,
     config: dict,
     generate_agent_files_fn: Callable,
+    config_yaml: Optional[str] = None,
 ) -> Tuple[io.BytesIO, str]:
     """Generate agent files with personalization mapping applied.
 
@@ -335,6 +345,7 @@ def handle_personalized_agent(
         agent_model,
         config,
         generation_mode=GenerationMode.CODE_ONLY,
+        config_yaml=config_yaml,
     )
     return zip_buffer, file_name
 
@@ -342,7 +353,7 @@ def handle_personalized_agent(
 def collect_agents_from_diagrams(
     agent_diagrams: List[Any],
     default_config: Any = None,
-) -> Tuple[List[Any], Dict[str, Any]]:
+) -> Tuple[List[Any], Dict[str, Any], Dict[str, Optional[str]]]:
     """Process every AgentDiagram in a project into BUML Agent models.
 
     Used by both the ``/generate-output-from-project`` route and the
@@ -356,8 +367,9 @@ def collect_agents_from_diagrams(
             ``config`` entry.
 
     Returns:
-        ``(agent_models, agent_configs)`` where ``agent_configs`` is keyed by
-        ``agent.name``.
+        ``(agent_models, agent_configs, agent_config_yamls)`` where both dicts are
+        keyed by ``agent.name``. ``agent_config_yamls`` maps each name to the
+        user-authored ``configYaml`` string for that agent, or ``None`` if absent.
 
     Raises:
         HTTPException(400): if two agents share the same ``.name`` — the
@@ -365,6 +377,7 @@ def collect_agents_from_diagrams(
     """
     agent_models: List[Any] = []
     agent_configs: Dict[str, Any] = {}
+    agent_config_yamls: Dict[str, Optional[str]] = {}
     seen: Set[str] = set()
     duplicates: Set[str] = set()
 
@@ -390,6 +403,8 @@ def collect_agents_from_diagrams(
         seen.add(name)
         agent_models.append(agent_model)
         agent_configs[name] = entry_dict.get("config") or default_config
+        raw_yaml = entry_dict.get("configYaml")
+        agent_config_yamls[name] = raw_yaml if isinstance(raw_yaml, str) else None
 
     if duplicates:
         raise HTTPException(
@@ -400,4 +415,4 @@ def collect_agents_from_diagrams(
             ),
         )
 
-    return agent_models, agent_configs
+    return agent_models, agent_configs, agent_config_yamls

@@ -1,0 +1,54 @@
+Version 7.8.1
+=============
+
+Patch release: makes **project-exported BUML files load again in the
+Web Modeling Editor**. v7.8.0's project import flow rejected
+``model.py`` files that embed a ``Project(...)`` wrapper around a flat
+domain-model block, returning a "Could not parse BUML file" error or,
+worse, silently importing an empty diagram. No metamodel, generator,
+or API contract changes — backend-only.
+
+Fixes
+-----
+
+* **``parse_buml_content`` sandbox missing ``Project``**: the class
+  diagram converter's ``exec()`` sandbox in
+  ``besser/utilities/web_modeling_editor/backend/services/converters/buml_to_json/class_diagram_converter.py``
+  strips ``import`` and ``from`` statements before execution and
+  injects the metamodel symbols it needs. ``Project`` was never in
+  that injection list, so any file whose tail looked like
+  ``project = Project(name=..., models=[domain_model], ...)`` failed
+  with ``NameError: name 'Project' is not defined`` before the
+  ``DomainModel`` could be lifted out. A no-op ``Project`` stub is
+  now provided in the sandbox so trailing project definitions parse
+  harmlessly.
+* **``project_to_json`` ignored flat project files**: the project
+  converter at
+  ``besser/utilities/web_modeling_editor/backend/services/converters/buml_to_json/project_converter.py``
+  only scans for ``# STRUCTURAL MODEL #`` (and the numbered/titled
+  variants) as section anchors. Files exported with the older flat
+  layout (``# Classes``, ``# Relationships``, ``# Generalizations``,
+  ``# Domain Model``, then ``# PROJECT DEFINITION #``) hit
+  ``models=[...]`` but produced zero extracted sections, leaving
+  every diagram empty. When section extraction yields nothing,
+  ``project_to_json`` now falls back to
+  ``_build_project_from_single_diagram`` against the full content
+  and restores the project ``name``, ``description``, and ``owner``
+  from the ``Project(...)`` wrapper.
+* **``/get-json-model`` read the wrong project shape**: the project
+  branch in
+  ``besser/utilities/web_modeling_editor/backend/routers/conversion_router.py``
+  still looked for the legacy flat shape
+  (``parsed_project["ClassDiagram"]``) instead of the
+  ``schemaVersion=3`` nested shape
+  (``parsed_project["diagrams"]["ClassDiagram"][i]``). Even after
+  ``project_to_json`` started returning populated diagrams, the
+  endpoint surfaced ``None`` and raised "Could not parse BUML file."
+  The branch now honours ``currentDiagramType`` and
+  ``currentDiagramIndices``, falling through the legacy priority
+  order if the active diagram is empty.
+
+A regression test
+(``test_project_to_json_handles_missing_section_headers``) in
+``tests/utilities/web_modeling_editor/backend/services/converters/test_project_single_diagram_fallback.py``
+guards the section-header-less project case end-to-end.

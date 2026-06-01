@@ -446,6 +446,30 @@ def project_to_json(content: str) -> Dict[str, Any]:
         if diagram_list:
             diagram_jsons[diagram_type] = diagram_list
 
+    # Section-header fallback: some project files declare `models=[domain_model]`
+    # but omit the `# STRUCTURAL MODEL #` (or sibling) section headers entirely —
+    # all the model code lives in one flat block above the project definition.
+    # When this happens, `diagram_jsons` ends up empty and every diagram type
+    # gets an empty placeholder, which the frontend renders as a blank canvas.
+    # Reuse the single-diagram detector to recover the actual model, then
+    # restore the project name/description/owner from the Project(...) wrapper.
+    if not diagram_jsons:
+        logger.info(
+            "Project declares models=%s but no section headers were found; "
+            "falling back to single-diagram detection.", model_names,
+        )
+        try:
+            result = _build_project_from_single_diagram(content)
+        except ValueError:
+            # No detectable single-diagram type either — fall through to the
+            # all-empty default below so the caller sees a structured project.
+            result = None
+        if result is not None:
+            result["name"] = project_name
+            result["description"] = project_description
+            result["owner"] = project_owner
+            return result
+
     project_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
 

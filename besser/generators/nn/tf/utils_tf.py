@@ -394,12 +394,64 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt (str): the syntax of the tensorop in PyTorch.
 
     """
+    tns_type = tensorop.tns_type
+
+    # Handle operations that don't use layers_of_tensors first
+    if tns_type in ["interpolate", "pad", "dropout"]:
+        if in_var is not None:
+            prev_out_var = in_var
+        elif len(list(modules_details.keys())) == 0:
+            prev_out_var = "x"
+        else:
+            prev_module = list(modules_details.keys())[-1]
+            prev_out_var = utils.get_previous_out_var(modules_details, prev_module)
+
+        if tns_type == "interpolate":
+            # F.interpolate upsampling/downsampling
+            size = tensorop.interpolate_size
+            scale = tensorop.interpolate_scale
+            mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'nearest'
+
+            if scale is not None:
+                # Use scale_factor
+                ts_op_synt = f"tf.image.resize({prev_out_var}, size=[tf.shape({prev_out_var})[1] * {scale}, tf.shape({prev_out_var})[2] * {scale}], method='{mode}')"
+            elif size is not None:
+                # Use explicit size
+                ts_op_synt = f"tf.image.resize({prev_out_var}, size={list(size)}, method='{mode}')"
+            else:
+                ts_op_synt = f"tf.image.resize({prev_out_var}, size=tf.shape({prev_out_var})[1:3], method='{mode}')"
+        elif tns_type == "pad":
+            # F.pad padding operation
+            pad_amount = tensorop.pad_amount if hasattr(tensorop, 'pad_amount') and tensorop.pad_amount else (0, 0, 0, 0)
+            mode = tensorop.pad_mode if hasattr(tensorop, 'pad_mode') else 'constant'
+
+            # Convert PyTorch pad format (left, right, top, bottom) to TF format [[top, bottom], [left, right]]
+            if len(pad_amount) == 4:
+                left, right, top, bottom = pad_amount
+                paddings = f"[[0, 0], [{top}, {bottom}], [{left}, {right}], [0, 0]]"
+            else:
+                paddings = "[[0, 0], [0, 0], [0, 0], [0, 0]]"
+
+            if mode == 'constant':
+                ts_op_synt = f"tf.pad({prev_out_var}, {paddings}, mode='CONSTANT')"
+            elif mode == 'reflect':
+                ts_op_synt = f"tf.pad({prev_out_var}, {paddings}, mode='REFLECT')"
+            elif mode == 'replicate':
+                ts_op_synt = f"tf.pad({prev_out_var}, {paddings}, mode='SYMMETRIC')"
+            else:
+                ts_op_synt = f"tf.pad({prev_out_var}, {paddings}, mode='CONSTANT')"
+        else:  # dropout
+            # F.dropout operation
+            rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
+            ts_op_synt = f"tf.nn.dropout({prev_out_var}, rate={rate})"
+
+        return ts_op_synt
+
+    # For other operations, get params as usual
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details)
     if in_var is not None:
         prev_out_var = in_var
-
-    tns_type = tensorop.tns_type
     if tns_type == "reshape":
         ts_op_synt = f"tf.reshape({prev_out_var}, [{params}])"
     elif tns_type == "concatenate":

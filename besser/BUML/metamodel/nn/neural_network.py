@@ -65,7 +65,14 @@ class TensorOp(NamedElement):
                  input_reused: bool = False,
                  actual_vars: List[str] = None,
                  subscript_indices: str = None,
-                 repeat_dim: List[int] = None):
+                 repeat_dim: List[int] = None,
+                 interpolate_size = None,
+                 interpolate_scale: float = None,
+                 interpolate_mode: str = None,
+                 pad_amount = None,
+                 pad_mode: str = None,
+                 pad_value: float = None,
+                 dropout_rate: float = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
@@ -78,6 +85,13 @@ class TensorOp(NamedElement):
         self.actual_vars: List[str] = actual_vars
         self.subscript_indices: str = subscript_indices
         self.repeat_dim: List[int] = repeat_dim
+        self.interpolate_size = interpolate_size
+        self.interpolate_scale: float = interpolate_scale
+        self.interpolate_mode: str = interpolate_mode
+        self.pad_amount = pad_amount
+        self.pad_mode: str = pad_mode
+        self.pad_value: float = pad_value
+        self.dropout_rate: float = dropout_rate
         self.tns_type: str = tns_type
 
     @property
@@ -99,7 +113,7 @@ class TensorOp(NamedElement):
             'reshape', 'concatenate', 'multiply',
             'matmultiply', 'permute', 'transpose', 'mean', 'max', 'squeeze', 'unsqueeze',
             'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'binop_floor_divide', 'subscript', 'shape_dim',
-            'normalize', 'repeat'
+            'normalize', 'repeat', 'interpolate', 'pad', 'dropout'
         ]:
             raise ValueError("Invalid value of tensorOp type")
         elif tns_type == 'reshape' and self.reshape_dim is None:

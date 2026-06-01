@@ -594,6 +594,9 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
             else:
                 resolved_multiples.append(str(mult))
         params = ', '.join(resolved_multiples)
+    elif tns_type in ["interpolate", "pad", "dropout"]:
+        # These operations don't use layers_of_tensors or params
+        params = None
     else:
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):

@@ -13,6 +13,8 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
+from besser.BUML.metamodel.uml_component import ComponentModel
+from besser.BUML.metamodel.uml_deployment import DeploymentModel
 from besser.utilities.buml_code_builder.common import _escape_python_string
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
@@ -24,6 +26,8 @@ from besser.utilities.buml_code_builder.state_machine_builder import state_machi
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -89,6 +93,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     state_machine_models = []   # StateMachine models
     nn_models = []
     bpmn_models = []
+    component_models = []        # ComponentModel models (UML Component diagrams)
+    deployment_models = []       # DeploymentModel models (UML Deployment diagrams)
 
     # Import GUIModel locally to avoid circular imports
     try:
@@ -137,6 +143,10 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             nn_models.append(model)
         elif BPMNModel and isinstance(model, BPMNModel):
             bpmn_models.append(model)
+        elif isinstance(model, ComponentModel):
+            component_models.append(model)
+        elif isinstance(model, DeploymentModel):
+            deployment_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -415,6 +425,48 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
                 bpmn_model_to_code(
                     model=bpmn,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # COMPONENT MODELS                                           #
+            # ---------------------------------------------------------- #
+            n_comp = len(component_models)
+            for idx, cm in enumerate(component_models, start=1):
+                var_name = _suffixed_name("component_model", idx, n_comp)
+
+                section = ""
+                if n_comp > 1:
+                    label = getattr(cm, "name", f"Component {idx}")
+                    section = f'# COMPONENT MODEL {idx}: "{label}" #\n\n'
+
+                tmp_path = os.path.join(temp_dir, f"component_model_{idx}.py")
+                component_model_to_code(
+                    model=cm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # DEPLOYMENT MODELS                                          #
+            # ---------------------------------------------------------- #
+            n_dep = len(deployment_models)
+            for idx, dm in enumerate(deployment_models, start=1):
+                var_name = _suffixed_name("deployment_model", idx, n_dep)
+
+                section = ""
+                if n_dep > 1:
+                    label = getattr(dm, "name", f"Deployment {idx}")
+                    section = f'# DEPLOYMENT MODEL {idx}: "{label}" #\n\n'
+
+                tmp_path = os.path.join(temp_dir, f"deployment_model_{idx}.py")
+                deployment_model_to_code(
+                    model=dm,
                     file_path=tmp_path,
                     model_var_name=var_name,
                 )

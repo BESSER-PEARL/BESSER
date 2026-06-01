@@ -35,6 +35,8 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -51,6 +53,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -61,6 +65,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     project_to_json,
     nn_buml_to_json,
     bpmn_to_json,
+    component_buml_to_json,
+    deployment_buml_to_json,
 )
 
 # Backend services - Other services
@@ -390,6 +396,46 @@ async def export_buml(input_data: DiagramInput):
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
             )
 
+        elif elements_data.get("type") == "ComponentDiagram":
+            try:
+                component_model = process_component_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Component diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "component_model.py")
+            component_model_to_code(
+                model=component_model, file_path=output_file_path,
+            )
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={
+                    "Content-Disposition": 'attachment; filename="component_model.py"',
+                },
+            )
+
+        elif elements_data.get("type") == "DeploymentDiagram":
+            try:
+                deployment_model = process_deployment_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Deployment diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "deployment_model.py")
+            deployment_model_to_code(
+                model=deployment_model, file_path=output_file_path,
+            )
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={
+                    "Content-Disposition": 'attachment; filename="deployment_model.py"',
+                },
+            )
+
         else:
             raise ValueError(
                 f"Unsupported or missing diagram type: {elements_data.get('type')}"
@@ -459,6 +505,19 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
     ])
 
+    # UML Component / Deployment markers (03-... §8.3). Distinct enough not
+    # to collide with cloud-infra `besser.BUML.metamodel.deployment` (which
+    # uses Cluster / K8s Deployment / Node-with-IPs class names).
+    is_uml_component = any(keyword in content_lower for keyword in [
+        'componentmodel(', '.add_component(', '.add_relationship(',
+        'agentcategory.', 'agenticedge('
+    ])
+
+    is_uml_deployment = any(keyword in content_lower for keyword in [
+        'deploymentmodel(', '.add_artifact(', 'deploymentrelation(',
+        'communicationpath(',
+    ])
+
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
     # Try to parse based on detected type
@@ -491,6 +550,12 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             elif parsed_project.get("BPMNDiagram") and parsed_project["BPMNDiagram"].get("model"):
                 diagram_data = parsed_project["BPMNDiagram"]
                 diagram_type = "BPMNDiagram"
+            elif parsed_project.get("ComponentDiagram") and parsed_project["ComponentDiagram"].get("model"):
+                diagram_data = parsed_project["ComponentDiagram"]
+                diagram_type = "ComponentDiagram"
+            elif parsed_project.get("DeploymentDiagram") and parsed_project["DeploymentDiagram"].get("model"):
+                diagram_data = parsed_project["DeploymentDiagram"]
+                diagram_type = "DeploymentDiagram"
 
             if diagram_data and diagram_data.get("title"):
                 diagram_title = diagram_data["title"]
@@ -574,11 +639,35 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
+    elif is_uml_component:
+        try:
+            logger.info("Detected UML Component diagram, parsing...")
+            component_json = component_buml_to_json(buml_content)
+            diagram_data = {
+                "title": diagram_title,
+                "model": component_json,
+            }
+            diagram_type = "ComponentDiagram"
+        except Exception as comp_error:
+            logger.error("Component diagram parsing failed: %s", str(comp_error))
+
+    elif is_uml_deployment:
+        try:
+            logger.info("Detected UML Deployment diagram, parsing...")
+            deployment_json = deployment_buml_to_json(buml_content)
+            diagram_data = {
+                "title": diagram_title,
+                "model": deployment_json,
+            }
+            diagram_type = "DeploymentDiagram"
+        except Exception as dep_error:
+            logger.error("Deployment diagram parsing failed: %s", str(dep_error))
+
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
+            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend

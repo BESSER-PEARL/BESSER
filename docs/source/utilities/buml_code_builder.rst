@@ -13,6 +13,10 @@ Available entry points
 * ``gui_model_to_code`` - GUI models
 * ``state_machine_to_code`` - state machine models
 * ``quantum_model_to_code`` - quantum circuit models
+* ``nn_model_to_code`` - neural network models
+* ``component_model_to_code`` - UML Component models (base ``ComponentModel``
+  and agentic ``AgenticComponentModel``)
+* ``deployment_model_to_code`` - UML Deployment models
 * ``project_to_code`` - full projects that bundle multiple diagrams
 
 Domain model generation

@@ -157,6 +157,15 @@ class SetupLayerSyntax:
         cls_name = self.layer.__class__.__name__
         lyr_name = self.layer.name
         layer_type = cls_name[:-5]
+
+        # Map BUML layer names to PyTorch layer names
+        layer_mapping = {
+            "SimpleRNN": "RNN",
+            "LSTM": "LSTM",
+            "GRU": "GRU"
+        }
+        layer_type = layer_mapping.get(layer_type, layer_type)
+
         in_sz = self.layer.input_size
         h_sz = self.layer.hidden_size
         bd = self.layer.bidirectional

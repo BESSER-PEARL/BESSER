@@ -159,7 +159,7 @@ rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''
 
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
-platform = agent.use_websocket_platform()
+platform = agent.use_websocket_platform(use_ui=False)
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
@@ -777,6 +777,32 @@ def {{ body_name }}(session: Session):
     {% if speech_enabled %}
     platform.reply_speech(session, message)
     {% endif %}
+    {% elif is_class(action, 'WebSocketReplyMarkdown') %}
+    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplyHTML') %}
+    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplySpeech') %}
+    {% if action.audio_speed is not none %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    {% else %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyOptions') %}
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    {% elif is_class(action, 'WebSocketReplyLocation') %}
+    platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
+    {% elif is_class(action, 'WebSocketReplyFile') %}
+    # TODO: Assign a baf.types.File object to `reply_file_obj` before this state is reached
+    platform.reply_file(session, reply_file_obj)
+    {% elif is_class(action, 'WebSocketReplyImage') %}
+    # TODO: Assign a numpy.ndarray image to `reply_image_arr` before this state is reached
+    platform.reply_image(session, reply_image_arr)
+    {% elif is_class(action, 'WebSocketReplyDataframe') %}
+    # TODO: Assign a pandas.DataFrame to `reply_df` before this state is reached
+    platform.reply_dataframe(session, reply_df)
+    {% elif is_class(action, 'WebSocketReplyPlotly') %}
+    # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
+    platform.reply_plotly(session, reply_plot)
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}
@@ -876,6 +902,32 @@ def {{ fallback_name }}(session: Session):
     {% if speech_enabled %}
     platform.reply_speech(session, message)
     {% endif %}
+    {% elif is_class(action, 'WebSocketReplyMarkdown') %}
+    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplyHTML') %}
+    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplySpeech') %}
+    {% if action.audio_speed is not none %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    {% else %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyOptions') %}
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    {% elif is_class(action, 'WebSocketReplyLocation') %}
+    platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
+    {% elif is_class(action, 'WebSocketReplyFile') %}
+    # TODO: Assign a baf.types.File object to `reply_file_obj` before this state is reached
+    platform.reply_file(session, reply_file_obj)
+    {% elif is_class(action, 'WebSocketReplyImage') %}
+    # TODO: Assign a numpy.ndarray image to `reply_image_arr` before this state is reached
+    platform.reply_image(session, reply_image_arr)
+    {% elif is_class(action, 'WebSocketReplyDataframe') %}
+    # TODO: Assign a pandas.DataFrame to `reply_df` before this state is reached
+    platform.reply_dataframe(session, reply_df)
+    {% elif is_class(action, 'WebSocketReplyPlotly') %}
+    # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
+    platform.reply_plotly(session, reply_plot)
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}

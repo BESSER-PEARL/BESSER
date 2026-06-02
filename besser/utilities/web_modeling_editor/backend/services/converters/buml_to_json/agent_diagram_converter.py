@@ -284,6 +284,88 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "llm_name": action.get("llm_name", "") or "",
                 }
                 elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_markdown":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Markdown", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyMarkdownAction", "replyType": "ws_markdown",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_html":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply HTML", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyHTMLAction", "replyType": "ws_html",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_speech":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Speech", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplySpeechAction", "replyType": "ws_speech",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "ws_audio_speed": action.get("ws_audio_speed"),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_options":
+                body_id = str(uuid.uuid4())
+                opts = action.get("ws_options") or action.get("options") or ""
+                if isinstance(opts, list):
+                    opts = "\n".join(opts)
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Options", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyOptionsAction", "replyType": "ws_options",
+                    "ws_options": opts,
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_location":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Location", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyLocationAction", "replyType": "ws_location",
+                    "ws_latitude": float(action.get("ws_latitude") or action.get("latitude") or 0.0),
+                    "ws_longitude": float(action.get("ws_longitude") or action.get("longitude") or 0.0),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_file":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply File", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyFileAction", "replyType": "ws_file",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_image":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Image", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyImageAction", "replyType": "ws_image",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_dataframe":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Dataframe", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyDataframeAction", "replyType": "ws_dataframe",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_plotly":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Plotly", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyPlotlyAction", "replyType": "ws_plotly",
+                }
+                elements[state_id][state_key].append(body_id)
 
     try:
         # First pass: collect all intents and Agent metadata
@@ -711,6 +793,45 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             actions[body_var] = [web_crawl_action]
                         else:
                             actions[body_var].append(web_crawl_action)
+                    elif node.value.args[0].func.id in (
+                        'WebSocketReplyMarkdown', 'WebSocketReplyHTML', 'WebSocketReplySpeech',
+                        'WebSocketReplyOptions', 'WebSocketReplyLocation',
+                        'WebSocketReplyFile', 'WebSocketReplyImage',
+                        'WebSocketReplyDataframe', 'WebSocketReplyPlotly',
+                    ):
+                        cls_name = node.value.args[0].func.id
+                        type_map = {
+                            'WebSocketReplyMarkdown': 'ws_markdown',
+                            'WebSocketReplyHTML': 'ws_html',
+                            'WebSocketReplySpeech': 'ws_speech',
+                            'WebSocketReplyOptions': 'ws_options',
+                            'WebSocketReplyLocation': 'ws_location',
+                            'WebSocketReplyFile': 'ws_file',
+                            'WebSocketReplyImage': 'ws_image',
+                            'WebSocketReplyDataframe': 'ws_dataframe',
+                            'WebSocketReplyPlotly': 'ws_plotly',
+                        }
+                        ws_action: Dict[str, Any] = {"type": type_map[cls_name]}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'options' and isinstance(kw.value, ast.List):
+                                opts = [elt.value for elt in kw.value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)]
+                                ws_action["ws_options"] = "\n".join(opts)
+                                continue
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'message' and isinstance(val, str):
+                                ws_action["ws_message"] = val
+                            elif kw.arg == 'audio_speed' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_audio_speed"] = float(val)
+                            elif kw.arg == 'latitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_latitude"] = float(val)
+                            elif kw.arg == 'longitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_longitude"] = float(val)
+                        if body_var not in actions:
+                            actions[body_var] = [ws_action]
+                        else:
+                            actions[body_var].append(ws_action)
                 elif isinstance(node.value.args[0], ast.Name):
                     # Handle references to CustomCodeAction variables
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'

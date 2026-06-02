@@ -31,6 +31,15 @@ from besser.BUML.metamodel.state_machine.agent import (
     RAGReply,
     DBReply,
     WebCrawlLLMReply,
+    WebSocketReplyMarkdown,
+    WebSocketReplyHTML,
+    WebSocketReplySpeech,
+    WebSocketReplyOptions,
+    WebSocketReplyLocation,
+    WebSocketReplyFile,
+    WebSocketReplyImage,
+    WebSocketReplyDataframe,
+    WebSocketReplyPlotly,
     RAGVectorStore,
     RAGTextSplitter,
 )
@@ -47,6 +56,15 @@ _REPLY_TYPE_TO_ACTION_TYPE = {
     "db_reply": "DBAction",
     "code": "CustomCodeAction",
     "web_crawl_llm": "WebCrawlLLMAction",
+    "ws_markdown": "WebSocketReplyMarkdownAction",
+    "ws_html": "WebSocketReplyHTMLAction",
+    "ws_speech": "WebSocketReplySpeechAction",
+    "ws_options": "WebSocketReplyOptionsAction",
+    "ws_location": "WebSocketReplyLocationAction",
+    "ws_file": "WebSocketReplyFileAction",
+    "ws_image": "WebSocketReplyImageAction",
+    "ws_dataframe": "WebSocketReplyDataframeAction",
+    "ws_plotly": "WebSocketReplyPlotlyAction",
 }
 
 
@@ -178,6 +196,60 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                     llm_name=llm_name,
                 ))
                 action_added = True
+
+        elif action_type == "WebSocketReplyMarkdownAction":
+            msg = sanitize_text(element.get("ws_message", ""))
+            body.add_action(WebSocketReplyMarkdown(message=msg))
+            action_added = True
+
+        elif action_type == "WebSocketReplyHTMLAction":
+            msg = sanitize_text(element.get("ws_message", ""))
+            body.add_action(WebSocketReplyHTML(message=msg))
+            action_added = True
+
+        elif action_type == "WebSocketReplySpeechAction":
+            msg = sanitize_text(element.get("ws_message", ""))
+            speed_raw = element.get("ws_audio_speed")
+            try:
+                audio_speed = float(speed_raw) if speed_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                audio_speed = None
+            body.add_action(WebSocketReplySpeech(message=msg, audio_speed=audio_speed))
+            action_added = True
+
+        elif action_type == "WebSocketReplyOptionsAction":
+            opts_raw = element.get("ws_options", "")
+            options = [o.strip() for o in opts_raw.split('\n') if o.strip()]
+            body.add_action(WebSocketReplyOptions(options=options))
+            action_added = True
+
+        elif action_type == "WebSocketReplyLocationAction":
+            try:
+                lat = float(element.get("ws_latitude", 0.0))
+            except (TypeError, ValueError):
+                lat = 0.0
+            try:
+                lon = float(element.get("ws_longitude", 0.0))
+            except (TypeError, ValueError):
+                lon = 0.0
+            body.add_action(WebSocketReplyLocation(latitude=lat, longitude=lon))
+            action_added = True
+
+        elif action_type == "WebSocketReplyFileAction":
+            body.add_action(WebSocketReplyFile())
+            action_added = True
+
+        elif action_type == "WebSocketReplyImageAction":
+            body.add_action(WebSocketReplyImage())
+            action_added = True
+
+        elif action_type == "WebSocketReplyDataframeAction":
+            body.add_action(WebSocketReplyDataframe())
+            action_added = True
+
+        elif action_type == "WebSocketReplyPlotlyAction":
+            body.add_action(WebSocketReplyPlotly())
+            action_added = True
 
         elif action_type == "CustomCodeAction":
             # Raw source code must not be sanitized — sanitize_text escapes single quotes

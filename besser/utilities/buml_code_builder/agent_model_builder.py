@@ -7,8 +7,11 @@ This module generates Python code for BUML agent models.
 import os
 from re import search
 from besser.BUML.metamodel.state_machine.agent import (
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply,
+    Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply,
     WebCrawlLLMReply, ReasoningState, llm_provider_key,
+    WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech,
+    WebSocketReplyOptions, WebSocketReplyLocation,
+    WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
@@ -51,6 +54,9 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "from besser.BUML.metamodel.state_machine.agent import "
             "Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply, "
             "WebCrawlLLMReply, "
+            "WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech, "
+            "WebSocketReplyOptions, WebSocketReplyLocation, "
+            "WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter, "
             "Tool, Skill, Workspace, ReasoningState, "
@@ -365,6 +371,27 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             if getattr(action, 'llm_name', None):
                                 wc_args.append(f"llm_name={repr(action.llm_name)}")
                             f.write(f"{state_var}_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
+                        elif isinstance(action, WebSocketReplyMarkdown):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyMarkdown(message={repr(action.message)}))\n")
+                        elif isinstance(action, WebSocketReplyHTML):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyHTML(message={repr(action.message)}))\n")
+                        elif isinstance(action, WebSocketReplySpeech):
+                            args = f"message={repr(action.message)}"
+                            if action.audio_speed is not None:
+                                args += f", audio_speed={action.audio_speed!r}"
+                            f.write(f"{state_var}_body.add_action(WebSocketReplySpeech({args}))\n")
+                        elif isinstance(action, WebSocketReplyOptions):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyOptions(options={action.options!r}))\n")
+                        elif isinstance(action, WebSocketReplyLocation):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyLocation(latitude={action.latitude!r}, longitude={action.longitude!r}))\n")
+                        elif isinstance(action, WebSocketReplyFile):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyFile())\n")
+                        elif isinstance(action, WebSocketReplyImage):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyImage())\n")
+                        elif isinstance(action, WebSocketReplyDataframe):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyDataframe())\n")
+                        elif isinstance(action, WebSocketReplyPlotly):
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyPlotly())\n")
                         elif isinstance(action, AgentReply):
                             f.write(f"{state_var}_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
                 f.write("\n")
@@ -452,6 +479,27 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             if getattr(action, 'llm_name', None):
                                 wc_args.append(f"llm_name={repr(action.llm_name)}")
                             f.write(f"{state_var}_fallback_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
+                        elif isinstance(action, WebSocketReplyMarkdown):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyMarkdown(message={repr(action.message)}))\n")
+                        elif isinstance(action, WebSocketReplyHTML):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyHTML(message={repr(action.message)}))\n")
+                        elif isinstance(action, WebSocketReplySpeech):
+                            args = f"message={repr(action.message)}"
+                            if action.audio_speed is not None:
+                                args += f", audio_speed={action.audio_speed!r}"
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplySpeech({args}))\n")
+                        elif isinstance(action, WebSocketReplyOptions):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyOptions(options={action.options!r}))\n")
+                        elif isinstance(action, WebSocketReplyLocation):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyLocation(latitude={action.latitude!r}, longitude={action.longitude!r}))\n")
+                        elif isinstance(action, WebSocketReplyFile):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyFile())\n")
+                        elif isinstance(action, WebSocketReplyImage):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyImage())\n")
+                        elif isinstance(action, WebSocketReplyDataframe):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyDataframe())\n")
+                        elif isinstance(action, WebSocketReplyPlotly):
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyPlotly())\n")
                         elif isinstance(action, AgentReply):
                             f.write(f"{state_var}_fallback_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
                 f.write("\n")

@@ -187,6 +187,91 @@ class WebCrawlLLMReply(Action):
         )
 
 
+class WebSocketReplyMarkdown(Action):
+    """Send a Markdown-formatted text reply via WebSocketPlatform.reply_markdown()."""
+
+    def __init__(self, message: str = ""):
+        super().__init__()
+        self.message: str = message
+
+    def __repr__(self):
+        return f"WebSocketReplyMarkdown(message={self.message!r})"
+
+
+class WebSocketReplyHTML(Action):
+    """Send an HTML-formatted text reply via WebSocketPlatform.reply_html()."""
+
+    def __init__(self, message: str = ""):
+        super().__init__()
+        self.message: str = message
+
+    def __repr__(self):
+        return f"WebSocketReplyHTML(message={self.message!r})"
+
+
+class WebSocketReplySpeech(Action):
+    """Convert text to speech and send the audio via WebSocketPlatform.reply_speech()."""
+
+    def __init__(self, message: str = "", audio_speed: Optional[float] = None):
+        super().__init__()
+        self.message: str = message
+        self.audio_speed: Optional[float] = audio_speed
+
+    def __repr__(self):
+        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r})"
+
+
+class WebSocketReplyOptions(Action):
+    """Send a list of selectable options via WebSocketPlatform.reply_options()."""
+
+    def __init__(self, options: Optional[list] = None):
+        super().__init__()
+        self.options: list = options if options is not None else []
+
+    def __repr__(self):
+        return f"WebSocketReplyOptions(options={self.options!r})"
+
+
+class WebSocketReplyLocation(Action):
+    """Send a geographic location reply via WebSocketPlatform.reply_location()."""
+
+    def __init__(self, latitude: float = 0.0, longitude: float = 0.0):
+        super().__init__()
+        self.latitude: float = latitude
+        self.longitude: float = longitude
+
+    def __repr__(self):
+        return f"WebSocketReplyLocation(latitude={self.latitude!r}, longitude={self.longitude!r})"
+
+
+class WebSocketReplyFile(Action):
+    """Send a file reply via WebSocketPlatform.reply_file(). Requires a runtime File object."""
+
+    def __repr__(self):
+        return "WebSocketReplyFile()"
+
+
+class WebSocketReplyImage(Action):
+    """Send an image reply via WebSocketPlatform.reply_image(). Requires a runtime numpy ndarray."""
+
+    def __repr__(self):
+        return "WebSocketReplyImage()"
+
+
+class WebSocketReplyDataframe(Action):
+    """Send a DataFrame reply via WebSocketPlatform.reply_dataframe(). Requires a runtime pandas DataFrame."""
+
+    def __repr__(self):
+        return "WebSocketReplyDataframe()"
+
+
+class WebSocketReplyPlotly(Action):
+    """Send a Plotly figure reply via WebSocketPlatform.reply_plotly(). Requires a runtime plotly Figure."""
+
+    def __repr__(self):
+        return "WebSocketReplyPlotly()"
+
+
 class DBReply(Action):
     """Primitive action that represents fetching information from a database.
 

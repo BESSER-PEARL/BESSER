@@ -302,6 +302,30 @@ class BAFGenerator(GeneratorInterface):
                 f.write(generated_code)
             logger.info("Agent readme file generated at %s", readme_path)
 
+            # Generate tools.py — one file containing all tool function definitions
+            tools = getattr(self.model, 'tools', []) or []
+            if tools:
+                tools_path = self.build_generation_path(file_name="tools.py")
+                with open(tools_path, mode="w", encoding="utf-8") as f:
+                    f.write("# Auto-generated tool definitions\n\n")
+                    for tool in tools:
+                        f.write(tool.code)
+                        if not tool.code.endswith('\n'):
+                            f.write('\n')
+                        f.write('\n')
+                logger.info("Tools file generated at %s", tools_path)
+
+            # Generate skills/ directory — one .md file per skill
+            skills = getattr(self.model, 'skills', []) or []
+            if skills:
+                skills_dir = os.path.join(self.build_generation_dir(), "skills")
+                os.makedirs(skills_dir, exist_ok=True)
+                for skill in skills:
+                    skill_file = os.path.join(skills_dir, f"{skill.name}.md")
+                    with open(skill_file, mode="w", encoding="utf-8") as f:
+                        f.write(skill.content)
+                logger.info("Skills directory generated at %s", skills_dir)
+
             rag_configs = getattr(self.model, 'rags', []) or []
             if rag_configs:
                 rag_base_dir = self.build_generation_dir()

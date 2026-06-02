@@ -5,6 +5,7 @@
 import json
 import logging
 import operator
+import os
 
 from baf.core.agent import Agent
 from baf.library.transition.events.base_events import *
@@ -49,6 +50,8 @@ from baf.utils.web_crawl import crawl_website
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 {% if personalization_mapping is defined and personalization_mapping %}
 def build_agent_configuration_prompt(agent_configuration: dict) -> str:
@@ -392,23 +395,14 @@ agent.set_default_ic_config(ic_config)
 ##############################
 # TOOLS
 ##############################
-{% for tool in agent.tools %}
-{{ tool.code }}
-agent.new_tool({{ tool.name }}, description={{ tool.description | string | tojson }})
-{% endfor %}
+agent.load_tools(os.path.join(_HERE, "tools.py"))
 {% endif %}
 
 {% if agent.skills and agent.skills|length > 0 %}
 ##############################
 # SKILLS
 ##############################
-{% for skill in agent.skills %}
-agent.new_skill(
-    {{ skill.content | string | tojson }},
-    name={{ skill.name | string | tojson }}{% if skill.description %},
-    description={{ skill.description | string | tojson }}{% endif %}
-)
-{% endfor %}
+agent.load_skills(os.path.join(_HERE, "skills"))
 {% endif %}
 
 {% if agent.workspaces and agent.workspaces|length > 0 %}

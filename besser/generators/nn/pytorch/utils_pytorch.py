@@ -31,9 +31,10 @@ class SetupLayerSyntax:
         modules_details dictionary.
 
     """
-    def __init__(self, layer: Layer, modules_details: dict):
+    def __init__(self, layer: Layer, modules_details: dict, is_subnn: bool = False):
         self.layer: Layer = layer
         self.modules_details: dict = modules_details
+        self.is_subnn: bool = is_subnn
         self.permute_out: bool | None = None
         self.permute_in: bool | None = None
         self.dim: str | None = None
@@ -337,6 +338,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"{params.split(', ')[0]} * {params.split(', ')[1]}" if ', ' in params else f"torch.multiply({params})"
     elif tns_type == "binop_divide":
         ts_op_synt = f"{params.split(', ')[0]} / {params.split(', ')[1]}" if ', ' in params else f"torch.divide({params})"
+    elif tns_type == "binop_floor_divide":
+        ts_op_synt = f"{params.split(', ')[0]} // {params.split(', ')[1]}" if ', ' in params else f"torch.floor_divide({params})"
     elif tns_type == "subscript":
         # General subscripting/slicing operation
         # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")

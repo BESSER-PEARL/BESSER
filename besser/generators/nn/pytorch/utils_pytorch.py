@@ -322,6 +322,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "mean":
         dim = tensorop.reduce_dim
         ts_op_synt = f"{prev_out_var}.mean(dim={dim})"
+    elif tns_type == "zeros_like":
+        ts_op_synt = f"torch.zeros_like({prev_out_var})"
     elif tns_type == "squeeze":
         if tensorop.reduce_dim is not None:
             dim = tensorop.reduce_dim

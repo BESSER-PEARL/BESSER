@@ -68,6 +68,11 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
         if lyr_input == 'INPUT':
             return 'x'
         if f"{lyr_input}_layer" in modules_names:
+            # Check if this layer should use RNN hidden state instead of sequence output
+            if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
+                # Return hidden state variable (index 4) instead of sequence output (index 1)
+                if len(modules_details[f"{lyr_input}_layer"]) > 4:
+                    return modules_details[f"{lyr_input}_layer"][4]
             return modules_details[f"{lyr_input}_layer"][1]
         if f"{lyr_input}_nn" in modules_names:
             return  modules_details[f"{lyr_input}_nn"]["in_out_variable"]
@@ -162,6 +167,9 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             nn_key = next(k for k in my_keys if k.startswith(layer_name + "_") and k.endswith("_nn"))
             nn_details = modules_details[nn_key]
             out_vars.append(nn_details["in_out_variable"])
+        elif layer_name == "INPUT":
+            # Special marker for network input
+            out_vars.append("x")
         else:
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars

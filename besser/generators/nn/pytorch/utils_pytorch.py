@@ -322,6 +322,12 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "mean":
         dim = tensorop.reduce_dim
         ts_op_synt = f"{prev_out_var}.mean(dim={dim})"
+    elif tns_type == "max":
+        if tensorop.reduce_dim is not None:
+            dim = tensorop.reduce_dim
+            ts_op_synt = f"{prev_out_var}.max(dim={dim})[0]"
+        else:
+            ts_op_synt = f"{prev_out_var}.max()"
     elif tns_type == "zeros_like":
         ts_op_synt = f"torch.zeros_like({prev_out_var})"
     elif tns_type == "squeeze":
@@ -341,6 +347,42 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         # TensorFlow tf.tile(x, [1, t, 1]) -> PyTorch .repeat(1, t, 1)
         # params contains resolved repeat counts
         ts_op_synt = f"{prev_out_var}.repeat({params})"
+    elif tns_type == "pad":
+        # TensorFlow tf.pad(x, [[0,0],[1,1],[1,1],[0,0]], mode='REFLECT')
+        # -> PyTorch F.pad(x, (left,right,top,bottom,...), mode='reflect')
+        # Note: TF format is [[dim0_before, dim0_after], [dim1_before, dim1_after], ...]
+        # PyTorch format is (lastdim_left, lastdim_right, 2ndlast_left, 2ndlast_right, ...)
+        pad_amount = tensorop.pad_amount
+        pad_mode = tensorop.pad_mode.lower() if hasattr(tensorop, 'pad_mode') else 'constant'
+
+        # Convert TF padding format to PyTorch format (reverse order, flatten)
+        if pad_amount and isinstance(pad_amount, list):
+            # Reverse and flatten: [[0,0],[1,1],[2,2]] -> (2,2,1,1,0,0)
+            pt_pad = []
+            for pair in reversed(pad_amount):
+                if isinstance(pair, list) and len(pair) == 2:
+                    pt_pad.extend(pair)
+            pad_tuple = tuple(pt_pad)
+            ts_op_synt = f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}')"
+        else:
+            ts_op_synt = f"F.pad({prev_out_var}, {pad_amount})"
+    elif tns_type == "dropout":
+        # TensorFlow tf.nn.dropout(x, rate=0.5) -> PyTorch F.dropout(x, p=0.5)
+        dropout_rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
+        ts_op_synt = f"F.dropout({prev_out_var}, p={dropout_rate})"
+    elif tns_type == "interpolate":
+        # TensorFlow tf.image.resize(x, [H, W], method='bilinear')
+        # -> PyTorch F.interpolate(x, size=(H, W), mode='bilinear')
+        size = tensorop.interpolate_size if hasattr(tensorop, 'interpolate_size') else None
+        mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'bilinear'
+
+        if size:
+            if isinstance(size, tuple):
+                ts_op_synt = f"F.interpolate({prev_out_var}, size={size}, mode='{mode}')"
+            else:
+                ts_op_synt = f"F.interpolate({prev_out_var}, size={size}, mode='{mode}')"
+        else:
+            ts_op_synt = f"F.interpolate({prev_out_var}, mode='{mode}')"
     elif tns_type == "binop_add":
         ts_op_synt = f"{params.split(', ')[0]} + {params.split(', ')[1]}" if ', ' in params else f"torch.add({params})"
     elif tns_type == "binop_subtract":

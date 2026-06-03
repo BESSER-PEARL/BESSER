@@ -515,7 +515,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
             source_layer = tensorop.layers_of_tensors[0]
             if source_layer == 'INPUT':
-                prev_out_var = 'inp'
+                prev_out_var = 'x'
             else:
                 modules_names = list(modules_details.keys())
                 if f"{source_layer}_layer" in modules_names:
@@ -528,7 +528,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
             source_layer = tensorop.layers_of_tensors[0]
             if source_layer == 'INPUT':
-                prev_out_var = 'inp'
+                prev_out_var = 'x'
             else:
                 modules_names = list(modules_details.keys())
                 if f"{source_layer}_layer" in modules_names:

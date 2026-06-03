@@ -275,6 +275,75 @@ Not yet — every regeneration overwrites the previous output. This is the class
 
 ---
 
+## The "naive" approach this beats — what we built BEYOND just "model in, code out"
+
+Anyone can build a single-LLM-call generator over a weekend:
+
+```
+   ┌──────────────┐    ┌──────────────────────┐    ┌──────────────┐
+   │ BUML model   │───▶│ One LLM call:        │───▶│ Code         │
+   │ (JSON)       │    │ "Here's a model.     │    │ (1 file)     │
+   │              │    │  Generate code."     │    │              │
+   └──────────────┘    └──────────────────────┘    └──────────────┘
+```
+
+This is the bench's "naive side" — same model, same tool surface, same caps, but no scaffolding, no validation, no pipeline. It's the realistic alternative. Most "AI code-gen" demos stop here.
+
+It works for trivial cases. It falls apart on real systems because:
+
+- The LLM has no idea what stack the user wants
+- It produces one file when a real project needs 15-30
+- It can't tell if its output compiles
+- It can't fix its own mistakes
+- It silently drops entities ("forgets" `Tag`)
+- It has no consistency rules — `User` becomes `Member` becomes `user_record` across files
+- Every run produces wildly different output for the same input
+
+### What BESSER adds, layer by layer
+
+Each layer was added because the previous version failed on something **measurable in the bench**:
+
+| concern | naive approach | BESSER's approach | added because |
+|---|---|---|---|
+| Stack detection | LLM infers from prose, often wrong | Phase 0 explicit match, deterministic for known stacks | bench showed inconsistent scaffold choice |
+| Build config | LLM invents and often forgets | Phase 0.5 pre-emits valid `tsconfig.json` / `Cargo.toml` / Gradle | per-project compile-pass was 0/5 on TS/Rust/Kotlin |
+| Idiomatic scaffold | LLM writes from scratch every time | Phase 1 templates for Python stacks (free, fast, deterministic) | naive was 2-3× slower on Python scenarios |
+| What's missing? | LLM tries to figure out at the end | Phase 1.5 explicit gap analysis as a separate step | the LLM was missing user-requested features |
+| Iteration on issues | Single-shot, no recovery | Phase 2 multi-turn with tool use | one-shot couldn't fix obvious mistakes |
+| Token cost | Whole prompt re-sent every turn | Cache-friendly prefix ordering (88-97% cache hit) | unnecessary spend on cached content |
+| Degenerate loops | LLM goes 30+ turns making tiny edits | Modify-loop guard at orchestrator level | one fastapi run hit 73 tool calls |
+| Does it compile? | Nobody checks | Phase 3 runs the actual compiler + fix loop | compile-pass on TS/Rust/Kotlin was 0/5 |
+| Entity fidelity | LLM silently drops entities | Diagram in cached prompt context every turn | naive dropped `Tag` 100% of the time in nextjs/kotlin todos |
+| Cost measurement | "It depends on the model's mood" | Tracker measures every API call | previous claims were measuring 1/10th of real spend |
+
+**Naive is one LLM call. BESSER is 7 named architectural stages, each justified by a measured failure mode.**
+
+---
+
+## The prompt-refinement story — what most "prompt engineering" gets wrong
+
+People assume prompt engineering is "write a good prompt and ship it." We measured every prompt change against the bench. Here's the iteration history:
+
+| iter | what we added | what the bench showed | what we did |
+|---|---|---|---|
+| 1 | Rule 11 (model audit) — "Before declaring done, verify every Class's attributes and methods appear in your output" | Fidelity ratio 0.78 → 1.00 | **Kept** |
+| 2 | Rule 12 (no trivial stubs) — "Don't return True/False as placeholders" | Stub rate dropped; cost up 50% | Initially kept |
+| 3 | Rule 13 (stack-aware naming) — "Match conventions of the target stack" | Duration regressed 50%, no quality gain | **Rolled back** |
+| 4 | Rule 14 (split monoliths) — "Don't put everything in one file" | Cost up; fidelity unchanged | **Rolled back** |
+| 5 | Lightened Rule 7 (project metadata) + Rule 11 | Duration recovered to baseline | Kept |
+| 6 | Rolled back Rule 12 | **Realized Rule 12 was masking a real Phase 1 bug** (`return True` lies in templates). Removed it, fixed the template instead. | Fixed the source |
+| 7 | Removed "PREFERRED over write_file" wording from modify_file; added Rule 9 "batch tool calls in one turn" | Median turn count compressed; tail still spiked occasionally | Added orchestrator-level modify-loop guard |
+
+**The lesson:** every prompt change is a measurable hypothesis. Some help, some hurt, some mask real bugs we needed to fix at the source. The bench made the difference visible. Without it, we'd be guessing about whether "Rule 12" was helping or hiding something. **It was hiding something.**
+
+---
+
+## The headline framing for the meeting (one-paragraph)
+
+> *"The naive way to do this is one LLM call: feed the model in, get code out. We tested that exact baseline. BESSER is a layered pipeline — stack routing, deterministic generators where possible, gap analysis, multi-turn customisation with tool use, server-side compiler validation. Each layer was added because the bench showed the previous version failing in a specific way. Each prompt change was a measured hypothesis, not a guess. The result is 18 seconds faster, $0.13 cheaper per run in non-Python stacks, +30% more structural preservation, with significance-tested numbers on 60 paired runs."*
+
+---
+
 ## Where each piece lives in the repo
 
 | component | path |

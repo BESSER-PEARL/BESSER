@@ -284,6 +284,28 @@ class TestAgenticGateway:
         assert node.collaboration_mode == CollaborationMode.DEBATE
         assert node.merging_strategy == MergingStrategy.LEADER_DRIVEN
 
+    def test_emit_agentic_gateway_governance_dsl(self):  # R-b-b-1
+        """A multi-line governance_dsl round-trips through exec'd code verbatim."""
+        dsl = "Scopes:\n    Tasks:\n        Merge\nMajorityPolicy P {\n    ratio : 0.5\n}"
+        gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                            gateway_role=GatewayRole.MERGING,
+                            collaboration_mode=CollaborationMode.ROLE,
+                            merging_strategy=MergingStrategy.LEADER_DRIVEN,
+                            governance_dsl=dsl)
+        model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={gw})})
+        source = bpmn_model_to_code(model)
+        assert "governance_dsl=" in source
+        node = next(iter(_find_model(_exec_source(source)).all_flow_nodes()))
+        assert isinstance(node, AgenticGateway)
+        assert node.governance_dsl == dsl
+
+    def test_emit_agentic_gateway_without_governance_omits_kwarg(self):  # R-b-b-2
+        """An AgenticGateway with no governance_dsl emits no governance_dsl kwarg."""
+        source = bpmn_model_to_code(
+            _agentic_gateway_merging_model(CollaborationMode.VOTING, MergingStrategy.MAJORITY)
+        )
+        assert "governance_dsl" not in source
+
 
 # ---------------------------------------------------------------------------
 # B-7 / B-8 -- AgenticLane

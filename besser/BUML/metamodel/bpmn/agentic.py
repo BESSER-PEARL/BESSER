@@ -338,6 +338,10 @@ class AgenticGateway(Gateway):
             (auto-cleared); auto-set for merging gateways if omitted. Explicit
             value validated against ``_LEGAL_MERGING_STRATEGIES``.
         trust_score (int): 0-100 (default 0).
+        governance_dsl (str | None): Opaque Governance-DSL snippet authored by
+            WME's ``generateGovernanceDsl`` (governance-dsl guide 02) for a
+            merging gateway. Default None. BESSER carries and round-trips it,
+            never derives it; stored tolerantly on any gateway.
         layout, metadata, timestamp: Inherited.
 
     Attributes:
@@ -345,6 +349,7 @@ class AgenticGateway(Gateway):
         collaboration_mode (CollaborationMode): The collaboration mode.
         merging_strategy (MergingStrategy | None): The merging strategy.
         trust_score (int): The trust score.
+        governance_dsl (str | None): The Governance-DSL snippet.
     """
 
     def __init__(self, name: str = "", gateway_type: "GatewayType" = None,
@@ -352,6 +357,7 @@ class AgenticGateway(Gateway):
                  collaboration_mode: "CollaborationMode" = None,
                  merging_strategy: "MergingStrategy" = None,
                  trust_score: int = 0,
+                 governance_dsl: str = None,
                  layout: dict = None, metadata=None, timestamp=None):
         # Default gateway_type to PARALLEL (Gateway's default of EXCLUSIVE would
         # be rejected by our setter override). Caller can pass INCLUSIVE
@@ -376,6 +382,7 @@ class AgenticGateway(Gateway):
         if merging_strategy is not None:
             self.merging_strategy = merging_strategy
         self.trust_score = trust_score
+        self.governance_dsl = governance_dsl
 
     # --- gateway_type setter override (eligibility check) -------------------
 
@@ -519,13 +526,38 @@ class AgenticGateway(Gateway):
         """
         self.__trust_score = _validate_trust_score(value)
 
+    # --- governance_dsl -----------------------------------------------------
+
+    @property
+    def governance_dsl(self):
+        """str | None: Get the Governance-DSL snippet for this (merging) gateway,
+        or ``None``. Opaque free text authored by WME's ``generateGovernanceDsl``
+        (governance-dsl guide 02); BESSER carries and round-trips it, never
+        derives it. Only meaningful on a MERGING gateway, but stored tolerantly
+        on any (no invariant)."""
+        return self.__governance_dsl
+
+    @governance_dsl.setter
+    def governance_dsl(self, value):
+        """str | None: Set the Governance-DSL snippet.
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"governance_dsl must be a str or None, got {type(value).__name__}"
+            )
+        self.__governance_dsl = value
+
     def __repr__(self):
         return (f"AgenticGateway(name='{self.name}', "
                 f"gateway_type={self.gateway_type}, "
                 f"gateway_role={self.gateway_role}, "
                 f"collaboration_mode={self.collaboration_mode}, "
                 f"merging_strategy={self.merging_strategy}, "
-                f"trust_score={self.trust_score})")
+                f"trust_score={self.trust_score}, "
+                f"governance_dsl={'<set>' if self.governance_dsl else None})")
 
 
 # ---------------------------------------------------------------------------

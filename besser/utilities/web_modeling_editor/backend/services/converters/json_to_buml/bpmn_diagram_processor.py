@@ -243,11 +243,17 @@ def _build_node(elem: dict):
                         f"Unknown mergingStrategy '{ms_value}' on AgenticGateway '{name}'."
                     ) from exc
             trust = _clamp_trust_score(elem.get("trustScore", 0))
+            # Governance DSL (governance-dsl guide 02): opaque CDATA child on
+            # merging gateways. Empty / whitespace-only -> None (matches WME's
+            # emit gate). Pass through verbatim.
+            gov = elem.get("governanceDsl")
+            gov = gov if (isinstance(gov, str) and gov.strip() != "") else None
             try:
                 return AgenticGateway(
                     name=name, gateway_type=gateway_type,
                     gateway_role=role, collaboration_mode=collaboration,
                     merging_strategy=merging, trust_score=trust,
+                    governance_dsl=gov,
                 )
             except ValueError as exc:
                 # gateway_type ineligibility (EXCLUSIVE/COMPLEX/EVENT_BASED) or

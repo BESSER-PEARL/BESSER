@@ -396,6 +396,90 @@ def test_E5_export_non_agentic_gateway_emits_wme_defaults():
     assert entry["trustScore"] == 0
 
 
+# ===========================================================================
+# R-b — AgenticGateway.governance_dsl (governance-dsl guide 02; opaque CDATA)
+# ===========================================================================
+
+_GOV_DSL = "Scopes:\n    Tasks:\n        MergeDecision\nMajorityPolicy P {\n    ratio : 0.5\n}"
+
+
+def _agentic_merging_gateway_elements(extra):
+    """One agentic merging BPMNGateway carrying the given extra fields."""
+    return {
+        "g1": _node("g1", "BPMNGateway", "Vote", gatewayType="parallel",
+                    isAgentic=True, gatewayRole="merging",
+                    collaborationMode="role", mergingStrategy="leader-driven",
+                    trustScore=75, **extra),
+    }
+
+
+def test_Rb_c1_import_agentic_gateway_with_governance_dsl():
+    """R-b-c-1: governanceDsl on a merging gateway imports onto governance_dsl."""
+    model = process_bpmn_diagram(
+        _envelope(_agentic_merging_gateway_elements({"governanceDsl": _GOV_DSL}), {})
+    )
+    [gw] = next(iter(model.processes)).flow_nodes
+    assert isinstance(gw, AgenticGateway)
+    assert gw.governance_dsl == _GOV_DSL
+
+
+def test_Rb_c2_import_agentic_gateway_blank_governance_is_none():
+    """R-b-c-2: a whitespace-only governanceDsl imports as None (matches WME gate)."""
+    model = process_bpmn_diagram(
+        _envelope(_agentic_merging_gateway_elements({"governanceDsl": "   \n  "}), {})
+    )
+    [gw] = next(iter(model.processes)).flow_nodes
+    assert gw.governance_dsl is None
+
+
+def test_Rb_c3_import_agentic_gateway_absent_governance_is_none():
+    """R-b-c-3: no governanceDsl key → governance_dsl is None."""
+    model = process_bpmn_diagram(_envelope(_agentic_merging_gateway_elements({}), {}))
+    [gw] = next(iter(model.processes)).flow_nodes
+    assert gw.governance_dsl is None
+
+
+def test_Rb_c4_export_agentic_gateway_with_governance_emits_field():
+    """R-b-c-4: an AgenticGateway with governance_dsl emits governanceDsl."""
+    gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                        gateway_role=GatewayRole.MERGING,
+                        collaboration_mode=CollaborationMode.ROLE,
+                        merging_strategy=MergingStrategy.LEADER_DRIVEN,
+                        governance_dsl=_GOV_DSL)
+    out = _process_with_node(gw)
+    [entry] = out["elements"].values()
+    assert entry["governanceDsl"] == _GOV_DSL
+
+
+def test_Rb_c5_export_agentic_gateway_without_governance_omits_field():
+    """R-b-c-5: an AgenticGateway with no governance_dsl omits governanceDsl."""
+    gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                        gateway_role=GatewayRole.MERGING,
+                        collaboration_mode=CollaborationMode.ROLE,
+                        merging_strategy=MergingStrategy.LEADER_DRIVEN)
+    out = _process_with_node(gw)
+    [entry] = out["elements"].values()
+    assert "governanceDsl" not in entry
+
+
+def test_Rb_c6_export_non_agentic_gateway_no_governance():
+    """R-b-c-6: a base Gateway never carries governanceDsl."""
+    out = _process_with_node(Gateway(name="Plain", gateway_type=GatewayType.EXCLUSIVE))
+    [entry] = out["elements"].values()
+    assert "governanceDsl" not in entry
+
+
+def test_Rb_c7_roundtrip_agentic_gateway_governance_preserved():
+    """R-b-c-7: JSON → BUML → JSON preserves a multi-line governanceDsl verbatim."""
+    out = bpmn_object_to_json(
+        process_bpmn_diagram(
+            _envelope(_agentic_merging_gateway_elements({"governanceDsl": _GOV_DSL}), {})
+        )
+    )
+    gw_entry = next(e for e in out["elements"].values() if e["type"] == "BPMNGateway")
+    assert gw_entry["governanceDsl"] == _GOV_DSL
+
+
 def _wrap_lane(lane):
     """Build a Pool+Process+Lane model and export it to JSON."""
     process = Process(name="P", lanes={lane})

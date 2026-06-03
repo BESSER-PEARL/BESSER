@@ -394,6 +394,10 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             if obj.merging_strategy is not None:
                 entry["mergingStrategy"] = obj.merging_strategy.value
             entry["trustScore"] = obj.trust_score
+            # Governance DSL (governance-dsl guide 02): emit only when set
+            # (WME's exporter drops it when undefined). Merging-gateway concept.
+            if obj.governance_dsl is not None:
+                entry["governanceDsl"] = obj.governance_dsl
     if isinstance(obj, Lane):
         entry.update(_WME_LANE_DEFAULTS)
         if isinstance(obj, AgenticLane):

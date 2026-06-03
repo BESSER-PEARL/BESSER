@@ -173,13 +173,18 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
             merging_repr = "None"
         else:
             merging_repr = f"MergingStrategy.{node.merging_strategy.name}"
+        # _quoted escapes newlines, so a multi-line governance DSL stays a valid
+        # single-line literal that exec's back to the original string.
+        gov_kwarg = ""
+        if node.governance_dsl is not None:
+            gov_kwarg = f", governance_dsl={_quoted(node.governance_dsl)}"
         body.append(
             f"{var} = AgenticGateway(name={_quoted(node.name)}, "
             f"gateway_type=GatewayType.{node.gateway_type.name}, "
             f"gateway_role=GatewayRole.{node.gateway_role.name}, "
             f"collaboration_mode=CollaborationMode.{node.collaboration_mode.name}, "
             f"merging_strategy={merging_repr}, "
-            f"trust_score={node.trust_score})"
+            f"trust_score={node.trust_score}{gov_kwarg})"
         )
     elif isinstance(node, Gateway):
         needed.update({"Gateway", "GatewayType"})

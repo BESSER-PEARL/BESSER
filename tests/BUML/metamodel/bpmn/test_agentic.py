@@ -522,6 +522,50 @@ def test_agentic_task_repr_includes_ref():
 
 
 # ---------------------------------------------------------------------------
+# AgenticGateway.governance_dsl — R-b (governance-dsl guide 02; opaque CDATA)
+# ---------------------------------------------------------------------------
+
+def test_agentic_gateway_governance_dsl_default_none():
+    """Constructed without the kwarg → governance_dsl is None (R-b-mm-1)."""
+    gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL)
+    assert gw.governance_dsl is None
+
+
+def test_agentic_gateway_governance_dsl_str():
+    """Accepts an arbitrary (multi-line) string verbatim — opaque (R-b-mm-2)."""
+    dsl = "Scopes:\n    Tasks:\n        MergeDecision\nMajorityPolicy P {\n}"
+    gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                        gateway_role=GatewayRole.MERGING, governance_dsl=dsl)
+    assert gw.governance_dsl == dsl
+
+
+def test_agentic_gateway_governance_dsl_role_independent():
+    """No invariant ties governance_dsl to gateway_role — a diverging gateway
+    may hold it too (R-b-mm-3)."""
+    gw = AgenticGateway(name="Split", gateway_type=GatewayType.PARALLEL,
+                        gateway_role=GatewayRole.DIVERGING, governance_dsl="x")
+    assert gw.governance_dsl == "x"
+    assert gw.merging_strategy is None  # INV-A still holds independently
+
+
+@pytest.mark.parametrize("value", [123, 0.5, ["x"], {"a": 1}, True])
+def test_agentic_gateway_governance_dsl_type_error(value):
+    """Non-str / non-None raises TypeError (R-b-mm-4)."""
+    with pytest.raises(TypeError, match="governance_dsl must be a str or None"):
+        AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                       governance_dsl=value)
+
+
+def test_agentic_gateway_repr_marks_governance():
+    """__repr__ marks governance_dsl as set without dumping the blob (R-b-mm-5)."""
+    gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                        gateway_role=GatewayRole.MERGING, governance_dsl="big\nblob")
+    assert "governance_dsl=<set>" in repr(gw)
+    plain = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL)
+    assert "governance_dsl=None" in repr(plain)
+
+
+# ---------------------------------------------------------------------------
 # AgenticTask.collaboration_mode — S2 (WME 04D1 D-D1; paper deviation)
 # ---------------------------------------------------------------------------
 

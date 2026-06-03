@@ -377,6 +377,10 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             # deviation beyond paper §4.2). Emit the real value, not the
             # _WME_TASK_DEFAULTS placeholder.
             entry["collaborationMode"] = obj.collaboration_mode.value
+            # WME guide 11: emit agentDiagramRef only when set (optional field;
+            # WME's exporter drops it when undefined). Canonical task carrier.
+            if obj.agent_diagram_ref is not None:
+                entry["agentDiagramRef"] = obj.agent_diagram_ref
     if isinstance(obj, Gateway):
         entry.update(_WME_GATEWAY_DEFAULTS)
         if isinstance(obj, AgenticGateway):

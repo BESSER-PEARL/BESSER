@@ -633,8 +633,75 @@ def test_S1_c7_roundtrip_agentic_lane_with_ref():
     task_entry = next(e for e in out["elements"].values()
                       if e["type"] == "BPMNTask")
     assert lane_entry["agentDiagramRef"] == _REF
-    # Lane-only: the ref must never leak onto a task entry.
+    # The task here has no ref of its own, so it emits none (refs are
+    # presence-gated per element; R-a makes the task a first-class carrier).
     assert "agentDiagramRef" not in task_entry
+
+
+# ===========================================================================
+# R-a — AgenticTask.agent_diagram_ref (WME guide 11 canonical task->agent link)
+# ===========================================================================
+
+def _agentic_task_elements(extra):
+    """One agentic BPMNTask carrying the given extra fields."""
+    return {
+        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+                    isAgentic=True, reflectionMode="cross", trustScore=80,
+                    collaborationMode="voting", **extra),
+    }
+
+
+def test_Ra_c1_import_agentic_task_with_agent_diagram_ref():
+    """R-a-c-1: agentDiagramRef on the task imports onto the AgenticTask."""
+    model = process_bpmn_diagram(_envelope(_agentic_task_elements({"agentDiagramRef": _REF}), {}))
+    [task] = next(iter(model.processes)).flow_nodes
+    assert isinstance(task, AgenticTask)
+    assert task.agent_diagram_ref == _REF
+
+
+def test_Ra_c2_import_agentic_task_empty_ref_is_none():
+    """R-a-c-2: an empty-string agentDiagramRef imports as None."""
+    model = process_bpmn_diagram(_envelope(_agentic_task_elements({"agentDiagramRef": ""}), {}))
+    [task] = next(iter(model.processes)).flow_nodes
+    assert task.agent_diagram_ref is None
+
+
+def test_Ra_c3_import_agentic_task_absent_ref_is_none():
+    """R-a-c-3: no agentDiagramRef key → agent_diagram_ref is None."""
+    model = process_bpmn_diagram(_envelope(_agentic_task_elements({}), {}))
+    [task] = next(iter(model.processes)).flow_nodes
+    assert task.agent_diagram_ref is None
+
+
+def test_Ra_c4_export_agentic_task_with_ref_emits_field():
+    """R-a-c-4: an AgenticTask with a ref emits agentDiagramRef in the JSON entry."""
+    out = _process_with_node(AgenticTask(name="Review", task_type=TaskType.USER,
+                                         agent_diagram_ref=_REF))
+    [entry] = out["elements"].values()
+    assert entry["agentDiagramRef"] == _REF
+
+
+def test_Ra_c5_export_agentic_task_without_ref_omits_field():
+    """R-a-c-5: an AgenticTask with no ref omits agentDiagramRef entirely."""
+    out = _process_with_node(AgenticTask(name="Review", task_type=TaskType.USER))
+    [entry] = out["elements"].values()
+    assert "agentDiagramRef" not in entry
+
+
+def test_Ra_c6_export_non_agentic_task_no_ref():
+    """R-a-c-6: a base Task never carries agentDiagramRef."""
+    out = _process_with_node(Task(name="Plain", task_type=TaskType.DEFAULT))
+    [entry] = out["elements"].values()
+    assert "agentDiagramRef" not in entry
+
+
+def test_Ra_c7_roundtrip_agentic_task_with_ref():
+    """R-a-c-7: JSON → BUML → JSON preserves agentDiagramRef on the task."""
+    out = bpmn_object_to_json(
+        process_bpmn_diagram(_envelope(_agentic_task_elements({"agentDiagramRef": _REF}), {}))
+    )
+    task_entry = next(e for e in out["elements"].values() if e["type"] == "BPMNTask")
+    assert task_entry["agentDiagramRef"] == _REF
 
 
 # ===========================================================================

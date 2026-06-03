@@ -206,6 +206,23 @@ class TestAgenticTask:
         source = bpmn_model_to_code(_agentic_task_model())
         assert "CollaborationMode" in _import_block(source)
 
+    def test_emit_agentic_task_agent_diagram_ref(self):  # R-a-b-1
+        """An AgenticTask with agent_diagram_ref round-trips through exec'd code."""
+        t = AgenticTask(name="Review", task_type=TaskType.USER,
+                        reflection_mode=ReflectionMode.CROSS, trust_score=80,
+                        agent_diagram_ref="ref-123")
+        model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={t})})
+        source = bpmn_model_to_code(model)
+        assert "agent_diagram_ref='ref-123'" in source
+        node = next(iter(_find_model(_exec_source(source)).all_flow_nodes()))
+        assert isinstance(node, AgenticTask)
+        assert node.agent_diagram_ref == "ref-123"
+
+    def test_emit_agentic_task_without_ref_omits_kwarg(self):  # R-a-b-2
+        """An AgenticTask with no ref emits no agent_diagram_ref kwarg."""
+        source = bpmn_model_to_code(_agentic_task_model())
+        assert "agent_diagram_ref" not in source
+
 
 # ---------------------------------------------------------------------------
 # B-3 / B-4 / B-5 / B-6 -- AgenticGateway

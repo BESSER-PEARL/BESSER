@@ -186,6 +186,11 @@ class AgenticTask(Task):
             (default ``VOTING``). A WME 04D1 D-D1 extension **beyond** paper
             §4.2 Fig 3b -- independent of any gateway; no merging-strategy
             invariant applies to a task's collaboration mode.
+        agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
+            task's agent behavior is defined by (SEAA'25 cross-diagram link,
+            WME guide 11). Default None. Pass-through -- no UUID validation,
+            no resolution. Canonical carrier; supersedes the lane carrier of
+            WME 08 (which is kept on ``AgenticLane`` for legacy tolerance).
         task_type (TaskType): Inherited from Task.
         loop_characteristics (LoopCharacteristics): Inherited from Activity.
         layout (dict): Inherited (opaque DI passthrough).
@@ -195,11 +200,13 @@ class AgenticTask(Task):
         reflection_mode (ReflectionMode): The reflection mode.
         trust_score (int): The trust score.
         collaboration_mode (CollaborationMode): The collaboration mode.
+        agent_diagram_ref (str | None): The AgentDiagram reference.
     """
 
     def __init__(self, name: str = "", reflection_mode: "ReflectionMode" = None,
                  trust_score: int = 0,
                  collaboration_mode: "CollaborationMode" = None,
+                 agent_diagram_ref: str = None,
                  task_type=None, loop_characteristics=None,
                  layout: dict = None, metadata=None, timestamp=None):
         super().__init__(name=name, task_type=task_type,
@@ -210,6 +217,7 @@ class AgenticTask(Task):
         self.trust_score = trust_score
         self.collaboration_mode = (collaboration_mode if collaboration_mode is not None
                                    else CollaborationMode.VOTING)
+        self.agent_diagram_ref = agent_diagram_ref
 
     @property
     def reflection_mode(self) -> "ReflectionMode":
@@ -267,11 +275,35 @@ class AgenticTask(Task):
             )
         self.__collaboration_mode = value
 
+    @property
+    def agent_diagram_ref(self):
+        """str | None: Get the opaque id of the AgentDiagram this task's agent
+        behavior is defined by (SEAA'25 cross-diagram link, WME guide 11 --
+        canonical carrier; supersedes the lane carrier of WME 08). ``None`` when unset."""
+        return self.__agent_diagram_ref
+
+    @agent_diagram_ref.setter
+    def agent_diagram_ref(self, value):
+        """str | None: Set the AgentDiagram reference.
+
+        Opaque pass-through -- no UUID-format check, no typed resolution (the
+        value is whatever id the project assigned the AgentDiagram).
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"agent_diagram_ref must be a str or None, got {type(value).__name__}"
+            )
+        self.__agent_diagram_ref = value
+
     def __repr__(self):
         return (f"AgenticTask(name='{self.name}', "
                 f"reflection_mode={self.reflection_mode}, "
                 f"trust_score={self.trust_score}, "
-                f"collaboration_mode={self.collaboration_mode})")
+                f"collaboration_mode={self.collaboration_mode}, "
+                f"agent_diagram_ref={self.agent_diagram_ref!r})")
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +598,12 @@ class AgenticLane(Lane):
     @property
     def agent_diagram_ref(self):
         """str | None: Get the opaque id of the AgentDiagram this lane's agent
-        is defined by (SEAA'25 cross-diagram link, WME 08). ``None`` when unset."""
+        is defined by (SEAA'25 cross-diagram link, WME 08). ``None`` when unset.
+
+        **Legacy carrier.** WME guide 11 moved the canonical task->agent link to
+        ``AgenticTask.agent_diagram_ref``; this lane field is retained only for
+        round-tripping legacy projects (matching WME's tolerant-but-inert lane
+        carrier). New links should be authored on ``AgenticTask``."""
         return self.__agent_diagram_ref
 
     @agent_diagram_ref.setter

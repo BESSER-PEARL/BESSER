@@ -486,6 +486,42 @@ def test_agentic_lane_repr_includes_ref():
 
 
 # ---------------------------------------------------------------------------
+# AgenticTask.agent_diagram_ref — R-a (WME guide 11 canonical task->agent link)
+# ---------------------------------------------------------------------------
+
+def test_agentic_task_agent_diagram_ref_default_none():
+    """Constructed without the kwarg → agent_diagram_ref is None (R-a-mm-1)."""
+    task = AgenticTask(name="Review")
+    assert task.agent_diagram_ref is None
+
+
+def test_agentic_task_agent_diagram_ref_str():
+    """Accepts an arbitrary string (e.g. a UUID) verbatim — opaque (R-a-mm-2)."""
+    ref = "3f0a1c2d-4e5b-4f6a-9012-3456789abcde"
+    task = AgenticTask(name="Review", agent_diagram_ref=ref)
+    assert task.agent_diagram_ref == ref
+
+
+def test_agentic_task_agent_diagram_ref_none_allowed():
+    """Explicit None is accepted (R-a-mm-3)."""
+    task = AgenticTask(name="Review", agent_diagram_ref=None)
+    assert task.agent_diagram_ref is None
+
+
+@pytest.mark.parametrize("value", [123, 0.5, ["x"], {"a": 1}, True])
+def test_agentic_task_agent_diagram_ref_type_error(value):
+    """Non-str / non-None raises TypeError (R-a-mm-4)."""
+    with pytest.raises(TypeError, match="agent_diagram_ref must be a str or None"):
+        AgenticTask(name="Review", agent_diagram_ref=value)
+
+
+def test_agentic_task_repr_includes_ref():
+    """__repr__ includes agent_diagram_ref (R-a-mm-5)."""
+    task = AgenticTask(name="Review", trust_score=90, agent_diagram_ref="ref-123")
+    assert "agent_diagram_ref='ref-123'" in repr(task)
+
+
+# ---------------------------------------------------------------------------
 # AgenticTask.collaboration_mode — S2 (WME 04D1 D-D1; paper deviation)
 # ---------------------------------------------------------------------------
 

@@ -176,10 +176,15 @@ def _build_node(elem: dict):
                         f"Unknown collaborationMode '{collab_value}' on AgenticTask '{name}'."
                     ) from exc
                 trust = _clamp_trust_score(elem.get("trustScore", 0))
+                # WME guide 11: optional opaque AgentDiagram id on the agentic
+                # task (canonical carrier; supersedes the lane carrier of WME 08).
+                # Empty string / absent -> None. No UUID validation -- pass through.
+                agent_ref = elem.get("agentDiagramRef") or None
                 return AgenticTask(
                     name=name, task_type=task_type, loop_characteristics=loop,
                     reflection_mode=reflection, trust_score=trust,
                     collaboration_mode=collaboration,
+                    agent_diagram_ref=agent_ref,
                 )
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
         # SubProcess / Transaction / CallActivity all take the same args (no

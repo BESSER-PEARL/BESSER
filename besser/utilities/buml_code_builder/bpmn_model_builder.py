@@ -105,13 +105,16 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
             "AgenticTask", "TaskType", "LoopCharacteristics", "ReflectionMode",
             "CollaborationMode",
         })
+        ref_kwarg = ""
+        if node.agent_diagram_ref is not None:
+            ref_kwarg = f", agent_diagram_ref={_quoted(node.agent_diagram_ref)}"
         body.append(
             f"{var} = AgenticTask(name={_quoted(node.name)}, "
             f"task_type=TaskType.{node.task_type.name}, "
             f"loop_characteristics=LoopCharacteristics.{node.loop_characteristics.name}, "
             f"reflection_mode=ReflectionMode.{node.reflection_mode.name}, "
             f"trust_score={node.trust_score}, "
-            f"collaboration_mode=CollaborationMode.{node.collaboration_mode.name})"
+            f"collaboration_mode=CollaborationMode.{node.collaboration_mode.name}{ref_kwarg})"
         )
     elif isinstance(node, Task):
         needed.update({"Task", "TaskType", "LoopCharacteristics"})

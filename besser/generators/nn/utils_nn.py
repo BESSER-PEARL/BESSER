@@ -126,6 +126,14 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
     my_keys = list(modules_details.keys())
     out_vars = []
     for i, layer_name in enumerate(layers_names):
+        # Handle inline layer calls (from tf2torch)
+        if isinstance(layer_name, str) and layer_name.startswith("INLINE_CALL:"):
+            # Format: "INLINE_CALL:layer_name:input_var"
+            parts = layer_name.split(":")
+            inline_layer_name = parts[1]
+            inline_input_var = parts[2]
+            out_vars.append(f"self.{inline_layer_name}({inline_input_var})")
+            continue
         # Handle numeric constants directly
         if isinstance(layer_name, (int, float)):
             out_vars.append(str(layer_name))

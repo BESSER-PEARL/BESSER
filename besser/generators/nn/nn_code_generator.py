@@ -129,6 +129,11 @@ class NNCodeGenerator(GeneratorInterface):
                     module, self.setup_layer, modules_details,
                     self.channel_last, actv_func, is_seq, is_subnn=False
                 )
+                # Mark inline_only layers in modules_details so template can skip them in forward
+                if getattr(module, 'inline_only', False):
+                    layer_key = f"{module.name}_layer"
+                    if layer_key in modules_details:
+                        modules_details[layer_key].append('INLINE_ONLY')
             else:
                 handle_tensorop(
                     module, modules_details, self.get_tensorop_syntax,

@@ -121,6 +121,7 @@ from torch import nn
     {%- elif module_name.endswith("nn") %}
         {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
     {%- else %}
+        {%- if 'INLINE_ONLY' not in module_details %}
         {%- if module_name.endswith("activ") %}
         {{ module_details[1] }} = self.{{ module_details[0].split('.', 1)[1].split('=', 1)[0].strip() }}({{ module_details[2] }})
         {%- elif module_details[3].__class__.mro()[1].__name__ == "RNN" %}
@@ -156,6 +157,7 @@ from torch import nn
         {%- else %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
         {%- endif -%}
+        {%- endif %}
     {%- endif -%}
     {%- if module_name.endswith("nn") %}
     {%- set return_variable.value =  module_details["in_out_variable"] %}

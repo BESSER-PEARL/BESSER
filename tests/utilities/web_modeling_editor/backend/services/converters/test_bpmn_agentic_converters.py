@@ -323,6 +323,42 @@ def test_I13_import_message_flow_agentic_now_typed():
     assert mf.trust_score == 33
 
 
+def test_I14_import_pool_to_pool_agentic_message_flow_survives():
+    """R-R1: a pool-to-pool agentic message flow (Participant endpoints) is no longer
+    dropped on import. WME draws agentic collaboration flows pool-to-pool; pre-R-R1 the
+    base MessageFlow endpoint check rejected Participant ends and the converter skipped it."""
+    elements = {
+        "p1": _node("p1", "BPMNPool", "P1"),
+        "p2": _node("p2", "BPMNPool", "P2"),
+    }
+    rels = {
+        "f1": _flow("f1", "p1", "p2", flow_type="message",
+                    isAgentic=True, collaborationMode="role",
+                    mergingStrategy="leader-driven", trustScore=40),
+    }
+    model = process_bpmn_diagram(_envelope(elements, rels))
+    [mf] = model.collaboration.message_flows
+    assert isinstance(mf, AgenticMessageFlow)
+    assert isinstance(mf.source, Participant) and isinstance(mf.target, Participant)
+    assert mf.merging_strategy == MergingStrategy.LEADER_DRIVEN
+    # The model validates clean (E1 sees the pools; E3 sees two distinct pools).
+    assert model.validate(raise_exception=False)["success"]
+
+
+def test_I15_roundtrip_pool_to_pool_message_flow():
+    """R-R1: pool-to-pool message flow round-trips JSON -> BUML -> JSON (flowType=message)."""
+    elements = {
+        "p1": _node("p1", "BPMNPool", "P1"),
+        "p2": _node("p2", "BPMNPool", "P2"),
+    }
+    rels = {
+        "f1": _flow("f1", "p1", "p2", flow_type="message", isAgentic=False),
+    }
+    out = bpmn_object_to_json(process_bpmn_diagram(_envelope(elements, rels)))
+    [rel] = out["relationships"].values()
+    assert rel["flowType"] == "message"
+
+
 # ===========================================================================
 # Export tests (BUML -> JSON)
 # ===========================================================================

@@ -867,18 +867,24 @@ class SequenceFlow(BPMNConnectingObject):
 
 
 class MessageFlow(BPMNConnectingObject):
-    """A BPMN Message Flow -- communication between message-eligible nodes across pools
-    (BPMN 2.0.2 §9.3). Lives on a Collaboration."""
+    """A BPMN Message Flow -- communication across pools (BPMN 2.0.2 §9.3). Lives on a
+    Collaboration.
+
+    Endpoints are message-eligible nodes (Activities / Events) *or* whole Participants
+    (pools). BPMN 2.0.2 §9.3 permits a message flow to attach to a Pool directly; the WME
+    editor draws agentic collaboration message flows pool-to-pool, so the metamodel accepts
+    ``Participant`` endpoints too."""
 
     def _check_endpoint(self, endpoint, role: str):
-        """A MessageFlow connects message-eligible nodes (Activities and Events).
+        """A MessageFlow connects message-eligible nodes (Activities / Events) or
+        Participants (pools).
 
         Raises:
-            TypeError: if endpoint is not an Activity or Event.
+            TypeError: if endpoint is not an Activity, Event, or Participant.
         """
-        if not isinstance(endpoint, (Activity, Event)):
+        if not isinstance(endpoint, (Activity, Event, Participant)):
             raise TypeError(
-                f"MessageFlow {role} must be an Activity or Event, "
+                f"MessageFlow {role} must be an Activity, Event, or Participant, "
                 f"got {type(endpoint).__name__}"
             )
 
@@ -1565,11 +1571,19 @@ class BPMNModel(Model):
             elements |= process.artifacts
             elements |= process.data_objects
         elements |= self.__data_stores
+        # Participants (pools) are valid MessageFlow endpoints (BPMN 2.0.2 §9.3),
+        # so they belong to the reference universe for E1.
+        if self.__collaboration is not None:
+            elements |= self.__collaboration.participants
         return elements
 
     def _participant_of(self, node):
         """Participant: The participant whose process (transitively) contains ``node``,
-        or None."""
+        or None. A ``Participant`` endpoint (a pool used directly as a MessageFlow end)
+        resolves to itself, so E3's same-pool check stays meaningful for pool-to-pool
+        message flows."""
+        if isinstance(node, Participant):
+            return node
         container = getattr(node, "container", None)
         while isinstance(container, SubProcess):
             container = container.container

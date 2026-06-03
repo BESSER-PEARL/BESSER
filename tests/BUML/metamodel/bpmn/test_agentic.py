@@ -24,6 +24,8 @@ from besser.BUML.metamodel.bpmn import (
     LoopCharacteristics,
     MergingStrategy,
     MessageFlow,
+    Participant,
+    Process,
     ReflectionMode,
     Task,
     TaskType,
@@ -626,10 +628,20 @@ def test_agentic_message_flow_isinstance_message_flow():
 
 
 def test_agentic_message_flow_endpoint_check():
-    """Non-Activity/Event endpoint raises TypeError (inherited from MessageFlow) (S3-mm-3)."""
+    """Non-eligible endpoint (Gateway) raises TypeError (inherited from MessageFlow) (S3-mm-3)."""
     bad = Gateway(name="g", gateway_type=GatewayType.EXCLUSIVE)
-    with pytest.raises(TypeError, match="must be an Activity or Event"):
+    with pytest.raises(TypeError, match="must be an Activity, Event, or Participant"):
         AgenticMessageFlow(source=bad, target=Task(name="B"))
+
+
+def test_agentic_message_flow_participant_endpoints():
+    """Pool-to-pool endpoints are accepted (R-R1 / BPMN 2.0.2 §9.3)."""
+    p1 = Participant(name="P1", process=Process(name="proc1"))
+    p2 = Participant(name="P2", process=Process(name="proc2"))
+    amf = AgenticMessageFlow(source=p1, target=p2,
+                             collaboration_mode=CollaborationMode.ROLE,
+                             merging_strategy=MergingStrategy.LEADER_DRIVEN)
+    assert amf.source is p1 and amf.target is p2
 
 
 def test_agentic_message_flow_merging_never_none():

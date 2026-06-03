@@ -52,18 +52,22 @@ Agentic extension elements
 --------------------------
 
 Models that use the :ref:`bpmn-agentic-extension` (``AgenticTask`` /
-``AgenticGateway`` / ``AgenticLane``) emit additional information per
-element through the standard BPMN 2.0 ``<bpmn:extensionElements>``
-mechanism. The root ``<bpmn:definitions>`` element gains the
+``AgenticGateway`` / ``AgenticLane`` / ``AgenticMessageFlow``) emit
+additional information per element through the standard BPMN 2.0
+``<bpmn:extensionElements>`` mechanism. The root ``<bpmn:definitions>``
+element gains the
 ``xmlns:agentic="https://www.besser-pearl.org/bpmn/agentic"`` namespace
 declaration, and each agentic element carries one
-``<agentic:agentic .../>`` child with flat attributes:
+``<agentic:agentic .../>`` child with flat attributes. An ``AgenticTask``
+emits ``reflectionMode``, ``collaborationMode`` and ``trustScore``, plus
+``agentDiagramRef`` when the task is linked to an Agent diagram:
 
 .. code-block:: xml
 
     <bpmn:userTask id="Task_1" name="Review">
       <bpmn:extensionElements>
-        <agentic:agentic reflectionMode="cross" trustScore="85"/>
+        <agentic:agentic reflectionMode="cross" collaborationMode="voting"
+                         trustScore="85" agentDiagramRef="a1b2c3d4-..."/>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_in</bpmn:incoming>
       <bpmn:outgoing>Flow_out</bpmn:outgoing>
@@ -73,6 +77,9 @@ declaration, and each agentic element carries one
       <bpmn:extensionElements>
         <agentic:agentic gatewayRole="merging" collaborationMode="voting"
                          mergingStrategy="majority" trustScore="85"/>
+        <agentic:governance>Scopes:
+        ...governance-policy DSL...
+        </agentic:governance>
       </bpmn:extensionElements>
     </bpmn:parallelGateway>
 
@@ -96,12 +103,31 @@ strategy is meaningful only at the merging gateway):
       </bpmn:extensionElements>
     </bpmn:parallelGateway>
 
+A merging ``AgenticGateway`` that carries a ``governance_dsl`` additionally
+emits a sibling ``<agentic:governance>`` child holding the policy snippet
+(shown above). An ``AgenticMessageFlow`` emits its own block on the
+``<bpmn:messageFlow>`` element (``collaborationMode`` + ``mergingStrategy`` +
+``trustScore``; no ``gatewayRole``):
+
+.. code-block:: xml
+
+    <bpmn:messageFlow id="Flow_M1" sourceRef="Pool_A" targetRef="Pool_B">
+      <bpmn:extensionElements>
+        <agentic:agentic collaborationMode="role" mergingStrategy="leader-driven"
+                         trustScore="40"/>
+      </bpmn:extensionElements>
+    </bpmn:messageFlow>
+
 The ``<bpmn:extensionElements>`` element is always emitted as the **first
-child** of its host (``tFlowNode`` / ``tLane`` per the BPMN 2.0 schema).
-Enum values use lowercase strings (``"cross"`` / ``"voting"`` /
-``"majority"`` / ``"manager"`` / ``"diverging"`` / …), mirroring the
-WME editor's wire format so the agentic block round-trips byte-for-byte
-with WME's exporter.
+child** of its host (``tFlowNode`` / ``tLane`` / ``tMessageFlow`` per the
+BPMN 2.0 schema). Enum values use lowercase strings (``"cross"`` /
+``"voting"`` / ``"majority"`` / ``"manager"`` / ``"diverging"`` / …),
+mirroring the WME editor's wire format so the ``<agentic:agentic>``
+attributes round-trip byte-for-byte with WME's exporter. The
+``<agentic:governance>`` body is written as escaped text rather than a
+``CDATA`` section (Python's standard ``ElementTree`` has no native CDATA);
+this is semantically equivalent — any XML parser yields the same text
+content, which WME trims on import.
 
 Vanilla BPMN models (no agentic subclasses) emit no
 ``<bpmn:extensionElements>`` blocks — the agentic emission is strictly

@@ -36,7 +36,9 @@ Key concepts
 
 - **Connecting objects** (``BPMNConnectingObject``): four concrete subtypes —
   ``SequenceFlow`` (orders flow nodes inside a process / sub-process),
-  ``MessageFlow`` (message-eligible nodes across pool boundaries),
+  ``MessageFlow`` (across pool boundaries — endpoints may be message-eligible
+  nodes, i.e. activities / events, *or* whole ``Participant`` pools per
+  BPMN 2.0.2 § 9.3),
   ``Association`` (links an artifact to anything), ``DataAssociation``
   (connects exactly one ``DataElement`` to exactly one ``FlowNode``).
 - **Containers**: ``Process`` and ``SubProcess`` hold flow nodes and sequence
@@ -141,14 +143,18 @@ SEAA'25 agentic extension
 The BPMN metamodel ships a paper-faithful extension for **human-agentic
 collaborative workflows** alongside the vanilla BPMN base. The extension is
 defined in Ait et al., *Towards Modeling Human-Agentic Collaborative
-Workflows: A BPMN Extension* (SEAA'25), and adds three
+Workflows: A BPMN Extension* (SEAA'25), and adds four
 stereotype-as-subclass primitives in a sibling module
 (``besser/BUML/metamodel/bpmn/agentic.py``); the base ``bpmn.py`` is
 unmodified.
 
 - ``AgenticTask(Task)`` — a Task with a ``reflection_mode``
-  (``NONE`` / ``SELF`` / ``CROSS`` / ``HUMAN``) and a ``trust_score``
-  ∈ ``[0, 100]`` (paper § 4.2, Fig 3b).
+  (``NONE`` / ``SELF`` / ``CROSS`` / ``HUMAN``), a ``trust_score``
+  ∈ ``[0, 100]`` (paper § 4.2, Fig 3b), a ``collaboration_mode``
+  (``VOTING`` / ``ROLE`` / ``DEBATE`` / ``COMPETITION``; a WME extension
+  beyond the paper's Fig 3b), and an optional ``agent_diagram_ref`` — an
+  opaque id linking the task to the Agent diagram that defines its internal
+  behaviour (the canonical task → agent cross-diagram link).
 - ``AgenticGateway(Gateway)`` — a Gateway with collaboration semantics
   (paper § 4.3). Restricted to ``PARALLEL`` or ``INCLUSIVE`` ``gateway_type``
   (the paper's *AgenticAND* / *AgenticOR*); ``EXCLUSIVE`` / ``COMPLEX`` /
@@ -157,9 +163,18 @@ unmodified.
   (``VOTING`` / ``ROLE`` / ``DEBATE`` / ``COMPETITION``), an optional
   ``merging_strategy`` (seven values per paper Table 2: ``MAJORITY`` /
   ``ABSOLUTE_MAJORITY`` / ``MINORITY`` / ``LEADER_DRIVEN`` / ``COMPOSED`` /
-  ``FASTEST`` / ``MOST_COMPLETE``), and a ``trust_score``.
+  ``FASTEST`` / ``MOST_COMPLETE``), a ``trust_score``, and an optional
+  ``governance_dsl`` — an opaque governance-policy snippet (a small DSL)
+  carried on merging gateways. BESSER stores and round-trips it; it does not
+  generate it.
 - ``AgenticLane(Lane)`` — a Lane with a ``role`` (``WORKER`` / ``MANAGER``)
-  and a ``trust_score`` (paper § 4.1, Fig 3a).
+  and a ``trust_score`` (paper § 4.1, Fig 3a). It also keeps an
+  ``agent_diagram_ref`` as a **legacy carrier** for backward compatibility;
+  new task → agent links belong on ``AgenticTask``.
+- ``AgenticMessageFlow(MessageFlow)`` — a cross-pool message flow carrying a
+  ``collaboration_mode`` and a ``merging_strategy`` (always set — a message
+  flow has no diverging / merging axis) plus a ``trust_score``, for agents
+  collaborating across pools.
 
 Two tri-attribute invariants on ``AgenticGateway`` are auto-maintained by
 the setters so the common ergonomic path is single-statement:
@@ -228,7 +243,10 @@ WME ``isAgentic`` flag to construct the right subclass; export emits the
 WME shape. Trust scores are clamped on import (``max(0, min(100, value))``)
 to bridge WME's tolerant data into the metamodel's strict ``[0, 100]``;
 the metamodel itself raises ``ValueError`` on out-of-range values per
-B-UML house style.
+B-UML house style. The cross-diagram and policy fields round-trip too:
+``AgenticTask.agent_diagram_ref``, ``AgenticGateway.governance_dsl``, and
+pool-to-pool ``AgenticMessageFlow``\ s all survive the JSON import / export
+cycle.
 
 The :doc:`../../generators/bpmn` emits the agentic information as
 ``<bpmn:extensionElements>`` / ``<agentic:agentic .../>`` blocks in the

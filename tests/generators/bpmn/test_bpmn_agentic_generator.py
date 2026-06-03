@@ -21,15 +21,18 @@ import pytest
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
+    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     BPMNModel,
+    Collaboration,
     CollaborationMode,
     EndEvent,
     GatewayRole,
     GatewayType,
     Lane,
     MergingStrategy,
+    Participant,
     Process,
     ReflectionMode,
     SequenceFlow,
@@ -191,9 +194,13 @@ class TestAgenticTaskEmission:
         inner = _agentic_inner(root)[0]
         assert inner.attrib.get("reflectionMode") == "cross"
         assert inner.attrib.get("trustScore") == "85"
-        # Tasks emit neither gatewayRole/collaborationMode/mergingStrategy nor role.
-        for forbidden in ("gatewayRole", "collaborationMode",
-                          "mergingStrategy", "role"):
+        # OQ-5: a task now also emits collaborationMode (default VOTING here),
+        # mirroring WME's emitAgenticExtension.
+        assert inner.attrib.get("collaborationMode") == "voting"
+        # No agentDiagramRef when the task is not linked.
+        assert "agentDiagramRef" not in inner.attrib
+        # Gateway-only / lane-only attrs absent.
+        for forbidden in ("gatewayRole", "mergingStrategy", "role"):
             assert forbidden not in inner.attrib
 
 
@@ -379,3 +386,70 @@ class TestDeterminism:
         BPMNGenerator(model, output_dir=str(tmp_path),
                       file_name="second.bpmn").generate()
         assert out1.read_bytes() == out2.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# G-13 -- OQ-5 generator catch-up: task agentDiagramRef, gateway governance,
+#         AgenticMessageFlow emission
+# ---------------------------------------------------------------------------
+
+_GOV_DSL = "Scopes:\n    Tasks:\n        Merge\nMajorityPolicy P {\n    ratio : 0.5\n}"
+
+
+def _agentic_message_flow_model() -> BPMNModel:
+    """Two pools with a pool-to-pool AgenticMessageFlow between them."""
+    t1, t2 = Task(name="T1"), Task(name="T2")
+    p1 = Process(name="proc1", flow_nodes={t1})
+    p2 = Process(name="proc2", flow_nodes={t2})
+    part1 = Participant(name="P1", process=p1)
+    part2 = Participant(name="P2", process=p2)
+    mf = AgenticMessageFlow(
+        source=part1, target=part2,
+        collaboration_mode=CollaborationMode.ROLE,
+        merging_strategy=MergingStrategy.LEADER_DRIVEN, trust_score=40,
+    )
+    coll = Collaboration(name="C", participants={part1, part2}, message_flows={mf})
+    return BPMNModel(name="MFModel", processes={p1, p2}, collaboration=coll)
+
+
+class TestOQ5Emission:
+    def test_task_emits_agent_diagram_ref(self, tmp_path):  # G-13a
+        t = AgenticTask(name="Review", task_type=TaskType.USER,
+                        reflection_mode=ReflectionMode.CROSS, trust_score=80,
+                        agent_diagram_ref="agent-uuid-123")
+        model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={t})})
+        inner = _agentic_inner(_parse(_generate(model, tmp_path)))[0]
+        assert inner.attrib.get("agentDiagramRef") == "agent-uuid-123"
+
+    def test_gateway_emits_governance_child(self, tmp_path):  # G-13b
+        g = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
+                           gateway_role=GatewayRole.MERGING,
+                           collaboration_mode=CollaborationMode.ROLE,
+                           merging_strategy=MergingStrategy.LEADER_DRIVEN,
+                           governance_dsl=_GOV_DSL)
+        model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={g})})
+        root = _parse(_generate(model, tmp_path))
+        gov = _findall(root, "agentic:governance")
+        assert len(gov) == 1
+        assert gov[0].text == _GOV_DSL  # verbatim (ET.indent leaves leaf text alone)
+
+    def test_gateway_without_governance_emits_no_child(self, tmp_path):  # G-13c
+        root = _parse(_generate(_agentic_gateway_merging_model(), tmp_path))
+        assert _findall(root, "agentic:governance") == []
+
+    def test_message_flow_emits_agentic_extension(self, tmp_path):  # G-13d
+        root = _parse(_generate(_agentic_message_flow_model(), tmp_path))
+        inner = _agentic_inner(root)
+        assert len(inner) == 1
+        attrs = inner[0].attrib
+        assert attrs.get("collaborationMode") == "role"
+        assert attrs.get("mergingStrategy") == "leader-driven"
+        assert attrs.get("trustScore") == "40"
+        # A message flow has no gatewayRole / role / reflectionMode.
+        for forbidden in ("gatewayRole", "role", "reflectionMode", "agentDiagramRef"):
+            assert forbidden not in attrs
+
+    def test_message_flow_extension_is_first_child(self, tmp_path):  # G-13e
+        root = _parse(_generate(_agentic_message_flow_model(), tmp_path))
+        [mf_el] = _findall(root, "bpmn:messageFlow")
+        assert list(mf_el)[0].tag == f"{{{_NS['bpmn']}}}extensionElements"

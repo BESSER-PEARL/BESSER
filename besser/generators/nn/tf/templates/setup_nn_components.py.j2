@@ -172,13 +172,13 @@ from datetime import datetime
                 {%- elif module_details[-1].__class__.__name__ != "LSTMLayer" and module_details[-1].bidirectional %}
         _, forward_h_n, backward_h_n = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[-1].hx_source %}{% if modules_details[module_details[-1].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ modules_details[module_details[-1].hx_source + '_layer'][1] }}, {{ modules_details[module_details[-1].hx_source + '_layer'][1] }}_cell]{% else %}, initial_state=[{{ modules_details[module_details[-1].hx_source + '_layer'][1] }}]{% endif %}{% endif %})
                 {%- else %}
-        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[-1].hx_source %}{% if modules_details[module_details[-1].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ modules_details[module_details[-1].hx_source + '_layer'][1] }}, {{ modules_details[module_details[-1].hx_source + '_layer'][1] }}_cell]{% else %}, initial_state=[{{ modules_details[module_details[-1].hx_source + '_layer'][1] }}]{% endif %}{% endif %})
+        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
                 {%- endif -%}
                 {%- if module_details[-1].bidirectional %}
         {{ module_details[1] }} = tf.concat([forward_h_n, backward_h_n], axis=-1)
                 {%- endif -%}
             {%- else %}
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[-1].hx_source %}{% if modules_details[module_details[-1].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ modules_details[module_details[-1].hx_source + '_layer'][1] }}, {{ modules_details[module_details[-1].hx_source + '_layer'][1] }}_cell]{% else %}, initial_state=[{{ modules_details[module_details[-1].hx_source + '_layer'][1] }}]{% endif %}{% endif %})
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
             {%- endif -%}
         {%- else %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})

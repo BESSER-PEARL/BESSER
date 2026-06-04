@@ -336,6 +336,48 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
 
     return layer_synt, actv_func_synt, setup
 
+def _is_shape_dim_operation(module_name: str, modules_details: dict) -> bool:
+    """
+    Check if a module is a shape_dim operation (side operation that extracts
+    shape dimensions but doesn't produce tensors for the main flow).
+
+    Args:
+        module_name: Name of the module to check
+        modules_details: Dictionary of module details
+
+    Returns:
+        True if the module is a shape_dim operation
+    """
+    if not module_name.endswith("_op"):
+        return False
+
+    # Get the tensorop syntax from modules_details
+    if module_name in modules_details:
+        syntax = modules_details[module_name][0]
+        # Check if it's a shape extraction operation
+        # TensorFlow: "tf.shape(x)[0]"
+        # PyTorch: "x.size(0)"
+        return "tf.shape(" in syntax or ".size(" in syntax
+    return False
+
+def _find_previous_non_shape_dim_module(modules_details: dict) -> str:
+    """
+    Find the previous module that is not a shape_dim operation.
+
+    Args:
+        modules_details: Dictionary of module details
+
+    Returns:
+        Name of the previous non-shape_dim module, or None if not found
+    """
+    module_keys = list(modules_details.keys())
+    # Start from the end and work backwards
+    for i in range(len(module_keys) - 1, -1, -1):
+        module_name = module_keys[i]
+        if not _is_shape_dim_operation(module_name, modules_details):
+            return module_name
+    return None
+
 def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
                  modules_details: dict, channel_last: bool | None,
                  actv_func_syntax: str | bool = False, is_seq: bool = False,
@@ -369,10 +411,22 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         out_layer, in_layer, out_actv, in_actv = initialize_layer_vars(layer)
     else:
         prev_module = list(modules_details.keys())[-1]
-        prev_out_var = get_previous_out_var(modules_details, prev_module)
-        out_layer, in_layer, out_actv, in_actv = get_layer_vars(
-            layer, prev_out_var, modules_details
-        )
+
+        # Skip shape_dim operations to find the actual previous tensor-producing module
+        if _is_shape_dim_operation(prev_module, modules_details):
+            actual_prev = _find_previous_non_shape_dim_module(modules_details)
+            if actual_prev:
+                prev_module = actual_prev
+            else:
+                # No previous non-shape_dim module, treat as first layer
+                out_layer, in_layer, out_actv, in_actv = initialize_layer_vars(layer)
+                prev_module = None
+
+        if prev_module is not None:
+            prev_out_var = get_previous_out_var(modules_details, prev_module)
+            out_layer, in_layer, out_actv, in_actv = get_layer_vars(
+                layer, prev_out_var, modules_details
+            )
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
         setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer,
@@ -433,40 +487,57 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         prev_out_var = "x"
     else:
         prev_module = list(modules_details.keys())[-1]
+
+        # Skip shape_dim operations to find the actual previous tensor-producing module
+        if _is_shape_dim_operation(prev_module, modules_details):
+            actual_prev = _find_previous_non_shape_dim_module(modules_details)
+            if actual_prev:
+                prev_module = actual_prev
+
         prev_out_var = get_previous_out_var(modules_details, prev_module)
 
     # Check if tensorop has name_module_input set (similar to layers)
+    # If not, try to derive it from layers_of_tensors for single-input tensorops
+    module_input = None
     if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
-        if tensorop.name_module_input == 'INPUT':
+        module_input = tensorop.name_module_input
+    elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+        # For single-input tensorops, use the first (and only) input
+        # For multi-input tensorops, check if any input is INPUT
+        if len(tensorop.layers_of_tensors) == 1:
+            module_input = tensorop.layers_of_tensors[0]
+        elif 'INPUT' in tensorop.layers_of_tensors:
+            module_input = 'INPUT'
+
+    if module_input is not None:
+        if module_input == 'INPUT':
             # Use dedicated variable for preserved input
             # Generator will need to add: inp = x at the start
             prev_out_var = 'inp'
         else:
             # Use get_input_var logic for tensorops too
-            lyr_input = tensorop.name_module_input
             modules_names = list(modules_details.keys())
-            if f"{lyr_input}_layer" in modules_names:
-                prev_out_var = modules_details[f"{lyr_input}_layer"][1]
-            elif f"{lyr_input}_nn" in modules_names:
-                prev_out_var = modules_details[f"{lyr_input}_nn"]["in_out_variable"]
-            elif f"{lyr_input}_activ" in modules_names:
-                prev_out_var = modules_details[f"{lyr_input}_activ"][1]
-            elif f"{lyr_input}_op" in modules_names:
-                prev_out_var = modules_details[f"{lyr_input}_op"][1]
+            if f"{module_input}_layer" in modules_names:
+                prev_out_var = modules_details[f"{module_input}_layer"][1]
+            elif f"{module_input}_nn" in modules_names:
+                prev_out_var = modules_details[f"{module_input}_nn"]["in_out_variable"]
+            elif f"{module_input}_activ" in modules_names:
+                prev_out_var = modules_details[f"{module_input}_activ"][1]
+            elif f"{module_input}_op" in modules_names:
+                prev_out_var = modules_details[f"{module_input}_op"][1]
 
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
-        # If reshape has layers_of_tensors set, use it to determine source variable
-        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+        # If reshape has layers_of_tensors set and it's not INPUT, use it to determine source variable
+        # (INPUT case is handled by name_module_input logic above)
+        if (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors and
+            tensorop.layers_of_tensors[0] != 'INPUT'):
             source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
+            modules_names = list(modules_details.keys())
+            if f"{source_layer}_layer" in modules_names:
+                prev_out_var = modules_details[f"{source_layer}_layer"][1]
+            elif f"{source_layer}_op" in modules_names:
+                prev_out_var = modules_details[f"{source_layer}_op"][1]
         # Resolve operation names to their actual variable names
         resolved_dims = []
         for dim in tensorop.reshape_dim:
@@ -515,7 +586,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
             source_layer = tensorop.layers_of_tensors[0]
             if source_layer == 'INPUT':
-                prev_out_var = 'x'
+                prev_out_var = 'inp'
             else:
                 modules_names = list(modules_details.keys())
                 if f"{source_layer}_layer" in modules_names:
@@ -528,7 +599,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
             source_layer = tensorop.layers_of_tensors[0]
             if source_layer == 'INPUT':
-                prev_out_var = 'x'
+                prev_out_var = 'inp'
             else:
                 modules_names = list(modules_details.keys())
                 if f"{source_layer}_layer" in modules_names:

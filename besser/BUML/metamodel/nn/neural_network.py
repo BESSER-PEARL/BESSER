@@ -72,7 +72,8 @@ class TensorOp(NamedElement):
                  pad_amount = None,
                  pad_mode: str = None,
                  pad_value: float = None,
-                 dropout_rate: float = None):
+                 dropout_rate: float = None,
+                 name_module_input: str = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
@@ -93,6 +94,7 @@ class TensorOp(NamedElement):
         self.pad_value: float = pad_value
         self.dropout_rate: float = dropout_rate
         self.tns_type: str = tns_type
+        self.name_module_input: str = name_module_input
 
     @property
     def tns_type(self) -> str:

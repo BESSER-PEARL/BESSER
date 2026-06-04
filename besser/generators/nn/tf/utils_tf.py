@@ -490,6 +490,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "unsqueeze":
         axis = tensorop.reduce_dim
         ts_op_synt = f"tf.expand_dims({prev_out_var}, axis={axis})"
+    elif tns_type == "zeros_like":
+        ts_op_synt = f"tf.zeros_like({prev_out_var})"
     elif tns_type == "normalize":
         # F.normalize(x, p=2, dim=1) -> tf.nn.l2_normalize(x, axis=1)
         # Currently only supports L2 normalization (p=2)
@@ -514,9 +516,25 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")
         ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
     elif tns_type == "shape_dim":
-        # Extract shape dimension (e.g., b = tf.shape(x)[0])
+        # Extract shape dimension (e.g., b = tf.shape(inp)[0])
+        # Get input tensor from layers_of_tensors, not prev_out_var
+        tensors = tensorop.layers_of_tensors
+        if isinstance(tensors[0], str):
+            if tensors[0] == 'INPUT':
+                source_var = 'inp'
+            else:
+                # Check if the module exists in modules_details
+                if f"{tensors[0]}_layer" in modules_details or f"{tensors[0]}_op" in modules_details:
+                    source_tensors = utils.get_layers_output_for_tensorops(tensors, modules_details)
+                    source_var = source_tensors[0]
+                else:
+                    # Module not found, use the tensor name directly (might be a variable)
+                    source_var = tensors[0]
+        else:
+            source_var = tensors[0]
+
         dim_index = tensorop.reduce_dim
-        ts_op_synt = f"tf.shape({prev_out_var})[{dim_index}]"
+        ts_op_synt = f"tf.shape({source_var})[{dim_index}]"
     else:
         ts_op_synt = f"tf.matmul({params})"
     return ts_op_synt

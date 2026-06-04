@@ -357,9 +357,13 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
         # Convert TF padding format to PyTorch format (reverse order, flatten)
         if pad_amount and isinstance(pad_amount, list):
-            # Reverse and flatten: [[0,0],[1,1],[2,2]] -> (2,2,1,1,0,0)
+            # TF format: [[N], [H], [W], [C]] (NHWC) or [[N], [C], [H], [W]] depending on format
+            # PyTorch F.pad doesn't pad batch dimension, and expects (left, right, top, bottom, ...)
+            # Skip first dimension (batch) and reverse the rest
+            # [[0,0],[1,1],[2,2],[3,3]] -> skip [0,0], reverse [1,1],[2,2],[3,3] -> (3,3,2,2,1,1)
             pt_pad = []
-            for pair in reversed(pad_amount):
+            # Skip first element (batch dimension) and reverse the rest
+            for pair in reversed(pad_amount[1:]):
                 if isinstance(pair, list) and len(pair) == 2:
                     pt_pad.extend(pair)
             pad_tuple = tuple(pt_pad)
@@ -397,6 +401,26 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         # General subscripting/slicing operation
         # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")
         ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
+    elif tns_type == "shape_dim":
+        # Extract shape dimension (e.g., b = x.size(0))
+        # Get input tensor from layers_of_tensors, not prev_out_var
+        tensors = tensorop.layers_of_tensors
+        if isinstance(tensors[0], str):
+            if tensors[0] == 'INPUT':
+                source_var = 'x'
+            else:
+                # Check if the module exists in modules_details
+                if f"{tensors[0]}_layer" in modules_details or f"{tensors[0]}_op" in modules_details:
+                    source_tensors = utils.get_layers_output_for_tensorops(tensors, modules_details)
+                    source_var = source_tensors[0]
+                else:
+                    # Module not found, use the tensor name directly (might be a variable)
+                    source_var = tensors[0]
+        else:
+            source_var = tensors[0]
+
+        dim_index = tensorop.reduce_dim
+        ts_op_synt = f"{source_var}.size({dim_index})"
     else:
         ts_op_synt = f"torch.matmul({params})"
     return ts_op_synt

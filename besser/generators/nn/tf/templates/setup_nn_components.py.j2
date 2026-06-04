@@ -123,7 +123,8 @@ from datetime import datetime
     {%- set needs_input_preservation = namespace(flag=False) %}
     {%- for module_name, module_details in modules_details.items() -%}
         {%- if module_name.endswith("_op") and module_details|length > 2 -%}
-            {%- if module_details[2].name_module_input is defined and module_details[2].name_module_input == 'INPUT' %}
+            {%- if (module_details[2].name_module_input is defined and module_details[2].name_module_input == 'INPUT') or
+                   (module_details[2].layers_of_tensors is defined and module_details[2].layers_of_tensors is not none and 'INPUT' in module_details[2].layers_of_tensors) %}
                 {%- set needs_input_preservation.flag = True %}
             {%- endif %}
         {%- elif (module_name.endswith("_layer") or module_name.endswith("_activ")) and module_details|length > 3 -%}

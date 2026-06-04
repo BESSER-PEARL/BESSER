@@ -31,6 +31,7 @@ from datetime import datetime {%- set ti.torch_imported = True %}{% endif %}
 {%- endif %}{%- endfor %}
 {% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 from torch import nn
+import torch.nn.functional as F
 {% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms
 {% if model.train_data.image.normalize %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}{%- endif %}
 {% if model.train_data %}{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
@@ -103,7 +104,8 @@ from torch import nn
     {%- set needs_input_preservation = namespace(flag=False) %}
     {%- for module_name, module_details in modules_details.items() -%}
         {%- if module_name.endswith("_op") and module_details|length > 2 -%}
-            {%- if module_details[2].name_module_input is defined and module_details[2].name_module_input == 'INPUT' %}
+            {%- if (module_details[2].name_module_input is defined and module_details[2].name_module_input == 'INPUT') or
+                   (module_details[2].layers_of_tensors is defined and module_details[2].layers_of_tensors is not none and 'INPUT' in module_details[2].layers_of_tensors) %}
                 {%- set needs_input_preservation.flag = True %}
             {%- endif %}
         {%- elif (module_name.endswith("_layer") or module_name.endswith("_activ")) and module_details|length > 3 -%}

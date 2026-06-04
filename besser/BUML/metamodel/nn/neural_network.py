@@ -1575,7 +1575,7 @@ class RNN(Layer):
                  input_size: int = None, bidirectional: bool = False,
                  dropout: float = 0.0, batch_first: bool = True, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
+                 input_reused: bool = False, hx_source: str = None):
         super().__init__(name, actv_func, name_module_input, input_reused)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
@@ -1584,6 +1584,7 @@ class RNN(Layer):
         self.input_size: int = input_size
         self.hidden_size: int = hidden_size
         self.return_type: str = return_type
+        self.hx_source: str = hx_source
 
     @property
     def input_size(self) -> int:
@@ -1677,12 +1678,22 @@ class RNN(Layer):
             raise ValueError ("Invalid return type")
         self.__return_type = return_type
 
+    @property
+    def hx_source(self) -> str:
+        """str: Get the name of the source layer for initial hidden state."""
+        return self.__hx_source
+
+    @hx_source.setter
+    def hx_source(self, hx_source: str):
+        """str: Set the name of the source layer for initial hidden state."""
+        self.__hx_source = hx_source
+
     def __repr__(self):
         return (
             f'RNN({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.bias}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
         )
 
 class SimpleRNNLayer(RNN):
@@ -1743,7 +1754,7 @@ class SimpleRNNLayer(RNN):
             f'SimpleRNNLayer({self.name}, {self.hidden_size}, '
             f'{self.return_type}, {self.input_size}, {self.bidirectional}, '
             f'{self.dropout}, {self.batch_first}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
         )
 
 class LSTMLayer(RNN):
@@ -1803,7 +1814,7 @@ class LSTMLayer(RNN):
             f'LSTMLayer({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
         )
 
 class GRULayer(RNN):
@@ -1863,7 +1874,7 @@ class GRULayer(RNN):
             f'GRULayer({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
         )
 
 class GeneralLayer(Layer):

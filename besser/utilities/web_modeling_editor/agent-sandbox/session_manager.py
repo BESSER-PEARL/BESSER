@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -321,6 +321,44 @@ class SessionManager:
             logger.info("Terminated session %s", normalized_session_id)
         else:
             logger.debug("Removed stale work dir for unknown session %s", normalized_session_id)
+
+    _MAX_FILE_SIZE_BYTES = 512 * 1024  # 512 KB per file
+
+    def get_session_files(self, session_id: str) -> Dict[str, Any]:
+        """Return files and directory paths under the session work dir.
+
+        The ``directories`` list allows the frontend to render empty folders.
+        """
+        try:
+            normalized = self._validate_session_id(session_id)
+        except ValueError:
+            return {"files": [], "directories": []}
+        work_dir = self._session_work_dir(normalized)
+        if not os.path.isdir(work_dir):
+            return {"files": [], "directories": []}
+        _skip_dirs = {"tmp"}
+        files = []
+        directories = set()
+        for root, dirnames, filenames in os.walk(work_dir):
+            dirnames[:] = sorted(d for d in dirnames if d not in _skip_dirs)
+            rel_root = os.path.relpath(root, work_dir).replace("\\", "/")
+            for dirname in dirnames:
+                rel_dir = f"{rel_root}/{dirname}" if rel_root != "." else dirname
+                directories.add(rel_dir)
+            for filename in sorted(filenames):
+                abs_path = os.path.join(root, filename)
+                rel_path = f"{rel_root}/{filename}" if rel_root != "." else filename
+                try:
+                    file_size = os.path.getsize(abs_path)
+                    if file_size > self._MAX_FILE_SIZE_BYTES:
+                        files.append({"path": rel_path, "content": f"[File too large to display: {file_size} bytes]"})
+                        continue
+                    with open(abs_path, encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                    files.append({"path": rel_path, "content": content})
+                except Exception:
+                    pass
+        return {"files": files, "directories": sorted(directories)}
 
     def cleanup_expired(self) -> None:
         with self._lock:

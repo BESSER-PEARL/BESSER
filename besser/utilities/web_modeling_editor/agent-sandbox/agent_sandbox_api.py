@@ -16,7 +16,7 @@ from typing import Dict, List
 
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from session_manager import session_manager
 
@@ -58,6 +58,16 @@ class CreateSessionResponse(BaseModel):
     port: int
 
 
+class SessionFile(BaseModel):
+    path: str
+    content: str
+
+
+class SessionFilesResponse(BaseModel):
+    files: List[SessionFile]
+    directories: List[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # REST endpoints
 # ---------------------------------------------------------------------------
@@ -85,6 +95,23 @@ async def create_session(request: CreateSessionRequest):
     except Exception as exc:
         logger.exception("Failed to create session %s", request.session_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/sessions/{session_id}/files", response_model=SessionFilesResponse)
+async def list_session_files(session_id: str):
+    """Return all readable files in the session work directory."""
+    if not _is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    raw_payload = await asyncio.to_thread(session_manager.get_session_files, session_id)
+    raw_files = raw_payload.get("files", [])
+    raw_directories = raw_payload.get("directories", [])
+    return SessionFilesResponse(
+        files=[SessionFile(**f) for f in raw_files],
+        directories=[str(path).replace("\\", "/") for path in raw_directories if isinstance(path, str)],
+    )
 
 
 @app.delete("/sessions/{session_id}")
@@ -137,7 +164,7 @@ async def session_ws(websocket: WebSocket, session_id: str):
     # Wait up to 15 seconds for the agent's WebSocket server to start
     agent_ws_url = f"ws://localhost:{session.port}/"
     agent_ws = None
-    for attempt in range(30):
+    for attempt in range(150):
         try:
             agent_ws = await websockets.connect(agent_ws_url, open_timeout=2)
             logger.info("[%s] Connected to agent WS on port %d", session_id, session.port)

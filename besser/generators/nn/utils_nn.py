@@ -67,6 +67,15 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
         # Special case: INPUT marker for network input
         if lyr_input == 'INPUT':
             return 'x'
+        # Handle bidirectional concat marker (from torch2tf bidirectional RNN migration)
+        if isinstance(lyr_input, str) and lyr_input.startswith("bidirectional_concat_"):
+            base_module = lyr_input.replace("bidirectional_concat_", "")
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                # Return the hidden variable (index 4) which contains the concatenated hidden states
+                if len(layer_details) > 4:
+                    return layer_details[4]
+                return layer_details[1]  # Fallback
         # Check for RNN hidden/cell state suffixes before checking layer names
         if isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
             base_module = lyr_input[:-8]  # Remove "__hidden"

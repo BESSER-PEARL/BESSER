@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import websockets
 from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
@@ -134,6 +134,16 @@ class ValidateResponse(BaseModel):
     agentCode: str
     eventList: List[str]
     errors: List[str]
+
+
+class SessionFile(BaseModel):
+    path: str
+    content: str
+
+
+class SessionFilesResponse(BaseModel):
+    files: List[SessionFile]
+    directories: List[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +368,30 @@ async def validate_agent(
         eventList=event_list,
         errors=[],
     )
+
+
+@router.get("/sessions/{session_id}/files", response_model=SessionFilesResponse)
+async def get_session_files(
+    session_id: str,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Proxy file listing from the sandbox for the given test session."""
+    _enforce_agent_test_auth(github_session)
+    if not _is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{SANDBOX_URL}/sessions/{session_id}/files")
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Session not found in sandbox")
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Sandbox error: {resp.text}")
+            return resp.json()
+    except HTTPException:
+        raise
+    except httpx.RequestError as exc:
+        logger.exception("Cannot reach agent sandbox at %s", SANDBOX_URL)
+        raise HTTPException(status_code=503, detail="Agent sandbox is unavailable.") from exc
 
 
 @router.delete("/sessions/{session_id}")

@@ -9,11 +9,18 @@ class NeuralNetwork(tf.keras.Model):
         
     def call(self, x):
     {{- nn_components.print_forward(modules_details) }}
+    
 
 {% if model.train_data is not none %}
 # Dataset preparation
 {{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) }}
 
+
+# Define the network, loss function, and optimizer
+{{ model.name }} = NeuralNetwork()
+{% set from_logits = nn_components.from_logits(modules_details) -%}
+criterion = {{ nn_components.get_loss_function(model.configuration, from_logits) }}
+optimizer = {{ nn_components.get_optimizer(model) }}
 
 # Train the neural network
 {{ nn_components.train_model(model, model.train_data.task_type) }}
@@ -23,11 +30,4 @@ class NeuralNetwork(tf.keras.Model):
 
 # Save the neural network
 {{ nn_components.save_model(model) }}
-
-{%- set template = "subclassing" -%}
-
-{{ nn_components.main(model, modules_details, template) }}
-if __name__ == "__main__":
-    main()
-
-{% endif -%}
+{%- endif -%}

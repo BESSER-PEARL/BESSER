@@ -49,10 +49,9 @@ from baf.utils.web_crawl import crawl_website
 {% endif %}
 
 # Configure the logging module
-logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
+logger.setLevel(logging.INFO)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-
 {% if personalization_mapping is defined and personalization_mapping %}
 def build_agent_configuration_prompt(agent_configuration: dict) -> str:
     base_prompt = """
@@ -98,11 +97,11 @@ agent.load_properties('config.yaml')
 # Define the platform your chatbot will use
 {% for platform in agent.platforms %}
 {% if platform.__class__.__name__ == 'WebSocketPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=False)
 {% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 telegram_platform = agent.use_telegram_platform()
 {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+platform = agent.use_websocket_platform(use_ui={% if test_mode %}False{% else %}True{% endif %}{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
 {% endif %}
 {% endfor %}
 
@@ -166,25 +165,25 @@ platform = agent.use_websocket_platform(use_ui=False)
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
-platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+platform = agent.use_websocket_platform(use_ui={% if test_mode %}False{% else %}True{% endif %}{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
 {% elif agent.platforms and agent.platforms|length > 0 %}
     {% set found_platform = false %}
     {% for platform in agent.platforms %}
         {% if not found_platform %}
             {% if platform.__class__.__name__ == 'WebSocketPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=False)
                 {% set found_platform = true %}
             {% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 platform = agent.use_telegram_platform()
                 {% set found_platform = true %}
             {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+platform = agent.use_websocket_platform(use_ui={% if test_mode %}False{% else %}True{% endif %}{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
                 {% set found_platform = true %}
             {% endif %}
         {% endif %}
     {% endfor %}
 {% else %}
-platform = agent.use_websocket_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui={% if test_mode %}False{% else %}True{% endif %})
 {% endif %}
 {% set has_default_llm_state = namespace(value=false) %}
 {% set has_db_reply_state = namespace(value=false) %}
@@ -545,7 +544,11 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
     llm=default_llm,
     {% endif %}
     name={{ state.name | string | tojson }},
-    {% if state.initial and not has_personalization %}initial=True,{% endif %}
+    {% if state.initial and not has_personalization %}
+    initial=True,
+    {% else %}
+    initial=False,
+    {% endif %}
     max_steps={{ state.max_steps }},
     enable_task_planning={{ state.enable_task_planning }},
     stream_steps={{ state.stream_steps }}{% if state.system_prompt %},

@@ -1,0 +1,6 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic>=2.6.3
+websockets==11.0.3
+PyYAML==6.0.2
+besser-agentic-framework[extras,llms]==4.4.1

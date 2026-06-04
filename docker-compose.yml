@@ -14,9 +14,13 @@ services:
     environment:
       - PYTHONPATH=/app
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
+      - AGENT_SANDBOX_URL=http://localhost:8001
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network
+      - besser_internal
+    depends_on:
+      - besser-agent-sandbox
 
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
@@ -31,6 +35,29 @@ services:
       - besser_network
     ports:
       - "8080:8080"
+
+  besser-agent-sandbox:
+    build:
+      context: ./besser/utilities/web_modeling_editor/agent-sandbox
+      dockerfile: Dockerfile
+    container_name: besser-agent-sandbox
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    environment:
+      - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+    restart: unless-stopped
+    networks:
+      - besser_internal
 
   # besser-wme-modeling-agent:
   #   image: artefacts.list.lu/besser/web_modeling_editor/modeling_agent:latest
@@ -56,3 +83,7 @@ networks:
   besser_network:
     name: besser_network
     driver: bridge
+  besser_internal:
+    name: besser_internal
+    driver: bridge
+    # internal: true

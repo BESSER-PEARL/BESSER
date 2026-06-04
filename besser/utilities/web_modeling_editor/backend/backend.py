@@ -68,6 +68,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     validation_router,
     deployment_router,
 )
+from besser.utilities.web_modeling_editor.backend.routers import agent_test_router
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +209,7 @@ app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
+app.include_router(agent_test_router.router)
 
 
 # Exception handlers

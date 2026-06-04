@@ -102,11 +102,13 @@ class BAFGenerator(GeneratorInterface):
         openai_api_key: str = None,
         generation_mode: GenerationMode | str = GenerationMode.FULL,
         config_yaml: Optional[str] = None,
+        test_mode: bool = False,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
+        self.test_mode = test_mode
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -171,6 +173,24 @@ class BAFGenerator(GeneratorInterface):
             if not slug:
                 slug = f"rag_{index}"
             return slug
+
+        def workspace_rel_dir(path: str, name: str, index: int) -> str:
+            """Return a safe workspace directory relative to the output dir.
+
+            Test sessions run generated agents inside an isolated session folder,
+            so workspace folders must be created relative to that folder.
+            """
+            candidate = (path or '').strip().replace('\\', '/')
+            if candidate:
+                # Strip drive letters / leading separators and remove traversal.
+                if ':' in candidate:
+                    candidate = candidate.split(':', 1)[1]
+                candidate = candidate.lstrip('/')
+                parts = [p for p in candidate.split('/') if p not in ('', '.', '..')]
+                if parts:
+                    return os.path.join(*parts)
+            fallback = safe_var_name(name) if name else ''
+            return fallback or f"workspace_{index}"
 
         def resolve_rag_var_name(agent: Agent, rag_db_name: str) -> str:
             """Return the generated RAG variable name for ``rag_db_name``.
@@ -276,12 +296,13 @@ class BAFGenerator(GeneratorInterface):
                     agent=self.model,
                     config=self.config,
                     personalization_mapping=config_for_personalization['personalizationMapping'],
+                    test_mode=self.test_mode,
                 )
                 f.write(generated_code)
         else:
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 # TODO: how to handle llm variable names that are used in bodies?
-                generated_code = agent_template.render(agent=self.model, config=self.config)
+                generated_code = agent_template.render(agent=self.model, config=self.config, test_mode=self.test_mode)
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
         if generate_code_assets:
@@ -325,6 +346,21 @@ class BAFGenerator(GeneratorInterface):
                     with open(skill_file, mode="w", encoding="utf-8") as f:
                         f.write(skill.content)
                 logger.info("Skills directory generated at %s", skills_dir)
+
+            # Test sessions run generated agents in an isolated sandbox folder.
+            # Pre-create declared workspaces there so tooling can rely on them.
+            if self.test_mode:
+                workspaces = getattr(self.model, 'workspaces', []) or []
+                if workspaces:
+                    base_dir = self.build_generation_dir()
+                    for idx, ws in enumerate(workspaces):
+                        ws_dir = workspace_rel_dir(
+                            getattr(ws, 'path', ''),
+                            getattr(ws, 'name', ''),
+                            idx,
+                        )
+                        os.makedirs(os.path.join(base_dir, ws_dir), exist_ok=True)
+                    logger.info("Workspace directories generated for test mode in %s", base_dir)
 
             rag_configs = getattr(self.model, 'rags', []) or []
             if rag_configs:

@@ -67,7 +67,22 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
         # Special case: INPUT marker for network input
         if lyr_input == 'INPUT':
             return 'x'
-        if f"{lyr_input}_layer" in modules_names:
+        # Check for RNN hidden/cell state suffixes before checking layer names
+        if isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
+            base_module = lyr_input[:-8]  # Remove "__hidden"
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                if len(layer_details) > 4:
+                    return layer_details[4]  # Hidden variable
+                return layer_details[1]  # Fallback
+        elif isinstance(lyr_input, str) and lyr_input.endswith("__cell"):
+            base_module = lyr_input[:-6]  # Remove "__cell"
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                if len(layer_details) > 4:
+                    return layer_details[4]  # For now use hidden (cell state needs separate tracking)
+                return layer_details[1]
+        elif f"{lyr_input}_layer" in modules_names:
             # Check if this layer should use RNN hidden state instead of sequence output
             if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
                 # Return hidden state variable (index 4) instead of sequence output (index 1)
@@ -142,6 +157,29 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         # Handle numeric constants directly
         if isinstance(layer_name, (int, float)):
             out_vars.append(str(layer_name))
+        # Handle RNN hidden/cell state suffixes
+        elif isinstance(layer_name, str) and layer_name.endswith("__hidden"):
+            base_layer = layer_name[:-8]  # Remove "__hidden"
+            if base_layer + "_layer" in my_keys:
+                layer_details = modules_details[base_layer + "_layer"]
+                if len(layer_details) > 4:
+                    out_vars.append(layer_details[4])  # Hidden variable
+                else:
+                    out_vars.append(layer_details[1])  # Fallback to output
+            else:
+                out_vars.append("x")  # Fallback
+        elif isinstance(layer_name, str) and layer_name.endswith("__cell"):
+            base_layer = layer_name[:-6]  # Remove "__cell"
+            if base_layer + "_layer" in my_keys:
+                layer_details = modules_details[base_layer + "_layer"]
+                if len(layer_details) > 4:
+                    # For LSTM, cell state would need separate tracking
+                    # For now, use hidden var as placeholder
+                    out_vars.append(layer_details[4])
+                else:
+                    out_vars.append(layer_details[1])
+            else:
+                out_vars.append("x")
         elif layer_name+"_layer" in my_keys:
             layer_details = modules_details[layer_name + "_layer"]
             # Check if this layer has return_type="both" and we have actual_vars info
@@ -515,16 +553,47 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
             # Generator will need to add: inp = x at the start
             prev_out_var = 'inp'
         else:
-            # Use get_input_var logic for tensorops too
-            modules_names = list(modules_details.keys())
-            if f"{module_input}_layer" in modules_names:
-                prev_out_var = modules_details[f"{module_input}_layer"][1]
-            elif f"{module_input}_nn" in modules_names:
-                prev_out_var = modules_details[f"{module_input}_nn"]["in_out_variable"]
-            elif f"{module_input}_activ" in modules_names:
-                prev_out_var = modules_details[f"{module_input}_activ"][1]
-            elif f"{module_input}_op" in modules_names:
-                prev_out_var = modules_details[f"{module_input}_op"][1]
+            # Check for RNN hidden/cell state suffixes
+            if module_input.endswith("__hidden"):
+                # Extract base module name and get hidden variable
+                base_module = module_input[:-8]  # Remove "__hidden"
+                modules_names = list(modules_details.keys())
+                if f"{base_module}_layer" in modules_names:
+                    # RNN layers with return_type="both" have hidden_var at index 4
+                    layer_details = modules_details[f"{base_module}_layer"]
+                    if len(layer_details) > 4:
+                        prev_out_var = layer_details[4]
+                    else:
+                        # Fallback to regular output if hidden var not available
+                        prev_out_var = layer_details[1]
+                else:
+                    prev_out_var = "x"
+            elif module_input.endswith("__cell"):
+                # LSTM cell state - for now use same logic as hidden
+                # (may need separate tracking in the future)
+                base_module = module_input[:-6]  # Remove "__cell"
+                modules_names = list(modules_details.keys())
+                if f"{base_module}_layer" in modules_names:
+                    layer_details = modules_details[f"{base_module}_layer"]
+                    if len(layer_details) > 4:
+                        # For LSTM, cell state would need separate tracking
+                        # For now, use hidden var as placeholder
+                        prev_out_var = layer_details[4]
+                    else:
+                        prev_out_var = layer_details[1]
+                else:
+                    prev_out_var = "x"
+            else:
+                # Use get_input_var logic for tensorops too
+                modules_names = list(modules_details.keys())
+                if f"{module_input}_layer" in modules_names:
+                    prev_out_var = modules_details[f"{module_input}_layer"][1]
+                elif f"{module_input}_nn" in modules_names:
+                    prev_out_var = modules_details[f"{module_input}_nn"]["in_out_variable"]
+                elif f"{module_input}_activ" in modules_names:
+                    prev_out_var = modules_details[f"{module_input}_activ"][1]
+                elif f"{module_input}_op" in modules_names:
+                    prev_out_var = modules_details[f"{module_input}_op"][1]
 
     tns_type = tensorop.tns_type
     if tns_type == "reshape":

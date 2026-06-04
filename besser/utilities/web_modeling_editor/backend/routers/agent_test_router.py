@@ -11,12 +11,14 @@ import json
 import logging
 import os
 import tempfile
+import time
 import uuid
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import websockets
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from besser.generators.agents.baf_generator import GenerationMode
@@ -31,12 +33,79 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import GenerationError
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import get_user_token
 
 logger = logging.getLogger(__name__)
 
 # Agent sandbox base URL — overridable via environment variable.
 # In Docker the sandbox is reachable on the internal network by service name.
-SANDBOX_URL = os.environ.get("AGENT_SANDBOX_URL", "http://localhost:8001")
+SANDBOX_URL = os.environ.get("AGENT_SANDBOX_URL", "http://besser-agent-sandbox:8001")
+
+_AGENT_TEST_REQUIRE_AUTH = os.environ.get("AGENT_TEST_REQUIRE_AUTH", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("AGENT_TEST_RATE_LIMIT_WINDOW_SECONDS", "60"))
+_RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("AGENT_TEST_RATE_LIMIT_MAX_REQUESTS", "12"))
+
+
+class _SlidingWindowRateLimiter:
+    def __init__(self, window_seconds: int, max_requests: int):
+        self._window_seconds = max(window_seconds, 1)
+        self._max_requests = max(max_requests, 1)
+        self._events: Dict[str, List[float]] = {}
+        self._lock = Lock()
+
+    def check(self, key: str) -> None:
+        now = time.monotonic()
+        threshold = now - self._window_seconds
+        with self._lock:
+            events = [ts for ts in self._events.get(key, []) if ts >= threshold]
+            if len(events) >= self._max_requests:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Rate limit exceeded for agent testing endpoints. Please retry shortly.",
+                )
+            events.append(now)
+            self._events[key] = events
+
+
+_rate_limiter = _SlidingWindowRateLimiter(
+    window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
+    max_requests=_RATE_LIMIT_MAX_REQUESTS,
+)
+
+
+def _is_valid_session_id(session_id: str) -> bool:
+    try:
+        uuid.UUID(session_id)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _resolve_actor_key(github_session: Optional[str], request: Optional[Request], websocket: Optional[WebSocket] = None) -> str:
+    if github_session:
+        return f"github:{github_session}"
+    if request and request.client and request.client.host:
+        return f"ip:{request.client.host}"
+    if websocket and websocket.client and websocket.client.host:
+        return f"ip:{websocket.client.host}"
+    return "anonymous"
+
+
+def _enforce_agent_test_auth(github_session: Optional[str]) -> None:
+    if not _AGENT_TEST_REQUIRE_AUTH:
+        return
+    if not github_session:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub authentication required for agent testing. Please sign in first.",
+        )
+    if not get_user_token(github_session):
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub session expired. Please sign in again.",
+        )
 
 router = APIRouter(prefix="/besser_api/test", tags=["agent-testing"])
 
@@ -193,8 +262,14 @@ async def _cleanup_sandbox_session(session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 @router.post("/sessions", response_model=StartTestSessionResponse)
-async def start_test_session(request: StartTestSessionRequest):
+async def start_test_session(
+    request: StartTestSessionRequest,
+    http_request: Request,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
     """Generate agent code and create a sandbox session for live testing."""
+    _enforce_agent_test_auth(github_session)
+    _rate_limiter.check(_resolve_actor_key(github_session, http_request))
     session_id = str(uuid.uuid4())
 
     # Reconstruct diagram_data as process_agent_diagram expects it
@@ -252,8 +327,14 @@ async def start_test_session(request: StartTestSessionRequest):
 
 
 @router.post("/validate", response_model=ValidateResponse)
-async def validate_agent(request: StartTestSessionRequest):
+async def validate_agent(
+    request: StartTestSessionRequest,
+    http_request: Request,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
     """Validate agent code generation without creating a sandbox session."""
+    _enforce_agent_test_auth(github_session)
+    _rate_limiter.check(_resolve_actor_key(github_session, http_request))
     diagram_data = {"title": request.title, "model": request.model}
 
     try:
@@ -280,8 +361,14 @@ async def validate_agent(request: StartTestSessionRequest):
 
 
 @router.delete("/sessions/{session_id}")
-async def stop_test_session(session_id: str):
+async def stop_test_session(
+    session_id: str,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
     """Terminate a sandbox session."""
+    _enforce_agent_test_auth(github_session)
+    if not _is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
     await _cleanup_sandbox_session(session_id)
     return {"ok": True}
 
@@ -299,6 +386,20 @@ async def test_session_ws(websocket: WebSocket, session_id: str):
     Agent subprocess → sandbox → frontend
     Agent stdout test events → frontend (via sandbox)
     """
+    github_session = websocket.query_params.get("github_session")
+    actor_key = _resolve_actor_key(github_session, request=None, websocket=websocket)
+
+    try:
+        _enforce_agent_test_auth(github_session)
+        _rate_limiter.check(actor_key)
+        if not _is_valid_session_id(session_id):
+            raise HTTPException(status_code=400, detail="Invalid session id")
+    except HTTPException as exc:
+        await websocket.accept()
+        await websocket.send_text(json.dumps({"type": "error", "message": exc.detail}))
+        await websocket.close(code=4401 if exc.status_code == 401 else 4400)
+        return
+
     await websocket.accept()
 
     sandbox_ws_url = (

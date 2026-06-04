@@ -14,7 +14,8 @@ services:
     environment:
       - PYTHONPATH=/app
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
-      - AGENT_SANDBOX_URL=http://localhost:8001
+      - AGENT_SANDBOX_URL=http://besser-agent-sandbox:8001
+      - AGENT_TEST_REQUIRE_AUTH=${AGENT_TEST_REQUIRE_AUTH:-true}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network
@@ -50,6 +51,9 @@ services:
       - /tmp:size=512m,mode=1777
     environment:
       - PYTHONUNBUFFERED=1
+    cpus: 2.0
+    mem_limit: 4g
+    pids_limit: 128
     deploy:
       resources:
         limits:

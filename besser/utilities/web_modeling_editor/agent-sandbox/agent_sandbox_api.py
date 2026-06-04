@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from typing import Dict, List
 
 import websockets
@@ -27,6 +28,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _STATE_BODY_LOG_RE = re.compile(r"\[(?P<state>[^]]+)\]\s+Running body\b")
+
+
+def _is_valid_session_id(session_id: str) -> bool:
+    try:
+        uuid.UUID(session_id)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 app = FastAPI(title="BESSER Agent Sandbox API", docs_url=None, redoc_url=None)
 
@@ -56,6 +65,9 @@ class CreateSessionResponse(BaseModel):
 @app.post("/sessions", response_model=CreateSessionResponse)
 async def create_session(request: CreateSessionRequest):
     """Start a new agent sandbox session."""
+    if not _is_valid_session_id(request.session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+
     try:
         session = await asyncio.to_thread(
             session_manager.create_session,
@@ -78,6 +90,8 @@ async def create_session(request: CreateSessionRequest):
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     """Terminate a sandbox session and clean up its resources."""
+    if not _is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
     await asyncio.to_thread(session_manager.terminate_session, session_id)
     return {"ok": True}
 
@@ -108,6 +122,11 @@ async def session_ws(websocket: WebSocket, session_id: str):
                           forwarded as ``{"type":"stdout","line":"..."}`` messages.
     """
     await websocket.accept()
+
+    if not _is_valid_session_id(session_id):
+        await websocket.send_text(json.dumps({"type": "error", "message": "Invalid session id"}))
+        await websocket.close(code=4400)
+        return
 
     session = session_manager.get_session(session_id)
     if not session:
@@ -245,8 +264,18 @@ async def session_ws(websocket: WebSocket, session_id: str):
 
 @app.on_event("startup")
 async def _start_cleanup_task():
+    _ensure_sessions_root_permissions()
     _remove_stale_session_dirs()
     asyncio.create_task(_periodic_cleanup())
+
+
+def _ensure_sessions_root_permissions() -> None:
+    import os as _os
+
+    sessions_root = "/tmp/sessions"
+    _os.makedirs(sessions_root, exist_ok=True)
+    _os.chown(sessions_root, 0, 0)
+    _os.chmod(sessions_root, 0o711)
 
 
 def _remove_stale_session_dirs() -> None:

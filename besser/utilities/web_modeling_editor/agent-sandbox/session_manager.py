@@ -11,7 +11,9 @@ import resource
 import shutil
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Dict, List, Optional
 
 import yaml
@@ -21,6 +23,9 @@ logger = logging.getLogger(__name__)
 MAX_SESSIONS = 5
 SESSION_LIFETIME_SECONDS = 900  # 15 minutes
 PORT_POOL = list(range(7700, 7700 + MAX_SESSIONS))
+SESSION_UID_BASE = int(os.environ.get("AGENT_SANDBOX_SESSION_UID_BASE", "20000"))
+UID_POOL = list(range(SESSION_UID_BASE, SESSION_UID_BASE + MAX_SESSIONS))
+SESSIONS_ROOT = "/tmp/sessions"
 
 # Per-subprocess resource limits.
 # RLIMIT_AS (virtual memory) must be generous: Python + ML libs (openai,
@@ -37,6 +42,7 @@ _RLIMIT_NOFILE = 1024                  # Python import machinery needs ~200+
 class Session:
     session_id: str
     port: int
+    uid: int
     process: subprocess.Popen
     work_dir: str
     started_at: float
@@ -63,6 +69,48 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, Session] = {}
         self._used_ports: set = set()
+        self._used_uids: set = set()
+        self._lock = RLock()
+
+    @staticmethod
+    def _validate_session_id(session_id: str) -> str:
+        try:
+            return str(uuid.UUID(str(session_id)))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid session_id format") from exc
+
+    @staticmethod
+    def _session_work_dir(session_id: str) -> str:
+        safe_session_id = SessionManager._validate_session_id(session_id)
+        root = os.path.abspath(SESSIONS_ROOT)
+        target = os.path.abspath(os.path.join(root, safe_session_id))
+        if os.path.commonpath([root, target]) != root:
+            raise ValueError("Invalid session_id path")
+        return target
+
+    def _acquire_uid(self) -> Optional[int]:
+        for uid in UID_POOL:
+            if uid not in self._used_uids:
+                self._used_uids.add(uid)
+                return uid
+        return None
+
+    def _release_uid(self, uid: int) -> None:
+        self._used_uids.discard(uid)
+
+    @staticmethod
+    def _set_owner_and_permissions(root_path: str, uid: int) -> None:
+        os.chown(root_path, uid, uid)
+        os.chmod(root_path, 0o700)
+        for current_root, dirnames, filenames in os.walk(root_path):
+            for dirname in dirnames:
+                target = os.path.join(current_root, dirname)
+                os.chown(target, uid, uid)
+                os.chmod(target, 0o700)
+            for filename in filenames:
+                target = os.path.join(current_root, filename)
+                os.chown(target, uid, uid)
+                os.chmod(target, 0o600)
 
     def _acquire_port(self) -> Optional[int]:
         for port in PORT_POOL:
@@ -75,10 +123,12 @@ class SessionManager:
         self._used_ports.discard(port)
 
     def get_session_count(self) -> int:
-        return len(self._sessions)
+        with self._lock:
+            return len(self._sessions)
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        return self._sessions.get(session_id)
+        with self._lock:
+            return self._sessions.get(session_id)
 
     @staticmethod
     def _normalize_session_relative_path(path: str) -> Optional[str]:
@@ -132,15 +182,23 @@ class SessionManager:
         support_files: Optional[Dict[str, str]] = None,
         workspace_paths: Optional[List[str]] = None,
     ) -> Session:
-        if len(self._sessions) >= MAX_SESSIONS:
-            raise RuntimeError(f"Maximum concurrent sessions ({MAX_SESSIONS}) reached")
+        normalized_session_id = self._validate_session_id(session_id)
+        with self._lock:
+            if len(self._sessions) >= MAX_SESSIONS:
+                raise RuntimeError(f"Maximum concurrent sessions ({MAX_SESSIONS}) reached")
 
-        port = self._acquire_port()
-        if port is None:
-            raise RuntimeError("No available ports for agent WebSocket")
+            port = self._acquire_port()
+            if port is None:
+                raise RuntimeError("No available ports for agent WebSocket")
 
-        work_dir = f"/tmp/sessions/{session_id}"
+            uid = self._acquire_uid()
+            if uid is None:
+                self._release_port(port)
+                raise RuntimeError("No available sandbox UID for agent session")
+
+        work_dir = self._session_work_dir(normalized_session_id)
         os.makedirs(work_dir, exist_ok=True)
+        os.chmod(work_dir, 0o700)
 
         # Write agent code
         agent_path = os.path.join(work_dir, "agent.py")
@@ -182,15 +240,38 @@ class SessionManager:
         self._write_support_files(work_dir, support_files or {})
         self._create_workspace_dirs(work_dir, workspace_paths or [])
 
-        # Subprocess environment
-        proc_env = os.environ.copy()
-        proc_env.update(env_vars)
-        proc_env["BESSER_TEST_MODE"] = "1"
-        proc_env["BESSER_WS_PORT"] = str(port)
-        proc_env["PYTHONUNBUFFERED"] = "1"
-        proc_env["NLTK_DATA"] = os.environ.get("NLTK_DATA", "/opt/nltk_data")
+        # Ensure strict ownership and permissions before dropping privileges.
+        self._set_owner_and_permissions(work_dir, uid)
+
+        runtime_tmp = os.path.join(work_dir, "tmp")
+        os.makedirs(runtime_tmp, exist_ok=True)
+        os.chown(runtime_tmp, uid, uid)
+        os.chmod(runtime_tmp, 0o700)
+
+        # Subprocess environment: strict allowlist to avoid leaking container secrets.
+        proc_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONUNBUFFERED": "1",
+            "BESSER_TEST_MODE": "1",
+            "BESSER_WS_PORT": str(port),
+            "NLTK_DATA": os.environ.get("NLTK_DATA", "/opt/nltk_data"),
+            "HOME": work_dir,
+            "TMPDIR": runtime_tmp,
+        }
+        for key in ("OPENAI_API_KEY", "HUGGINGFACEHUB_API_TOKEN", "REPLICATE_API_TOKEN"):
+            value = env_vars.get(key)
+            if value:
+                proc_env[key] = value
 
         def _set_limits():
+            try:
+                os.setgid(uid)
+                os.setuid(uid)
+                os.umask(0o077)
+            except Exception as exc:
+                # Fail fast: running untrusted code without UID isolation is unsafe.
+                raise RuntimeError(f"Cannot switch sandbox subprocess to uid {uid}") from exc
+
             try:
                 resource.setrlimit(resource.RLIMIT_AS, (_RLIMIT_AS, _RLIMIT_AS))
                 resource.setrlimit(resource.RLIMIT_CPU, (_RLIMIT_CPU, _RLIMIT_CPU))
@@ -210,39 +291,47 @@ class SessionManager:
         )
 
         session = Session(
-            session_id=session_id,
+            session_id=normalized_session_id,
             port=port,
+            uid=uid,
             process=process,
             work_dir=work_dir,
             started_at=time.time(),
             event_list=event_list,
         )
-        self._sessions[session_id] = session
-        logger.info("Created session %s on port %d (pid=%d)", session_id, port, process.pid)
+        with self._lock:
+            self._sessions[normalized_session_id] = session
+        logger.info("Created session %s on port %d (pid=%d)", normalized_session_id, port, process.pid)
         return session
 
     def terminate_session(self, session_id: str) -> None:
-        session = self._sessions.pop(session_id, None)
+        normalized_session_id = self._validate_session_id(session_id)
+        with self._lock:
+            session = self._sessions.pop(normalized_session_id, None)
+            if session:
+                self._release_port(session.port)
+                self._release_uid(session.uid)
         if session:
             session.terminate()
-            self._release_port(session.port)
         # Always remove the work directory even when the session is no longer in the
         # registry (e.g. double-delete calls or sandbox restart with stale dirs).
-        work_dir = os.path.join("/tmp/sessions", session_id)
+        work_dir = self._session_work_dir(normalized_session_id)
         shutil.rmtree(work_dir, ignore_errors=True)
         if session:
-            logger.info("Terminated session %s", session_id)
+            logger.info("Terminated session %s", normalized_session_id)
         else:
-            logger.debug("Removed stale work dir for unknown session %s", session_id)
+            logger.debug("Removed stale work dir for unknown session %s", normalized_session_id)
 
     def cleanup_expired(self) -> None:
-        expired = [
-            sid for sid, s in list(self._sessions.items())
-            if s.is_expired() or not s.is_alive()
-        ]
+        with self._lock:
+            snapshot = list(self._sessions.items())
+        expired = [sid for sid, s in snapshot if s.is_expired() or not s.is_alive()]
         for sid in expired:
             logger.info("Cleaning up expired/dead session %s", sid)
-            self.terminate_session(sid)
+            try:
+                self.terminate_session(sid)
+            except ValueError:
+                logger.warning("Skipping invalid session id during cleanup: %s", sid)
 
 
 session_manager = SessionManager()

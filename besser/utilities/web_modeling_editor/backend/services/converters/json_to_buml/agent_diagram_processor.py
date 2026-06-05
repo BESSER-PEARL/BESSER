@@ -7,11 +7,9 @@ import operator
 from deep_translator import GoogleTranslator
 
 logger = logging.getLogger(__name__)
-import json as json_lib
 from besser.BUML.metamodel.state_machine.state_machine import (
     Body,
     Condition,
-    ConfigProperty,
     CustomCodeAction,
     TransitionBuilder,
 )

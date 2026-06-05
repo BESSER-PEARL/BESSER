@@ -482,7 +482,35 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         axis = tensorop.reduce_dim
         ts_op_synt = f"tf.reduce_max({prev_out_var}, axis={axis})"
     elif tns_type == "squeeze":
-        if tensorop.reduce_dim is not None:
+        # Check if this is squeeze(0) on an RNN hidden state
+        # In PyTorch, RNN hidden states have shape (num_layers, batch, hidden)
+        # In TensorFlow, they have shape (batch, hidden) - no layers dimension
+        # So squeeze(0) on RNN hidden state should be a no-op in TensorFlow
+        is_rnn_hidden_squeeze = False
+        if tensorop.reduce_dim == 0 and hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            source_layer = tensorop.layers_of_tensors[0] if isinstance(tensorop.layers_of_tensors[0], str) else None
+            if source_layer:
+                # Check if source is an RNN layer and prev_out_var is its hidden state
+                # Strip __hidden/__cell suffix (AST parser adds these for RNN state variables)
+                base_layer = source_layer.replace('__hidden', '').replace('__cell', '')
+                layer_key = f"{base_layer}_layer"
+                if layer_key in modules_details:
+                    layer_details = modules_details[layer_key]
+                    # layer_details structure: [syntax, out_var, in_var, layer_obj, hidden_var, ...]
+                    # For RNN layers with return_state, hidden var is at index 4
+                    if len(layer_details) > 4:
+                        layer_obj = layer_details[3] if len(layer_details) > 3 else None
+                        hidden_var = layer_details[4]
+                        # Check if this is an RNN/LSTM/GRU layer and prev_out_var is the hidden state
+                        if (layer_obj and hasattr(layer_obj, '__class__') and
+                            layer_obj.__class__.__name__ in ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer'] and
+                            prev_out_var == hidden_var):
+                            is_rnn_hidden_squeeze = True
+
+        if is_rnn_hidden_squeeze:
+            # No-op: hidden state already has correct shape in TensorFlow
+            ts_op_synt = prev_out_var
+        elif tensorop.reduce_dim is not None:
             axis = tensorop.reduce_dim
             ts_op_synt = f"tf.squeeze({prev_out_var}, axis={axis})"
         else:

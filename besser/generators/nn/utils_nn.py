@@ -194,6 +194,13 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
                     out_vars.append(layer_details[1])
             else:
                 out_vars.append("x")
+        # Handle bidirectional RNN forward/backward suffixes (torch2tf migration)
+        elif isinstance(layer_name, str) and layer_name.endswith("__forward"):
+            # For bidirectional RNNs, forward hidden state is the temporary variable forward_h_n
+            out_vars.append("forward_h_n")
+        elif isinstance(layer_name, str) and layer_name.endswith("__backward"):
+            # For bidirectional RNNs, backward hidden state is the temporary variable backward_h_n
+            out_vars.append("backward_h_n")
         elif layer_name+"_layer" in my_keys:
             layer_details = modules_details[layer_name + "_layer"]
             # Check if this layer has return_type="both" and we have actual_vars info

@@ -164,6 +164,10 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             inline_input_var = parts[2]
             out_vars.append(f"self.{inline_layer_name}({inline_input_var})")
             continue
+        # Handle INPUT marker (network input preserved as 'inp')
+        if layer_name == 'INPUT':
+            out_vars.append('inp')
+            continue
         # Handle numeric constants directly
         if isinstance(layer_name, (int, float)):
             out_vars.append(str(layer_name))

@@ -217,6 +217,16 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         elif layer_name == "INPUT":
             # Special marker for network input
             out_vars.append("x")
+        elif layer_name.startswith("bidirectional_concat_"):
+            # Special marker for bidirectional RNN hidden state concat (from torch2tf)
+            # Extract the actual layer name and get its hidden variable
+            base_layer = layer_name.replace("bidirectional_concat_", "")
+            layer_details = modules_details.get(base_layer + "_layer")
+            if layer_details and len(layer_details) > 4:
+                out_vars.append(layer_details[4])  # Hidden variable at index 4
+            else:
+                # Fallback to looking for the marker itself as an op
+                out_vars.append(modules_details[layer_name + "_op"][1])
         else:
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars

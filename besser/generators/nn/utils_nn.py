@@ -196,11 +196,13 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
                 out_vars.append("x")
         # Handle bidirectional RNN forward/backward suffixes (torch2tf migration)
         elif isinstance(layer_name, str) and layer_name.endswith("__forward"):
-            # For bidirectional RNNs, forward hidden state is the temporary variable forward_h_n
-            out_vars.append("forward_h_n")
+            # Extract base layer name and create unique forward variable
+            base_name = layer_name.rsplit("__forward", 1)[0]
+            out_vars.append(f"{base_name}_forward_h")
         elif isinstance(layer_name, str) and layer_name.endswith("__backward"):
-            # For bidirectional RNNs, backward hidden state is the temporary variable backward_h_n
-            out_vars.append("backward_h_n")
+            # Extract base layer name and create unique backward variable
+            base_name = layer_name.rsplit("__backward", 1)[0]
+            out_vars.append(f"{base_name}_backward_h")
         elif layer_name+"_layer" in my_keys:
             layer_details = modules_details[layer_name + "_layer"]
             # Check if this layer has return_type="both" and we have actual_vars info
@@ -233,12 +235,16 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             # Special marker for bidirectional RNN hidden state concat (from torch2tf)
             # Extract the actual layer name and get its hidden variable
             base_layer = layer_name.replace("bidirectional_concat_", "")
-            layer_details = modules_details.get(base_layer + "_layer")
-            if layer_details and len(layer_details) > 4:
-                out_vars.append(layer_details[4])  # Hidden variable at index 4
-            else:
-                # Fallback to looking for the marker itself as an op
-                out_vars.append(modules_details[layer_name + "_op"][1])
+            layer_key = base_layer + "_layer"
+
+            if layer_key in modules_details:
+                layer_details = modules_details[layer_key]
+                if len(layer_details) > 4 and layer_details[4]:
+                    out_vars.append(layer_details[4])  # Hidden variable at index 4
+                    continue
+
+            # Fallback: if layer not found, return placeholder
+            out_vars.append("x")
         else:
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars
@@ -278,29 +284,41 @@ def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
     if prev_out_var == "x":
         out_var = "x_1"
     else:
-        # Try to extract the number from x_N pattern
-        parts = prev_out_var.split('_')
-        try:
-            # If the last part is a number, increment it
-            num = int(parts[-1])
-            out_var = f"x_{num + 1}"
-        except ValueError:
-            # If prev_out_var doesn't follow x_N pattern (e.g., 'b', 't', 'last')
-            # Find the next available x_N by scanning existing variables
-            if modules_details:
-                max_num = 0
-                for module_details in modules_details.values():
-                    if isinstance(module_details, list) and len(module_details) > 1:
-                        var = module_details[1]  # Output variable
-                        if isinstance(var, str) and var.startswith('x_'):
-                            try:
-                                num = int(var.split('_')[1])
-                                max_num = max(max_num, num)
-                            except (ValueError, IndexError):
-                                pass
-                out_var = f"x_{max_num + 1}"
-            else:
-                # Fallback if modules_details not provided
+        # Find the next available x_N by scanning existing variables
+        if modules_details:
+            used_nums = set()
+            for module_details in modules_details.values():
+                if isinstance(module_details, list) and len(module_details) > 1:
+                    var = module_details[1]  # Output variable
+                    if isinstance(var, str) and var.startswith('x_'):
+                        try:
+                            num = int(var.split('_')[1])
+                            used_nums.add(num)
+                        except (ValueError, IndexError):
+                            pass
+            # Also check input variables (module_details[2]) for nested/reused vars
+            for module_details in modules_details.values():
+                if isinstance(module_details, list) and len(module_details) > 2:
+                    var = module_details[2]  # Input variable
+                    if isinstance(var, str) and var.startswith('x_'):
+                        try:
+                            num = int(var.split('_')[1])
+                            used_nums.add(num)
+                        except (ValueError, IndexError):
+                            pass
+
+            # Find the first available number starting from 1
+            num = 1
+            while num in used_nums:
+                num += 1
+            out_var = f"x_{num}"
+        else:
+            # Fallback: try to extract number from prev_out_var
+            parts = prev_out_var.split('_')
+            try:
+                num = int(parts[-1])
+                out_var = f"x_{num + 1}"
+            except ValueError:
                 out_var = "x_1"
     return out_var
 
@@ -614,6 +632,19 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                         prev_out_var = layer_details[1]
                 else:
                     prev_out_var = "x"
+            elif module_input.startswith("bidirectional_concat_"):
+                # Handle bidirectional RNN concat markers from torch2tf
+                base_layer = module_input.replace("bidirectional_concat_", "")
+                layer_key = base_layer + "_layer"
+                modules_names = list(modules_details.keys())
+                if layer_key in modules_names:
+                    layer_details = modules_details[layer_key]
+                    if len(layer_details) > 4 and layer_details[4]:
+                        prev_out_var = layer_details[4]  # Hidden state concat variable
+                    else:
+                        prev_out_var = layer_details[1]  # Fallback to output
+                else:
+                    prev_out_var = "x"  # Last resort fallback
             else:
                 # Use get_input_var logic for tensorops too
                 modules_names = list(modules_details.keys())

@@ -817,7 +817,8 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         params = None
     else:
         tensors = tensorop.layers_of_tensors
-        if isinstance(tensors[0], str):
+        # Check if ANY element is a string (layer name) that needs lookup
+        if any(isinstance(t, str) for t in tensors):
             # Check if we need to use actual_vars for output vs hidden selection
             actual_vars = getattr(tensorop, 'actual_vars', None)
             tensors = get_layers_output_for_tensorops(tensors,

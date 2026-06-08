@@ -270,6 +270,9 @@ class SetupLayerSyntax:
                 else:
                     return f"{self.layer.actv_func}"
             else:
+                # Set default activation for RNN layers (PyTorch RNN defaults to tanh)
+                if self.layer.__class__.__name__ == 'SimpleRNNLayer':
+                    return "'tanh'"
                 return None
 
     def setup_conv(self, lyr_name: str, cls_name: str):
@@ -575,7 +578,33 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "subscript":
         # General subscripting/slicing operation
         # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")
-        ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
+        # Need to convert axes for Conv layers (PyTorch channels-first → TF channels-last)
+        subscript_pattern = tensorop.subscript_indices
+
+        # Check if source is a Conv layer that needs axis remapping
+        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            source_layer = tensorop.layers_of_tensors[0] if isinstance(tensorop.layers_of_tensors[0], str) else None
+            if source_layer and source_layer + "_layer" in modules_details:
+                layer_obj = modules_details[source_layer + "_layer"][3] if len(modules_details[source_layer + "_layer"]) > 3 else None
+                if layer_obj and hasattr(layer_obj, '__class__'):
+                    layer_class = layer_obj.__class__.__name__
+                    # Conv1D: PyTorch [B,C,L] → TF [B,L,C], remap dims 1↔2
+                    # Conv2D: PyTorch [B,C,H,W] → TF [B,H,W,C], remap dims 1→3, 2→1, 3→2
+                    if layer_class == 'Conv1D' and subscript_pattern.count(',') == 2:
+                        # 3D subscript for Conv1D: swap dims 1 and 2
+                        # Parse pattern like "[:, :, -1]" and swap positions
+                        parts = subscript_pattern.strip('[]').split(',')
+                        if len(parts) == 3:
+                            # Swap parts[1] and parts[2]
+                            subscript_pattern = f"[{parts[0]},{parts[2]},{parts[1]}]"
+                    elif layer_class == 'Conv2D' and subscript_pattern.count(',') == 3:
+                        # 4D subscript for Conv2D: [B, C, H, W] → [B, H, W, C]
+                        # Remap: [:, c, h, w] → [:, h, w, c]
+                        parts = subscript_pattern.strip('[]').split(',')
+                        if len(parts) == 4:
+                            subscript_pattern = f"[{parts[0]},{parts[2]},{parts[3]},{parts[1]}]"
+
+        ts_op_synt = f"{prev_out_var}{subscript_pattern}"
     elif tns_type == "shape_dim":
         # Extract shape dimension (e.g., b = tf.shape(inp)[0])
         # Get input tensor from layers_of_tensors, not prev_out_var

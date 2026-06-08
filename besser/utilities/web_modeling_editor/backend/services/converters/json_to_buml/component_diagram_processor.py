@@ -157,6 +157,12 @@ def _build_component_node(elem_id: str, elem: dict) -> Optional[ComponentElement
         else:
             obj = Component(name=name)
         apply_component_stereotype_tokens(obj, stereotype)
+        # Cross-diagram refs (04-...): realizes -> Class WME ids (all Component
+        # subtypes); processModelRefs -> BPMN diagram UUIDs (agentic only).
+        # WME keys are camelCase; empty/absent -> []. Resolved at project level.
+        obj.realizes = elem.get("realizes") or []
+        if isinstance(obj, AgenticComponent):
+            obj.process_model_refs = elem.get("processModelRefs") or []
         return obj
 
     logger.warning(

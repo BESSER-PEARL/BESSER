@@ -9,6 +9,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel,
 )
 from besser.BUML.metamodel.uml_component import (
+    AgenticComponent,
     Component,
     ComponentModel,
 )
@@ -39,6 +40,15 @@ def _make_deployment_model_with_artifact(
     """Build a DeploymentModel holding one root-level Artifact with manifests."""
     a = Artifact(name=artifact_name, manifests=manifests)
     return DeploymentModel(name="dm", artifacts={a})
+
+
+def _make_class_model_with_id(class_id: str, name: str = "Book") -> DomainModel:
+    """Build a DomainModel holding one Class plus the WME-id side-map the class
+    processor stashes (``_wme_class_index``), so realizes resolves by id (04-... D1)."""
+    cls = Class(name=name)
+    dm = DomainModel(name="dm_class", types={cls})
+    dm._wme_class_index = {class_id: cls}
+    return dm
 
 
 # ---------------------------------------------------------------------------
@@ -87,31 +97,50 @@ class TestValidateCrossDiagramReferences:
         assert "uuid-bogus" in msg
 
     def test_valid_component_realizes(self):
-        """Class diagram has Book, Component.realizes=['Book'] → no errors."""
+        """Class diagram has a Class with WME id 'cls-1';
+        Component.realizes=['cls-1'] → no errors (id-keyed, 04-... D4)."""
         c = Component(name="C")
-        c.realizes = ["Book"]
+        c.realizes = ["cls-1"]
         cm = ComponentModel(name="cm", components={c})
-        book = Class(name="Book")
-        dm_class = DomainModel(name="dm_class", types={book})
+        dm_class = _make_class_model_with_id("cls-1")
         result = _validate_cross_diagram_references(
             component_models=[cm], class_models=[dm_class],
         )
         assert result["errors"] == []
 
     def test_dangling_component_realizes(self):
-        """Class diagram has Book, Component.realizes=['Magazine'] → error."""
+        """Class diagram has a Class with id 'cls-1';
+        Component.realizes=['cls-bogus'] → error."""
         c = Component(name="MyComp")
-        c.realizes = ["Magazine"]
+        c.realizes = ["cls-bogus"]
         cm = ComponentModel(name="cm", components={c})
-        book = Class(name="Book")
-        dm_class = DomainModel(name="dm_class", types={book})
+        dm_class = _make_class_model_with_id("cls-1")
         result = _validate_cross_diagram_references(
             component_models=[cm], class_models=[dm_class],
         )
         assert len(result["errors"]) == 1
         msg = result["errors"][0]
         assert "MyComp" in msg
-        assert "Magazine" in msg
+        assert "cls-bogus" in msg
+
+    def test_realizes_resolves_by_id_not_name(self):
+        """Collision-safety (04-... D4): a Class named 'Book' lives in two
+        diagrams under different WME ids. A Component realizing diagram-A's id
+        resolves; the same-named Class in diagram B does NOT satisfy a wrong id."""
+        c_ok = Component(name="Realizer")
+        c_ok.realizes = ["book-A"]
+        c_bad = Component(name="MisRealizer")
+        c_bad.realizes = ["book-B-typo"]
+        cm = ComponentModel(name="cm", components={c_ok, c_bad})
+        dm_a = _make_class_model_with_id("book-A", name="Book")
+        dm_b = _make_class_model_with_id("book-B", name="Book")
+        result = _validate_cross_diagram_references(
+            component_models=[cm], class_models=[dm_a, dm_b],
+        )
+        # 'book-A' resolves; 'book-B-typo' does not (even though a 'Book' exists).
+        assert len(result["errors"]) == 1
+        assert "book-B-typo" in result["errors"][0]
+        assert "MisRealizer" in result["errors"][0]
 
     def test_multiple_component_diagrams_unioned(self):
         """IDs split across two Component diagrams — Artifact.manifests
@@ -125,6 +154,78 @@ class TestValidateCrossDiagramReferences:
             component_models=[cm1, cm2], deployment_models=[dm],
         )
         assert result["errors"] == []
+
+    # -- process_model_refs (item 2): agentic Component -> BPMN diagram --------
+
+    def test_valid_process_model_refs(self):
+        """AgenticComponent.process_model_refs=[bpmn diagram uuid] resolves to
+        the BPMNModel in the diagram index → no errors."""
+        from besser.BUML.metamodel.bpmn import BPMNModel, Process
+
+        comp = AgenticComponent(name="Agent1")
+        comp.process_model_refs = ["bpmn-diag-1"]
+        cm = ComponentModel(name="cm", components={comp})
+        bpmn = BPMNModel(name="b", processes={Process(name="P")})
+        result = _validate_cross_diagram_references(
+            component_models=[cm], diagram_index={"bpmn-diag-1": bpmn},
+        )
+        assert result["errors"] == []
+
+    def test_dangling_process_model_refs(self):
+        """A processModelRefs id absent from the index → error."""
+        from besser.BUML.metamodel.bpmn import BPMNModel, Process
+
+        comp = AgenticComponent(name="LonelyAgent")
+        comp.process_model_refs = ["missing-diag"]
+        cm = ComponentModel(name="cm", components={comp})
+        bpmn = BPMNModel(name="b", processes={Process(name="P")})
+        result = _validate_cross_diagram_references(
+            component_models=[cm], diagram_index={"bpmn-diag-1": bpmn},
+        )
+        assert len(result["errors"]) == 1
+        msg = result["errors"][0]
+        assert "LonelyAgent" in msg
+        assert "missing-diag" in msg
+
+    def test_process_model_refs_no_index_noop(self):
+        """No diagram index (no BPMN/Agent peers) → silently skipped (D5)."""
+        comp = AgenticComponent(name="Agent1")
+        comp.process_model_refs = ["whatever"]
+        cm = ComponentModel(name="cm", components={comp})
+        result = _validate_cross_diagram_references(component_models=[cm])
+        assert result["errors"] == []
+
+    # -- agent_diagram_ref (item 4): agentic task -> Agent --------------------
+
+    def test_valid_agent_diagram_ref(self):
+        """An agentic task's agent_diagram_ref resolves to the Agent in the
+        diagram index → no errors."""
+        from besser.BUML.metamodel.bpmn import AgenticTask, BPMNModel, Process
+        from besser.BUML.metamodel.state_machine.agent import Agent
+
+        task = AgenticTask(name="DoThing", agent_diagram_ref="agent-diag-1")
+        bpmn = BPMNModel(name="b", processes={Process(name="P", flow_nodes={task})})
+        agent = Agent(name="MyAgent")
+        result = _validate_cross_diagram_references(
+            bpmn_models=[bpmn], diagram_index={"agent-diag-1": agent},
+        )
+        assert result["errors"] == []
+
+    def test_dangling_agent_diagram_ref(self):
+        """An agent_diagram_ref id absent from the index → error."""
+        from besser.BUML.metamodel.bpmn import AgenticTask, BPMNModel, Process
+        from besser.BUML.metamodel.state_machine.agent import Agent
+
+        task = AgenticTask(name="DoThing", agent_diagram_ref="missing-agent")
+        bpmn = BPMNModel(name="b", processes={Process(name="P", flow_nodes={task})})
+        agent = Agent(name="MyAgent")
+        result = _validate_cross_diagram_references(
+            bpmn_models=[bpmn], diagram_index={"agent-diag-1": agent},
+        )
+        assert len(result["errors"]) == 1
+        msg = result["errors"][0]
+        assert "DoThing" in msg
+        assert "missing-agent" in msg
 
 
 # ---------------------------------------------------------------------------

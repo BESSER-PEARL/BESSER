@@ -18,9 +18,14 @@ from . import (
     process_deployment_diagram,
 )
 from besser.BUML.metamodel.project import Project
-from besser.BUML.metamodel.structural.structural import Class, DomainModel, Metadata
+from besser.BUML.metamodel.structural.structural import DomainModel, Metadata
 from besser.BUML.metamodel.uml_component import ComponentModel
 from besser.BUML.metamodel.uml_deployment import DeploymentModel
+
+try:
+    from besser.BUML.metamodel.bpmn import BPMNModel
+except ImportError:  # BPMN metamodel optional in some envs
+    BPMNModel = None
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -34,6 +39,7 @@ def _validate_cross_diagram_references(
     deployment_models: Optional[list] = None,
     class_models: Optional[list] = None,
     bpmn_models: Optional[list] = None,
+    diagram_index: Optional[dict] = None,
 ) -> dict:
     """Validate cross-diagram references at the project level.
 
@@ -49,9 +55,13 @@ def _validate_cross_diagram_references(
             Artifact.manifests).
         deployment_models: Deployment diagrams in this project.
         class_models: Structural class diagrams in this project.
-        bpmn_models: BPMN diagrams in this project (post-BPMN-merge;
-            today the BPMN metamodel is on the parallel SEAA'25 track
-            and the matching mechanism is deferred).
+        bpmn_models: BPMN diagrams in this project. Their agentic tasks'
+            ``agent_diagram_ref`` resolves against ``diagram_index``.
+        diagram_index: ``{WME ProjectDiagram UUID -> built model}`` for the
+            whole project (BPMN + Agent diagrams). Used to resolve the
+            diagram-grained refs ``AgenticComponent.process_model_refs``
+            (-> BPMNModel) and ``AgenticTask.agent_diagram_ref`` (-> Agent).
+            See 04-besser-resolver-batch-guide D2.
 
     Returns:
         ``{"errors": list[str], "warnings": list[str]}``.
@@ -62,6 +72,7 @@ def _validate_cross_diagram_references(
     deployment_models = deployment_models or []
     class_models = class_models or []
     bpmn_models = bpmn_models or []
+    diagram_index = diagram_index or {}
 
     # Artifact.manifests -> Component.id (via Component.layout["id"]).
     if component_models and deployment_models:
@@ -80,37 +91,64 @@ def _validate_cross_diagram_references(
                             f"unknown Component id '{cid}'."
                         )
 
-    # Component.realizes -> Class.name. B-UML structural Class identity
-    # is by name; if Class ever acquires a stable UUID via D10-style
-    # layout, switch this to UUID matching.
+    # Component.realizes -> Class WME id (04-... D1/D4). Resolve against the
+    # WME element-id side-map the class processor stashes on each DomainModel
+    # (structural Class has no `layout`). Id-keyed, so duplicate Class names
+    # in different diagrams never alias.
     if component_models and class_models:
-        class_names = {
-            cls.name
+        class_ids = {
+            wid
             for cm in class_models
-            for cls in cm.types
-            if isinstance(cls, Class)
+            for wid in getattr(cm, "_wme_class_index", {})
         }
         for cm in component_models:
             for component in cm.all_components():
-                for class_name in component.realizes:
-                    if class_name not in class_names:
+                for class_id in component.realizes:
+                    if class_id not in class_ids:
                         errors.append(
                             f"Component '{component.name}' realizes "
-                            f"unknown Class '{class_name}'."
+                            f"unknown Class id '{class_id}'."
                         )
 
-    # Component.process_model_refs -> BPMN Process.id (stub).
-    # Activates once the BPMN baseline merges to master and exposes a
-    # stable Process-ID mechanism (the SEAA'25 BPMN track is where
-    # that ID convention is being established). Until then, silently
-    # no-op — matches the Component-only / Deployment-only / Class-only
-    # cases (no peer present, no check possible).
-    try:
-        from besser.BUML.metamodel.bpmn import BPMNModel  # noqa: F401
-    except ImportError:
-        pass
-    # else: fill in once BPMN's ID mechanism is locked.
-    _ = bpmn_models  # placeholder reference so ruff doesn't flag unused-arg.
+    # AgenticComponent.process_model_refs -> BPMN diagram UUID(s) (04-... item 2).
+    # The ref is a whole-diagram UUID (twin of agent_diagram_ref, not an element
+    # id); resolve it via diagram_index to the BPMNModel built from that diagram
+    # (its .processes are the resolved Process set). Non-agentic components have
+    # no process_model_refs, so getattr defaults to []. Only checked when the
+    # project actually carries diagrams (diagram_index non-empty).
+    if component_models and diagram_index:
+        try:
+            from besser.BUML.metamodel.bpmn import BPMNModel
+        except ImportError:
+            BPMNModel = None
+        if BPMNModel is not None:
+            for cm in component_models:
+                for component in cm.all_components():
+                    for ref in getattr(component, "process_model_refs", []):
+                        if not isinstance(diagram_index.get(ref), BPMNModel):
+                            errors.append(
+                                f"Component '{component.name}' processModelRefs "
+                                f"unknown BPMN diagram id '{ref}'."
+                            )
+
+    # AgenticTask.agent_diagram_ref -> AgentDiagram UUID (04-... item 4).
+    # Walk every BPMN process's flow nodes for agentic tasks carrying the ref
+    # and resolve it via diagram_index to the Agent built from that diagram.
+    if bpmn_models and diagram_index:
+        try:
+            from besser.BUML.metamodel.state_machine.agent import Agent
+        except ImportError:
+            Agent = None
+        if Agent is not None:
+            for bm in bpmn_models:
+                for proc in bm.processes:
+                    for node in proc.flow_nodes:
+                        ref = getattr(node, "agent_diagram_ref", None)
+                        if ref and not isinstance(diagram_index.get(ref), Agent):
+                            errors.append(
+                                f"Agentic task '{node.name}' agentDiagramRef "
+                                f"unknown Agent diagram id '{ref}'."
+                            )
 
     return {"errors": errors, "warnings": warnings}
 
@@ -184,6 +222,11 @@ def json_to_buml_project(project):
 
     model_list = []
 
+    # Diagram-grained reference index (04-... D2): WME ProjectDiagram UUID ->
+    # built model. Populated for BPMN + Agent diagrams as they are processed;
+    # consumed by the cross-diagram resolver for process_model_refs / agent_diagram_ref.
+    diagram_index: dict = {}
+
     # ── ClassDiagram caching ──────────────────────────────────────────
     # Cache processed ClassDiagrams by ID so we never process the same one twice
     # (e.g. when an ObjectDiagram and a GUINoCodeDiagram both reference it).
@@ -234,6 +277,9 @@ def json_to_buml_project(project):
     for agent_diag in diagrams.get("AgentDiagram", []):
         agent_model = process_agent_diagram(agent_diag.model_dump())
         model_list.append(agent_model)
+        # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.
+        if getattr(agent_diag, "id", None):
+            diagram_index[agent_diag.id] = agent_model
 
     # ── Process ALL GUINoCodeDiagrams ─────────────────────────────────
     # Each GUINoCodeDiagram can reference its own ClassDiagram.
@@ -309,6 +355,9 @@ def json_to_buml_project(project):
         try:
             bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
             model_list.append(bpmn_model)
+            # Index by diagram UUID so a Component's processModelRefs resolves.
+            if getattr(bpmn_diag, "id", None):
+                diagram_index[bpmn_diag.id] = bpmn_model
         except Exception as e:
             logger.warning(
                 "BPMNDiagram '%s' could not be processed: %s",
@@ -368,11 +417,19 @@ def json_to_buml_project(project):
     cross_deployment_models = [
         m for m in model_list if isinstance(m, DeploymentModel)
     ]
+    cross_bpmn_models = [
+        m for m in model_list
+        if BPMNModel is not None and isinstance(m, BPMNModel)
+    ]
     project_instance._cross_diagram_errors = _validate_cross_diagram_references(
         component_models=cross_component_models,
         deployment_models=cross_deployment_models,
         class_models=cross_class_models,
-        # bpmn_models filled in once the BPMN baseline merges to master.
+        bpmn_models=cross_bpmn_models,
+        diagram_index=diagram_index,
     )
+    # Expose the diagram index so a future generator / validate-project consumer
+    # can dereference process_model_refs / agent_diagram_ref (04-... OQ-1).
+    project_instance._diagram_index = diagram_index
 
     return project_instance

@@ -41,7 +41,6 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENTIC_EDGE_KIND_TOKENS,
     COMPONENT_DEFAULT_STEREOTYPES,
     DEPLOYMENT_DEFAULT_STEREOTYPES,
-    HUMAN_ACTOR_TOKENS,
     LOCALITY_TOKENS,
     NODE_KIND_TOKENS,
 )
@@ -118,15 +117,17 @@ def parse_agentic_edge_kind(raw: Optional[str]) -> Optional[AgenticEdgeKind]:
 
 def stereotype_has_agentic_tokens(raw: Optional[str]) -> bool:
     """True if the stereotype string carries any token that requires an
-    ``AgenticComponent`` (an agent-category token or a human-actor token).
+    ``AgenticComponent`` (an agent-category token).
 
     The processor uses this to decide whether to build an ``AgenticComponent``
     or a plain ``Component`` (04-... base/agentic split). ``locality`` tokens
     are *not* agentic -- they set ``Component.locality`` and keep the element a
-    plain ``Component``.
+    plain ``Component``. A «human» stereotype is likewise *not* agentic
+    (meeting #1c, 2026-06-08): a human has no implementation and stays a plain
+    ``Component``.
     """
     for token in tokenise(raw):
-        if token in AGENT_CATEGORY_TOKENS or token in HUMAN_ACTOR_TOKENS:
+        if token in AGENT_CATEGORY_TOKENS:
             return True
     return False
 
@@ -136,13 +137,14 @@ def apply_component_stereotype_tokens(component: Component, raw: Optional[str]) 
     Tool / Subsystem).
 
     Sets typed slots per the token tables in 02-... §3.3: ``locality`` on any
-    ``Component``; ``agent_category`` / ``is_human`` only on an
-    ``AgenticComponent`` (04-... base/agentic split -- the processor builds an
-    ``AgenticComponent`` when agentic tokens are present, so in practice the
-    agent tokens always land on one). Unknown tokens -- and agent tokens that
-    somehow reach a non-agentic element -- land in ``component.stereotypes`` as
-    free-form passthrough. Default tokens (``"component"`` / ``"subsystem"``)
-    are consumed silently.
+    ``Component``; ``agent_category`` only on an ``AgenticComponent`` (04-...
+    base/agentic split -- the processor builds an ``AgenticComponent`` when
+    agentic tokens are present, so in practice the agent tokens always land on
+    one). Unknown tokens -- and agent tokens that somehow reach a non-agentic
+    element -- land in ``component.stereotypes`` as free-form passthrough.
+    Default tokens (``"component"`` / ``"subsystem"``) are consumed silently. A
+    «human» token has no typed slot (meeting #1c) and passes through as a
+    free-form stereotype.
 
     No-op if ``raw`` is empty / missing.
     """
@@ -161,12 +163,6 @@ def apply_component_stereotype_tokens(component: Component, raw: Optional[str]) 
             continue
         if token in LOCALITY_TOKENS:
             component.locality = ComponentLocality(token)
-            continue
-        if token in HUMAN_ACTOR_TOKENS:
-            if isinstance(component, AgenticComponent):
-                component.is_human = True
-            else:
-                leftovers.append(token)
             continue
         if token in {"skill", "tool"}:
             # Subtype promotion is handled by the processor at construction
@@ -251,8 +247,8 @@ def format_component_stereotype(component: Component) -> str:
     Emission order:
     1. Agent category (if not NONE).
     2. Locality (if not LOCAL — the default).
-    3. ``"human"`` (if is_human).
-    4. Free-form ``stereotypes`` extras, in the order stored.
+    3. Free-form ``stereotypes`` extras, in the order stored (a hand-typed
+       «human» rides along here -- meeting #1c retired the typed slot).
 
     Returns ``""`` when nothing would be emitted, so the converter can skip
     the field entirely (compact round-trip with omitting-style real exports).
@@ -263,8 +259,6 @@ def format_component_stereotype(component: Component) -> str:
         parts.append(component.agent_category.value)
     if component.locality is not ComponentLocality.LOCAL:
         parts.append(component.locality.value)
-    if isinstance(component, AgenticComponent) and component.is_human:
-        parts.append("human")
     for extra in component.stereotypes:
         if extra and extra not in parts:
             parts.append(extra)

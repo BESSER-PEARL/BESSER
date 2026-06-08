@@ -50,9 +50,9 @@ untouched and remains valid vanilla UML 2.5 on its own.
 
 * ``AgenticComponent`` — a ``Component`` that is an *agent*. Carries an
   ``agent_category`` (``AgentCategory``: ``NONE`` / ``SOLUTION`` /
-  ``SUPERVISION`` / ``CONSENSUS`` / ``COLLABORATION``), an ``is_human`` flag
-  for human-in-the-loop agents, and ``process_model_refs`` — cross-diagram
-  references to the BPMN processes the agent participates in.
+  ``SUPERVISION`` / ``CONSENSUS`` / ``COLLABORATION``) and
+  ``process_model_refs`` — cross-diagram references to the BPMN processes the
+  agent participates in.
 * ``Skill`` / ``Tool`` — agent capabilities (plain ``Component``
   subclasses).
 * ``Permission`` — a named authority (with a ``scope``) carried on an

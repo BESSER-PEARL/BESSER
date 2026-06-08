@@ -162,8 +162,6 @@ def _emit_component(component: Component, var_name: str, dispenser: _NameDispens
             args.append(
                 f"agent_category=AgentCategory.{component.agent_category.name}"
             )
-        if component.is_human:
-            args.append("is_human=True")
     if component.locality.name != "LOCAL":
         args.append(f"locality=Locality.{component.locality.name}")
     if component.stereotypes:

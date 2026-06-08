@@ -58,7 +58,6 @@ def test_base_component_has_no_agentic_fields():
     """04- split: agentic fields live on AgenticComponent, not base Component."""
     c = Component("c")
     assert not hasattr(c, "agent_category")
-    assert not hasattr(c, "is_human")
     assert not hasattr(c, "process_model_refs")
 
 

@@ -4,7 +4,7 @@ Three reusable, well-formed models. ``minimal_component_model`` and
 ``subsystem_model`` are pure-UML ``ComponentModel``s; ``agent_swarm_model`` is
 an ``AgenticComponentModel`` -- intentionally complete enough to round-trip the
 UNP-style worked example from the thesis milestone (agents in agent
-categories, skills, tools, a permission, a human, agentic edges).
+categories, skills, tools, a permission, agentic edges).
 """
 
 import pytest
@@ -36,7 +36,8 @@ def minimal_component_model() -> ComponentModel:
 @pytest.fixture
 def agent_swarm_model() -> AgenticComponentModel:
     """A simplified UNP-style swarm: one Solution agent, one Supervision
-    agent, one human, one skill, one tool, one permission, full wiring."""
+    agent, one delegate agent, one skill, one tool, one permission, full
+    wiring."""
     advisor = AgenticComponent(
         "code_advisor",
         agent_category=AgentCategory.SOLUTION,
@@ -47,8 +48,8 @@ def agent_swarm_model() -> AgenticComponentModel:
         agent_category=AgentCategory.SUPERVISION,
         process_model_refs=["proc_unp"],
     )
-    human = AgenticComponent(
-        "developer", is_human=True, process_model_refs=["proc_unp"]
+    delegate = AgenticComponent(
+        "developer_agent", process_model_refs=["proc_unp"]
     )
     llm = Component(
         "llm_endpoint",
@@ -70,14 +71,14 @@ def agent_swarm_model() -> AgenticComponentModel:
     sup_uses = AgenticEdge(supervisor, tool_git, kind=AgenticEdgeKind.USES,
                            name="supervisor_uses_git")
     delegates = AgenticEdge(
-        supervisor, human, kind=AgenticEdgeKind.DELEGATES,
-        permissions=[permission_approve], name="sup_delegates_human",
+        supervisor, delegate, kind=AgenticEdgeKind.DELEGATES,
+        permissions=[permission_approve], name="sup_delegates_developer",
     )
     llm_dep = ComponentDependency(advisor, llm, name="advisor_uses_llm")
 
     return AgenticComponentModel(
         "agent_swarm_model",
-        components={advisor, supervisor, human, llm, skill_search, tool_git},
+        components={advisor, supervisor, delegate, llm, skill_search, tool_git},
         permissions={permission_approve},
         relationships={
             has_skill, uses_tool, sup_has, sup_uses, delegates, llm_dep,

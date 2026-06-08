@@ -39,11 +39,10 @@ def test_agentic_subtypes_instantiate():
 
 def test_agentic_component_carries_agent_profile():
     a = AgenticComponent(
-        "agent", agent_category=AgentCategory.SOLUTION, is_human=False,
+        "agent", agent_category=AgentCategory.SOLUTION,
         process_model_refs=["proc_a"],
     )
     assert a.agent_category is AgentCategory.SOLUTION
-    assert a.is_human is False
     assert a.process_model_refs == ["proc_a"]
 
 
@@ -61,11 +60,6 @@ def test_agentic_component_inherits_base_fields():
 def test_agent_category_is_type_checked():
     with pytest.raises(TypeError):
         AgenticComponent("c", agent_category="solution")
-
-
-def test_is_human_must_be_bool():
-    with pytest.raises(TypeError):
-        AgenticComponent("c", is_human="yes")
 
 
 def test_process_model_refs_must_be_list_of_str():
@@ -179,12 +173,12 @@ def test_validate_passes_for_well_formed_swarm(agent_swarm_model):
 def test_e10_dangling_permission_reference():
     agent = AgenticComponent("agent", agent_category=AgentCategory.SOLUTION,
                              process_model_refs=["p"])
-    human = AgenticComponent("human", is_human=True, process_model_refs=["p"])
+    delegate = AgenticComponent("delegate", process_model_refs=["p"])
     rogue_perm = Permission("rogue", scope="x")  # NOT in model.permissions
-    edge = AgenticEdge(agent, human, kind=AgenticEdgeKind.DELEGATES,
+    edge = AgenticEdge(agent, delegate, kind=AgenticEdgeKind.DELEGATES,
                        permissions=[rogue_perm], name="d")
     model = AgenticComponentModel(
-        "m", components={agent, human}, relationships={edge},
+        "m", components={agent, delegate}, relationships={edge},
     )
     result = model.validate(raise_exception=False)
     assert any("not in the model" in e for e in result["errors"])

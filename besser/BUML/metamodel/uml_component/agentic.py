@@ -14,8 +14,8 @@ here so the base is citable as pure UML.
 Adds:
 
 * ``AgenticComponent`` -- a ``Component`` that is an agent (carries an
-  ``agent_category`` role, an ``is_human`` marker, and ``process_model_refs``
-  cross-diagram links to the BPMN processes it participates in).
+  ``agent_category`` role and ``process_model_refs`` cross-diagram links to
+  the BPMN processes it participates in).
 * ``Skill`` / ``Tool`` -- agent capabilities (plain ``Component`` subclasses;
   agentic-notation vocabulary).
 * ``Permission`` -- an authority carried on an ``AgenticEdge``.
@@ -134,15 +134,13 @@ class AgenticComponent(Component):
 
     A ``Component`` carrying the agentic profile (decision D3 typed-slot
     carriers). The base ``Component`` is pure UML 2.5; ``AgenticComponent``
-    adds the swarm intent: an agent role, a human-in-the-loop marker, and
-    cross-diagram references to the BPMN processes the agent participates in.
+    adds the swarm intent: an agent role and cross-diagram references to the
+    BPMN processes the agent participates in.
 
     Args:
         name (str): The component label.
         agent_category (AgentCategory): The agent's role. ``NONE`` (default)
             means "agent, role not yet specified".
-        is_human (bool): True for a «actor / human» component (a human-in-the-
-            loop agent). Default False.
         process_model_refs (List[str]): Cross-diagram IDs of BPMN ``Process`` es
             this agent participates in (D3 drill-down). Default ``[]``.
         locality, realizes, stereotypes, layout, metadata, timestamp: Inherited
@@ -150,12 +148,11 @@ class AgenticComponent(Component):
 
     Attributes:
         agent_category (AgentCategory): The agent role.
-        is_human (bool): Whether this is a human «actor / human» agent.
         process_model_refs (List[str]): Cross-diagram BPMN Process IDs.
     """
 
     def __init__(self, name: str = "", agent_category: AgentCategory = None,
-                 is_human: bool = False, process_model_refs: List[str] = None,
+                 process_model_refs: List[str] = None,
                  locality=None, realizes: List[str] = None,
                  stereotypes: List[str] = None, layout: dict = None,
                  metadata=None, timestamp=None):
@@ -165,7 +162,6 @@ class AgenticComponent(Component):
         self.agent_category = (agent_category
                                if agent_category is not None
                                else AgentCategory.NONE)
-        self.is_human = is_human
         self.process_model_refs = (process_model_refs
                                    if process_model_refs is not None else [])
 
@@ -187,22 +183,6 @@ class AgenticComponent(Component):
                 f"got {type(agent_category).__name__}"
             )
         self.__agent_category = agent_category
-
-    @property
-    def is_human(self) -> bool:
-        """bool: Whether this is a human «actor / human» agent."""
-        return self.__is_human
-
-    @is_human.setter
-    def is_human(self, is_human: bool):
-        """bool: Set whether this is a human «actor / human» agent.
-
-        Raises:
-            TypeError: if not a bool.
-        """
-        if not isinstance(is_human, bool):
-            raise TypeError(f"is_human must be a bool, got {type(is_human).__name__}")
-        self.__is_human = is_human
 
     @property
     def process_model_refs(self) -> List[str]:

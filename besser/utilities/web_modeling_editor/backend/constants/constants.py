@@ -146,9 +146,6 @@ AGENT_CATEGORY_TOKENS = frozenset({
     "solution", "supervision", "consensus", "collaboration",
 })
 
-# Actor / human tokens (Component side).
-HUMAN_ACTOR_TOKENS = frozenset({"actor / human", "actor", "human"})
-
 # AgenticEdgeKind tokens (Component side, on ComponentDependency edges).
 AGENTIC_EDGE_KIND_TOKENS = frozenset({
     "delegates", "supervises", "revises", "collaborates",

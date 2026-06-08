@@ -118,7 +118,7 @@ from datetime import datetime
         {%- endfor %}
 {% endmacro -%}
 
-{%- macro print_forward(modules_details) %}
+{%- macro print_forward(modules_details, model=None, inputs_outputs={}) %}
     {%- set return_variable =  namespace(value="") %}
     {%- set needs_input_preservation = namespace(flag=False) %}
     {%- for module_name, module_details in modules_details.items() -%}
@@ -193,8 +193,26 @@ from datetime import datetime
     {%- set return_variable.value =  module_details[1] %}
     {%- endif -%}
     {%- endfor %}
-        {%- if "," in return_variable.value %}
-        return {{ return_variable.value.split(",")[0].strip() if return_variable.value.split(",")[0].strip()!="_" else return_variable.value.split(",")[1].strip()}}
+        {%- if '__return__' in inputs_outputs %}
+            {%- set return_module_names = inputs_outputs['__return__'][1].split(',') %}
+            {%- set return_vars = [] %}
+            {%- for module_name in return_module_names %}
+                {%- if (module_name + "_layer") in modules_details %}
+                    {%- set _ = return_vars.append(modules_details[module_name + "_layer"][1]) %}
+                {%- elif (module_name + "_op") in modules_details %}
+                    {%- set _ = return_vars.append(modules_details[module_name + "_op"][1]) %}
+                {%- endif %}
+            {%- endfor %}
+        return {{ return_vars|join(', ') }}
+        {%- elif "," in return_variable.value %}
+            {%- set parts = return_variable.value.split(",") %}
+            {%- set non_underscore = [] %}
+            {%- for part in parts %}
+                {%- if part.strip() != "_" %}
+                    {%- set _ = non_underscore.append(part.strip()) %}
+                {%- endif %}
+            {%- endfor %}
+        return {{ non_underscore|join(', ') }}
         {%- else %}
         return {{ return_variable.value }}
         {%- endif %}

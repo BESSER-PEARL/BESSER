@@ -162,8 +162,11 @@ class NNCodeGenerator(GeneratorInterface):
         template = env.get_template(self.template_name)
 
         with open(file_path, mode="w", encoding="utf-8") as f:
+            # Pass inputs_outputs if available (for multiple return values)
+            inputs_outputs = getattr(self.model, 'inputs_outputs', {})
             generated_code = template.render(
                 model=self.model, modules_details=self.modules_details,
-                generation_type=self.generation_type)
+                generation_type=self.generation_type,
+                inputs_outputs=inputs_outputs)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

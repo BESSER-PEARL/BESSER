@@ -270,8 +270,9 @@ class SetupLayerSyntax:
                 else:
                     return f"{self.layer.actv_func}"
             else:
-                # Set default activation for RNN layers (PyTorch RNN defaults to tanh)
-                if self.layer.__class__.__name__ == 'SimpleRNNLayer':
+                # Set default activation for RNN layers
+                # PyTorch RNN defaults to tanh, LSTM/GRU also use tanh for cell state
+                if self.layer.__class__.__name__ in ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer']:
                     return "'tanh'"
                 return None
 

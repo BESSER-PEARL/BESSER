@@ -493,10 +493,46 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         # PyTorch transpose(dim0, dim1) swaps two dims - convert to full perm
         transpose_dims = tensorop.transpose_dim
         if len(transpose_dims) == 2:
-            # Assume 3D tensor (batch, dim1, dim2) - most common case
-            # Create full permutation by swapping the two specified dims
             dim0, dim1 = transpose_dims
-            perm = list(range(3))
+            # Infer tensor dimensionality from source layer
+            num_dims = 3  # default fallback
+            if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+                source_layer = tensorop.layers_of_tensors[0] if isinstance(tensorop.layers_of_tensors[0], str) else None
+                if source_layer:
+                    # Check if source is a layer
+                    if source_layer + '_layer' in modules_details:
+                        layer_obj = modules_details[source_layer + '_layer'][3] if len(modules_details[source_layer + '_layer']) > 3 else None
+                        if layer_obj and hasattr(layer_obj, '__class__'):
+                            layer_class = layer_obj.__class__.__name__
+                            # Determine dimensionality based on layer type
+                            if layer_class in ['Dense', 'LinearLayer']:
+                                # Dense keeps input dimensionality - check if it's 2D or 3D
+                                # For now, check if preceded by flatten/pool → 2D, otherwise 3D
+                                # Simple heuristic: if no RNN before, likely 2D
+                                has_rnn = any('RNN' in str(v[3].__class__.__name__) if len(v) > 3 and hasattr(v[3], '__class__') else False
+                                             for k, v in modules_details.items() if k.endswith('_layer') and isinstance(v, list))
+                                num_dims = 3 if has_rnn else 2
+                            elif 'RNN' in layer_class or 'LSTM' in layer_class or 'GRU' in layer_class:
+                                # RNN with return_sequences → 3D, without → 2D
+                                num_dims = 3 if (hasattr(layer_obj, 'return_sequences') and layer_obj.return_sequences) else 2
+                            elif 'Conv1D' in layer_class or 'Embedding' in layer_class:
+                                num_dims = 3
+                            elif 'Conv2D' in layer_class:
+                                num_dims = 4
+                            elif 'Conv3D' in layer_class:
+                                num_dims = 5
+                    # Check if source is an op
+                    elif source_layer + '_op' in modules_details:
+                        op_syntax = modules_details[source_layer + '_op'][0] if modules_details[source_layer + '_op'] else ""
+                        # Infer from operation
+                        if 'squeeze' in op_syntax.lower():
+                            num_dims = 2  # squeeze typically reduces to 2D
+                        elif 'expand_dims' in op_syntax.lower() or 'unsqueeze' in op_syntax.lower():
+                            num_dims = 3  # adds a dimension
+            # Ensure num_dims is at least max(dim0, dim1) + 1
+            num_dims = max(num_dims, max(dim0, dim1) + 1)
+            # Create full permutation by swapping the two specified dims
+            perm = list(range(num_dims))
             perm[dim0], perm[dim1] = perm[dim1], perm[dim0]
             perm_str = ", ".join(map(str, perm))
             ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{perm_str}])"

@@ -460,17 +460,34 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"tf.reshape({prev_out_var}, [{params}])"
     elif tns_type == "concatenate":
         axis = tensorop.concatenate_dim
-        # Fix axis for concat after 1D pooling: PyTorch channels-first vs TF channels-last
-        # After 1D pooling: PyTorch [B,C,1] concat dim=1→[B,2C,1], TF [B,1,C] concat axis=2→[B,1,2C]
+        # Fix axis for concat with Conv layers: PyTorch channels-first vs TF channels-last
+        # Only apply if sources aren't from squeeze/flatten ops (which produce 2D tensors)
         if axis == 1 and hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-            # Check if any source is a 1D pooling layer
+            # Check if any source is from squeeze/flatten (indicates 2D tensor)
+            is_flattened = False
             for source_layer in tensorop.layers_of_tensors:
-                if isinstance(source_layer, str) and source_layer + "_layer" in modules_details:
-                    layer_obj = modules_details[source_layer + "_layer"][3] if len(modules_details[source_layer + "_layer"]) > 3 else None
-                    if layer_obj and hasattr(layer_obj, '__class__') and 'Pooling' in layer_obj.__class__.__name__:
-                        if hasattr(layer_obj, 'dimension') and layer_obj.dimension == '1D':
-                            axis = 2  # Convert to TF channels-last format
-                            break
+                if isinstance(source_layer, str) and source_layer + "_op" in modules_details:
+                    op_syntax = modules_details[source_layer + "_op"][0] if modules_details[source_layer + "_op"] else ""
+                    if 'squeeze' in op_syntax or 'flatten' in op_syntax:
+                        is_flattened = True
+                        break
+
+            # Only convert axis if sources are NOT flattened
+            if not is_flattened:
+                # Find Conv layer dimension to determine target axis
+                for key, val in modules_details.items():
+                    if isinstance(val, list) and len(val) > 3 and val[3]:
+                        layer_obj = val[3]
+                        if hasattr(layer_obj, '__class__'):
+                            layer_class = layer_obj.__class__.__name__
+                            if layer_class.startswith('Conv'):
+                                if '1D' in layer_class:
+                                    axis = 2
+                                elif '2D' in layer_class:
+                                    axis = 3
+                                elif '3D' in layer_class:
+                                    axis = 4
+                                break
         ts_op_synt = f"tf.concat([{params}], axis={axis})"
     elif tns_type == "transpose":
         # PyTorch transpose(dim0, dim1) swaps two dims - convert to full perm

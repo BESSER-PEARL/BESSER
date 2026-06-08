@@ -456,6 +456,17 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt = f"tf.reshape({prev_out_var}, [{params}])"
     elif tns_type == "concatenate":
         axis = tensorop.concatenate_dim
+        # Fix axis for concat after 1D pooling: PyTorch channels-first vs TF channels-last
+        # After 1D pooling: PyTorch [B,C,1] concat dim=1→[B,2C,1], TF [B,1,C] concat axis=2→[B,1,2C]
+        if axis == 1 and hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            # Check if any source is a 1D pooling layer
+            for source_layer in tensorop.layers_of_tensors:
+                if isinstance(source_layer, str) and source_layer + "_layer" in modules_details:
+                    layer_obj = modules_details[source_layer + "_layer"][3] if len(modules_details[source_layer + "_layer"]) > 3 else None
+                    if layer_obj and hasattr(layer_obj, '__class__') and 'Pooling' in layer_obj.__class__.__name__:
+                        if hasattr(layer_obj, 'dimension') and layer_obj.dimension == '1D':
+                            axis = 2  # Convert to TF channels-last format
+                            break
         ts_op_synt = f"tf.concat([{params}], axis={axis})"
     elif tns_type == "transpose":
         # PyTorch transpose(dim0, dim1) swaps two dims - convert to full perm
@@ -512,6 +523,28 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
             ts_op_synt = prev_out_var
         elif tensorop.reduce_dim is not None:
             axis = tensorop.reduce_dim
+            # Fix axis for squeeze after 1D pooling: PyTorch channels-first vs TF channels-last
+            # After 1D AdaptiveAvgPool/MaxPool: PyTorch [B,C,1], TF [B,1,C]
+            # PyTorch squeeze(-1) removes sequence dim, TF should use axis=1
+            if axis == -1 and hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+                source_layer = tensorop.layers_of_tensors[0] if isinstance(tensorop.layers_of_tensors[0], str) else None
+                if source_layer:
+                    # Check if source is a 1D pooling layer
+                    if source_layer + "_layer" in modules_details:
+                        layer_obj = modules_details[source_layer + "_layer"][3] if len(modules_details[source_layer + "_layer"]) > 3 else None
+                        if layer_obj and hasattr(layer_obj, '__class__') and 'Pooling' in layer_obj.__class__.__name__:
+                            # Check if it's 1D pooling - convert squeeze(-1) axis
+                            # After 1D pooling: PyTorch [B,C,1] squeeze(-1)→[B,C], TF [B,1,C] squeeze(1)→[B,C]
+                            if hasattr(layer_obj, 'dimension') and layer_obj.dimension == '1D':
+                                axis = 1  # Convert to TF channels-last format
+                    # Check if source is a concat op that comes from 1D pooling
+                    elif source_layer + "_op" in modules_details:
+                        op_details = modules_details[source_layer + "_op"]
+                        # Check if this is a concatenate op by looking at the syntax
+                        if len(op_details) > 0 and isinstance(op_details[0], str) and 'tf.concat' in op_details[0]:
+                            # The concat was already converted to use axis=2 for 1D pooling sources
+                            # So squeeze(-1) should become squeeze(1) to remove the sequence dimension
+                            axis = 1
             ts_op_synt = f"tf.squeeze({prev_out_var}, axis={axis})"
         else:
             ts_op_synt = f"tf.squeeze({prev_out_var})"

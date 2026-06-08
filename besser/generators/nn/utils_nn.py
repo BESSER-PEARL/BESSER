@@ -547,10 +547,13 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
     if hasattr(setup, 'add_separate_activation_if_needed'):
         setup.add_separate_activation_if_needed(out_actv, in_actv)
 
+    # Output permute logic:
+    # - TF generator (channel_last=None): skip when permute_out=True (PyTorch code has format conversion)
+    # - PyTorch generator (channel_last=True): add when permute_out=True (need format conversion)
     if setup.permute_out and hasattr(setup, 'add_permute'):
-        if channel_last is None or channel_last:
+        if channel_last:  # Only for PyTorch generator
             dim = setup.dim
-            setup.add_permute(layer.name, dim, out_layer, permute_in = False,
+            setup.add_permute(layer.name, dim, out_layer, permute_in=False,
                               sequential=is_seq, is_subnn=is_subnn)
 
 

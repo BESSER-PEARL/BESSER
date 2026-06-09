@@ -611,6 +611,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
             # Fallback for other cases
             ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{params}])"
     elif tns_type == "permute":
+        # Note: permute_in flag on layers controls whether transpose is added before the layer.
+        # For TensorFlow, permute_in is skipped in utils_nn.py since TF uses channels-last throughout.
         ts_op_synt = f"tf.transpose({prev_out_var}, perm=[{params}])"
     elif tns_type == "multiply":
         ts_op_synt = f"tf.math.multiply({params})"

@@ -521,7 +521,10 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
     )
 
     if setup.permute_in and hasattr(setup, 'add_permute'):
-        if channel_last is None or channel_last:
+        # Only add input permute for PyTorch generation (channel_last=True).
+        # TensorFlow (channel_last=None) uses channels-last throughout, so no format conversion needed between layers.
+        # PyTorch default (channel_last=False) uses channels-first and permute is already in the parsed code.
+        if channel_last:
             dim = setup.dim
             setup.add_permute(
                 layer.name, dim, in_layer, permute_in=True,

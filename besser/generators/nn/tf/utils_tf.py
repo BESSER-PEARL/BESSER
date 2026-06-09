@@ -461,34 +461,105 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     elif tns_type == "concatenate":
         axis = tensorop.concatenate_dim
         # Fix axis for concat with Conv layers: PyTorch channels-first vs TF channels-last
-        # Only apply if sources aren't from squeeze/flatten ops (which produce 2D tensors)
+        # Only apply if sources produce multi-dimensional tensors (3D+), not 2D
         if axis == 1 and hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-            # Check if any source is from squeeze/flatten (indicates 2D tensor)
-            is_flattened = False
+            # First check: if all sources are layers that produce 2D output, keep axis=1
+            all_2d_layers = True
             for source_layer in tensorop.layers_of_tensors:
-                if isinstance(source_layer, str) and source_layer + "_op" in modules_details:
-                    op_syntax = modules_details[source_layer + "_op"][0] if modules_details[source_layer + "_op"] else ""
-                    if 'squeeze' in op_syntax or 'flatten' in op_syntax:
-                        is_flattened = True
-                        break
+                if isinstance(source_layer, str) and source_layer + "_layer" in modules_details:
+                    layer_details = modules_details[source_layer + "_layer"]
+                    if len(layer_details) > 3 and layer_details[3]:
+                        layer_obj = layer_details[3]
+                        class_name = layer_obj.__class__.__name__ if hasattr(layer_obj, '__class__') else ''
+                        # Check if it's a layer that produces 2D output (LinearLayer, FlattenLayer)
+                        if not any(name in class_name for name in ['Linear', 'Flatten']):
+                            all_2d_layers = False
+                            break
+                else:
+                    all_2d_layers = False
+                    break
 
-            # Only convert axis if sources are NOT flattened
-            if not is_flattened:
-                # Find Conv layer dimension to determine target axis
-                for key, val in modules_details.items():
-                    if isinstance(val, list) and len(val) > 3 and val[3]:
-                        layer_obj = val[3]
-                        if hasattr(layer_obj, '__class__'):
-                            layer_class = layer_obj.__class__.__name__
-                            if layer_class.startswith('Conv'):
-                                if '1D' in layer_class:
-                                    axis = 2
-                                elif '2D' in layer_class:
-                                    axis = 3
-                                elif '3D' in layer_class:
-                                    axis = 4
+            if all_2d_layers:
+                # All sources are layers that produce 2D output, keep axis=1
+                ts_op_synt = f"tf.concat([{params}], axis=1)"
+            else:
+                # Check if any source is from operations or layers that produce 2D tensors
+                # (squeeze, flatten, reduce_max, reduce_mean, subscript slicing, Dense with 2D input, etc.)
+                is_2d_tensor = False
+                for source_layer in tensorop.layers_of_tensors:
+                    if isinstance(source_layer, str):
+                        # Check operations
+                        if source_layer + "_op" in modules_details:
+                            op_syntax = modules_details[source_layer + "_op"][0] if modules_details[source_layer + "_op"] else ""
+                            # Check for operations that reduce to 2D
+                            if any(pattern in op_syntax.lower() for pattern in ['squeeze', 'flatten', 'reduce_max', 'reduce_mean', 'amax']):
+                                is_2d_tensor = True
                                 break
-        ts_op_synt = f"tf.concat([{params}], axis={axis})"
+                            # Check for subscript operations that slice to 2D (e.g., [:, -1, :])
+                            if '_subscript_' in source_layer:
+                                is_2d_tensor = True
+                                break
+                        # Check layers (LinearLayer with 2D input produces 2D output, FlattenLayer always produces 2D, RNN hidden states are 2D)
+                        elif source_layer + "_layer" in modules_details:
+                            layer_details = modules_details[source_layer + "_layer"]
+                            if len(layer_details) > 3 and layer_details[3]:
+                                layer_obj = layer_details[3]
+                                # RNN hidden states are always 2D in TensorFlow
+                                if hasattr(layer_obj, '__class__') and layer_obj.__class__.__name__ in ('SimpleRNNLayer', 'LSTMLayer', 'GRULayer'):
+                                    # If using hidden state (not sequence output), it's 2D
+                                    if hasattr(layer_obj, 'return_type') and layer_obj.return_type in ('hidden', 'both'):
+                                        is_2d_tensor = True
+                                        break
+                                # FlattenLayer always produces 2D output
+                                elif hasattr(layer_obj, '__class__') and 'Flatten' in layer_obj.__class__.__name__:
+                                    is_2d_tensor = True
+                                    break
+                                # LinearLayer outputs are same dimensionality as inputs
+                                # If input is 2D (from reduce, squeeze, other Linear, RNN hidden, Flatten, etc.), output is 2D
+                                elif hasattr(layer_obj, '__class__') and 'Linear' in layer_obj.__class__.__name__:
+                                    # Check if LinearLayer's input is 2D by checking name_module_input
+                                    if hasattr(layer_obj, 'name_module_input') and layer_obj.name_module_input:
+                                        input_source = layer_obj.name_module_input
+                                        # Check if input is from an op that produces 2D
+                                        if input_source + "_op" in modules_details:
+                                            input_op_syntax = modules_details[input_source + "_op"][0]
+                                            if any(p in input_op_syntax.lower() for p in ['reduce', 'squeeze', 'flatten', 'amax']):
+                                                is_2d_tensor = True
+                                                break
+                                        # Check if input is from RNN hidden state (ends with __hidden or __cell suffix)
+                                        elif input_source.endswith('__hidden') or input_source.endswith('__cell'):
+                                            is_2d_tensor = True
+                                            break
+                                        # Check if input is from another 2D-producing layer (LinearLayer, FlattenLayer)
+                                        elif input_source + "_layer" in modules_details:
+                                            input_layer_details = modules_details[input_source + "_layer"]
+                                            if len(input_layer_details) > 3 and input_layer_details[3]:
+                                                input_layer_obj = input_layer_details[3]
+                                                input_class_name = input_layer_obj.__class__.__name__ if hasattr(input_layer_obj, '__class__') else ''
+                                                # If Linear or Flatten, output is 2D
+                                                if any(name in input_class_name for name in ['Linear', 'Flatten']):
+                                                    is_2d_tensor = True
+                                                    break
+
+                # Only convert axis if sources are NOT 2D tensors
+                if not is_2d_tensor:
+                    # Find Conv layer dimension to determine target axis
+                    for key, val in modules_details.items():
+                        if isinstance(val, list) and len(val) > 3 and val[3]:
+                            layer_obj = val[3]
+                            if hasattr(layer_obj, '__class__'):
+                                layer_class = layer_obj.__class__.__name__
+                                if layer_class.startswith('Conv'):
+                                    if '1D' in layer_class:
+                                        axis = 2
+                                    elif '2D' in layer_class:
+                                        axis = 3
+                                    elif '3D' in layer_class:
+                                        axis = 4
+                                    break
+                ts_op_synt = f"tf.concat([{params}], axis={axis})"
+        else:
+            ts_op_synt = f"tf.concat([{params}], axis={axis})"
     elif tns_type == "transpose":
         # PyTorch transpose(dim0, dim1) swaps two dims - convert to full perm
         transpose_dims = tensorop.transpose_dim

@@ -533,8 +533,9 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 
     # Only add _layer entry if layer_synt is not None (standalone activations return None)
     if layer_synt is not None:
-        # For RNNs with return_type="both", add hidden variable as 5th element
-        if (hasattr(layer, 'return_type') and layer.return_type == "both"):
+        # For RNNs with return_type="both" or "hidden", add hidden variable as 5th element
+        # Both types need hidden state tracking for encoder-decoder patterns
+        if (hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden")):
             # Generate hidden variable name
             hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
             modules_details[layer.name + "_layer"] = [layer_synt, out_layer,

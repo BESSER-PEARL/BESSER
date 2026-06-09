@@ -155,6 +155,7 @@ _WME_LANE_DEFAULTS = {
     "isAgentic": False,
     "role": "worker",
     "trustScore": 0,
+    "multiplicity": 1,
 }
 _WME_FLOW_AGENTIC_DEFAULTS = {
     # WME's BPMNFlow.serialize() always emits these four fields (defaults
@@ -404,6 +405,9 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             entry["isAgentic"] = True
             entry["role"] = obj.role.value
             entry["trustScore"] = obj.trust_score
+            # WME 3c: swarm size; always emitted (WME serialises it on every
+            # lane, default 1).
+            entry["multiplicity"] = obj.multiplicity
             # WME 08: emit agentDiagramRef only when set (optional field;
             # WME's exporter drops it when undefined). Lane-only — never on
             # tasks / gateways.

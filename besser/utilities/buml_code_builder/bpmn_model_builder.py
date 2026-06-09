@@ -243,10 +243,13 @@ def _emit_lane(lane, process_var: str, dispenser: _NameDispenser,
         ref_kwarg = ""
         if lane.agent_diagram_ref is not None:
             ref_kwarg = f", agent_diagram_ref={_quoted(lane.agent_diagram_ref)}"
+        mult_kwarg = ""
+        if lane.multiplicity > 1:
+            mult_kwarg = f", multiplicity={lane.multiplicity}"
         body.append(
             f"{var} = AgenticLane(name={_quoted(lane.name)}, "
             f"role=AgentRole.{lane.role.name}, "
-            f"trust_score={lane.trust_score}{ref_kwarg})"
+            f"trust_score={lane.trust_score}{mult_kwarg}{ref_kwarg})"
         )
     else:
         needed.add("Lane")

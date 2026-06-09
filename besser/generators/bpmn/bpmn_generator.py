@@ -150,6 +150,10 @@ def _emit_agentic_extension(host_el, obj) -> None:
     attrs: dict = {}
     if isinstance(obj, AgenticLane):
         attrs["role"] = obj.role.value
+        # WME 3c: swarm size. Emit only when > 1 (absence = default 1),
+        # matching WME's 04D2 exporter.
+        if obj.multiplicity > 1:
+            attrs["multiplicity"] = str(obj.multiplicity)
     if isinstance(obj, AgenticTask):
         attrs["reflectionMode"] = obj.reflection_mode.value
         attrs["collaborationMode"] = obj.collaboration_mode.value

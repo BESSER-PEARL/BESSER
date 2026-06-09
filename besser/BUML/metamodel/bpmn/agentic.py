@@ -170,6 +170,28 @@ def _validate_trust_score(value) -> int:
     return value
 
 
+def _validate_multiplicity(value) -> int:
+    """Validate a swarm-size multiplicity: ``int`` ``>= 1``.
+
+    The swarm size of an «AgenticLane» — how many identical copies of the
+    lane's agent participate (WME meeting 2026-06-08 point #3; the count that
+    flows to the Deployment artifact ``[N]``). No upper cap.
+
+    Raises:
+        TypeError: if not an int (bool excluded — it is technically int).
+        ValueError: if < 1.
+
+    Returns the value unchanged on success.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"multiplicity must be an int, got {type(value).__name__}"
+        )
+    if value < 1:
+        raise ValueError(f"multiplicity must be >= 1, got {value}")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # AgenticTask
 # ---------------------------------------------------------------------------
@@ -574,6 +596,9 @@ class AgenticLane(Lane):
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
             lane's agent is defined by (SEAA'25 cross-diagram link, WME 08).
             Default None. Pass-through -- no UUID validation, no resolution.
+        multiplicity (int): Swarm size — how many identical copies of this
+            lane's agent participate (>= 1, default 1). Flows to the Deployment
+            artifact ``[N]``. WME meeting 2026-06-08 point #3.
         flow_nodes (set[FlowNode]): Inherited from Lane.
         layout (dict): Inherited.
         metadata, timestamp: Inherited.
@@ -586,6 +611,7 @@ class AgenticLane(Lane):
 
     def __init__(self, name: str = "", role: "AgentRole" = None,
                  trust_score: int = 0, agent_diagram_ref: str = None,
+                 multiplicity: int = 1,
                  flow_nodes: set = None,
                  layout: dict = None, metadata=None, timestamp=None):
         super().__init__(name=name, flow_nodes=flow_nodes, layout=layout,
@@ -593,6 +619,7 @@ class AgenticLane(Lane):
         self.role = role if role is not None else AgentRole.WORKER
         self.trust_score = trust_score
         self.agent_diagram_ref = agent_diagram_ref
+        self.multiplicity = multiplicity
 
     @property
     def role(self) -> "AgentRole":
@@ -628,6 +655,21 @@ class AgenticLane(Lane):
         self.__trust_score = _validate_trust_score(value)
 
     @property
+    def multiplicity(self) -> int:
+        """int: Get the swarm size (>= 1, default 1)."""
+        return self.__multiplicity
+
+    @multiplicity.setter
+    def multiplicity(self, value: int):
+        """int: Set the swarm size.
+
+        Raises:
+            TypeError: if not an int.
+            ValueError: if < 1.
+        """
+        self.__multiplicity = _validate_multiplicity(value)
+
+    @property
     def agent_diagram_ref(self):
         """str | None: Get the opaque id of the AgentDiagram this lane's agent
         is defined by (SEAA'25 cross-diagram link, WME 08). ``None`` when unset.
@@ -659,6 +701,7 @@ class AgenticLane(Lane):
     def __repr__(self):
         return (f"AgenticLane(name='{self.name}', role={self.role}, "
                 f"trust_score={self.trust_score}, "
+                f"multiplicity={self.multiplicity}, "
                 f"agent_diagram_ref={self.agent_diagram_ref!r})")
 
 

@@ -488,6 +488,38 @@ def test_agentic_lane_repr_includes_ref():
 
 
 # ---------------------------------------------------------------------------
+# AgenticLane.multiplicity — 3c (WME 2026-06-08 point #3 swarm size)
+# ---------------------------------------------------------------------------
+
+def test_agentic_lane_multiplicity_default():
+    """Constructed without the kwarg → multiplicity is 1 (single agent)."""
+    lane = AgenticLane(name="Coder")
+    assert lane.multiplicity == 1
+
+
+def test_agentic_lane_multiplicity_set():
+    lane = AgenticLane(name="Coder", multiplicity=3)
+    assert lane.multiplicity == 3
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_agentic_lane_multiplicity_out_of_range(value):
+    with pytest.raises(ValueError, match=r"multiplicity must be >= 1"):
+        AgenticLane(name="Coder", multiplicity=value)
+
+
+@pytest.mark.parametrize("value", [True, 2.0])
+def test_agentic_lane_multiplicity_type_error(value):
+    with pytest.raises(TypeError, match="multiplicity must be an int"):
+        AgenticLane(name="Coder", multiplicity=value)
+
+
+def test_agentic_lane_repr_includes_multiplicity():
+    lane = AgenticLane(name="Coder", multiplicity=3)
+    assert "multiplicity=3" in repr(lane)
+
+
+# ---------------------------------------------------------------------------
 # AgenticTask.agent_diagram_ref — R-a (WME guide 11 canonical task->agent link)
 # ---------------------------------------------------------------------------
 

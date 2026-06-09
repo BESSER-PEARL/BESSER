@@ -252,6 +252,24 @@ class TestAgenticLaneEmission:
         for forbidden in ("reflectionMode", "gatewayRole",
                           "collaborationMode", "mergingStrategy"):
             assert forbidden not in attrs
+        # 3c: default-1 lane carries no multiplicity attribute.
+        assert "multiplicity" not in attrs
+
+    def test_agentic_lane_emits_multiplicity_when_gt_one(self, tmp_path):  # 3c
+        t = Task(name="Code")
+        lane = AgenticLane(name="Reviewer", role=AgentRole.MANAGER,
+                           trust_score=85, multiplicity=3, flow_nodes={t})
+        p = Process(name="P", flow_nodes={t}, lanes={lane})
+        model = BPMNModel(name="AgLaneSwarm", processes={p})
+        root = _parse(_generate(model, tmp_path))
+        attrs = _agentic_inner(root)[0].attrib
+        assert attrs.get("multiplicity") == "3"
+
+    def test_agentic_lane_omits_multiplicity_when_one(self, tmp_path):  # 3c
+        # _agentic_lane_model() defaults multiplicity to 1.
+        root = _parse(_generate(_agentic_lane_model(), tmp_path))
+        attrs = _agentic_inner(root)[0].attrib
+        assert "multiplicity" not in attrs
 
 
 # ---------------------------------------------------------------------------

@@ -759,6 +759,46 @@ def test_S1_c7_roundtrip_agentic_lane_with_ref():
 
 
 # ===========================================================================
+# 3c — AgenticLane.multiplicity (WME 2026-06-08 point #3 swarm size)
+# ===========================================================================
+
+def test_3c_roundtrip_agentic_lane_multiplicity():
+    """3c: JSON multiplicity=4 → BUML multiplicity=4 → JSON multiplicity=4."""
+    model = process_bpmn_diagram(_envelope(_lane_elements({"multiplicity": 4}), {}))
+    [participant] = model.collaboration.participants
+    [lane] = participant.process.lanes
+    assert lane.multiplicity == 4
+    out = bpmn_object_to_json(model)
+    lane_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNSwimlane")
+    assert lane_entry["multiplicity"] == 4
+
+
+def test_3c_import_agentic_lane_absent_multiplicity_is_one():
+    """3c: no multiplicity key → multiplicity is 1."""
+    model = process_bpmn_diagram(_envelope(_lane_elements({}), {}))
+    [participant] = model.collaboration.participants
+    [lane] = participant.process.lanes
+    assert lane.multiplicity == 1
+
+
+def test_3c_import_agentic_lane_zero_multiplicity_clamps_to_one():
+    """3c: multiplicity=0 clamps to 1 on import (WME-tolerant bridge)."""
+    model = process_bpmn_diagram(_envelope(_lane_elements({"multiplicity": 0}), {}))
+    [participant] = model.collaboration.participants
+    [lane] = participant.process.lanes
+    assert lane.multiplicity == 1
+
+
+def test_3c_export_non_agentic_lane_carries_default_multiplicity():
+    """3c: a base Lane emits multiplicity=1 from _WME_LANE_DEFAULTS."""
+    out = _wrap_lane(Lane(name="Plain"))
+    lane_entry = next(e for e in out["elements"].values()
+                      if e["type"] == "BPMNSwimlane")
+    assert lane_entry["multiplicity"] == 1
+
+
+# ===========================================================================
 # R-a — AgenticTask.agent_diagram_ref (WME guide 11 canonical task->agent link)
 # ===========================================================================
 

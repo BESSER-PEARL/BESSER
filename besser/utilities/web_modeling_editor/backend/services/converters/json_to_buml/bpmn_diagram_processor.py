@@ -129,6 +129,21 @@ def _clamp_trust_score(value) -> int:
     return max(0, min(100, n))
 
 
+def _clamp_multiplicity(value) -> int:
+    """Clamp WME's tolerant multiplicity to BESSER's strict ``>= 1``.
+
+    Mirrors WME's ``clampMultiplicity`` (``Math.max(1, Math.round(n))``,
+    packages/editor/.../common/types.ts). Non-numeric input defaults to ``1``.
+    BESSER's strict ``AgenticLane.multiplicity`` setter would raise on < 1; the
+    converter clamps on import to bridge WME's tolerant data.
+    """
+    try:
+        n = round(float(value))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, n)
+
+
 def _build_node(elem: dict):
     """Construct the metamodel object for one WME ``elements[id]`` entry.
 
@@ -286,8 +301,11 @@ def _build_node(elem: dict):
             # WME 08: optional opaque AgentDiagram id. Empty string / absent → None.
             # No UUID validation (audit OQ-2) — pass through verbatim.
             agent_ref = elem.get("agentDiagramRef") or None
+            # WME 3c: swarm size; absent → 1 (single agent).
+            multiplicity = _clamp_multiplicity(elem.get("multiplicity", 1))
             return AgenticLane(name=name, role=role, trust_score=trust,
-                               agent_diagram_ref=agent_ref)
+                               agent_diagram_ref=agent_ref,
+                               multiplicity=multiplicity)
         return Lane(name=name)
     if elem_type == "BPMNPool":
         # Build the Pool's Process eagerly so pass 2 containment can attach to it.

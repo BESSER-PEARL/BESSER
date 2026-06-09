@@ -100,14 +100,14 @@ class NNCodeGenerator(GeneratorInterface):
         if self.generation_type == "sequential":
             is_seq = True
 
-        # First pass: detect tensor value reuse (branching) by counting how many times
-        # each module's output is used as input to subsequent operations.
-        # When a module output is used by multiple operations, mark those operations
-        # with input_reused=True so they create new variables instead of reassigning.
-        module_usage_count = {}  # Count how many times each module's output is used
+        # First pass: detect tensor value reuse (branching) by counting
+        # how many times each module's output is used as input to
+        # subsequent operations. When a module output is used by multiple
+        # operations, mark those operations with input_reused=True so they
+        # create new variables instead of reassigning.
+        module_usage_count = {}
         referenced_tensorops = set()
 
-        print("\n[DEBUG] === Pass 1: Analyzing module usage ===")
         for module in self.model.modules:
             if module.__class__.__name__ == "TensorOp":
                 if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
@@ -117,28 +117,24 @@ class NNCodeGenerator(GeneratorInterface):
                             if item.startswith("op_"):
                                 referenced_tensorops.add(item)
 
-        print(f"[DEBUG] Module usage counts: {module_usage_count}")
-        print(f"[DEBUG] Referenced tensorops: {referenced_tensorops}")
-
-        # Second pass: mark tensorops that use multi-use inputs with input_reused=True
-        # This ensures operations that use a branching input create new variables
-        print("\n[DEBUG] === Pass 2: Marking input_reused for branching ===")
+        # Second pass: mark tensorops that use multi-use inputs with
+        # input_reused=True. This ensures operations that use a branching
+        # input create new variables
         for module in self.model.modules:
             if module.__class__.__name__ == "TensorOp":
-                print(f"[DEBUG] TensorOp {module.name}: tns_type={module.tns_type}, input_reused={getattr(module, 'input_reused', None)}")
                 if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
-                    print(f"[DEBUG]   layers_of_tensors: {module.layers_of_tensors}")
-                    # Check if this tensorop uses a module whose output is used multiple times
+                    # Check if this tensorop uses a module whose output
+                    # is used multiple times
                     for input_module in module.layers_of_tensors:
-                        if isinstance(input_module, str) and module_usage_count.get(input_module, 0) > 1:
-                            # This tensorop uses a multi-use input - mark it
-                            if not hasattr(module, 'input_reused') or not module.input_reused:
-                                print(f"[DEBUG]   -> Marking {module.name} with input_reused=True (uses {input_module} which is used {module_usage_count[input_module]} times)")
+                        if (isinstance(input_module, str) and
+                                module_usage_count.get(input_module, 0) > 1):
+                            # This tensorop uses a multi-use input
+                            if (not hasattr(module, 'input_reused') or
+                                    not module.input_reused):
                                 module.input_reused = True
                             break
 
         # Third pass: process modules and generate code
-        print("\n[DEBUG] === Pass 3: Processing modules ===")
         for module in self.model.modules:
             module_type = module.__class__.__name__
             if module_type == "NN":

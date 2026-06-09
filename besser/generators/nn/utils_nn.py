@@ -895,6 +895,9 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
             # Binary operations always get unique op_ prefix to avoid conflicts
             elif tensorop.tns_type.startswith("binop_"):
                 out_var = tensorop.name
+            # Tensorops with input_reused should also use their op_N name to avoid x_N conflicts
+            elif hasattr(tensorop, 'input_reused') and tensorop.input_reused:
+                out_var = tensorop.name
             else:
                 out_var = get_tensorop_out_var(tensorop, prev_out_var, modules_details)
 

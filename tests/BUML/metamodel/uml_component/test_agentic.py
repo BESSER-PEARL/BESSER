@@ -288,3 +288,26 @@ def test_extension_names_are_re_exported():
                  "AgenticEdge", "AgenticComponentModel", "AgentCategory",
                  "AgenticEdgeKind", "Component", "ComponentModel", "Locality"):
         assert hasattr(pkg, name), f"{name} not re-exported"
+
+
+# ---------------------------------------------------------------------------
+# LLM / Database / RAG — Tool subclasses (04a-component-llm-db-rag-capabilities)
+# ---------------------------------------------------------------------------
+
+def test_llm_db_rag_are_tool_subclasses_and_valid_uses_targets():
+    from besser.BUML.metamodel.uml_component import (
+        AgenticComponent, AgenticEdge, AgenticEdgeKind, Database, LLM, RAG, Tool,
+    )
+    agent = AgenticComponent(name="Researcher")
+    for resource_cls, label in ((LLM, "GPT"), (Database, "orders"), (RAG, "kb")):
+        resource = resource_cls(name=label)
+        assert isinstance(resource, Tool)
+        # USES → Tool rule accepts the subclass with no validator change.
+        edge = AgenticEdge(source=agent, target=resource, kind=AgenticEdgeKind.USES)
+        assert edge.kind is AgenticEdgeKind.USES
+
+
+def test_llm_db_rag_re_exported():
+    from besser.BUML.metamodel import uml_component as pkg
+    for name in ("LLM", "Database", "RAG"):
+        assert hasattr(pkg, name), f"{name} not re-exported"

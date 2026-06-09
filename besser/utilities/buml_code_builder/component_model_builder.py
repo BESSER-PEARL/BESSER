@@ -14,10 +14,13 @@ from besser.BUML.metamodel.uml_component import (
     Component,
     ComponentDependency,
     ComponentModel,
+    Database,
     Interface,
     InterfaceProvided,
     InterfaceRequired,
+    LLM,
     Permission,
+    RAG,
     Skill,
     Subsystem,
     Tool,
@@ -98,6 +101,12 @@ def _collect_imports(model: ComponentModel) -> list:
             needed.add("Subsystem")
         elif isinstance(c, Skill):
             needed.add("Skill")
+        elif isinstance(c, LLM):
+            needed.add("LLM")
+        elif isinstance(c, Database):
+            needed.add("Database")
+        elif isinstance(c, RAG):
+            needed.add("RAG")
         elif isinstance(c, Tool):
             needed.add("Tool")
         elif isinstance(c, AgenticComponent):
@@ -136,7 +145,8 @@ def _collect_imports(model: ComponentModel) -> list:
     ordered_classes = [
         c for c in (
             "ComponentModel", "AgenticComponentModel",
-            "Component", "Subsystem", "AgenticComponent", "Skill", "Tool",
+            "Component", "Subsystem", "AgenticComponent",
+            "Skill", "Tool", "LLM", "Database", "RAG",
             "Interface", "Permission",
             "InterfaceProvided", "InterfaceRequired",
             "ComponentDependency", "AgenticEdge",

@@ -20,8 +20,11 @@ from besser.BUML.metamodel.uml_component import (
     AgenticEdgeKind,
     Component,
     ComponentModel,
+    Database,
+    LLM,
     Locality,
     Permission,
+    RAG,
     Skill,
     Subsystem,
     Tool,
@@ -479,3 +482,124 @@ class TestComponentBumlToJson:
         # The test here just verifies the exception is not caught.
         with pytest.raises(RuntimeError):
             component_buml_to_json("raise RuntimeError('boom')")
+
+
+# ---------------------------------------------------------------------------
+# LLM / Database / RAG round-trip (04a-component-llm-db-rag-capabilities)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def llm_db_rag_component_diagram():
+    """WME diagram with llm/db/rag Components + uses edges from an agent.
+
+    Mirrors the WME BPMN→Component derivation output for an agent that calls
+    an LLM, queries a DB, and reads a RAG store.
+    """
+    return {
+        "title": "LLM DB RAG Diagram",
+        "model": {
+            "version": "3.0.0",
+            "type": "ComponentDiagram",
+            "size": {"width": 1200, "height": 600},
+            "elements": {
+                "agent-1": {
+                    "id": "agent-1", "name": "ResearchAgent", "type": "Component",
+                    "owner": None,
+                    "bounds": {"x": 100, "y": 200, "width": 160, "height": 80},
+                    "stereotype": "solution", "displayStereotype": True,
+                },
+                "llm-1": {
+                    "id": "llm-1", "name": "GPT4", "type": "Component",
+                    "owner": None,
+                    "bounds": {"x": 400, "y": 80, "width": 160, "height": 80},
+                    "stereotype": "llm", "displayStereotype": True,
+                },
+                "db-1": {
+                    "id": "db-1", "name": "OrdersDB", "type": "Component",
+                    "owner": None,
+                    "bounds": {"x": 400, "y": 200, "width": 160, "height": 80},
+                    "stereotype": "db", "displayStereotype": True,
+                },
+                "rag-1": {
+                    "id": "rag-1", "name": "KnowledgeBase", "type": "Component",
+                    "owner": None,
+                    "bounds": {"x": 400, "y": 320, "width": 160, "height": 80},
+                    "stereotype": "rag", "displayStereotype": True,
+                },
+            },
+            "relationships": {
+                "uses-llm": {
+                    "id": "uses-llm", "name": "", "type": "ComponentDependency",
+                    "owner": None,
+                    "bounds": {"x": 260, "y": 120, "width": 140, "height": 1},
+                    "path": [{"x": 0, "y": 0}, {"x": 140, "y": 0}],
+                    "source": {"element": "agent-1", "direction": "Right"},
+                    "target": {"element": "llm-1", "direction": "Left"},
+                    "isManuallyLayouted": False,
+                    "stereotype": "uses",
+                },
+                "uses-db": {
+                    "id": "uses-db", "name": "", "type": "ComponentDependency",
+                    "owner": None,
+                    "bounds": {"x": 260, "y": 240, "width": 140, "height": 1},
+                    "path": [{"x": 0, "y": 0}, {"x": 140, "y": 0}],
+                    "source": {"element": "agent-1", "direction": "Right"},
+                    "target": {"element": "db-1", "direction": "Left"},
+                    "isManuallyLayouted": False,
+                    "stereotype": "uses",
+                },
+                "uses-rag": {
+                    "id": "uses-rag", "name": "", "type": "ComponentDependency",
+                    "owner": None,
+                    "bounds": {"x": 260, "y": 360, "width": 140, "height": 1},
+                    "path": [{"x": 0, "y": 0}, {"x": 140, "y": 0}],
+                    "source": {"element": "agent-1", "direction": "Right"},
+                    "target": {"element": "rag-1", "direction": "Left"},
+                    "isManuallyLayouted": False,
+                    "stereotype": "uses",
+                },
+            },
+            "interactive": {"elements": {}, "relationships": {}},
+            "assessments": {},
+        },
+    }
+
+
+class TestLLMDBRAGRoundTrip:
+    def test_import_promotes_to_correct_subtypes(self, llm_db_rag_component_diagram):
+        model = process_component_diagram(llm_db_rag_component_diagram)
+        components_by_id = {c.layout["id"]: c for c in model.components
+                            if c.layout and "id" in c.layout}
+        # llm-1 must be LLM, not bare Component and not plain Tool.
+        assert isinstance(components_by_id["llm-1"], LLM)
+        assert type(components_by_id["llm-1"]) is LLM
+        # db-1 must be Database.
+        assert isinstance(components_by_id["db-1"], Database)
+        assert type(components_by_id["db-1"]) is Database
+        # rag-1 must be RAG.
+        assert isinstance(components_by_id["rag-1"], RAG)
+        assert type(components_by_id["rag-1"]) is RAG
+
+    def test_uses_edges_survive_not_silently_dropped(self, llm_db_rag_component_diagram):
+        """Regression guard: before 04a the uses edges were silently dropped."""
+        model = process_component_diagram(llm_db_rag_component_diagram)
+        agentic_edges = [r for r in model.relationships
+                         if isinstance(r, AgenticEdge)]
+        assert len(agentic_edges) == 3
+        for edge in agentic_edges:
+            assert edge.kind is AgenticEdgeKind.USES
+
+    def test_export_emits_correct_subtype_tokens(self, llm_db_rag_component_diagram):
+        """Round-trip: import then export must emit llm/db/rag, never 'tool'."""
+        model = process_component_diagram(llm_db_rag_component_diagram)
+        out = component_object_to_json(model)
+        llm_elem = out["elements"]["llm-1"]
+        db_elem = out["elements"]["db-1"]
+        rag_elem = out["elements"]["rag-1"]
+        assert "llm" in llm_elem["stereotype"].split()
+        assert "db" in db_elem["stereotype"].split()
+        assert "rag" in rag_elem["stereotype"].split()
+        # Most-derived-first: none of these should emit as plain 'tool'.
+        assert "tool" not in llm_elem["stereotype"].split()
+        assert "tool" not in db_elem["stereotype"].split()
+        assert "tool" not in rag_elem["stereotype"].split()

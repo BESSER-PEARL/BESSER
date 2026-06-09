@@ -132,10 +132,14 @@ DEPLOYMENT_RELATIONSHIP_TYPES = {
 COMPONENT_DEFAULT_STEREOTYPES = frozenset({"component", "subsystem"})
 DEPLOYMENT_DEFAULT_STEREOTYPES = frozenset({"node"})  # handled via NodeKind.GENERIC
 
-# Stereotype tokens that promote a Component subtype.
+# Stereotype tokens that promote a Component subtype. `llm`/`db`/`rag`
+# (meeting 2026-06-08 §5) are Tool subclasses — see uml_component/agentic.py.
 COMPONENT_SUBTYPE_TOKENS = {
     "skill": "Skill",
     "tool": "Tool",
+    "llm": "LLM",
+    "db": "Database",
+    "rag": "RAG",
 }
 
 # Locality tokens (shared Component/Deployment side).

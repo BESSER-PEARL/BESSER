@@ -218,6 +218,34 @@ class Tool(Component):
     """
 
 
+class LLM(Tool):
+    """A large-language-model capability an agent calls (meeting 2026-06-08 §5).
+
+    A ``Tool`` subclass: an LLM is "tool-like" (O4) so an agent reaches it by an
+    ``AgenticEdge[USES]`` exactly like any Tool. Derived by the WME BPMN→Component
+    transform from an agent-state body whose ``replyType == 'llm'``. Bare (no model
+    id) -- WME is C-lite; provider selection is future Component-side work.
+    """
+
+
+class Database(Tool):
+    """A database an agent queries (agent-state body ``replyType == 'db_reply'``).
+
+    A ``Tool`` subclass (O4 "tool-like, edge = uses"). The Component name carries
+    the DB's custom name (WME ``dbCustomName``); query mode / operation are not
+    modelled on the Component view.
+    """
+
+
+class RAG(Tool):
+    """A retrieval-augmented-generation store an agent reads (agent-state body
+    ``replyType == 'rag'``).
+
+    A ``Tool`` subclass (O4). The Component name carries the RAG database name
+    (WME ``ragDatabaseName``).
+    """
+
+
 # ---------------------------------------------------------------------------
 # Permission (per A-4 of the requirements review -- a separate ComponentElement)
 # ---------------------------------------------------------------------------

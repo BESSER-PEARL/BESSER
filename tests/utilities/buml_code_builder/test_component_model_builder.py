@@ -16,10 +16,13 @@ from besser.BUML.metamodel.uml_component import (
     Component,
     ComponentDependency,
     ComponentModel,
+    Database,
     Interface,
     InterfaceProvided,
+    LLM,
     Locality,
     Permission,
+    RAG,
     Skill,
     Subsystem,
     Tool,
@@ -184,3 +187,44 @@ class TestComponentModelBuilder:
     def test_rejects_non_component_model(self):
         with pytest.raises(TypeError):
             component_model_to_code("not a model")
+
+    def test_llm_database_rag_subtype_promotion(self):
+        llm = LLM(name="GPT4")
+        db = Database(name="OrdersDB")
+        rag = RAG(name="KnowledgeBase")
+        agent = AgenticComponent(name="ResearchAgent",
+                                 agent_category=AgentCategory.SOLUTION)
+        edge_llm = AgenticEdge(source=agent, target=llm,
+                                kind=AgenticEdgeKind.USES, name="uses-llm")
+        edge_db = AgenticEdge(source=agent, target=db,
+                               kind=AgenticEdgeKind.USES, name="uses-db")
+        edge_rag = AgenticEdge(source=agent, target=rag,
+                                kind=AgenticEdgeKind.USES, name="uses-rag")
+        model = AgenticComponentModel(
+            name="LLMDBRAGModel",
+            components={agent, llm, db, rag},
+            relationships={edge_llm, edge_db, edge_rag},
+        )
+        source = component_model_to_code(model)
+        # Imports must include the three subclasses.
+        assert "LLM" in source
+        assert "Database" in source
+        assert "RAG" in source
+        # Constructors must use the exact class names (not Tool).
+        assert "LLM(name=" in source
+        assert "Database(name=" in source
+        assert "RAG(name=" in source
+        assert "Tool(name=" not in source
+        # Exec round-trip: rebuilt model has the right types.
+        rebuilt = _exec_and_get_model(source)
+        llms = [c for c in rebuilt.components if type(c) is LLM]
+        dbs = [c for c in rebuilt.components if type(c) is Database]
+        rags = [c for c in rebuilt.components if type(c) is RAG]
+        assert len(llms) == 1 and llms[0].name == "GPT4"
+        assert len(dbs) == 1 and dbs[0].name == "OrdersDB"
+        assert len(rags) == 1 and rags[0].name == "KnowledgeBase"
+        # uses edges survive.
+        uses_edges = [r for r in rebuilt.relationships
+                      if isinstance(r, AgenticEdge)
+                      and r.kind is AgenticEdgeKind.USES]
+        assert len(uses_edges) == 3

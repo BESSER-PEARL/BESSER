@@ -17,10 +17,13 @@ from besser.BUML.metamodel.uml_component import (
     ComponentElement,
     ComponentModel,
     ComponentRelationship,
+    Database,
     Interface,
     InterfaceProvided,
     InterfaceRequired,
+    LLM,
     Permission,
+    RAG,
     Skill,
     Subsystem,
     Tool,
@@ -37,6 +40,17 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Component subtype class-name (from parse_component_node_subtype) → class.
+# Mirrors COMPONENT_SUBTYPE_TOKENS values. llm/db/rag are Tool subclasses
+# (meeting 2026-06-08 §5).
+_COMPONENT_SUBTYPE_CLASSES = {
+    "Skill": Skill,
+    "Tool": Tool,
+    "LLM": LLM,
+    "Database": Database,
+    "RAG": RAG,
+}
 
 
 def process_component_diagram(json_data: dict) -> ComponentModel:
@@ -146,13 +160,12 @@ def _build_component_node(elem_id: str, elem: dict) -> Optional[ComponentElement
 
     if elem_type == "Component":
         subtype = parse_component_node_subtype(stereotype)
-        if subtype == "Skill":
-            obj = Skill(name=name)
-        elif subtype == "Tool":
-            obj = Tool(name=name)
+        if subtype is not None:
+            # skill/tool/llm/db/rag → the matching Component subclass.
+            obj = _COMPONENT_SUBTYPE_CLASSES[subtype](name=name)
         elif stereotype_has_agentic_tokens(stereotype):
-            # An agent-category or human-actor token promotes a bare Component
-            # to AgenticComponent (04-... base/agentic split).
+            # An agent-category token promotes a bare Component to
+            # AgenticComponent (04-... base/agentic split).
             obj = AgenticComponent(name=name)
         else:
             obj = Component(name=name)

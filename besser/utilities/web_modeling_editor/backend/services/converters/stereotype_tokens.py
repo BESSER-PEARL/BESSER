@@ -26,7 +26,10 @@ from besser.BUML.metamodel.uml_component import (
     AgenticComponent,
     AgenticEdgeKind,
     Component,
+    Database,
+    LLM,
     Locality as ComponentLocality,
+    RAG,
     Skill,
     Tool,
 )
@@ -40,6 +43,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_CATEGORY_TOKENS,
     AGENTIC_EDGE_KIND_TOKENS,
     COMPONENT_DEFAULT_STEREOTYPES,
+    COMPONENT_SUBTYPE_TOKENS,
     DEPLOYMENT_DEFAULT_STEREOTYPES,
     LOCALITY_TOKENS,
     NODE_KIND_TOKENS,
@@ -92,17 +96,16 @@ def extract_permission_scopes(raw: Optional[str]) -> list:
 
 
 def parse_component_node_subtype(raw: Optional[str]) -> Optional[str]:
-    """Return ``"Skill"`` / ``"Tool"`` if the stereotype string promotes
-    a bare ``Component`` to a subclass, else ``None``.
+    """Return the BUML class name (``"Skill"`` / ``"Tool"`` / ``"LLM"`` /
+    ``"Database"`` / ``"RAG"``) if the stereotype string promotes a bare
+    ``Component`` to a subclass, else ``None``.
 
     Looks for the *first* subtype token in the tokenised list — Apollon
     typically emits one stereotype, but defensively scan all.
     """
     for token in tokenise(raw):
-        if token == "skill":
-            return "Skill"
-        if token == "tool":
-            return "Tool"
+        if token in COMPONENT_SUBTYPE_TOKENS:
+            return COMPONENT_SUBTYPE_TOKENS[token]
     return None
 
 
@@ -164,10 +167,11 @@ def apply_component_stereotype_tokens(component: Component, raw: Optional[str]) 
         if token in LOCALITY_TOKENS:
             component.locality = ComponentLocality(token)
             continue
-        if token in {"skill", "tool"}:
-            # Subtype promotion is handled by the processor at construction
-            # time (we can't re-class an already-instantiated object). Drop
-            # the token here so it doesn't double-emit on round-trip.
+        if token in COMPONENT_SUBTYPE_TOKENS:
+            # Subtype promotion (skill/tool/llm/db/rag) is handled by the
+            # processor at construction time (we can't re-class an
+            # already-instantiated object). Drop the token here so it doesn't
+            # double-emit on round-trip.
             continue
         leftovers.append(token)
     if leftovers:
@@ -266,12 +270,19 @@ def format_component_stereotype(component: Component) -> str:
 
 
 def format_component_subtype_stereotype(component: Component) -> str:
-    """For a Skill / Tool / bare-Component round-trip: emit the subtype
-    promotion token in front of the rest so the importer sees it.
+    """For a Skill / Tool / LLM / Database / RAG / bare-Component round-trip:
+    emit the subtype promotion token in front of the rest so the importer
+    sees it. LLM/Database/RAG subclass Tool, so they are checked first.
     """
     base = format_component_stereotype(component)
     if isinstance(component, Skill):
         prefix = "skill"
+    elif isinstance(component, LLM):
+        prefix = "llm"
+    elif isinstance(component, Database):
+        prefix = "db"
+    elif isinstance(component, RAG):
+        prefix = "rag"
     elif isinstance(component, Tool):
         prefix = "tool"
     else:

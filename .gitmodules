@@ -1,4 +1,4 @@
 [submodule "besser/utilities/web_modeling_editor/frontend"]
 	path = besser/utilities/web_modeling_editor/frontend
-	url = https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR
+	url = https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor.git
 	branch = main

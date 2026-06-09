@@ -447,7 +447,16 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         else:  # dropout
             # F.dropout operation
             rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
-            ts_op_synt = f"tf.nn.dropout({prev_out_var}, rate={rate})"
+            training_aware = getattr(tensorop, 'dropout_training_aware', False)
+
+            if training_aware:
+                # Use layers.Dropout for training-aware dropout
+                # This will be handled as a layer, not inline operation
+                # For now, generate inline with training parameter
+                ts_op_synt = f"tf.keras.layers.Dropout({rate})({prev_out_var}, training=training)"
+            else:
+                # Always apply dropout (not training-aware)
+                ts_op_synt = f"tf.nn.dropout({prev_out_var}, rate={rate})"
 
         return ts_op_synt
 

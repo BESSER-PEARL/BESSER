@@ -73,6 +73,7 @@ class TensorOp(NamedElement):
                  pad_mode: str = None,
                  pad_value: float = None,
                  dropout_rate: float = None,
+                 dropout_training_aware: bool = False,
                  name_module_input: str = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
@@ -93,6 +94,7 @@ class TensorOp(NamedElement):
         self.pad_mode: str = pad_mode
         self.pad_value: float = pad_value
         self.dropout_rate: float = dropout_rate
+        self.dropout_training_aware: bool = dropout_training_aware
         self.tns_type: str = tns_type
         self.name_module_input: str = name_module_input
 

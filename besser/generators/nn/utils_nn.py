@@ -73,10 +73,16 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
             base_module = lyr_input.replace("bidirectional_concat_", "")
             if f"{base_module}_layer" in modules_names:
                 layer_details = modules_details[f"{base_module}_layer"]
-                # Return the hidden variable (index 4) which contains the concatenated hidden states
-                if len(layer_details) > 4:
-                    return layer_details[4]
-                return layer_details[1]  # Fallback
+                layer_obj = layer_details[3] if len(layer_details) > 3 else None
+                # For return_type="hidden": concat is assigned to output var (index 1)
+                # For return_type="both": concat is assigned to hidden var (index 4)
+                if layer_obj and hasattr(layer_obj, 'return_type'):
+                    if layer_obj.return_type == "hidden":
+                        return layer_details[1]  # Output variable
+                    elif layer_obj.return_type == "both" and len(layer_details) > 4:
+                        return layer_details[4]  # Hidden variable
+                # Fallback: return output variable
+                return layer_details[1]
         # Check for RNN hidden/cell state suffixes before checking layer names
         if isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
             base_module = lyr_input[:-8]  # Remove "__hidden"
@@ -233,14 +239,25 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             out_vars.append("x")
         elif layer_name.startswith("bidirectional_concat_"):
             # Special marker for bidirectional RNN hidden state concat (from torch2tf)
-            # Extract the actual layer name and get its hidden variable
+            # Extract the actual layer name and get the correct variable based on return_type
             base_layer = layer_name.replace("bidirectional_concat_", "")
             layer_key = base_layer + "_layer"
 
             if layer_key in modules_details:
                 layer_details = modules_details[layer_key]
-                if len(layer_details) > 4 and layer_details[4]:
-                    out_vars.append(layer_details[4])  # Hidden variable at index 4
+                layer_obj = layer_details[3] if len(layer_details) > 3 else None
+                # For return_type="hidden": concat is assigned to output var (index 1)
+                # For return_type="both": concat is assigned to hidden var (index 4)
+                if layer_obj and hasattr(layer_obj, 'return_type'):
+                    if layer_obj.return_type == "hidden":
+                        out_vars.append(layer_details[1])
+                        continue
+                    elif layer_obj.return_type == "both" and len(layer_details) > 4 and layer_details[4]:
+                        out_vars.append(layer_details[4])
+                        continue
+                # Fallback: use output variable
+                if len(layer_details) > 1:
+                    out_vars.append(layer_details[1])
                     continue
 
             # Fallback: if layer not found, return placeholder
@@ -646,8 +663,16 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                 modules_names = list(modules_details.keys())
                 if layer_key in modules_names:
                     layer_details = modules_details[layer_key]
-                    if len(layer_details) > 4 and layer_details[4]:
-                        prev_out_var = layer_details[4]  # Hidden state concat variable
+                    layer_obj = layer_details[3] if len(layer_details) > 3 else None
+                    # For return_type="hidden": concat is assigned to output var (index 1)
+                    # For return_type="both": concat is assigned to hidden var (index 4)
+                    if layer_obj and hasattr(layer_obj, 'return_type'):
+                        if layer_obj.return_type == "hidden":
+                            prev_out_var = layer_details[1]
+                        elif layer_obj.return_type == "both" and len(layer_details) > 4 and layer_details[4]:
+                            prev_out_var = layer_details[4]
+                        else:
+                            prev_out_var = layer_details[1]  # Fallback
                     else:
                         prev_out_var = layer_details[1]  # Fallback to output
                 else:

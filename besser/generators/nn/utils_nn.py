@@ -578,6 +578,235 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
                               sequential=is_seq, is_subnn=is_subnn)
 
 
+# ============================================================================
+# Helper functions for get_tensorop_params (refactored for maintainability)
+# ============================================================================
+
+def _resolve_source_layer_var(source_layer, modules_details):
+    """Resolve a source layer name to its output variable."""
+    if source_layer == 'INPUT':
+        return 'inp'
+
+    modules_names = list(modules_details.keys())
+    for suffix in ['_layer', '_op', '_activ', '_nn']:
+        key = f"{source_layer}{suffix}"
+        if key in modules_names:
+            if suffix == '_nn':
+                return modules_details[key]["in_out_variable"]
+            return modules_details[key][1]
+
+    # Fallback: treat as input variable if it's 'x', otherwise use as-is
+    return 'inp' if source_layer == 'x' else source_layer
+
+
+def _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn):
+    """Get RNN hidden/cell state variable."""
+    modules_names = list(modules_details.keys())
+    layer_key = f"{base_module}_layer"
+
+    if layer_key in modules_names:
+        layer_details = modules_details[layer_key]
+        if get_rnn_hidden_var_fn:
+            return get_rnn_hidden_var_fn(layer_details, base_module)
+        if len(layer_details) > 4:
+            return layer_details[4]
+        return layer_details[1]
+    return "x"
+
+
+def _resolve_prev_out_var_from_module_input(
+    module_input, modules_details, get_rnn_hidden_var_fn
+):
+    """Resolve prev_out_var from tensorop's name_module_input or layers_of_tensors."""
+    if module_input == 'INPUT':
+        return 'inp'
+
+    # RNN hidden state
+    if module_input.endswith("__hidden"):
+        base_module = module_input[:-8]
+        return _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn)
+
+    # LSTM cell state
+    if module_input.endswith("__cell"):
+        base_module = module_input[:-6]
+        return _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn)
+
+    # Bidirectional RNN concat
+    if module_input.startswith("bidirectional_concat_"):
+        base_layer = module_input.replace("bidirectional_concat_", "")
+        layer_key = f"{base_layer}_layer"
+        if layer_key in modules_details:
+            layer_details = modules_details[layer_key]
+            layer_obj = layer_details[3] if len(layer_details) > 3 else None
+            if layer_obj and hasattr(layer_obj, 'return_type'):
+                if layer_obj.return_type == "hidden":
+                    return layer_details[1]
+                if (layer_obj.return_type == "both" and
+                    len(layer_details) > 4 and layer_details[4]):
+                    return layer_details[4]
+            return layer_details[1]
+        return "x"
+
+    # Regular module
+    return _resolve_source_layer_var(module_input, modules_details)
+
+
+def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
+    """Get the initial prev_out_var before tensorop-specific handling."""
+    if len(list(modules_details.keys())) == 0:
+        return "x"
+
+    prev_module = list(modules_details.keys())[-1]
+
+    # Skip shape_dim operations to find actual previous tensor-producing module
+    if _is_shape_dim_operation(prev_module, modules_details):
+        actual_prev = _find_previous_non_shape_dim_module(modules_details)
+        if actual_prev:
+            prev_module = actual_prev
+
+    prev_out_var = get_previous_out_var(modules_details, prev_module)
+
+    # Override with name_module_input or layers_of_tensors if available
+    module_input = None
+    if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
+        module_input = tensorop.name_module_input
+    elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+        if len(tensorop.layers_of_tensors) == 1:
+            module_input = tensorop.layers_of_tensors[0]
+        elif 'INPUT' in tensorop.layers_of_tensors:
+            module_input = 'INPUT'
+
+    if module_input is not None:
+        prev_out_var = _resolve_prev_out_var_from_module_input(
+            module_input, modules_details, get_rnn_hidden_var_fn
+        )
+
+    return prev_out_var
+
+
+def _override_prev_out_var_if_needed(
+    tensorop, modules_details, current_prev_out_var, check_name_module_input=True
+):
+    """Override prev_out_var from layers_of_tensors if present."""
+    # Skip if name_module_input is already set (unless told not to check)
+    if (check_name_module_input and
+        hasattr(tensorop, 'name_module_input') and
+        tensorop.name_module_input is not None):
+        return current_prev_out_var
+
+    if (hasattr(tensorop, 'layers_of_tensors') and
+        tensorop.layers_of_tensors and
+        isinstance(tensorop.layers_of_tensors[0], str)):
+        source_layer = tensorop.layers_of_tensors[0]
+        return _resolve_source_layer_var(source_layer, modules_details)
+
+    return current_prev_out_var
+
+
+def _handle_reshape_params(tensorop, modules_details):
+    """Handle reshape tensorop parameters."""
+    prev_out_var = None
+
+    # Override prev_out_var if layers_of_tensors is set and not INPUT
+    if (hasattr(tensorop, 'layers_of_tensors') and
+        tensorop.layers_of_tensors and
+        tensorop.layers_of_tensors[0] != 'INPUT'):
+        source_layer = tensorop.layers_of_tensors[0]
+        prev_out_var = _resolve_source_layer_var(source_layer, modules_details)
+
+    # Resolve operation names to their actual variable names
+    resolved_dims = []
+    for dim in tensorop.reshape_dim:
+        if isinstance(dim, str) and f"{dim}_op" in modules_details:
+            resolved_dims.append(modules_details[f"{dim}_op"][1])
+        else:
+            resolved_dims.append(str(dim))
+
+    params = ', '.join(resolved_dims)
+    return prev_out_var, params
+
+
+def _handle_concatenate_params(tensorop, modules_details):
+    """Handle concatenate tensorop parameters."""
+    actual_vars = getattr(tensorop, 'actual_vars', None)
+    tensors = get_layers_output_for_tensorops(
+        tensorop.layers_of_tensors, modules_details, actual_vars
+    )
+    params = ', '.join(tensors)
+    return None, params
+
+
+def _handle_transpose_params(tensorop, modules_details):
+    """Handle transpose tensorop parameters."""
+    prev_out_var = _override_prev_out_var_if_needed(
+        tensorop, modules_details, None, check_name_module_input=False
+    )
+    params = ", ".join([str(i) for i in tensorop.transpose_dim])
+    return prev_out_var, params
+
+
+def _handle_permute_params(tensorop, modules_details):
+    """Handle permute tensorop parameters."""
+    params = ", ".join([str(i) for i in tensorop.permute_dim])
+    return None, params
+
+
+def _handle_simple_op_params(tensorop, modules_details):
+    """Handle simple ops (mean, max, squeeze, unsqueeze, normalize, shape_dim, subscript)."""
+    prev_out_var = _override_prev_out_var_if_needed(
+        tensorop, modules_details, None, check_name_module_input=False
+    )
+    return prev_out_var, ""
+
+
+def _handle_repeat_params(tensorop, modules_details):
+    """Handle repeat tensorop parameters."""
+    prev_out_var = _override_prev_out_var_if_needed(
+        tensorop, modules_details, None, check_name_module_input=False
+    )
+
+    # Resolve operation names in repeat_dim (similar to reshape_dim)
+    resolved_multiples = []
+    for mult in tensorop.repeat_dim:
+        if isinstance(mult, str) and f"{mult}_op" in modules_details:
+            resolved_multiples.append(modules_details[f"{mult}_op"][1])
+        else:
+            resolved_multiples.append(str(mult))
+
+    params = ', '.join(resolved_multiples)
+    return prev_out_var, params
+
+
+def _handle_generic_params(tensorop, modules_details):
+    """Handle generic tensorop parameters using layers_of_tensors."""
+    tensors = tensorop.layers_of_tensors
+    if any(isinstance(t, str) for t in tensors):
+        actual_vars = getattr(tensorop, 'actual_vars', None)
+        tensors = get_layers_output_for_tensorops(tensors, modules_details, actual_vars)
+
+    params = ', '.join([str(i) for i in tensors])
+    return None, params
+
+
+# Dispatch table for tensorop types
+_TENSOROP_HANDLERS = {
+    "reshape": _handle_reshape_params,
+    "concatenate": _handle_concatenate_params,
+    "transpose": _handle_transpose_params,
+    "permute": _handle_permute_params,
+    "mean": _handle_simple_op_params,
+    "max": _handle_simple_op_params,
+    "squeeze": _handle_simple_op_params,
+    "unsqueeze": _handle_simple_op_params,
+    "subscript": _handle_simple_op_params,
+    "shape_dim": _handle_simple_op_params,
+    "normalize": _handle_simple_op_params,
+    "repeat": _handle_repeat_params,
+    "interpolate": lambda t, m: (None, None),
+    "pad": lambda t, m: (None, None),
+    "dropout": lambda t, m: (None, None),
+}
+
 
 def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidden_var_fn=None):
     """
@@ -596,272 +825,19 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidde
         - previous output variable and the parameters of the tensorop.
 
     """
-    if len(list(modules_details.keys())) == 0:
-        prev_out_var = "x"
-    else:
-        prev_module = list(modules_details.keys())[-1]
+    # Get initial prev_out_var
+    prev_out_var = _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn)
 
-        # Skip shape_dim operations to find the actual previous tensor-producing module
-        if _is_shape_dim_operation(prev_module, modules_details):
-            actual_prev = _find_previous_non_shape_dim_module(modules_details)
-            if actual_prev:
-                prev_module = actual_prev
-
-        prev_out_var = get_previous_out_var(modules_details, prev_module)
-
-    # Check if tensorop has name_module_input set (similar to layers)
-    # If not, try to derive it from layers_of_tensors for single-input tensorops
-    module_input = None
-    if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
-        module_input = tensorop.name_module_input
-    elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-        # For single-input tensorops, use the first (and only) input
-        # For multi-input tensorops, check if any input is INPUT
-        if len(tensorop.layers_of_tensors) == 1:
-            module_input = tensorop.layers_of_tensors[0]
-        elif 'INPUT' in tensorop.layers_of_tensors:
-            module_input = 'INPUT'
-
-    if module_input is not None:
-        if module_input == 'INPUT':
-            # Use dedicated variable for preserved input
-            # Generator will need to add: inp = x at the start
-            prev_out_var = 'inp'
-        else:
-            # Check for RNN hidden/cell state suffixes
-            if module_input.endswith("__hidden"):
-                # Extract base module name and get hidden variable
-                base_module = module_input[:-8]  # Remove "__hidden"
-                modules_names = list(modules_details.keys())
-                if f"{base_module}_layer" in modules_names:
-                    layer_details = modules_details[f"{base_module}_layer"]
-                    # Use framework-specific helper if provided, otherwise fallback to default logic
-                    if get_rnn_hidden_var_fn:
-                        prev_out_var = get_rnn_hidden_var_fn(layer_details, base_module)
-                    elif len(layer_details) > 4:
-                        prev_out_var = layer_details[4]
-                    else:
-                        prev_out_var = layer_details[1]
-                else:
-                    prev_out_var = "x"
-            elif module_input.endswith("__cell"):
-                # LSTM cell state - for now use same logic as hidden
-                # (may need separate tracking in the future)
-                base_module = module_input[:-6]  # Remove "__cell"
-                modules_names = list(modules_details.keys())
-                if f"{base_module}_layer" in modules_names:
-                    layer_details = modules_details[f"{base_module}_layer"]
-                    # Use framework-specific helper if provided, otherwise fallback to default logic
-                    if get_rnn_hidden_var_fn:
-                        prev_out_var = get_rnn_hidden_var_fn(layer_details, base_module)
-                    elif len(layer_details) > 4:
-                        prev_out_var = layer_details[4]
-                    else:
-                        prev_out_var = layer_details[1]
-                else:
-                    prev_out_var = "x"
-            elif module_input.startswith("bidirectional_concat_"):
-                # Handle bidirectional RNN concat markers from torch2tf
-                base_layer = module_input.replace("bidirectional_concat_", "")
-                layer_key = base_layer + "_layer"
-                modules_names = list(modules_details.keys())
-                if layer_key in modules_names:
-                    layer_details = modules_details[layer_key]
-                    layer_obj = layer_details[3] if len(layer_details) > 3 else None
-                    # For return_type="hidden": concat is assigned to output var (index 1)
-                    # For return_type="both": concat is assigned to hidden var (index 4)
-                    if layer_obj and hasattr(layer_obj, 'return_type'):
-                        if layer_obj.return_type == "hidden":
-                            prev_out_var = layer_details[1]
-                        elif layer_obj.return_type == "both" and len(layer_details) > 4 and layer_details[4]:
-                            prev_out_var = layer_details[4]
-                        else:
-                            prev_out_var = layer_details[1]  # Fallback
-                    else:
-                        prev_out_var = layer_details[1]  # Fallback to output
-                else:
-                    prev_out_var = "x"  # Last resort fallback
-            else:
-                # Use get_input_var logic for tensorops too
-                modules_names = list(modules_details.keys())
-                if f"{module_input}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{module_input}_layer"][1]
-                elif f"{module_input}_nn" in modules_names:
-                    prev_out_var = modules_details[f"{module_input}_nn"]["in_out_variable"]
-                elif f"{module_input}_activ" in modules_names:
-                    prev_out_var = modules_details[f"{module_input}_activ"][1]
-                elif f"{module_input}_op" in modules_names:
-                    prev_out_var = modules_details[f"{module_input}_op"][1]
-
+    # Get tensorop-specific parameters and potentially override prev_out_var
     tns_type = tensorop.tns_type
-    if tns_type == "reshape":
-        # If reshape has layers_of_tensors set and it's not INPUT, use it to determine source variable
-        # (INPUT case is handled by name_module_input logic above)
-        if (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors and
-            tensorop.layers_of_tensors[0] != 'INPUT'):
-            source_layer = tensorop.layers_of_tensors[0]
-            modules_names = list(modules_details.keys())
-            if f"{source_layer}_layer" in modules_names:
-                prev_out_var = modules_details[f"{source_layer}_layer"][1]
-            elif f"{source_layer}_op" in modules_names:
-                prev_out_var = modules_details[f"{source_layer}_op"][1]
-        # Resolve operation names to their actual variable names
-        resolved_dims = []
-        for dim in tensorop.reshape_dim:
-            if isinstance(dim, str) and f"{dim}_op" in modules_details:
-                # This is an operation name - use its output variable
-                resolved_dims.append(modules_details[f"{dim}_op"][1])
-            else:
-                resolved_dims.append(str(dim))
-        params = ', '.join(resolved_dims)
-    elif tns_type == "concatenate":
-        actual_vars = getattr(tensorop, 'actual_vars', None)
-        tensors = get_layers_output_for_tensorops(tensorop.layers_of_tensors,
-                                                  modules_details,
-                                                  actual_vars)
-        params = ', '.join(tensors)
-    elif tns_type == "transpose":
-        # Transpose may have layers_of_tensors set
-        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-        params = ", ".join([str(i) for i in tensorop.transpose_dim])
-    elif tns_type == "permute":
-        params = ", ".join([str(i) for i in tensorop.permute_dim])
-    elif tns_type == "mean":
-        # Mean operates on prev_out_var, but may have layers_of_tensors set
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-        params = ""
-    elif tns_type == "max":
-        # Max operates on prev_out_var, but may have layers_of_tensors set
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-        params = ""
-    elif tns_type == "squeeze" or tns_type == "unsqueeze":
-        # Squeeze/unsqueeze operate on prev_out_var, but may have layers_of_tensors set
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-                elif f"{source_layer}_activ" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
-        params = ""
-    elif tns_type == "subscript":
-        # Subscript operates on prev_out_var, pattern is in subscript_indices
-        # Only override prev_out_var if name_module_input wasn't already set
-        if not (hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None):
-            if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-                source_layer = tensorop.layers_of_tensors[0]
-                if source_layer == 'INPUT':
-                    prev_out_var = 'inp'
-                elif (source_layer + "_layer" in modules_details or
-                      source_layer + "_op" in modules_details or
-                      source_layer + "_activ" in modules_details):
-                    prev_out_var = get_layers_output_for_tensorops([source_layer], modules_details)[0]
-                else:
-                    prev_out_var = source_layer
-        params = ""
-    elif tns_type == "shape_dim":
-        # Shape extraction: layers_of_tensors[0] contains the source to extract shape from
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-                elif f"{source_layer}_activ" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
-                else:
-                    # Source not found in modules - use it directly (e.g., variable name 'x')
-                    # Treat as input variable
-                    prev_out_var = 'inp' if source_layer == 'x' else source_layer
-        params = ""
-    elif tns_type == "normalize":
-        # Normalize operates on prev_out_var, resolve from layers_of_tensors
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-                elif f"{source_layer}_activ" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
-        params = ""
-    elif tns_type == "repeat":
-        # Repeat operates on prev_out_var, resolve from layers_of_tensors
-        if tensorop.layers_of_tensors and isinstance(tensorop.layers_of_tensors[0], str):
-            source_layer = tensorop.layers_of_tensors[0]
-            if source_layer == 'INPUT':
-                prev_out_var = 'inp'
-            else:
-                modules_names = list(modules_details.keys())
-                if f"{source_layer}_layer" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_layer"][1]
-                elif f"{source_layer}_op" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_op"][1]
-                elif f"{source_layer}_activ" in modules_names:
-                    prev_out_var = modules_details[f"{source_layer}_activ"][1]
-        # Resolve operation names in repeat_dim (similar to reshape_dim)
-        resolved_multiples = []
-        for mult in tensorop.repeat_dim:
-            if isinstance(mult, str) and f"{mult}_op" in modules_details:
-                # This is an operation name - use its output variable
-                resolved_multiples.append(modules_details[f"{mult}_op"][1])
-            else:
-                resolved_multiples.append(str(mult))
-        params = ', '.join(resolved_multiples)
-    elif tns_type in ["interpolate", "pad", "dropout"]:
-        # These operations don't use layers_of_tensors or params
-        params = None
-    else:
-        tensors = tensorop.layers_of_tensors
-        # Check if ANY element is a string (layer name) that needs lookup
-        if any(isinstance(t, str) for t in tensors):
-            # Check if we need to use actual_vars for output vs hidden selection
-            actual_vars = getattr(tensorop, 'actual_vars', None)
-            tensors = get_layers_output_for_tensorops(tensors,
-                                                      modules_details,
-                                                      actual_vars)
+    handler = _TENSOROP_HANDLERS.get(tns_type, _handle_generic_params)
 
-        params = ', '.join([str(i) for i in tensors])
+    override_prev_out_var, params = handler(tensorop, modules_details)
+
+    # Use override if provided
+    if override_prev_out_var is not None:
+        prev_out_var = override_prev_out_var
+
     return prev_out_var, params
 
 

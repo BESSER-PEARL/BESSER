@@ -398,23 +398,6 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt (str): the syntax of the tensorop in PyTorch.
 
     """
-    # Check if this is a no-op tensorop (e.g., squeeze on RNN hidden marked during parsing)
-    if hasattr(tensorop, 'is_noop') and tensorop.is_noop:
-        # Return just the variable name for assignment (e.g., h_squeezed = x_1_h)
-        if in_var is not None:
-            return in_var
-        # Get the source variable from layers_of_tensors
-        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-            source_layers = tensorop.layers_of_tensors
-            prev_out_var_list = utils.get_layers_output_for_tensorops(source_layers, modules_details, None)
-            if prev_out_var_list and len(prev_out_var_list) > 0:
-                return prev_out_var_list[0]
-        # Fallback to getting prev var from modules
-        if len(list(modules_details.keys())) == 0:
-            return "x"
-        prev_module = list(modules_details.keys())[-1]
-        return utils.get_previous_out_var(modules_details, prev_module)
-
     tns_type = tensorop.tns_type
 
     # Handle operations that don't use layers_of_tensors first

@@ -83,6 +83,18 @@ _PYTHON_STACK_KEYWORDS: frozenset[str] = frozenset(
 )
 
 
+# Frameworks BESSER has NO deterministic generator for. When the user
+# explicitly asks for one of these, Phase 1 is skipped and the customise
+# loop writes the project from scratch. Single source of truth shared by
+# the orchestrator's keyword selector and the smart-preview classifier —
+# they must always agree on which generator would run.
+NO_GENERATOR_FRAMEWORKS: tuple[str, ...] = (
+    "nestjs", "next.js", "nextjs", "express", "spring boot", "springboot",
+    "laravel", "rails", "golang", "axum", "actix", "angular", "vue",
+    "svelte", "nuxt",
+)
+
+
 def _contains_word(text: str, needle: str) -> bool:
     """Case-insensitive substring match with word-boundary fallback.
 

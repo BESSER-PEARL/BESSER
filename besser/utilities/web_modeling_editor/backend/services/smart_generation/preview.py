@@ -26,20 +26,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from besser.generators.llm.stack_metadata import NO_GENERATOR_FRAMEWORKS
 from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
     AssembledModels,
 )
 
 
-# Names mirrored from the orchestrator's keyword branch so that the
-# preview and the real Phase 1 always agree on which generator will run
-# for a given instruction. Keep in sync with
-# ``LLMOrchestrator._select_generator_keyword``.
-_EXPLICIT_NO_GENERATOR_FRAMEWORKS: tuple[str, ...] = (
-    "nestjs", "next.js", "nextjs", "express", "spring boot", "springboot",
-    "laravel", "rails", "golang", "axum", "actix", "angular", "vue",
-    "svelte", "nuxt",
-)
+# Single source of truth shared with the orchestrator's keyword branch so
+# that the preview and the real Phase 1 always agree on which generator
+# will run for a given instruction.
+_EXPLICIT_NO_GENERATOR_FRAMEWORKS: tuple[str, ...] = NO_GENERATOR_FRAMEWORKS
 
 
 @dataclass(frozen=True)

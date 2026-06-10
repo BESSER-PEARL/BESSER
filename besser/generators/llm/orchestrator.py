@@ -792,9 +792,8 @@ class LLMOrchestrator:
             return bool(_re.search(r'\b' + _re.escape(word) + r'\b', lower))
 
         # Frameworks with NO BESSER generator → write from scratch
-        for fw in ("nestjs", "next.js", "nextjs", "express", "spring boot",
-                    "springboot", "laravel", "rails", "golang", "axum",
-                    "actix", "angular", "vue", "svelte", "nuxt"):
+        from besser.generators.llm.stack_metadata import NO_GENERATOR_FRAMEWORKS
+        for fw in NO_GENERATOR_FRAMEWORKS:
             if _has(fw):
                 return ""
 

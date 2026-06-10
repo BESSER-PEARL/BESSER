@@ -18,6 +18,14 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 
+# Per-request timeout (seconds) passed to the provider SDK. Both the
+# anthropic and openai SDKs forward this to httpx, where it acts as a
+# connect + between-chunk read timeout — streaming responses are NOT cut
+# off mid-generation as long as chunks keep arriving. Without it, a hung
+# connection stalls a turn for the SDK default of 10 minutes, which in
+# practice eats the orchestrator's whole runtime budget.
+_API_TIMEOUT_SECONDS = float(os.environ.get("BESSER_LLM_API_TIMEOUT_SECONDS", "120"))
+
 logger = logging.getLogger(__name__)
 
 
@@ -285,7 +293,10 @@ class ClaudeLLMClient(LLMProvider):
                 "Install it with: pip install anthropic"
             ) from None
 
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": _API_TIMEOUT_SECONDS,
+        }
         resolved_base = base_url or os.environ.get("ANTHROPIC_BASE_URL")
         if resolved_base:
             client_kwargs["base_url"] = resolved_base
@@ -672,7 +683,10 @@ class OpenAIProvider(LLMProvider):
                 "Install it with: pip install openai"
             ) from None
 
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": _API_TIMEOUT_SECONDS,
+        }
         resolved_base = base_url or os.environ.get("OPENAI_BASE_URL")
         if resolved_base:
             client_kwargs["base_url"] = resolved_base

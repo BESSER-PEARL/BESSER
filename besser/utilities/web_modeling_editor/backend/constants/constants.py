@@ -81,6 +81,13 @@ LLM_MAX_CONCURRENT_RUNS = _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10)
 LLM_ENABLE_TRACING = _env_bool("BESSER_LLM_ENABLE_TRACING", True)
 LLM_ENABLE_CHECKPOINTING = _env_bool("BESSER_LLM_ENABLE_CHECKPOINTING", True)
 
+# When enabled, Phase 3 blocker-level validation issues (syntax errors,
+# failing toolchain checks) are fed back to the LLM for a bounded fix
+# loop instead of only being recorded. Cost is already covered by the
+# run's max_cost_usd / max_runtime_seconds caps; the loop itself is
+# capped at 3 rounds x 5 turns inside the orchestrator.
+LLM_AUTO_FIX_ISSUES = _env_bool("BESSER_LLM_AUTO_FIX", False)
+
 # Output defaults
 OUTPUT_DIR_NAME = "output"
 AGENT_MODEL_FILENAME = "agent_model.py"

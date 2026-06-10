@@ -35,6 +35,7 @@ from pydantic import ValidationError as PydanticValidationError
 from besser.generators.llm.llm_client import create_llm_client
 from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_AUTO_FIX_ISSUES,
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
     LLM_ENABLE_CHECKPOINTING,
@@ -85,6 +86,51 @@ _EVENT_QUEUE_MAXSIZE = 2048
 # the final DoneEvent. A malformed or maliciously huge recipe would
 # otherwise bloat the last SSE frame beyond any reasonable size.
 _MAX_RECIPE_BYTES = 256 * 1024  # 256 KB
+
+
+# Short display names for the diagram-selection summary. Falls back to
+# the raw diagram type for anything unmapped.
+_DIAGRAM_TYPE_LABELS = {
+    "ClassDiagram": "class diagram",
+    "GUINoCodeDiagram": "GUI",
+    "AgentDiagram": "agent",
+    "ObjectDiagram": "object diagram",
+    "StateMachineDiagram": "state machine",
+    "QuantumCircuitDiagram": "quantum circuit",
+}
+
+
+def _format_selection_details(selection: Optional[dict]) -> str:
+    """Render the assembly selection report as user-facing text.
+
+    Returns an empty string when there is nothing worth showing (no
+    selection data, or a single-diagram project where the choice is
+    unambiguous and nothing was ignored).
+    """
+    if not isinstance(selection, dict):
+        return ""
+    selected = selection.get("selected") or []
+    ignored = selection.get("ignored") or []
+    if not selected:
+        return ""
+    # A single selected diagram with nothing ignored is the common,
+    # unambiguous case — stay quiet rather than adding a noise row.
+    if len(selected) == 1 and not ignored:
+        return ""
+
+    def _label(entry: dict) -> str:
+        type_label = _DIAGRAM_TYPE_LABELS.get(
+            str(entry.get("type")), str(entry.get("type"))
+        )
+        return f"{type_label} '{entry.get('title')}'"
+
+    lines = ["Using: " + ", ".join(_label(e) for e in selected)]
+    if ignored:
+        lines.append(
+            "Not included (only the active diagram of each type is used): "
+            + ", ".join(_label(e) for e in ignored)
+        )
+    return "\n".join(lines)
 
 
 class _EmptyGenerationError(Exception):
@@ -452,6 +498,20 @@ class SmartGenerationRunner:
 
         yield format_sse(PhaseEvent(phase="select", message="Selecting generator"))
 
+        # Tell the user exactly which diagrams feed this run. Diagram
+        # choice is deterministic (active tab per type), which is easy to
+        # get wrong with several diagrams of the same type open —
+        # surfacing it here makes a wrong pick visible immediately
+        # instead of discovered in the generated code.
+        selection_details = _format_selection_details(
+            getattr(assembled, "selection", None)
+        )
+        if selection_details:
+            yield format_sse(PhaseUpdateEvent(
+                phase="select",
+                details=selection_details,
+            ))
+
         # ---- 4. Build the LLM client (may raise on invalid key) --------
         try:
             client = await asyncio.to_thread(
@@ -619,6 +679,7 @@ class SmartGenerationRunner:
             # BESSER_LLM_ENABLE_* env vars without a code change.
             enable_tracing=LLM_ENABLE_TRACING,
             enable_checkpointing=LLM_ENABLE_CHECKPOINTING,
+            auto_fix_issues=LLM_AUTO_FIX_ISSUES,
         )
 
         # ---- 6. Spawn the worker + the cost emitter --------------------

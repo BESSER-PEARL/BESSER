@@ -231,6 +231,48 @@ class TestRuntimeTimeout:
 
         assert any("Skipping Phase 3" in record.message for record in caplog.records)
 
+    def test_phase3_issues_emitted_via_phase_details(self, simple_model, tmp_path):
+        """Validation findings are surfaced through on_phase_details so the
+        editor can render them — not just counted in on_progress."""
+        details_calls = []
+
+        orchestrator = LLMOrchestrator(
+            llm_client=_make_end_turn_client(),
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+            on_phase_details=lambda phase, details: details_calls.append((phase, details)),
+        )
+
+        os.makedirs(str(tmp_path), exist_ok=True)
+        with open(os.path.join(str(tmp_path), "bad.py"), "w") as f:
+            f.write("def f(\n    x =")
+
+        orchestrator._run_phase3_validation()
+
+        validate_calls = [d for p, d in details_calls if p == "validate"]
+        assert validate_calls, "expected a validate phase_details emission"
+        assert "[blocker]" in validate_calls[0] or "[warning]" in validate_calls[0]
+        assert "bad.py" in validate_calls[0]
+
+    def test_phase3_no_details_when_clean(self, simple_model, tmp_path):
+        """No validate phase_details emission when validation passes."""
+        details_calls = []
+
+        orchestrator = LLMOrchestrator(
+            llm_client=_make_end_turn_client(),
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+            on_phase_details=lambda phase, details: details_calls.append((phase, details)),
+        )
+
+        os.makedirs(str(tmp_path), exist_ok=True)
+        with open(os.path.join(str(tmp_path), "fine.py"), "w") as f:
+            f.write("x = 1\n")
+
+        orchestrator._run_phase3_validation()
+
+        assert not [d for p, d in details_calls if p == "validate"]
+
 
 # ======================================================================
 # Phase 1 validation tests

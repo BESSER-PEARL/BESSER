@@ -131,6 +131,65 @@ class TestAssembleModels:
         assert "Author" in class_names
         assert "Book" in class_names
 
+    def test_selection_report_single_diagram(self):
+        """One diagram per type: it is selected, nothing is ignored."""
+        project = _project_with({
+            "ClassDiagram": [
+                {"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL},
+            ]
+        })
+
+        result = assemble_models_from_project(project)
+
+        assert result.selection["selected"] == [
+            {"type": "ClassDiagram", "title": "Library"}
+        ]
+        assert result.selection["ignored"] == []
+
+    def test_selection_report_flags_ignored_sibling(self):
+        """A second class diagram that isn't the active tab is reported
+        as ignored — the user must be able to see it was dropped."""
+        project = _project_with({
+            "ClassDiagram": [
+                {"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL},
+                {"id": "cd2", "title": "Draft", "model": CLASS_DIAGRAM_MODEL},
+            ]
+        })
+
+        result = assemble_models_from_project(project)
+
+        assert result.selection["selected"] == [
+            {"type": "ClassDiagram", "title": "Library"}
+        ]
+        assert result.selection["ignored"] == [
+            {"type": "ClassDiagram", "title": "Draft"}
+        ]
+
+    def test_selection_report_honours_active_index(self):
+        """currentDiagramIndices decides which sibling is selected."""
+        project = ProjectInput(
+            id="test-project",
+            type="BesserProject",
+            name="TestProject",
+            createdAt="2026-04-15T00:00:00Z",
+            diagrams={
+                "ClassDiagram": [
+                    {"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL},
+                    {"id": "cd2", "title": "Shop", "model": CLASS_DIAGRAM_MODEL},
+                ]
+            },
+            currentDiagramIndices={"ClassDiagram": 1},
+        )
+
+        result = assemble_models_from_project(project)
+
+        assert result.selection["selected"] == [
+            {"type": "ClassDiagram", "title": "Shop"}
+        ]
+        assert result.selection["ignored"] == [
+            {"type": "ClassDiagram", "title": "Library"}
+        ]
+
     def test_new_optional_models_default_to_empty(self):
         """The newly added optional diagram slots (object / state machines /
         quantum) must default to ``None`` / empty list when the project

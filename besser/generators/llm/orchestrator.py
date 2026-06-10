@@ -1368,6 +1368,28 @@ class LLMOrchestrator:
                 f"{len(blockers_before)} blockers / {len(issues)} total",
             )
 
+        # Surface the actual findings, not just the counts. The editor
+        # renders phase details behind a chevron on the smart-gen card —
+        # without this the issues only exist in server logs and the
+        # recipe inside the ZIP, where users never look. Capped so a
+        # pathological run can't flood the SSE stream.
+        if self.on_phase_details:
+            max_shown = 20
+            detail_lines = [
+                f"[{issue.severity}] {issue.message}"
+                for issue in issues[:max_shown]
+            ]
+            if len(issues) > max_shown:
+                detail_lines.append(
+                    f"... and {len(issues) - max_shown} more issue(s)"
+                )
+            try:
+                self.on_phase_details("validate", "\n".join(detail_lines))
+            except Exception:
+                logger.debug(
+                    "on_phase_details failed for validate phase", exc_info=True
+                )
+
         # Auto-fix is opt-in (default off). Industry pattern: report by
         # default, fix on request. Avoid the LLM running ``npm install`` —
         # post-install hooks execute arbitrary code from chosen packages.
@@ -1838,12 +1860,26 @@ class LLMOrchestrator:
         except (subprocess.TimeoutExpired, OSError):
             return []
 
-        lines = (result.stdout or "").strip().splitlines()
+        def _is_noise(line: str) -> bool:
+            # ruff prints non-finding chatter to stdout even with
+            # --output-format=concise: a success banner and a trailing
+            # summary/fix-hint. Only actual findings should become issues.
+            return (
+                line == "All checks passed!"
+                or line.startswith("Found ")
+                or line.startswith("[*]")
+            )
+
+        lines = [
+            line.strip()
+            for line in (result.stdout or "").strip().splitlines()
+            if line.strip() and not _is_noise(line.strip())
+        ]
         if not lines:
             return []
         # Cap to keep Phase 3 feedback scoped — the LLM doesn't need every
         # unused-import warning, it needs the shape of the problem.
-        issues = [f"ruff: {line.strip()}" for line in lines[:20] if line.strip()]
+        issues = [f"ruff: {line}" for line in lines[:20]]
         if len(lines) > 20:
             issues.append(f"ruff: (+{len(lines) - 20} more issues truncated)")
         return issues

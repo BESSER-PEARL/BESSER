@@ -456,3 +456,46 @@ class TestRegistrySweep:
                 _sh.rmtree(tmp, ignore_errors=True)
 
         asyncio.run(_test())
+
+
+class TestSelectionDetails:
+    """_format_selection_details — diagram-selection summary for the
+    select phase_update event."""
+
+    def test_none_and_empty_return_blank(self):
+        assert runner_module._format_selection_details(None) == ""
+        assert runner_module._format_selection_details({}) == ""
+        assert runner_module._format_selection_details(
+            {"selected": [], "ignored": []}
+        ) == ""
+
+    def test_single_unambiguous_selection_stays_quiet(self):
+        """One diagram, nothing ignored — no noise row on the card."""
+        selection = {
+            "selected": [{"type": "ClassDiagram", "title": "Library"}],
+            "ignored": [],
+        }
+        assert runner_module._format_selection_details(selection) == ""
+
+    def test_multiple_selected_are_listed(self):
+        selection = {
+            "selected": [
+                {"type": "ClassDiagram", "title": "Library"},
+                {"type": "GUINoCodeDiagram", "title": "MainApp"},
+            ],
+            "ignored": [],
+        }
+        details = runner_module._format_selection_details(selection)
+        assert "class diagram 'Library'" in details
+        assert "GUI 'MainApp'" in details
+        assert "Not included" not in details
+
+    def test_ignored_diagrams_are_called_out(self):
+        selection = {
+            "selected": [{"type": "ClassDiagram", "title": "Library"}],
+            "ignored": [{"type": "ClassDiagram", "title": "Draft"}],
+        }
+        details = runner_module._format_selection_details(selection)
+        assert "class diagram 'Library'" in details
+        assert "Not included" in details
+        assert "class diagram 'Draft'" in details

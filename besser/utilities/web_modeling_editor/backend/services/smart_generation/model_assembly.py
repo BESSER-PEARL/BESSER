@@ -81,6 +81,14 @@ class AssembledModels:
     object_model: Optional[Any] = None                  # ObjectModel — instance data / fixtures
     state_machines: List[Any] = field(default_factory=list)  # list of StateMachine
     quantum_circuit: Optional[Any] = None               # QuantumCircuit or None
+    # Human-readable record of which diagram was used per type and which
+    # sibling diagrams were ignored (only the active diagram of each type
+    # feeds the run, except state machines). Surfaced to the user via an
+    # SSE phase_update so "which model was taken" is never a silent side
+    # effect of tab state. Shape:
+    #   {"selected": [{"type": ..., "title": ...}, ...],
+    #    "ignored":  [{"type": ..., "title": ...}, ...]}
+    selection: dict = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
         """Shape suitable for the preview endpoint response.
@@ -219,6 +227,7 @@ def assemble_models_from_project(
         object_model=object_model,
         state_machines=state_machines,
         quantum_circuit=quantum_circuit,
+        selection=_build_selection_report(project, class_diagram),
     )
 
 
@@ -462,6 +471,68 @@ def _collect_diagrams_of_type(
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+
+# Diagram types where only ONE diagram (the active tab, or the
+# GUI-referenced one for class diagrams) feeds the run. State machines
+# are excluded — every StateMachineDiagram is collected.
+_SINGLE_ACTIVE_TYPES: tuple[str, ...] = (
+    "ClassDiagram",
+    "GUINoCodeDiagram",
+    "AgentDiagram",
+    "ObjectDiagram",
+    "QuantumCircuitDiagram",
+)
+
+
+def _build_selection_report(
+    project: ProjectInput,
+    class_diagram: Optional[DiagramInput],
+) -> dict:
+    """Record which diagram was used per type and which were ignored.
+
+    Only diagrams with actual content (non-empty ``model``) are listed —
+    empty placeholder tabs are noise, not a meaningful "ignored" signal.
+    The chosen diagram mirrors what the assemblers above actually used:
+    ``_pick_class_diagram``'s result for class diagrams, the active
+    diagram for the other single-active types, and every diagram for
+    state machines.
+    """
+    def _identity(diagram: Any) -> Any:
+        return getattr(diagram, "id", None) or id(diagram)
+
+    def _entry(diagram_type: str, diagram: Any) -> dict:
+        return {
+            "type": diagram_type,
+            "title": getattr(diagram, "title", None) or "<untitled>",
+        }
+
+    selected: list[dict] = []
+    ignored: list[dict] = []
+
+    for diagram_type in _SINGLE_ACTIVE_TYPES:
+        with_content = [
+            d for d in _collect_diagrams_of_type(project, diagram_type)
+            if getattr(d, "model", None)
+        ]
+        if not with_content:
+            continue
+        if diagram_type == "ClassDiagram":
+            chosen = class_diagram
+        else:
+            chosen = project.get_active_diagram(diagram_type)
+        chosen_id = _identity(chosen) if chosen is not None else None
+        if chosen is not None and getattr(chosen, "model", None):
+            selected.append(_entry(diagram_type, chosen))
+        for diagram in with_content:
+            if _identity(diagram) != chosen_id:
+                ignored.append(_entry(diagram_type, diagram))
+
+    for diagram in _collect_diagrams_of_type(project, "StateMachineDiagram"):
+        if getattr(diagram, "model", None):
+            selected.append(_entry("StateMachineDiagram", diagram))
+
+    return {"selected": selected, "ignored": ignored}
 
 
 def _pick_class_diagram(project: ProjectInput) -> Optional[DiagramInput]:

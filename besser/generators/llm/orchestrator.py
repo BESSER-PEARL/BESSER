@@ -225,6 +225,7 @@ class LLMOrchestrator:
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
+        enable_conformance_gate: bool = True,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -348,6 +349,16 @@ class LLMOrchestrator:
         # possible resume. Kept separate from ``self._validation_issues``
         # because those are about Phase 3 quality, not run completion.
         self._phase2_exited_cleanly: bool = False
+        # Done gate: when the LLM declares completion while declared
+        # model elements are missing from the output, the missing list
+        # is injected back and the loop continues — at most
+        # ``_MAX_CONFORMANCE_NUDGES`` times, so a model the LLM genuinely
+        # can't express in the target stack can't loop forever.
+        self.enable_conformance_gate = enable_conformance_gate
+        self._conformance_nudges: int = 0
+        self._conformance_report = None
+
+    _MAX_CONFORMANCE_NUDGES = 2
 
     _LOOP_THRESHOLD = 4
     # Tighter, per-file threshold for the modify_file streak guard.
@@ -649,8 +660,12 @@ class LLMOrchestrator:
             logger.info("Phase 1: Keywords override LLM → %s", keyword_result)
             return keyword_result
 
-        if llm_result == "" and (keyword_result is None or keyword_result == ""):
-            # Both LLM and keywords agree: no generator
+        if llm_result == "" or keyword_result == "":
+            # An explicit "no generator" signal from either selector wins
+            # over the last-resort default: the LLM saying "none", or the
+            # keywords matching a framework BESSER has no generator for
+            # (NestJS, Rails, …). Scaffolding FastAPI under a NestJS
+            # request would fight the user's explicit ask.
             return None
 
         # Last resort: default based on available models. Quantum and GUI
@@ -1072,6 +1087,8 @@ class LLMOrchestrator:
                 break
 
             if response["stop_reason"] == "end_turn":
+                if self._maybe_conformance_nudge(response, messages):
+                    continue
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
                 break
@@ -1138,6 +1155,67 @@ class LLMOrchestrator:
             else:
                 logger.warning("Unexpected stop_reason: %s", response["stop_reason"])
                 break
+
+    def _maybe_conformance_nudge(self, response: dict, messages: list) -> bool:
+        """Done gate: refuse an ``end_turn`` while declared model elements
+        are missing from the workspace.
+
+        Runs the deterministic conformance check against the domain model.
+        When elements are missing (and the nudge budget isn't exhausted),
+        appends the LLM's message plus a corrective user message listing
+        the gaps, and returns True so the caller continues the loop.
+        Returns False when the end_turn should be accepted.
+        """
+        if not self.enable_conformance_gate or self.domain_model is None:
+            return False
+        if self._conformance_nudges >= self._MAX_CONFORMANCE_NUDGES:
+            return False
+
+        from besser.generators.llm.conformance import (
+            check_conformance,
+            format_missing_for_llm,
+        )
+        try:
+            report = check_conformance(self.domain_model, self.output_dir)
+        except Exception:
+            # The gate is a quality net, never a failure source — accept
+            # the end_turn if the check itself blows up.
+            logger.debug("Conformance check failed; accepting end_turn", exc_info=True)
+            return False
+
+        self._conformance_report = report
+        if report.ok:
+            return False
+
+        self._conformance_nudges += 1
+        logger.warning(
+            "Done gate: %d/%d declared model elements missing — nudge %d/%d",
+            len(report.missing), report.expected,
+            self._conformance_nudges, self._MAX_CONFORMANCE_NUDGES,
+        )
+        self._trace.write(
+            "conformance_nudge",
+            missing=len(report.missing),
+            expected=report.expected,
+            nudge=self._conformance_nudges,
+        )
+        if self.on_phase_details:
+            try:
+                self.on_phase_details(
+                    "customize",
+                    f"Conformance check: {len(report.missing)} declared model "
+                    f"element(s) missing — asking the LLM to implement them:\n"
+                    + "\n".join(f"  - {m.describe()}" for m in report.missing[:20]),
+                )
+            except Exception:
+                logger.debug("on_phase_details failed for conformance nudge", exc_info=True)
+
+        messages.append({"role": "assistant", "content": response["content"]})
+        messages.append({
+            "role": "user",
+            "content": [{"type": "text", "text": format_missing_for_llm(report)}],
+        })
+        return True
 
     def _execute_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
         """
@@ -2541,11 +2619,24 @@ class LLMOrchestrator:
         if self.quantum_circuit is not None:
             recipe_model["quantum_present"] = True
 
+        # Final conformance snapshot — recomputed here (not reused from
+        # the done gate) so it reflects any Phase 3 fixes too.
+        conformance_summary = None
+        if self.domain_model is not None and self.enable_conformance_gate:
+            from besser.generators.llm.conformance import check_conformance
+            try:
+                conformance_summary = check_conformance(
+                    self.domain_model, self.output_dir
+                ).to_dict()
+            except Exception:
+                logger.debug("Conformance snapshot failed for recipe", exc_info=True)
+
         recipe = {
             "instructions": instructions,
             "model": recipe_model,
             "llm_model": self.client.model,
             "generator_used": self._generator_used,
+            "conformance": conformance_summary,
             "turns": self.total_turns,
             "tool_calls_count": len(self.tool_calls_log),
             "compactions": self._compaction_count,

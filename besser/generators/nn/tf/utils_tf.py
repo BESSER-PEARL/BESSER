@@ -689,12 +689,15 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
             ts_op_synt = f"tf.squeeze({prev_out_var})"
     elif tns_type == "unsqueeze":
         axis = tensorop.reduce_dim
-        # Skip unsqueeze(0) for RNN hidden states - TensorFlow single-layer RNNs don't have num_layers dim
-        # PyTorch: [B, H] -> unsqueeze(0) -> [1, B, H] for num_layers dimension
-        # Note: unsqueeze(0) on RNN hidden states for initial_state is handled
-        # during parsing (removed as no-op). This code generates expand_dims for
-        # all other unsqueeze operations that affect final output shapes.
-        ts_op_synt = f"tf.expand_dims({prev_out_var}, axis={axis})"
+        # Skip unsqueeze(0) when output is used as RNN initial_state
+        # PyTorch: initial_state shape is [num_layers, B, H]
+        # TensorFlow: initial_state shape is [B, H]
+        # So unsqueeze(0) that adds num_layers dimension should be skipped
+        if axis == 0 and hasattr(tensorop, 'is_rnn_initial_state') and tensorop.is_rnn_initial_state:
+            # Skip this unsqueeze - TensorFlow doesn't need the num_layers dimension
+            ts_op_synt = f"SKIP:{prev_out_var}"
+        else:
+            ts_op_synt = f"tf.expand_dims({prev_out_var}, axis={axis})"
     elif tns_type == "zeros_like":
         ts_op_synt = f"tf.zeros_like({prev_out_var})"
     elif tns_type == "normalize":

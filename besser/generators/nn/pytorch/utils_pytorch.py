@@ -303,7 +303,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     """
 
     prev_out_var, params = utils.get_tensorop_params(tensorop,
-                                                     modules_details)
+                                                     modules_details,
+                                                     get_rnn_hidden_var)
     if in_var is not None:
         prev_out_var = in_var
 
@@ -469,3 +470,33 @@ def get_activation_function(activ: str):
     if activ in activ_func:
         return f"nn.{activ_func[activ]}()"
     raise ValueError(f"The activation function {activ} is invalid")
+
+
+def get_rnn_hidden_var(layer_details, base_module):
+    """
+    Get the correct variable name for RNN hidden state in PyTorch.
+
+    For return_type="both": hidden var is at index 4 (e.g., x_1_h)
+    For return_type="hidden": hidden var is at index 1 after [-1] extraction (e.g., x_1)
+
+    Arguments:
+        layer_details: The layer details from modules_details
+        base_module: The base module name (e.g., "rnn")
+
+    Returns:
+        The variable name to use for the hidden state
+    """
+    layer_obj = layer_details[3] if len(layer_details) > 3 else None
+
+    if layer_obj and hasattr(layer_obj, 'return_type'):
+        if layer_obj.return_type == "both" and len(layer_details) > 4:
+            # Hidden variable is separate (x_1_h)
+            return layer_details[4]
+        else:
+            # For return_type="hidden", hidden is in index 1 after [-1] extraction
+            return layer_details[1]
+    elif len(layer_details) > 4:
+        return layer_details[4]
+    else:
+        # Fallback to regular output if hidden var not available
+        return layer_details[1]

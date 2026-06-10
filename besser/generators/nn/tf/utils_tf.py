@@ -462,7 +462,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     # For other operations, get params as usual
     prev_out_var, params = utils.get_tensorop_params(tensorop,
-                                                     modules_details)
+                                                     modules_details,
+                                                     get_rnn_hidden_var)
     if in_var is not None:
         prev_out_var = in_var
     if tns_type == "reshape":
@@ -772,3 +773,23 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     else:
         ts_op_synt = f"tf.matmul({params})"
     return ts_op_synt
+
+
+def get_rnn_hidden_var(layer_details, base_module):
+    """
+    Get the correct variable name for RNN hidden state in TensorFlow.
+
+    For both return_type="both" and "hidden": uses index 4 if available, else index 1
+
+    Arguments:
+        layer_details: The layer details from modules_details
+        base_module: The base module name (e.g., "rnn")
+
+    Returns:
+        The variable name to use for the hidden state
+    """
+    if len(layer_details) > 4:
+        return layer_details[4]
+    else:
+        # Fallback to regular output if hidden var not available
+        return layer_details[1]

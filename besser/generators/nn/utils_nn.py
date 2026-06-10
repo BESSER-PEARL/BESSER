@@ -579,7 +579,7 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 
 
 
-def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
+def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidden_var_fn=None):
     """
     It retrieves tensorops parameters that are used by
     `get_tensorop_syntax` function defined in PyTorch and
@@ -589,6 +589,8 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
         tensorop (TensorOp): The BUML tensorop object.
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
+        get_rnn_hidden_var_fn (callable): Optional framework-specific function
+            to get RNN hidden variable name. Should accept (layer_details, base_module).
 
     Returns:
         - previous output variable and the parameters of the tensorop.
@@ -632,12 +634,13 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                 base_module = module_input[:-8]  # Remove "__hidden"
                 modules_names = list(modules_details.keys())
                 if f"{base_module}_layer" in modules_names:
-                    # RNN layers with return_type="both" have hidden_var at index 4
                     layer_details = modules_details[f"{base_module}_layer"]
-                    if len(layer_details) > 4:
+                    # Use framework-specific helper if provided, otherwise fallback to default logic
+                    if get_rnn_hidden_var_fn:
+                        prev_out_var = get_rnn_hidden_var_fn(layer_details, base_module)
+                    elif len(layer_details) > 4:
                         prev_out_var = layer_details[4]
                     else:
-                        # Fallback to regular output if hidden var not available
                         prev_out_var = layer_details[1]
                 else:
                     prev_out_var = "x"
@@ -648,9 +651,10 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
                 modules_names = list(modules_details.keys())
                 if f"{base_module}_layer" in modules_names:
                     layer_details = modules_details[f"{base_module}_layer"]
-                    if len(layer_details) > 4:
-                        # For LSTM, cell state would need separate tracking
-                        # For now, use hidden var as placeholder
+                    # Use framework-specific helper if provided, otherwise fallback to default logic
+                    if get_rnn_hidden_var_fn:
+                        prev_out_var = get_rnn_hidden_var_fn(layer_details, base_module)
+                    elif len(layer_details) > 4:
                         prev_out_var = layer_details[4]
                     else:
                         prev_out_var = layer_details[1]

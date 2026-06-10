@@ -888,7 +888,8 @@ def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str, modules_details:
 
 def handle_tensorop(tensorop: TensorOp, modules_details: dict,
                     get_tensorop_syntax: callable, out_var: str | None = None,
-                    referenced_tensorops: set | None = None):
+                    referenced_tensorops: set | None = None,
+                    inputs_outputs: dict | None = None):
     """
     It populates the `modules_details` dictionary with tensorop's
     information: Its syntax and output variable.
@@ -907,9 +908,13 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
     """
     ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
     if out_var is None:
+        # Check if parser provided actual variable name in inputs_outputs
+        if inputs_outputs and tensorop.name in inputs_outputs:
+            # Use the actual Python variable name from the assignment
+            out_var = inputs_outputs[tensorop.name][1]
         # For shape_dim TensorOps, use the TensorOp name as the output variable
         # (e.g., 'b' for extracting batch size, 't' for sequence length)
-        if tensorop.tns_type == "shape_dim":
+        elif tensorop.tns_type == "shape_dim":
             out_var = tensorop.name
         elif len(modules_details) == 0:
             out_var  = initialize_tensorop_var(tensorop)

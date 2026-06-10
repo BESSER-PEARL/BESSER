@@ -161,7 +161,8 @@ class NNCodeGenerator(GeneratorInterface):
             else:
                 handle_tensorop(
                     module, modules_details, self.get_tensorop_syntax,
-                    referenced_tensorops=referenced_tensorops
+                    referenced_tensorops=referenced_tensorops,
+                    inputs_outputs=self.model.inputs_outputs
                 )
         if actv_func:
             adjust_actv_func_name(modules_details)

@@ -379,3 +379,119 @@ def test_a1_end_to_end_bracket_n_to_replicas(tmp_path):
     assert deploy.get("replicas") == 3, (
         f"Expected replicas=3, got {deploy.get('replicas')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6b-2 — agent baking tests (the load-bearing test for this feature)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def _researcher_agent():
+    """Minimal BUML Agent model for baking tests."""
+    from besser.BUML.metamodel.state_machine.agent import Agent, WebSocketPlatform
+    agent = Agent("Researcher")
+    agent.platforms.append(WebSocketPlatform())
+    agent.new_state("initial", initial=True)
+    return agent
+
+
+def test_baking_produces_build_context(tmp_path, _researcher_agent):
+    """6c — LOCAL artifact with resolvable agent_model_ref gets a baked build context."""
+    node = Node("Cluster", kind=NodeKind.EXECUTION_ENVIRONMENT)
+    art = Artifact("Researcher", locality=Locality.LOCAL)
+    art.agent_model_ref = "agent-1"
+    dr = DeploymentRelation(art, node)
+    model = DeploymentModel("m", nodes={node}, artifacts={art}, relationships={dr})
+
+    gen = DockerComposeGenerator(
+        model, output_dir=str(tmp_path),
+        agent_models_by_id={"agent-1": _researcher_agent},
+    )
+    gen.generate()
+
+    # compose file exists and references the build context
+    compose_path = tmp_path / "docker-compose.yml"
+    assert compose_path.exists()
+    content = compose_path.read_text(encoding="utf-8")
+    assert "build: ./researcher" in content
+
+    # build context files
+    ctx = tmp_path / "researcher"
+    assert (ctx / "Dockerfile").exists(), "Dockerfile should be baked"
+    dockerfile = (ctx / "Dockerfile").read_text(encoding="utf-8")
+    assert 'CMD ["python", "Researcher.py"]' in dockerfile
+
+    assert (ctx / "Researcher.py").exists(), "BAFGenerator output should be present"
+
+
+def test_baking_skips_artifact_without_agent_ref(tmp_path, _researcher_agent):
+    """6c — LOCAL artifact with no agent_model_ref gets no Dockerfile baked."""
+    node = Node("Cluster", kind=NodeKind.EXECUTION_ENVIRONMENT)
+    agentic = Artifact("Researcher", locality=Locality.LOCAL)
+    agentic.agent_model_ref = "agent-1"
+    plain = Artifact("database", locality=Locality.LOCAL)
+    # plain has no agent_model_ref (defaults None)
+    dr1 = DeploymentRelation(agentic, node)
+    dr2 = DeploymentRelation(plain, node)
+    model = DeploymentModel("m", nodes={node}, artifacts={agentic, plain},
+                            relationships={dr1, dr2})
+
+    gen = DockerComposeGenerator(
+        model, output_dir=str(tmp_path),
+        agent_models_by_id={"agent-1": _researcher_agent},
+    )
+    gen.generate()
+
+    # agentic artifact was baked
+    assert (tmp_path / "researcher" / "Dockerfile").exists()
+    # plain artifact was NOT baked
+    assert not (tmp_path / "database" / "Dockerfile").exists()
+
+
+def test_baking_no_op_when_agent_models_empty(tmp_path):
+    """6c back-compat — empty agent_models_by_id (6a path) produces only compose."""
+    node = Node("Host", kind=NodeKind.DEVICE)
+    art = Artifact("svc", locality=Locality.LOCAL)
+    dr = DeploymentRelation(art, node)
+    model = DeploymentModel("m", nodes={node}, artifacts={art}, relationships={dr})
+
+    gen = DockerComposeGenerator(model, output_dir=str(tmp_path), agent_models_by_id={})
+    gen.generate()
+
+    assert (tmp_path / "docker-compose.yml").exists()
+    # No build-context subdirectory created
+    subdirs = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert subdirs == [], f"Expected no subdirs, got {subdirs}"
+
+
+def test_baking_no_op_when_no_agent_models_arg(tmp_path):
+    """6c back-compat — 2-arg constructor (default agent_models_by_id=None) still works."""
+    node = Node("Host", kind=NodeKind.DEVICE)
+    art = Artifact("svc", locality=Locality.LOCAL)
+    dr = DeploymentRelation(art, node)
+    model = DeploymentModel("m", nodes={node}, artifacts={art}, relationships={dr})
+
+    gen = DockerComposeGenerator(model, output_dir=str(tmp_path))
+    gen.generate()
+
+    assert (tmp_path / "docker-compose.yml").exists()
+    subdirs = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert subdirs == [], f"Expected no subdirs, got {subdirs}"
+
+
+def test_baking_skips_unresolvable_ref(tmp_path):
+    """6c — artifact whose agent_model_ref has no match is skipped (no crash)."""
+    node = Node("Host", kind=NodeKind.DEVICE)
+    art = Artifact("ghost", locality=Locality.LOCAL)
+    art.agent_model_ref = "no-such-uuid"
+    dr = DeploymentRelation(art, node)
+    model = DeploymentModel("m", nodes={node}, artifacts={art}, relationships={dr})
+
+    gen = DockerComposeGenerator(
+        model, output_dir=str(tmp_path),
+        agent_models_by_id={"other-uuid": None},
+    )
+    gen.generate()
+
+    assert (tmp_path / "docker-compose.yml").exists()
+    assert not (tmp_path / "ghost" / "Dockerfile").exists()

@@ -140,7 +140,10 @@ def _build_deployment_node(elem_id: str, elem: dict) -> tuple:
 
     if elem_type == "DeploymentArtifact":
         clean_name, mult = parse_from_name(raw_name)
-        artifact = Artifact(name=clean_name)
+        # 6b-2 — WME stamps the Agent-diagram UUID as `agentModelRef`
+        # (guide 33 / full-via-Artifact). Absent on non-agent artifacts.
+        agent_model_ref = elem.get("agentModelRef")
+        artifact = Artifact(name=clean_name, agent_model_ref=agent_model_ref)
         apply_artifact_stereotype_tokens(artifact, stereotype)
         return artifact, mult
 
@@ -148,7 +151,9 @@ def _build_deployment_node(elem_id: str, elem: dict) -> tuple:
         # D12: synthetic Artifact representing the Component, the
         # original Component id lives in manifests (the cross-diagram link).
         clean_name, mult = parse_from_name(raw_name)
-        artifact = Artifact(name=clean_name, manifests=[elem_id])
+        agent_model_ref = elem.get("agentModelRef")
+        artifact = Artifact(name=clean_name, manifests=[elem_id],
+                            agent_model_ref=agent_model_ref)
         apply_artifact_stereotype_tokens(artifact, stereotype)
         return artifact, mult
 

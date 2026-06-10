@@ -479,3 +479,56 @@ class TestDeploymentBumlToJson:
                      if e["type"] == "DeploymentArtifact"]
         assert len(artifacts) == 1
         assert artifacts[0]["name"] == "agent-runtime [3]"
+
+
+# ---------------------------------------------------------------------------
+# 6b-2 — agentModelRef threading (processor reads WME wire key onto field)
+# ---------------------------------------------------------------------------
+
+class TestAgentModelRefProcessor:
+    def _make_payload(self, elem_type: str, agent_model_ref=None) -> dict:
+        elem = {
+            "type": elem_type,
+            "name": "Researcher",
+        }
+        if agent_model_ref is not None:
+            elem["agentModelRef"] = agent_model_ref
+        return {
+            "title": "T",
+            "model": {
+                "elements": {"elem-1": elem},
+                "relationships": {},
+            },
+        }
+
+    def test_deployment_artifact_with_agent_model_ref(self):
+        """DeploymentArtifact JSON with agentModelRef → artifact.agent_model_ref set."""
+        payload = self._make_payload("DeploymentArtifact", agent_model_ref="uuid-abc")
+        model = process_deployment_diagram(payload)
+        artifacts = list(model.all_artifacts())
+        assert len(artifacts) == 1
+        assert artifacts[0].agent_model_ref == "uuid-abc"
+
+    def test_deployment_artifact_without_agent_model_ref(self):
+        """DeploymentArtifact JSON with no agentModelRef → agent_model_ref is None."""
+        payload = self._make_payload("DeploymentArtifact")
+        model = process_deployment_diagram(payload)
+        artifacts = list(model.all_artifacts())
+        assert len(artifacts) == 1
+        assert artifacts[0].agent_model_ref is None
+
+    def test_deployment_component_with_agent_model_ref(self):
+        """DeploymentComponent (synthetic D12) also threads agentModelRef."""
+        payload = self._make_payload("DeploymentComponent", agent_model_ref="uuid-xyz")
+        model = process_deployment_diagram(payload)
+        artifacts = list(model.all_artifacts())
+        assert len(artifacts) == 1
+        assert artifacts[0].agent_model_ref == "uuid-xyz"
+
+    def test_deployment_component_without_agent_model_ref(self):
+        """DeploymentComponent with no agentModelRef → agent_model_ref is None."""
+        payload = self._make_payload("DeploymentComponent")
+        model = process_deployment_diagram(payload)
+        artifacts = list(model.all_artifacts())
+        assert len(artifacts) == 1
+        assert artifacts[0].agent_model_ref is None

@@ -426,12 +426,17 @@ class Artifact(DeploymentElement):
 
     def __init__(self, name: str = "", locality: Locality = None,
                  manifests: List[str] = None,
+                 agent_model_ref: Optional[str] = None,
                  stereotypes: List[str] = None, layout: dict = None,
                  metadata=None, timestamp=None):
         super().__init__(name=name, stereotypes=stereotypes, layout=layout,
                          metadata=metadata, timestamp=timestamp)
         self.locality = locality if locality is not None else Locality.LOCAL
         self.manifests = manifests if manifests is not None else []
+        # 6b-2 — UUID of the Agent diagram this artifact deploys (WME wire key
+        # `agentModelRef`; the Agent diagram's id). Drives BAF agent baking in
+        # the docker_compose generator. None when the artifact is not an agent.
+        self.agent_model_ref = agent_model_ref
         self.__parent: Optional[Node] = None
 
     @property
@@ -463,6 +468,22 @@ class Artifact(DeploymentElement):
             TypeError: if not a list of str.
         """
         self.__manifests = _checked_str_list(manifests, "manifests")
+
+    @property
+    def agent_model_ref(self) -> Optional[str]:
+        """Optional[str]: UUID of the Agent diagram this artifact deploys."""
+        return self.__agent_model_ref
+
+    @agent_model_ref.setter
+    def agent_model_ref(self, agent_model_ref: Optional[str]):
+        """Optional[str]: Set the Agent-diagram UUID.
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if agent_model_ref is not None and not isinstance(agent_model_ref, str):
+            raise TypeError("agent_model_ref must be a str or None")
+        self.__agent_model_ref = agent_model_ref
 
     @property
     def parent(self) -> Optional[Node]:

@@ -434,6 +434,13 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
+    # 6b-2 — deployment generators (docker_compose, future terraform) run at the
+    # project level so the AgentDiagrams are in scope for BAF agent baking.
+    if generator_info.category == "deployment":
+        return await _handle_deployment_project_generation(
+            input_data, generator_info, config, generator_type
+        )
+
     # Handle generators that consume a non-class diagram (Qiskit → quantum,
     # PyTorch/TensorFlow → neural network). The required diagram type comes
     # from the registry, so this branch covers every such generator without
@@ -614,6 +621,54 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             buml_model, gui_model, generator_class, config, temp_dir,
             agent_models=agent_models, agent_configs=agent_configs,
         )
+
+
+@handle_endpoint_errors("_handle_deployment_project_generation")
+async def _handle_deployment_project_generation(
+    input_data: ProjectInput, generator_info, config: dict, generator_type: str
+):
+    """6b-2 — deployment generation WITH the project's AgentDiagrams in scope,
+    so the docker_compose generator can bake a BAF build context per agentic
+    artifact. Builds {AgentDiagram-uuid → Agent BUML model} and hands it to the
+    generator, which resolves each Artifact.agent_model_ref against it.
+
+    Always returns a ZIP (the output is a tree: compose + per-agent build
+    contexts), regardless of generator_info.output_type.
+    """
+    deployment_diagram = input_data.get_active_diagram("DeploymentDiagram")
+    if not deployment_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="DeploymentDiagram is required for the deployment generator",
+        )
+
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+        # Mirror the single-diagram deployment path's conversion call shape.
+        deployment_model = process_deployment_diagram(deployment_diagram.model_dump())
+
+        # Resolver map: AgentDiagram.id → BUML Agent. Keyed by *diagram id*
+        # (== the Artifact.agent_model_ref UUID), NOT by agent name — duplicate
+        # agent names are legal, which is why 6b chose ID over name (memo 07 §8).
+        agent_models_by_id: dict = {}
+        for entry in input_data.diagrams.get("AgentDiagram", []):
+            entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+            if not isinstance(entry_dict, dict):
+                continue
+            diagram_id = entry_dict.get("id")
+            model = entry_dict.get("model")
+            if not diagram_id or not (isinstance(model, dict) and model.get("elements")):
+                continue
+            agent_model = process_agent_diagram(entry_dict)
+            if agent_model is not None:
+                agent_models_by_id[diagram_id] = agent_model
+
+        generator_class = generator_info.generator_class
+        generator_instance = generator_class(
+            deployment_model, output_dir=temp_dir,
+            agent_models_by_id=agent_models_by_id,
+        )
+        await asyncio.to_thread(generator_instance.generate)
+        return _create_zip_response(temp_dir, generator_type)
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:

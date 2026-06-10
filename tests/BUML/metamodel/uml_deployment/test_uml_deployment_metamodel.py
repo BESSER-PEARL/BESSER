@@ -83,6 +83,29 @@ def test_artifact_manifests_must_be_list_of_str():
         Artifact("a", manifests=[123])
 
 
+def test_artifact_agent_model_ref_default_none():
+    """6b-2 — agent_model_ref defaults to None."""
+    assert Artifact("a").agent_model_ref is None
+
+
+def test_artifact_agent_model_ref_str_accepted():
+    """6b-2 — agent_model_ref accepts a str UUID."""
+    a = Artifact("a", agent_model_ref="some-uuid")
+    assert a.agent_model_ref == "some-uuid"
+
+
+def test_artifact_agent_model_ref_none_accepted():
+    """6b-2 — agent_model_ref accepts None explicitly."""
+    a = Artifact("a", agent_model_ref=None)
+    assert a.agent_model_ref is None
+
+
+def test_artifact_agent_model_ref_type_error():
+    """6b-2 — agent_model_ref raises TypeError on non-str, non-None values."""
+    with pytest.raises(TypeError):
+        Artifact("a", agent_model_ref=5)
+
+
 # ---------------------------------------------------------------------------
 # Group 2 -- containment (Node.nested_artifacts / nested_nodes + parent)
 # ---------------------------------------------------------------------------

@@ -97,10 +97,20 @@ WME Generator Key
 When using the online editor, select ``docker_compose`` as the generator type
 for a ``DeploymentDiagram``.
 
-.. note::
+Agentic swarm baking
+--------------------
 
-   **v1 scope.** The generator emits valid Compose orchestration but does not
-   yet generate per-service Dockerfiles. ``build: ./<name>`` references a build
-   context directory that the user must supply (or generate via the BAF
-   generator). Resolving ``Artifact.manifests`` to enrich services with agent
-   labels is a follow-up (guide 08-).
+When the generator is invoked through the ``/generate-output-from-project``
+endpoint (i.e. as part of a full project that includes one or more
+``AgentDiagram`` s), each LOCAL ``Artifact`` whose ``agentModelRef`` field
+resolves to an ``AgentDiagram`` in the project receives a fully baked build
+context: ``<svc>/agent.py`` + ``<svc>/config.yaml`` (via the BAF generator) and
+a ``<svc>/Dockerfile`` that installs ``besser-agentic-framework[all]`` and runs
+the agent script.  The service name and the build-context directory are both
+derived from ``_safe_service_name(artifact.name)``, so ``build: ./<svc>`` in
+the compose file points at the correct directory automatically.  The
+``deploy.replicas: N`` value (from the BPMN lane multiplicity) scales each
+agent to *N* instances, so ``docker compose up --build`` launches a swarm of
+exactly the size authored on the BPMN lane.  LOCAL artifacts with no
+``agentModelRef`` (hand-drawn or unlinked) keep ``build: ./<svc>`` with no
+Dockerfile baked — the user supplies their own build context.

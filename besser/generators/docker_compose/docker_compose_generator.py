@@ -13,6 +13,7 @@ from besser.BUML.metamodel.uml_deployment import (
     Locality,
 )
 from besser.generators import GeneratorInterface
+from besser.generators.agents.baf_generator import BAFGenerator
 from besser.utilities import sort_by_timestamp
 
 
@@ -53,8 +54,13 @@ class DockerComposeGenerator(GeneratorInterface):
     — not resolved against the Component model; see guide §9 Q3).
     """
 
-    def __init__(self, model: DeploymentModel, output_dir: str = None):
+    def __init__(self, model: DeploymentModel, output_dir: str = None,
+                 agent_models_by_id: dict = None):
         super().__init__(model, output_dir)
+        # 6b-2 — {AgentDiagram-uuid → BUML Agent model}, supplied by the
+        # project-level router handler. Empty on the single-diagram path, in
+        # which case no build contexts are baked (6a compose-only behavior).
+        self.agent_models_by_id = agent_models_by_id or {}
 
     def generate(self):
         file_path = self.build_generation_path(file_name="docker-compose.yml")
@@ -71,6 +77,48 @@ class DockerComposeGenerator(GeneratorInterface):
         with open(file_path, mode="w", encoding="utf-8") as f:
             f.write(template.render(services=services, networks=networks))
         print("Code generated in the location: " + file_path)
+        # 6b-2 — bake a BAF build context per resolvable agentic LOCAL artifact.
+        self._bake_agent_contexts(env)
+
+    def _bake_agent_contexts(self, env: Environment) -> None:
+        """For each LOCAL Artifact carrying a resolvable ``agent_model_ref``,
+        bake a build context (``<output_dir>/<svc_name>/``) containing the BAF
+        ``agent.py`` + ``config.yaml`` (via BAFGenerator) and a ``Dockerfile``.
+
+        The directory name is ``_safe_service_name(art.name)`` — identical to the
+        ``build: ./<svc_name>`` the compose emits for this artifact, so the two
+        line up. No-ops when ``agent_models_by_id`` is empty (single-diagram
+        path). LOCAL artifacts with no/unresolvable ref are skipped (logged).
+        """
+        if not self.agent_models_by_id:
+            return
+        base_dir = os.path.dirname(
+            self.build_generation_path(file_name="docker-compose.yml")
+        )
+        dockerfile_tpl = env.get_template("Dockerfile.j2")
+        for art in self.model.all_artifacts():
+            if art.locality != Locality.LOCAL:
+                continue
+            ref = getattr(art, "agent_model_ref", None)
+            if not ref:
+                continue
+            agent = self.agent_models_by_id.get(ref)
+            if agent is None:
+                print(f"[docker_compose] artifact '{art.name}' references agent "
+                      f"'{ref}' but no matching AgentDiagram was found — "
+                      f"skipping its build context.")
+                continue
+            svc_name = _safe_service_name(art.name)
+            ctx_dir = os.path.join(base_dir, svc_name)
+            os.makedirs(ctx_dir, exist_ok=True)
+            # BAF agent.py + config.yaml into the build context.
+            BAFGenerator(agent, output_dir=ctx_dir).generate()
+            # Dockerfile referencing the agent script BAFGenerator just wrote.
+            agent_script = f"{agent.name}.py"
+            with open(os.path.join(ctx_dir, "Dockerfile"),
+                      mode="w", encoding="utf-8") as f:
+                f.write(dockerfile_tpl.render(agent_script=agent_script))
+            print(f"[docker_compose] baked build context: {ctx_dir}")
 
     def _build_view(self, model: DeploymentModel) -> tuple:
         """Resolve the metamodel into ordered dicts the template renders.

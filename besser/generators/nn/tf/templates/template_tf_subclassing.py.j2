@@ -6,8 +6,8 @@
 class NeuralNetwork(tf.keras.Model):
     def __init__(self):
     {{- nn_components.print_init(modules_details) }}
-        
-    def call(self, x, training=None):
+
+    def call(self, x):
     {{- nn_components.print_forward(modules_details, model, inputs_outputs) }}
     
 

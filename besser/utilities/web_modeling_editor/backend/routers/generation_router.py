@@ -46,6 +46,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_deployment_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -524,6 +525,12 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle BPMN generators (reads BPMNDiagram via process_bpmn_diagram)
         if generator_info.category == "business_process":
             return await _generate_bpmn(json_data, generator_type, generator_info.generator_class, temp_dir)
+
+        # Handle UML Deployment generators (reads DeploymentDiagram)
+        if generator_info.category == "deployment":
+            return await _handle_deployment_diagram_generation(
+                json_data, generator_type, generator_info, input_data.config, temp_dir,
+            )
 
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
@@ -1005,6 +1012,34 @@ async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, 
     generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
 
+    return _create_file_response(temp_dir, generator_type)
+
+
+async def _handle_deployment_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
+    temp_dir: str,
+):
+    """Handle generators that consume a UML DeploymentModel (category='deployment').
+
+    Shared by all UML-Deployment generators (DockerComposeGenerator, and future
+    Terraform extension). Processes the WME DeploymentDiagram JSON via
+    ``process_deployment_diagram``, instantiates the generator, and returns a
+    file or ZIP response depending on ``generator_info.output_type``.
+    """
+    try:
+        deployment_model = process_deployment_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed Deployment diagram payload: {exc}") from exc
+
+    generator_class = generator_info.generator_class
+    generator_instance = generator_class(deployment_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    if generator_info.output_type == "zip":
+        return _create_zip_response(temp_dir, generator_type)
     return _create_file_response(temp_dir, generator_type)
 
 

@@ -101,6 +101,11 @@ Choosing a Generator
      - BPMN
      - .bpmn (XML)
      - You need vendor-neutral BPMN 2.0 XML readable by every BPMN-aware tool
+   * - **Docker Compose**
+     - Deployment
+     - .yml
+     - You need a docker-compose.yml to run a swarm (``deploy.replicas: N``
+       from the diagram multiplicity)
 
 
 Web Application
@@ -143,6 +148,7 @@ Generate database schemas, APIs, and data formats:
    generators/json_schema
    generators/rdf
    generators/terraform
+   generators/docker_compose
 
 Machine Learning
 ----------------

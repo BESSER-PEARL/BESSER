@@ -285,6 +285,228 @@ class SetupLayerSyntax:
             )
         return lyr
 
+
+def _handle_reshape_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle reshape tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"{prev_out_var}.reshape({params})"
+
+
+def _handle_concatenate_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle concatenate tensorop syntax."""
+    dim = tensorop.concatenate_dim
+    return f"torch.cat(({params}), dim={dim})"
+
+
+def _handle_transpose_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle transpose tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"{prev_out_var}.transpose({params})"
+
+
+def _handle_permute_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle permute tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"{prev_out_var}.permute({params})"
+
+
+def _handle_multiply_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle multiply tensorop syntax."""
+    return f"torch.mul({params})"
+
+
+def _handle_mean_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle mean tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    dim = tensorop.reduce_dim
+    return f"{prev_out_var}.mean(dim={dim})"
+
+
+def _handle_max_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle max tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    if tensorop.reduce_dim is not None:
+        dim = tensorop.reduce_dim
+        return f"{prev_out_var}.max(dim={dim})[0]"
+    else:
+        return f"{prev_out_var}.max()"
+
+
+def _handle_zeros_like_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle zeros_like tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"torch.zeros_like({prev_out_var})"
+
+
+def _handle_squeeze_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle squeeze tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    if tensorop.reduce_dim is not None:
+        dim = tensorop.reduce_dim
+        return f"{prev_out_var}.squeeze({dim})"
+    else:
+        return f"{prev_out_var}.squeeze()"
+
+
+def _handle_unsqueeze_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle unsqueeze tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    dim = tensorop.reduce_dim
+    return f"{prev_out_var}.unsqueeze({dim})"
+
+
+def _handle_normalize_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle normalize tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    dim = tensorop.reduce_dim
+    return f"F.normalize({prev_out_var}, p=2, dim={dim})"
+
+
+def _handle_repeat_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle repeat tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"{prev_out_var}.repeat({params})"
+
+
+def _handle_pad_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle pad tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+
+    pad_amount = tensorop.pad_amount
+    pad_mode = tensorop.pad_mode.lower() if hasattr(tensorop, 'pad_mode') else 'constant'
+
+    if pad_amount and isinstance(pad_amount, list):
+        pt_pad = []
+        for pair in reversed(pad_amount[1:]):
+            if isinstance(pair, list) and len(pair) == 2:
+                pt_pad.extend(pair)
+        pad_tuple = tuple(pt_pad)
+        return f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}')"
+    else:
+        return f"F.pad({prev_out_var}, {pad_amount})"
+
+
+def _handle_dropout_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle dropout tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    dropout_rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
+    return f"F.dropout({prev_out_var}, p={dropout_rate})"
+
+
+def _handle_interpolate_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle interpolate tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+
+    size = tensorop.interpolate_size if hasattr(tensorop, 'interpolate_size') else None
+    mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'bilinear'
+
+    if size:
+        return f"F.interpolate({prev_out_var}, size={size}, mode='{mode}')"
+    else:
+        return f"F.interpolate({prev_out_var}, mode='{mode}')"
+
+
+def _handle_binop_add_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle binop_add tensorop syntax."""
+    return (f"{params.split(', ')[0]} + {params.split(', ')[1]}" if ', ' in params
+            else f"torch.add({params})")
+
+
+def _handle_binop_subtract_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle binop_subtract tensorop syntax."""
+    return (f"{params.split(', ')[0]} - {params.split(', ')[1]}" if ', ' in params
+            else f"torch.subtract({params})")
+
+
+def _handle_binop_multiply_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle binop_multiply tensorop syntax."""
+    return (f"{params.split(', ')[0]} * {params.split(', ')[1]}" if ', ' in params
+            else f"torch.multiply({params})")
+
+
+def _handle_binop_divide_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle binop_divide tensorop syntax."""
+    return (f"{params.split(', ')[0]} / {params.split(', ')[1]}" if ', ' in params
+            else f"torch.divide({params})")
+
+
+def _handle_binop_floor_divide_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle binop_floor_divide tensorop syntax."""
+    return (f"{params.split(', ')[0]} // {params.split(', ')[1]}" if ', ' in params
+            else f"torch.floor_divide({params})")
+
+
+def _handle_subscript_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle subscript tensorop syntax."""
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"{prev_out_var}{tensorop.subscript_indices}"
+
+
+def _handle_shape_dim_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle shape_dim tensorop syntax."""
+    tensors = tensorop.layers_of_tensors
+    if isinstance(tensors[0], str):
+        if tensors[0] == 'INPUT':
+            source_var = 'x'
+        else:
+            if f"{tensors[0]}_layer" in modules_details or f"{tensors[0]}_op" in modules_details:
+                source_tensors = utils.get_layers_output_for_tensorops(tensors, modules_details)
+                source_var = source_tensors[0]
+            else:
+                source_var = tensors[0]
+    else:
+        source_var = tensors[0]
+
+    dim_index = tensorop.reduce_dim
+    return f"{source_var}.size({dim_index})"
+
+
+def _handle_default_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle default case (matmul)."""
+    return f"torch.matmul({params})"
+
+
+# Dispatch table for PyTorch tensorop handlers
+_PYTORCH_TENSOROP_HANDLERS = {
+    "reshape": _handle_reshape_pytorch,
+    "concatenate": _handle_concatenate_pytorch,
+    "transpose": _handle_transpose_pytorch,
+    "permute": _handle_permute_pytorch,
+    "multiply": _handle_multiply_pytorch,
+    "mean": _handle_mean_pytorch,
+    "max": _handle_max_pytorch,
+    "zeros_like": _handle_zeros_like_pytorch,
+    "squeeze": _handle_squeeze_pytorch,
+    "unsqueeze": _handle_unsqueeze_pytorch,
+    "normalize": _handle_normalize_pytorch,
+    "repeat": _handle_repeat_pytorch,
+    "pad": _handle_pad_pytorch,
+    "dropout": _handle_dropout_pytorch,
+    "interpolate": _handle_interpolate_pytorch,
+    "binop_add": _handle_binop_add_pytorch,
+    "binop_subtract": _handle_binop_subtract_pytorch,
+    "binop_multiply": _handle_binop_multiply_pytorch,
+    "binop_divide": _handle_binop_divide_pytorch,
+    "binop_floor_divide": _handle_binop_floor_divide_pytorch,
+    "subscript": _handle_subscript_pytorch,
+    "shape_dim": _handle_shape_dim_pytorch,
+}
+
+
 def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
                         in_var: str | None = None):
     """
@@ -301,130 +523,13 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
         ts_op_synt (str): the syntax of the tensorop in PyTorch.
 
     """
-
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details,
                                                      get_rnn_hidden_var)
-    if in_var is not None:
-        prev_out_var = in_var
 
     tns_type = tensorop.tns_type
-    if tns_type == "reshape":
-        ts_op_synt = f"{prev_out_var}.reshape({params})"
-    elif tns_type == "concatenate":
-        dim = tensorop.concatenate_dim
-        ts_op_synt = f"torch.cat(({params}), dim={dim})"
-    elif tns_type == "transpose":
-        ts_op_synt = f"{prev_out_var}.transpose({params})"
-    elif tns_type == "permute":
-        ts_op_synt = f"{prev_out_var}.permute({params})"
-    elif tns_type == "multiply":
-        ts_op_synt = f"torch.mul({params})"
-    elif tns_type == "mean":
-        dim = tensorop.reduce_dim
-        ts_op_synt = f"{prev_out_var}.mean(dim={dim})"
-    elif tns_type == "max":
-        if tensorop.reduce_dim is not None:
-            dim = tensorop.reduce_dim
-            ts_op_synt = f"{prev_out_var}.max(dim={dim})[0]"
-        else:
-            ts_op_synt = f"{prev_out_var}.max()"
-    elif tns_type == "zeros_like":
-        ts_op_synt = f"torch.zeros_like({prev_out_var})"
-    elif tns_type == "squeeze":
-        if tensorop.reduce_dim is not None:
-            dim = tensorop.reduce_dim
-            ts_op_synt = f"{prev_out_var}.squeeze({dim})"
-        else:
-            ts_op_synt = f"{prev_out_var}.squeeze()"
-    elif tns_type == "unsqueeze":
-        dim = tensorop.reduce_dim
-        ts_op_synt = f"{prev_out_var}.unsqueeze({dim})"
-    elif tns_type == "normalize":
-        # tf.nn.l2_normalize(x, axis=1) -> F.normalize(x, p=2, dim=1)
-        dim = tensorop.reduce_dim
-        ts_op_synt = f"F.normalize({prev_out_var}, p=2, dim={dim})"
-    elif tns_type == "repeat":
-        # TensorFlow tf.tile(x, [1, t, 1]) -> PyTorch .repeat(1, t, 1)
-        # params contains resolved repeat counts
-        ts_op_synt = f"{prev_out_var}.repeat({params})"
-    elif tns_type == "pad":
-        # TensorFlow tf.pad(x, [[0,0],[1,1],[1,1],[0,0]], mode='REFLECT')
-        # -> PyTorch F.pad(x, (left,right,top,bottom,...), mode='reflect')
-        # Note: TF format is [[dim0_before, dim0_after], [dim1_before, dim1_after], ...]
-        # PyTorch format is (lastdim_left, lastdim_right, 2ndlast_left, 2ndlast_right, ...)
-        pad_amount = tensorop.pad_amount
-        pad_mode = tensorop.pad_mode.lower() if hasattr(tensorop, 'pad_mode') else 'constant'
-
-        # Convert TF padding format to PyTorch format (reverse order, flatten)
-        if pad_amount and isinstance(pad_amount, list):
-            # TF format: [[N], [H], [W], [C]] (NHWC) or [[N], [C], [H], [W]] depending on format
-            # PyTorch F.pad doesn't pad batch dimension, and expects (left, right, top, bottom, ...)
-            # Skip first dimension (batch) and reverse the rest
-            # [[0,0],[1,1],[2,2],[3,3]] -> skip [0,0], reverse [1,1],[2,2],[3,3] -> (3,3,2,2,1,1)
-            pt_pad = []
-            # Skip first element (batch dimension) and reverse the rest
-            for pair in reversed(pad_amount[1:]):
-                if isinstance(pair, list) and len(pair) == 2:
-                    pt_pad.extend(pair)
-            pad_tuple = tuple(pt_pad)
-            ts_op_synt = f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}')"
-        else:
-            ts_op_synt = f"F.pad({prev_out_var}, {pad_amount})"
-    elif tns_type == "dropout":
-        # TensorFlow tf.nn.dropout(x, rate=0.5) -> PyTorch F.dropout(x, p=0.5)
-        dropout_rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
-        ts_op_synt = f"F.dropout({prev_out_var}, p={dropout_rate})"
-    elif tns_type == "interpolate":
-        # TensorFlow tf.image.resize(x, [H, W], method='bilinear')
-        # -> PyTorch F.interpolate(x, size=(H, W), mode='bilinear')
-        size = tensorop.interpolate_size if hasattr(tensorop, 'interpolate_size') else None
-        mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'bilinear'
-
-        if size:
-            if isinstance(size, tuple):
-                ts_op_synt = f"F.interpolate({prev_out_var}, size={size}, mode='{mode}')"
-            else:
-                ts_op_synt = f"F.interpolate({prev_out_var}, size={size}, mode='{mode}')"
-        else:
-            ts_op_synt = f"F.interpolate({prev_out_var}, mode='{mode}')"
-    elif tns_type == "binop_add":
-        ts_op_synt = f"{params.split(', ')[0]} + {params.split(', ')[1]}" if ', ' in params else f"torch.add({params})"
-    elif tns_type == "binop_subtract":
-        ts_op_synt = f"{params.split(', ')[0]} - {params.split(', ')[1]}" if ', ' in params else f"torch.subtract({params})"
-    elif tns_type == "binop_multiply":
-        ts_op_synt = f"{params.split(', ')[0]} * {params.split(', ')[1]}" if ', ' in params else f"torch.multiply({params})"
-    elif tns_type == "binop_divide":
-        ts_op_synt = f"{params.split(', ')[0]} / {params.split(', ')[1]}" if ', ' in params else f"torch.divide({params})"
-    elif tns_type == "binop_floor_divide":
-        ts_op_synt = f"{params.split(', ')[0]} // {params.split(', ')[1]}" if ', ' in params else f"torch.floor_divide({params})"
-    elif tns_type == "subscript":
-        # General subscripting/slicing operation
-        # subscript_indices contains the slice pattern as a string (e.g., "[-1]", "[:, -1, :]")
-        ts_op_synt = f"{prev_out_var}{tensorop.subscript_indices}"
-    elif tns_type == "shape_dim":
-        # Extract shape dimension (e.g., b = x.size(0))
-        # Get input tensor from layers_of_tensors, not prev_out_var
-        tensors = tensorop.layers_of_tensors
-        if isinstance(tensors[0], str):
-            if tensors[0] == 'INPUT':
-                source_var = 'x'
-            else:
-                # Check if the module exists in modules_details
-                if f"{tensors[0]}_layer" in modules_details or f"{tensors[0]}_op" in modules_details:
-                    source_tensors = utils.get_layers_output_for_tensorops(tensors, modules_details)
-                    source_var = source_tensors[0]
-                else:
-                    # Module not found, use the tensor name directly (might be a variable)
-                    source_var = tensors[0]
-        else:
-            source_var = tensors[0]
-
-        dim_index = tensorop.reduce_dim
-        ts_op_synt = f"{source_var}.size({dim_index})"
-    else:
-        ts_op_synt = f"torch.matmul({params})"
-    return ts_op_synt
+    handler = _PYTORCH_TENSOROP_HANDLERS.get(tns_type, _handle_default_pytorch)
+    return handler(tensorop, modules_details, in_var, prev_out_var, params)
 
 
 def adjust_actv_func_name(modules_details: dict):

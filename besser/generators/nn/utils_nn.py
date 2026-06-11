@@ -986,7 +986,8 @@ def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str, modules_details:
 def handle_tensorop(tensorop: TensorOp, modules_details: dict,
                     get_tensorop_syntax: callable, out_var: str | None = None,
                     referenced_tensorops: set | None = None,
-                    inputs_outputs: dict | None = None):
+                    inputs_outputs: dict | None = None,
+                    channel_last: bool = False):
     """
     It populates the `modules_details` dictionary with tensorop's
     information: Its syntax and output variable.
@@ -998,6 +999,7 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
         out_var (str | None): The output variable of the tensorop.
         referenced_tensorops (set | None): Set of tensorop names that are
             referenced by other tensorops and need unique variable names.
+        channel_last (bool): If True, add permutes for spatial tensorops.
 
     Returns:
         None, but stores the tensorop details in the modules_details dict.
@@ -1043,7 +1045,33 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
         split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
         out_var = ", ".join(split_vars)
 
+    # Add input permute for spatial tensorops if needed (PyTorch TF→PyTorch migration)
+    if hasattr(tensorop, 'permute_in') and tensorop.permute_in and tensorop.tns_type in ("interpolate", "pad"):
+        from besser.BUML.metamodel.nn import TensorOp as TensorOpClass
+
+        # Add input permute: NHWC → NCHW
+        in_permute_name = f"{tensorop.name}_in_op"
+        in_permute = TensorOpClass(name=in_permute_name, tns_type="permute",
+                                     permute_dim=[0, 3, 1, 2])
+        # Get the current input variable
+        prev_module = list(modules_details.keys())[-1] if modules_details else None
+        in_var = get_previous_out_var(modules_details, prev_module) if prev_module else "x"
+        # Store input permute
+        handle_tensorop(in_permute, modules_details, get_tensorop_syntax,
+                        out_var=in_var, channel_last=False)
+
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
+
+    # Add output permute for spatial tensorops if needed
+    if hasattr(tensorop, 'permute_out') and tensorop.permute_out and tensorop.tns_type in ("interpolate", "pad"):
+        from besser.BUML.metamodel.nn import TensorOp as TensorOpClass
+
+        out_permute_name = f"{tensorop.name}_out_op"
+        out_permute = TensorOpClass(name=out_permute_name, tns_type="permute",
+                                      permute_dim=[0, 2, 3, 1])
+        # Use the current tensorop's output as input to the permute
+        handle_tensorop(out_permute, modules_details, get_tensorop_syntax,
+                        out_var=out_var, channel_last=False)
 
 
 def preprocess_image(image_path: str, target_size: tuple):

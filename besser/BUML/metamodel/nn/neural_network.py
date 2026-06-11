@@ -76,7 +76,9 @@ class TensorOp(NamedElement):
                  dropout_training_aware: bool = False,
                  split_dim: int = None,
                  split_sizes: int = None,
-                 name_module_input: str = None):
+                 name_module_input: str = None,
+                 permute_in: bool = False,
+                 permute_out: bool = False):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
@@ -101,6 +103,8 @@ class TensorOp(NamedElement):
         self.split_sizes: int = split_sizes
         self.tns_type: str = tns_type
         self.name_module_input: str = name_module_input
+        self.permute_in: bool = permute_in
+        self.permute_out: bool = permute_out
 
     @property
     def tns_type(self) -> str:

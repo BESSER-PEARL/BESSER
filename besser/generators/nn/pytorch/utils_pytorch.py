@@ -38,6 +38,9 @@ class SetupLayerSyntax:
         self.permute_out: bool | None = None
         self.permute_in: bool | None = None
         self.dim: str | None = None
+        # Track shared activation layers
+        if not hasattr(SetupLayerSyntax, '_shared_activations'):
+            SetupLayerSyntax._shared_activations = {}
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -63,6 +66,42 @@ class SetupLayerSyntax:
                 lyr = f"{lyr}.Embedding(num_embeddings={nm}, embedding_dim={dm})"
 
         return lyr
+
+    def setup_standalone_activation(self, out_var, in_var):
+        """It defines the syntax for standalone activation layer."""
+        actv_func = self.layer.actv_func
+        lyr_name = self.layer.name
+
+        # Map activation function names to PyTorch layer classes
+        activs = {"relu": "ReLU", "leaky_relu": "LeakyReLU",
+                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh", "gelu": "GELU"}
+        pytorch_actv = activs.get(actv_func, actv_func.capitalize())
+
+        # Inside Sequential blocks, use direct layer call
+        if self.is_subnn:
+            if actv_func == 'softmax':
+                return f"self.{lyr_name} = nn.Softmax(dim=-1)"
+            else:
+                return f"self.{lyr_name} = nn.{pytorch_actv}()"
+
+        # For standalone activations outside Sequential, use shared activation pattern
+        if actv_func not in SetupLayerSyntax._shared_activations:
+            shared_name = f"actv_func_{actv_func}"
+            SetupLayerSyntax._shared_activations[actv_func] = shared_name
+            # Add shared activation definition (DEF: to skip forward generation)
+            if actv_func == 'softmax':
+                syntax = f"self.{shared_name} = nn.Softmax(dim=-1)"
+            else:
+                syntax = f"self.{shared_name} = nn.{pytorch_actv}()"
+            self.modules_details[shared_name + "_activ"] = [f"DEF:{syntax}", None, None]
+
+        # Add call entry for this specific activation
+        shared_name = SetupLayerSyntax._shared_activations[actv_func]
+        actv_call_key = f"{lyr_name}_activ"
+        self.modules_details[actv_call_key] = [f"CALL:{shared_name}", out_var, in_var]
+
+        # Return None to signal handle_layer not to add _layer entry
+        return None
 
     def setup_layer_modifier(self):
         """It defines the syntax of layers' modifiers."""

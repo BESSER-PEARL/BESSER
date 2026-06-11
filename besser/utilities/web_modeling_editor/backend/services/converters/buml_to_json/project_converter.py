@@ -344,6 +344,14 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
                 "lastUpdate": datetime.now(timezone.utc).isoformat(),
             }]
 
+    current_diagram_indices = {dt: 0 for dt in diagram_defaults}
+
+    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
+    if "BPMNDiagram" in diagram_jsons:
+        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
+        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
+    current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
+
     return {
         "id": str(uuid.uuid4()),
         "type": "Project",
@@ -352,8 +360,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "description": "Imported from single-diagram BUML file",
         "owner": "Unknown",
         "createdAt": datetime.now(timezone.utc).isoformat(),
-        "currentDiagramType": diagram_type,
-        "currentDiagramIndices": {dt: 0 for dt in diagram_defaults},
+        "currentDiagramType": current_diagram_type,
+        "currentDiagramIndices": current_diagram_indices,
         "diagrams": diagram_jsons,
         "settings": {
             "defaultDiagramType": diagram_type,
@@ -512,6 +520,11 @@ def project_to_json(content: str) -> Dict[str, Any]:
             }]
 
     current_diagram_indices = {diagram_type: 0 for diagram_type in diagram_defaults}
+
+    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
+    if "BPMNDiagram" in diagram_jsons:
+        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
+        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
 
     return {
         "id": project_id,

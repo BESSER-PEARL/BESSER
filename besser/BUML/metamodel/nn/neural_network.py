@@ -20,40 +20,64 @@ class TensorOp(NamedElement):
 
     Args:
         name (str): The name of the tensor operation.
-        type (str): The type of the tensor operation.
+        tns_type (str): The type of the tensor operation.
         concatenate_dim (int): The dimension along which the tensors will
-            be concatenated with the cat operation.
+            be concatenated. Only relevant for concatenate operation.
         layers_of_tensors (List[Union[str, float]]): The list that
-            defines the inputs of the tensor op. Elements of the
-            list can be either names of layers from which the tensors
-            originate or scalar values.
-        reshape_dim (List[int]): A list specifying the new shape of the
-            tensor after the reshape operation.
-        transpose_dim (List[int]): A list specifying the transpose
-            dimensions. Only relevant with the transpose operation.
-        permute_dim (List[int]): A list containing the desired ordering
-            of dimensions. Only relevant with the permute operation.
-        input_reused (bool): Whether the input to this tensor op is
-            reused as input to another layer (or tensor op).
+            defines the inputs of the tensor op. Elements can be layer names
+            or scalar values.
+        reshape_dim (List[int]): New shape for reshape operation.
+        transpose_dim (List[int]): Transpose dimension specification.
+        permute_dim (List[int]): Desired ordering of dimensions for permute.
+        reduce_dim (int): Dimension for reduction operations like max or mean.
+        reduce_keepdims (bool): Whether to keep dimensions after reduction.
+        shape_dim (int): Dimension index to extract from shape.
+        input_reused (bool): Whether input is reused by another operation.
+        actual_vars (List[str]): Actual variable names for tracking.
+        subscript_indices (str): Indices for subscript operations.
+        repeat_dim (List[int]): Repetition counts for repeat operation.
+        interpolate_size: Target size for interpolation.
+        interpolate_scale (float): Scale factor for interpolation.
+        interpolate_mode (str): Interpolation mode like bilinear or nearest.
+        pad_amount: Padding amounts for pad operation.
+        pad_mode (str): Padding mode like constant or reflect.
+        pad_value (float): Value for constant padding.
+        dropout_rate (float): Dropout probability.
+        dropout_training_aware (bool): Whether dropout is training aware.
+        split_dim (int): Dimension along which to split the tensor.
+        split_sizes (int): Number of splits or list of split sizes.
+        name_module_input (str): Name of the input module.
+        permute_in (bool): Whether to permute input dimensions for spatial ops.
+        permute_out (bool): Whether to permute output dimensions for spatial ops.
 
     Attributes:
         name (str): The name of the tensor operation.
-        type (str): The type of the tensor operation.
-        concatenate_dim (int): The dimension along which the tensors
-            will be concatenated with the cat operation.
-        layers_of_tensors (List[Union[str, float]]): The list that
-            defines the inputs of the tensor op. Elements of the list
-            can be either names of layers from which the tensors
-            originate or scalar values.
-        reshape_dim (List[int]): A list specifying the new shape of
-            the tensor after the reshape operation.
-        transpose_dim (List[int]): A list specifying the transpose
-            dimensions. Only relevant with the transpose operation.
-        permute_dim (List[int]): A list containing the desired
-            ordering of dimensions. Only relevant with the permute
-            operation.
-        input_reused (bool): Whether the input to this tensor op is
-            reused as input to another layer (or tensor op).
+        tns_type (str): The type of the tensor operation.
+        concatenate_dim (int): Concatenation dimension.
+        layers_of_tensors (List[Union[str, float]]): Input layers or scalars.
+        reshape_dim (List[int]): Reshape target shape.
+        transpose_dim (List[int]): Transpose dimensions.
+        permute_dim (List[int]): Permute dimension ordering.
+        reduce_dim (int): Reduction dimension.
+        reduce_keepdims (bool): Keep dimensions after reduction.
+        shape_dim (int): Shape dimension to extract.
+        input_reused (bool): Input reuse flag.
+        actual_vars (List[str]): Actual variable names.
+        subscript_indices (str): Subscript indices.
+        repeat_dim (List[int]): Repeat dimensions.
+        interpolate_size: Interpolation target size.
+        interpolate_scale (float): Interpolation scale.
+        interpolate_mode (str): Interpolation mode.
+        pad_amount: Padding amount.
+        pad_mode (str): Padding mode.
+        pad_value (float): Padding value.
+        dropout_rate (float): Dropout rate.
+        dropout_training_aware (bool): Training aware dropout flag.
+        split_dim (int): Split dimension.
+        split_sizes (int): Number or sizes of splits.
+        name_module_input (str): Input module name.
+        permute_in (bool): Input permute flag.
+        permute_out (bool): Output permute flag.
     """
     def __init__(self, name: str, tns_type: str, concatenate_dim: int = None,
                  layers_of_tensors: List[Union[str, float]] = None,
@@ -61,6 +85,7 @@ class TensorOp(NamedElement):
                  transpose_dim: List[int] = None,
                  permute_dim: List[int] = None,
                  reduce_dim: int = None,
+                 reduce_keepdims: bool = False,
                  shape_dim: int = None,
                  input_reused: bool = False,
                  actual_vars: List[str] = None,
@@ -86,6 +111,7 @@ class TensorOp(NamedElement):
         self.transpose_dim: List[int] = transpose_dim
         self.permute_dim: List[int] = permute_dim
         self.reduce_dim: int = reduce_dim
+        self.reduce_keepdims: bool = reduce_keepdims
         self.shape_dim: int = shape_dim
         self.input_reused: bool = input_reused
         self.actual_vars: List[str] = actual_vars
@@ -289,7 +315,8 @@ class TensorOp(NamedElement):
         return (
             f'TensorOp({self.name}, {self.tns_type}, {self.concatenate_dim}, '
             f'{self.layers_of_tensors}, {self.reshape_dim}, '
-            f'{self.transpose_dim}, {self.permute_dim}, {self.input_reused})'
+            f'{self.transpose_dim}, {self.permute_dim}, {self.reduce_dim}, '
+            f'{self.reduce_keepdims}, {self.input_reused}, {self.permute_in}, {self.permute_out})'
         )
 
 class Layer(NamedElement):

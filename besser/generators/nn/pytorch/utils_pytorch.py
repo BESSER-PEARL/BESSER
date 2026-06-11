@@ -341,7 +341,11 @@ def _handle_max_pytorch(tensorop, modules_details, in_var, prev_out_var, params)
         prev_out_var = in_var
     if tensorop.reduce_dim is not None:
         dim = tensorop.reduce_dim
-        return f"{prev_out_var}.max(dim={dim})[0]"
+        keepdims = getattr(tensorop, 'reduce_keepdims', False)
+        if keepdims:
+            return f"{prev_out_var}.max(dim={dim}, keepdim=True)[0]"
+        else:
+            return f"{prev_out_var}.max(dim={dim})[0]"
     else:
         return f"{prev_out_var}.max()"
 

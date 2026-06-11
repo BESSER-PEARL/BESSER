@@ -143,6 +143,105 @@ def add_in_out_var_to_subnn(modules_details: dict):
     modules_details[last_module]["in_out_variable"] = in_out_var
 
 
+def _handle_inline_call(layer_name):
+    """Handle inline layer calls (INLINE_CALL:layer_name:input_var)."""
+    parts = layer_name.split(":")
+    inline_layer_name = parts[1]
+    inline_input_var = parts[2]
+    return f"self.{inline_layer_name}({inline_input_var})"
+
+
+def _handle_rnn_hidden_suffix(layer_name, modules_details):
+    """Handle RNN __hidden suffix."""
+    base_layer = layer_name[:-8]
+    my_keys = list(modules_details.keys())
+    if base_layer + "_layer" in my_keys:
+        layer_details = modules_details[base_layer + "_layer"]
+        if len(layer_details) > 4:
+            return layer_details[4]
+        else:
+            return layer_details[1]
+    else:
+        return "x"
+
+
+def _handle_rnn_cell_suffix(layer_name, modules_details):
+    """Handle RNN __cell suffix."""
+    base_layer = layer_name[:-6]
+    my_keys = list(modules_details.keys())
+    if base_layer + "_layer" in my_keys:
+        layer_details = modules_details[base_layer + "_layer"]
+        if len(layer_details) > 4:
+            return layer_details[4]
+        else:
+            return layer_details[1]
+    else:
+        return "x"
+
+
+def _handle_bidirectional_forward(layer_name):
+    """Handle bidirectional RNN __forward suffix."""
+    base_name = layer_name.rsplit("__forward", 1)[0]
+    return f"{base_name}_forward_h"
+
+
+def _handle_bidirectional_backward(layer_name):
+    """Handle bidirectional RNN __backward suffix."""
+    base_name = layer_name.rsplit("__backward", 1)[0]
+    return f"{base_name}_backward_h"
+
+
+def _handle_regular_layer(layer_name, modules_details, i, actual_vars):
+    """Handle regular layer with optional RNN actual_vars."""
+    layer_details = modules_details[layer_name + "_layer"]
+    if len(layer_details) > 4 and actual_vars and i < len(actual_vars):
+        if actual_vars[i] == "hidden":
+            return layer_details[4]
+        else:
+            out_var = layer_details[1]
+            return f"{out_var}[:, -1, :]"
+    else:
+        return layer_details[1]
+
+
+def _handle_activation_layer(layer_name, modules_details):
+    """Handle standalone activation layer."""
+    activ_details = modules_details[layer_name + "_activ"]
+    return activ_details[1]
+
+
+def _handle_subnetwork(layer_name, modules_details):
+    """Handle sub-network (Sequential)."""
+    my_keys = list(modules_details.keys())
+    nn_key = next(k for k in my_keys if k.startswith(layer_name + "_") and k.endswith("_nn"))
+    nn_details = modules_details[nn_key]
+    return nn_details["in_out_variable"]
+
+
+def _handle_bidirectional_concat(layer_name, modules_details):
+    """Handle bidirectional RNN concat marker."""
+    base_layer = layer_name.replace("bidirectional_concat_", "")
+    layer_key = base_layer + "_layer"
+
+    if layer_key in modules_details:
+        layer_details = modules_details[layer_key]
+        layer_obj = layer_details[3] if len(layer_details) > 3 else None
+        if layer_obj and hasattr(layer_obj, 'return_type'):
+            if layer_obj.return_type == "hidden":
+                return layer_details[1]
+            elif (layer_obj.return_type == "both" and len(layer_details) > 4
+                  and layer_details[4]):
+                return layer_details[4]
+        if len(layer_details) > 1:
+            return layer_details[1]
+    return "x"
+
+
+def _handle_tensorop(layer_name, modules_details):
+    """Handle tensorop output."""
+    return modules_details[layer_name + "_op"][1]
+
+
 def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
                                      actual_vars: list = None):
     """
@@ -161,109 +260,43 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
     """
     my_keys = list(modules_details.keys())
     out_vars = []
+
     for i, layer_name in enumerate(layers_names):
-        # Handle inline layer calls (from tf2torch)
+        # Handle inline layer calls
         if isinstance(layer_name, str) and layer_name.startswith("INLINE_CALL:"):
-            # Format: "INLINE_CALL:layer_name:input_var"
-            parts = layer_name.split(":")
-            inline_layer_name = parts[1]
-            inline_input_var = parts[2]
-            out_vars.append(f"self.{inline_layer_name}({inline_input_var})")
-            continue
-        # Handle INPUT marker (network input preserved as 'inp')
-        if layer_name == 'INPUT':
+            out_vars.append(_handle_inline_call(layer_name))
+        # Handle INPUT marker
+        elif layer_name == 'INPUT':
             out_vars.append('inp')
-            continue
-        # Handle numeric constants directly
-        if isinstance(layer_name, (int, float)):
+        # Handle numeric constants
+        elif isinstance(layer_name, (int, float)):
             out_vars.append(str(layer_name))
         # Handle RNN hidden/cell state suffixes
         elif isinstance(layer_name, str) and layer_name.endswith("__hidden"):
-            base_layer = layer_name[:-8]  # Remove "__hidden"
-            if base_layer + "_layer" in my_keys:
-                layer_details = modules_details[base_layer + "_layer"]
-                if len(layer_details) > 4:
-                    out_vars.append(layer_details[4])  # Hidden variable
-                else:
-                    out_vars.append(layer_details[1])  # Fallback to output
-            else:
-                out_vars.append("x")  # Fallback
+            out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__cell"):
-            base_layer = layer_name[:-6]  # Remove "__cell"
-            if base_layer + "_layer" in my_keys:
-                layer_details = modules_details[base_layer + "_layer"]
-                if len(layer_details) > 4:
-                    # For LSTM, cell state would need separate tracking
-                    # For now, use hidden var as placeholder
-                    out_vars.append(layer_details[4])
-                else:
-                    out_vars.append(layer_details[1])
-            else:
-                out_vars.append("x")
-        # Handle bidirectional RNN forward/backward suffixes (torch2tf migration)
+            out_vars.append(_handle_rnn_cell_suffix(layer_name, modules_details))
+        # Handle bidirectional RNN forward/backward suffixes
         elif isinstance(layer_name, str) and layer_name.endswith("__forward"):
-            # Extract base layer name and create unique forward variable
-            base_name = layer_name.rsplit("__forward", 1)[0]
-            out_vars.append(f"{base_name}_forward_h")
+            out_vars.append(_handle_bidirectional_forward(layer_name))
         elif isinstance(layer_name, str) and layer_name.endswith("__backward"):
-            # Extract base layer name and create unique backward variable
-            base_name = layer_name.rsplit("__backward", 1)[0]
-            out_vars.append(f"{base_name}_backward_h")
-        elif layer_name+"_layer" in my_keys:
-            layer_details = modules_details[layer_name + "_layer"]
-            # Check if this layer has return_type="both" and we have actual_vars info
-            if (len(layer_details) > 4 and actual_vars and i < len(actual_vars)):
-                # actual_vars contains "output" or "hidden" flags
-                if actual_vars[i] == "hidden":
-                    # Use hidden variable (element [4])
-                    out_vars.append(layer_details[4])
-                else:
-                    # Use output variable (element [1]), but slice to get last timestep
-                    # For RNN with return_sequences=True, we need [:, -1, :] to get last timestep
-                    out_var = layer_details[1]
-                    out_vars.append(f"{out_var}[:, -1, :]")
-            else:
-                # Normal case: use output variable
-                out_vars.append(layer_details[1])
-        elif layer_name+"_activ" in my_keys:
-            # Standalone activation layer (GeneralLayer)
-            activ_details = modules_details[layer_name + "_activ"]
-            out_vars.append(activ_details[1])
+            out_vars.append(_handle_bidirectional_backward(layer_name))
+        # Handle regular layer
+        elif layer_name + "_layer" in my_keys:
+            out_vars.append(_handle_regular_layer(layer_name, modules_details, i, actual_vars))
+        # Handle standalone activation layer
+        elif layer_name + "_activ" in my_keys:
+            out_vars.append(_handle_activation_layer(layer_name, modules_details))
+        # Handle sub-network (Sequential)
         elif any(k.startswith(layer_name + "_") and k.endswith("_nn") for k in my_keys):
-            # Sub-network (Sequential) - has format: name_N_nn where N is a counter
-            nn_key = next(k for k in my_keys if k.startswith(layer_name + "_") and k.endswith("_nn"))
-            nn_details = modules_details[nn_key]
-            out_vars.append(nn_details["in_out_variable"])
-        elif layer_name == "INPUT":
-            # Special marker for network input
-            out_vars.append("x")
+            out_vars.append(_handle_subnetwork(layer_name, modules_details))
+        # Handle bidirectional concat marker
         elif layer_name.startswith("bidirectional_concat_"):
-            # Special marker for bidirectional RNN hidden state concat (from torch2tf)
-            # Extract the actual layer name and get the correct variable based on return_type
-            base_layer = layer_name.replace("bidirectional_concat_", "")
-            layer_key = base_layer + "_layer"
-
-            if layer_key in modules_details:
-                layer_details = modules_details[layer_key]
-                layer_obj = layer_details[3] if len(layer_details) > 3 else None
-                # For return_type="hidden": concat is assigned to output var (index 1)
-                # For return_type="both": concat is assigned to hidden var (index 4)
-                if layer_obj and hasattr(layer_obj, 'return_type'):
-                    if layer_obj.return_type == "hidden":
-                        out_vars.append(layer_details[1])
-                        continue
-                    elif layer_obj.return_type == "both" and len(layer_details) > 4 and layer_details[4]:
-                        out_vars.append(layer_details[4])
-                        continue
-                # Fallback: use output variable
-                if len(layer_details) > 1:
-                    out_vars.append(layer_details[1])
-                    continue
-
-            # Fallback: if layer not found, return placeholder
-            out_vars.append("x")
+            out_vars.append(_handle_bidirectional_concat(layer_name, modules_details))
+        # Handle tensorop
         else:
-            out_vars.append(modules_details[layer_name + "_op"][1])
+            out_vars.append(_handle_tensorop(layer_name, modules_details))
+
     return out_vars
 
 def initialize_tensorop_var(tensorop: TensorOp):
@@ -482,6 +515,60 @@ def _find_previous_non_shape_dim_module(modules_details: dict) -> str:
             return module_name
     return None
 
+def _initialize_layer_variables(layer, modules_details):
+    """Initialize layer input/output variables based on modules_details."""
+    if len(modules_details) == 0:
+        return initialize_layer_vars(layer), None
+
+    prev_module = list(modules_details.keys())[-1]
+
+    # Skip shape_dim operations to find actual previous tensor-producing module
+    if _is_shape_dim_operation(prev_module, modules_details):
+        actual_prev = _find_previous_non_shape_dim_module(modules_details)
+        if actual_prev:
+            prev_module = actual_prev
+        else:
+            return initialize_layer_vars(layer), None
+
+    if prev_module is not None:
+        prev_out_var = get_previous_out_var(modules_details, prev_module)
+        return get_layer_vars(layer, prev_out_var, modules_details), prev_module
+
+    return initialize_layer_vars(layer), None
+
+
+def _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn):
+    """Add input permute for PyTorch generation if needed."""
+    if setup.permute_in and hasattr(setup, 'add_permute') and channel_last:
+        dim = setup.dim
+        setup.add_permute(
+            layer.name, dim, in_layer, permute_in=True,
+            sequential=is_seq, is_subnn=is_subnn
+        )
+
+
+def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details):
+    """Store layer syntax and variables in modules_details."""
+    if layer_synt is None:
+        return
+
+    if hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden"):
+        hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
+        modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                  in_layer, layer, hidden_var]
+    else:
+        modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                  in_layer, layer]
+
+
+def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq, is_subnn):
+    """Add output permute for PyTorch generation if needed."""
+    if setup.permute_out and hasattr(setup, 'add_permute') and channel_last:
+        dim = setup.dim
+        setup.add_permute(layer.name, dim, out_layer, permute_in=False,
+                          sequential=is_seq, is_subnn=is_subnn)
+
+
 def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
                  modules_details: dict, channel_last: bool | None,
                  actv_func_syntax: str | bool = False, is_seq: bool = False,
@@ -510,72 +597,27 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         None, but stores the layer details in the modules_details dict.
 
     """
-
-    if len(modules_details) == 0:
-        out_layer, in_layer, out_actv, in_actv = initialize_layer_vars(layer)
-    else:
-        prev_module = list(modules_details.keys())[-1]
-
-        # Skip shape_dim operations to find the actual previous tensor-producing module
-        if _is_shape_dim_operation(prev_module, modules_details):
-            actual_prev = _find_previous_non_shape_dim_module(modules_details)
-            if actual_prev:
-                prev_module = actual_prev
-            else:
-                # No previous non-shape_dim module, treat as first layer
-                out_layer, in_layer, out_actv, in_actv = initialize_layer_vars(layer)
-                prev_module = None
-
-        if prev_module is not None:
-            prev_out_var = get_previous_out_var(modules_details, prev_module)
-            out_layer, in_layer, out_actv, in_actv = get_layer_vars(
-                layer, prev_out_var, modules_details
-            )
+    (out_layer, in_layer, out_actv, in_actv), prev_module = _initialize_layer_variables(
+        layer, modules_details
+    )
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
         setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer,
         is_subnn=is_subnn
     )
 
-    if setup.permute_in and hasattr(setup, 'add_permute'):
-        # Only add input permute for PyTorch generation (channel_last=True).
-        # TensorFlow (channel_last=None) uses channels-last throughout, so no format conversion needed between layers.
-        # PyTorch default (channel_last=False) uses channels-first and permute is already in the parsed code.
-        if channel_last:
-            dim = setup.dim
-            setup.add_permute(
-                layer.name, dim, in_layer, permute_in=True,
-                sequential=is_seq, is_subnn=is_subnn
-            )
+    _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn)
 
-    # Only add _layer entry if layer_synt is not None (standalone activations return None)
-    if layer_synt is not None:
-        # For RNNs with return_type="both" or "hidden", add hidden variable as 5th element
-        # Both types need hidden state tracking for encoder-decoder patterns
-        if (hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden")):
-            # Generate hidden variable name
-            hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
-            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                      in_layer, layer, hidden_var]
-        else:
-            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                      in_layer, layer]
+    _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details)
+
     if actv_func_syntax:
-        modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv,
-                                                  in_actv]
+        modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv, in_actv]
 
     # TF-specific: Add separate activation for BatchNorm/LayerNorm
     if hasattr(setup, 'add_separate_activation_if_needed'):
         setup.add_separate_activation_if_needed(out_actv, in_actv)
 
-    # Output permute logic:
-    # - TF generator (channel_last=None): skip when permute_out=True (PyTorch code has format conversion)
-    # - PyTorch generator (channel_last=True): add when permute_out=True (need format conversion)
-    if setup.permute_out and hasattr(setup, 'add_permute'):
-        if channel_last:  # Only for PyTorch generator
-            dim = setup.dim
-            setup.add_permute(layer.name, dim, out_layer, permute_in=False,
-                              sequential=is_seq, is_subnn=is_subnn)
+    _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq, is_subnn)
 
 
 # ============================================================================

@@ -23,6 +23,15 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 )
 from datetime import datetime, timedelta
 
+# The React Flow frontend creates ``comment`` nodes tethered by
+# ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy spellings.
+COMMENT_NODE_TYPES = ("comment", "Comments")
+COMMENT_LINK_TYPES = ("CommentLink", "Link")
+
+# UserDiagram links behave exactly like ObjectLink (the frontend registers
+# ``UserModelLink`` as an ObjectLink alias).
+OBJECT_LINK_TYPES = ("ObjectLink", "UserModelLink")
+
 
 def get_all_attributes(cls, domain_model):
     """Get all attributes including inherited ones via recursive traversal."""
@@ -36,6 +45,8 @@ def get_all_attributes(cls, domain_model):
 
 def parse_datetime_value(value, type_name):
     """Parse datetime values from string format."""
+    if not isinstance(value, str):
+        return value
     try:
         if type_name in ['datetime', 'DateTimeType']:
             if 'T' in value:
@@ -145,7 +156,7 @@ def process_object_diagram(json_data, domain_model):
         node_id = node.get("id")
         data = node_data(node)
 
-        if node_type == "Comments":
+        if node_type in COMMENT_NODE_TYPES:
             comment_nodes[node_id] = (data.get("name") or "").strip()
             continue
 
@@ -179,11 +190,18 @@ def process_object_diagram(json_data, domain_model):
             attr_name = None
             value = None
             if node_type == "objectName":
-                # Format: "name = value"
+                # v4 inspector rows carry the value in a separate
+                # ``value`` field (``ObjectNodeAttribute`` in
+                # packages/library/lib/types/nodes/NodeProps.ts); legacy
+                # rows bake a combined "name = value" string into ``name``.
+                split_value = attr.get("value")
+                # Legacy combined format: "name = value".
                 if " = " in attr_string:
                     attr_part, value_part = attr_string.split(" = ", 1)
-                    value = value_part.strip()
+                    if split_value is None:
+                        split_value = value_part.strip()
                     attr_string = attr_part.strip()
+                value = split_value
                 try:
                     _, attr_name, _ = parse_attribute(attr_string, domain_model)
                 except Exception as e:
@@ -193,14 +211,22 @@ def process_object_diagram(json_data, domain_model):
                     )
                     continue
             else:  # UserModelName
+                # v4 inspector rows carry ``value`` (preferred) /
+                # ``defaultValue`` plus an ``attributeOperator`` comparator
+                # (``UserModelAttributeRow``). Legacy rows bake
+                # "name <op> value" into ``name``.
                 operator_str = attr.get("attributeOperator", "==")
-                if operator_str and operator_str in attr_string:
-                    attr_part, value_part = attr_string.split(operator_str, 1)
+                attr_name = attr_string.strip()
+                embedded_value = None
+                if operator_str and operator_str in attr_name:
+                    attr_part, value_part = attr_name.split(operator_str, 1)
                     attr_name = attr_part.strip()
-                    value = value_part.strip()
-                else:
-                    attr_name = attr_string.strip()
-                    value = attr.get("attributeValue")
+                    embedded_value = value_part.strip()
+                value = attr.get("value")
+                if value is None:
+                    value = attr.get("defaultValue")
+                if value is None:
+                    value = embedded_value if embedded_value else attr.get("attributeValue")
 
             if attr_name and value is not None:
                 property_obj = None
@@ -251,7 +277,10 @@ def process_object_diagram(json_data, domain_model):
                                     f"but received {value!r}."
                                 ) from exc
                         elif type_name in ['bool', 'BooleanType']:
-                            converted_value = value.lower() in ['true', '1', 'yes']
+                            if isinstance(value, str):
+                                converted_value = value.lower() in ['true', '1', 'yes']
+                            else:
+                                converted_value = bool(value)
                         elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
                             converted_value = parse_datetime_value(value, type_name)
                     attributes_dict[attr_name] = converted_value
@@ -273,7 +302,7 @@ def process_object_diagram(json_data, domain_model):
     # Process links (edges).
     for edge in edges:
         edge_type = edge.get("type")
-        if edge_type == "Link":
+        if edge_type in COMMENT_LINK_TYPES:
             source_id = edge.get("source")
             target_id = edge.get("target")
             comment_id = None
@@ -288,7 +317,7 @@ def process_object_diagram(json_data, domain_model):
                 comment_links.setdefault(comment_id, []).append(target)
             continue
 
-        if edge_type == "ObjectLink":
+        if edge_type in OBJECT_LINK_TYPES:
             source_id = edge.get("source")
             target_id = edge.get("target")
             edge_data = edge.get("data") or {}

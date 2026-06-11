@@ -172,7 +172,7 @@ type ClassNodeData = {
 
 type ClassifierMember = {
   id: string;
-  name: string;
+  name: string;                     // bare identifier; method rows do NOT fuse the signature in here
   attributeType: string;            // canonical Python-style: 'str','int','float','bool','date','datetime','time','any', or custom
   visibility: 'public' | 'private' | 'protected' | 'package';
   code?: string;
@@ -184,17 +184,23 @@ type ClassifierMember = {
   isId?: boolean;
   isExternalId?: boolean;
   defaultValue?: unknown;
+  // Method rows only — structured signature (the inspector mirrors
+  // returnType onto attributeType; 'any' means "no explicit return type").
+  parameters?: { id: string; name: string; parameterType?: string; defaultValue?: unknown }[];
+  returnType?: string;
 };
 ```
 
-`stereotype` is encoded as a single string. Map v3 element `type`:
+`stereotype` is encoded as a single string (capitalized canonical forms —
+the frontend compares case-sensitively; readers stay case-insensitive for
+legacy lowercase data). Map v3 element `type`:
 
 | v3 `type`      | v4 `node.type` | v4 `data.stereotype` |
 |----------------|----------------|----------------------|
 | `Class`        | `class`        | `null`               |
-| `AbstractClass`| `class`        | `'abstract'`         |
-| `Interface`    | `class`        | `'interface'`        |
-| `Enumeration`  | `class`        | `'enumeration'`      |
+| `AbstractClass`| `class`        | `'Abstract'`         |
+| `Interface`    | `class`        | `'Interface'`        |
+| `Enumeration`  | `class`        | `'Enumeration'`      |
 | `Package`      | `package`      | n/a                  |
 
 ### v4 edge types
@@ -236,12 +242,20 @@ type ClassifierMember = {
   `node.measured = { width: v3.bounds.width, height: v3.bounds.height }`.
 - `Package` v3 elements stay as nodes with `type: 'package'`; child
   classes that had `owner: <packageId>` get `parentId: <packageId>`.
-- `ClassOCLConstraint` v3 elements: collapse onto their owner class as a
-  row in `data.oclConstraints` if `owner` points to a class; otherwise
-  emit a free-standing node with `type: 'class'` + `data.stereotype:
-  'oclConstraint'` (rare, treat as fallback). Recommend: always collapse;
-  drop free-standing OCL constraint nodes since the editor never produced
-  them top-level in practice.
+- `ClassOCLConstraint`: the canonical v4 shape is a free-standing node
+  with `type: 'ClassOCLConstraint'` (sticky-note rendering;
+  `data.expression` carries the full `context …` OCL text,
+  `data.description` the optional natural-language note), tethered to its
+  anchoring class by a visual `ClassOCLLink` edge. This is the shape the
+  editor authors (`ClassOCLConstraintEditPanel`) and the shape the
+  backend converter always emits — including for class invariants and
+  method pre/post conditions, mirroring the develop baseline where
+  constraints are always visible boxes. The v3→v4 migrator may still
+  collapse owner-linked constraints onto `data.oclConstraints` rows; the
+  backend processor accepts both shapes on ingest (plus the legacy
+  `type: 'class'` + `data.stereotype: 'oclConstraint'` fallback) and the
+  context class is re-derived from the OCL text itself, with the
+  `ClassOCLLink` edge resolving owners for legacy body-only rows.
 - Associations: `edge.source = v3.source.element`, `edge.target =
   v3.target.element`. Direction mapping uses
   `sourceHandle = v3.source.direction` and `targetHandle =

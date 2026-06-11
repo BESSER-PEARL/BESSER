@@ -756,7 +756,10 @@ def _extract_reference_class_diagram(json_data: dict):
         model_payload = reference_data
         title = reference_data.get("title")
 
-    if not isinstance(model_payload, dict) or "elements" not in model_payload:
+    # The reference diagram arrives in the v4 wire shape (``{nodes, edges}``)
+    # — the same gate validation_router applies before calling
+    # ``process_class_diagram``.
+    if not isinstance(model_payload, dict) or "nodes" not in model_payload:
         return None
 
     return {

@@ -54,6 +54,37 @@ from .styling import build_style_map, resolve_component_styling
 from .utils import sanitize_name, get_element_by_id, clean_method_name
 
 
+def _element_name(element):
+    """Return the display name of a class-model element.
+
+    v4 nodes keep the name on ``node.data.name``; legacy v3-style element
+    dicts keep it at the top level. Returns ``None`` when unresolvable.
+    """
+    if not isinstance(element, dict):
+        return None
+    data = element.get("data")
+    if isinstance(data, dict) and data.get("name") is not None:
+        return data.get("name")
+    return element.get("name")
+
+
+def _find_method_row(class_element, method_id):
+    """Return the method row with the given id from a class element.
+
+    v4 collapses method rows onto the class node's ``data.methods`` array,
+    so method-row ids are NOT top-level node ids. Accepts both the v4 node
+    shape (rows under ``data``) and legacy dicts (rows at the top level).
+    """
+    if not isinstance(class_element, dict) or not method_id:
+        return None
+    data = class_element.get("data")
+    container = data if isinstance(data, dict) else class_element
+    for row in container.get("methods") or []:
+        if isinstance(row, dict) and row.get("id") == method_id:
+            return row
+    return None
+
+
 def process_gui_diagram(gui_diagram, class_model, domain_model):
     """
     Main entry point: Converts GrapesJS JSON and domain_model into a GUIModel instance.
@@ -528,13 +559,20 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                     method_class_id = getattr(element, '_method_class_id')
                     method_id = getattr(element, '_method_id')
 
-                    # Step 1: Get the class and method elements from class_model (JSON) by ID
+                    # Step 1: Get the class node from class_model (JSON) by ID
                     method_class_el = get_element_by_id(class_model, method_class_id)
-                    method_el = get_element_by_id(class_model, method_id)
 
-                    # Step 2: Extract the names from the JSON elements
-                    method_class_name = method_class_el.get('name') if method_class_el else None
-                    method_name_raw = method_el.get('name') if method_el else None
+                    # Step 2: Extract the names. v4 stores the class name on
+                    # ``node.data.name`` and method rows inside the class
+                    # node's ``data.methods`` (row ids are not node ids).
+                    method_class_name = _element_name(method_class_el)
+                    method_row = _find_method_row(method_class_el, method_id)
+                    if method_row is not None:
+                        method_name_raw = method_row.get('name')
+                    else:
+                        # Legacy fallback: method as its own top-level element.
+                        method_el = get_element_by_id(class_model, method_id)
+                        method_name_raw = _element_name(method_el)
                     # Clean the method name to remove visibility, parameters, and type annotations
                     method_name = clean_method_name(method_name_raw) if method_name_raw else None
 
@@ -555,8 +593,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                     entity_class_id = getattr(element, '_entity_class_id')
                     # Step 1: Get the class element from class_model (JSON) by ID
                     entity_class_el = get_element_by_id(class_model, entity_class_id)
-                    # Step 2: Extract the name from the JSON element
-                    entity_class_name = entity_class_el.get('name') if entity_class_el else None
+                    # Step 2: Extract the name (v4 keeps it on ``data.name``)
+                    entity_class_name = _element_name(entity_class_el)
                     # Step 3: Use domain_model to get the actual BUML object by name
                     if domain_model and entity_class_name:
                         entity_class = domain_model.get_class_by_name(entity_class_name)

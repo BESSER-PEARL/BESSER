@@ -22,7 +22,9 @@
             {"id": "n-book-a-pages", "name": "pages", "attributeType": "int", "visibility": "public", "isOptional": false, "isId": false, "isExternalId": false, "isDerived": false}
           ],
           "methods": [
-            {"id": "n-book-m-summary", "name": "+ summary(): str", "visibility": "public", "attributeType": "any"}
+            {"id": "n-book-m-summary", "name": "summary", "visibility": "public", "attributeType": "str", "returnType": "str", "parameters": [
+              {"id": "n-book-m-summary-p-verbose", "name": "verbose", "parameterType": "bool"}
+            ]}
           ]
         }
       },
@@ -51,12 +53,25 @@
         "measured": {"width": 200, "height": 100},
         "data": {
           "name": "Genre",
-          "stereotype": "enumeration",
+          "stereotype": "Enumeration",
           "attributes": [
             {"id": "n-genre-l-fiction", "name": "FICTION", "attributeType": "str", "visibility": "public"},
             {"id": "n-genre-l-nonfiction", "name": "NONFICTION", "attributeType": "str", "visibility": "public"}
           ],
           "methods": []
+        }
+      },
+      {
+        "id": "n-ocl-pages",
+        "type": "ClassOCLConstraint",
+        "position": {"x": 0, "y": 500},
+        "width": 210,
+        "height": 90,
+        "measured": {"width": 210, "height": 90},
+        "data": {
+          "name": "",
+          "expression": "context Book inv book_positive_pages: self.pages > 0",
+          "description": ""
         }
       }
     ],
@@ -76,6 +91,15 @@
           "targetMultiplicity": "1..1",
           "points": []
         }
+      },
+      {
+        "id": "e-ocl-pages",
+        "source": "n-ocl-pages",
+        "target": "n-book",
+        "type": "ClassOCLLink",
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "data": {"label": "", "points": []}
       }
     ],
     "interactive": {"elements": {}, "relationships": {}},

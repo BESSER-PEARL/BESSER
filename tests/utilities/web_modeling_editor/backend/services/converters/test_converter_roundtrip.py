@@ -467,10 +467,17 @@ def state_machine_json():
     }
 
 
-def _build_object_diagram_v4_fixture(class_diagram_v4, *, include_attributes=True):
+def _build_object_diagram_v4_fixture(
+    class_diagram_v4, *, include_attributes=True, attribute_style="split",
+):
     """Build a v4 object diagram referencing the given v4 class diagram.
 
     Two objects (book1 of Book, author1 of Author) and a link between them.
+
+    ``attribute_style`` selects the attribute-row shape: ``"split"`` is the
+    canonical v4 form (separate ``name`` / ``value`` fields, per
+    ``ObjectNodeAttribute``); ``"legacy"`` bakes the combined
+    ``"+ name: type = value"`` string into ``name`` (older fixtures).
     """
     book_id = "n-book"
     author_id = "n-author"
@@ -510,12 +517,22 @@ def _build_object_diagram_v4_fixture(class_diagram_v4, *, include_attributes=Tru
         },
     ]
     if include_attributes:
-        nodes[0]["data"]["attributes"] = [
-            {"id": "oa-title", "name": "+ title: str = TheGreatGatsby"},
-        ]
-        nodes[1]["data"]["attributes"] = [
-            {"id": "oa-aname", "name": "+ name: str = Fitzgerald"},
-        ]
+        if attribute_style == "split":
+            nodes[0]["data"]["attributes"] = [
+                {"id": "oa-title", "name": "title", "attributeType": "str",
+                 "value": "TheGreatGatsby"},
+            ]
+            nodes[1]["data"]["attributes"] = [
+                {"id": "oa-aname", "name": "name", "attributeType": "str",
+                 "value": "Fitzgerald"},
+            ]
+        else:
+            nodes[0]["data"]["attributes"] = [
+                {"id": "oa-title", "name": "+ title: str = TheGreatGatsby"},
+            ]
+            nodes[1]["data"]["attributes"] = [
+                {"id": "oa-aname", "name": "+ name: str = Fitzgerald"},
+            ]
 
     # Pick the first ClassBidirectional edge from the reference for the link's
     # associationId.
@@ -557,6 +574,13 @@ def object_diagram_json(minimal_class_diagram_json):
 @pytest.fixture
 def object_diagram_with_attrs_json(minimal_class_diagram_json):
     return _build_object_diagram_v4_fixture(minimal_class_diagram_json, include_attributes=True)
+
+
+@pytest.fixture
+def object_diagram_with_legacy_attrs_json(minimal_class_diagram_json):
+    return _build_object_diagram_v4_fixture(
+        minimal_class_diagram_json, include_attributes=True, attribute_style="legacy",
+    )
 
 
 # ===========================================================================
@@ -632,18 +656,24 @@ class TestClassDiagramRoundtrip:
             _method_names_for_class(result, "Book")
 
     def test_method_parameters_preserved(self, minimal_class_diagram_json):
+        """The converter emits the canonical inspector shape: a bare method
+        ``name`` plus structured ``parameters`` rows and ``returnType``
+        mirrored onto ``attributeType`` (never a fused signature string)."""
         domain_model = process_class_diagram(minimal_class_diagram_json)
         result = class_buml_to_json(domain_model)
 
         book_node = _class_node_by_name(result, "Book")
-        method_signatures = [m.get("name", "") for m in _data(book_node).get("methods") or []]
+        methods = _data(book_node).get("methods") or []
 
-        assert len(method_signatures) == 1
-        sig = method_signatures[0]
-        assert "summary" in sig
-        assert "verbose" in sig
-        assert "bool" in sig
-        assert "str" in sig
+        assert len(methods) == 1
+        method = methods[0]
+        assert method.get("name") == "summary"
+        assert method.get("returnType") == "str"
+        assert method.get("attributeType") == "str"
+        params = method.get("parameters") or []
+        assert len(params) == 1
+        assert params[0].get("name") == "verbose"
+        assert params[0].get("parameterType") == "bool"
 
     def test_association_preserved(self, minimal_class_diagram_json):
         domain_model = process_class_diagram(minimal_class_diagram_json)
@@ -814,6 +844,86 @@ class TestClassDiagramRoundtrip:
         assert len(methods) == 1
         assert methods[0].get("code") == "def add(self, a, b):\n    return a + b"
         assert methods[0].get("implementationType") == "code"
+
+    def test_abstract_stereotype_emitted_capitalized(self, class_diagram_with_inheritance_json):
+        """The frontend compares stereotypes case-sensitively against the
+        capitalized canonical forms — emit exactly 'Abstract' (the
+        processor keeps reading case-insensitively, so lowercase input
+        still ingests)."""
+        domain_model = process_class_diagram(class_diagram_with_inheritance_json)
+        result = class_buml_to_json(domain_model)
+        vehicle = _class_node_by_name(result, "Vehicle")
+        assert _data(vehicle).get("stereotype") == "Abstract"
+
+    def test_enumeration_stereotype_emitted_capitalized(self, class_diagram_with_enum_json):
+        domain_model = process_class_diagram(class_diagram_with_enum_json)
+        result = class_buml_to_json(domain_model)
+        status = _class_node_by_name(result, "OrderStatus")
+        assert _data(status).get("stereotype") == "Enumeration"
+
+    def test_comment_round_trip(self, minimal_class_diagram_json):
+        """``comment`` nodes tethered by ``CommentLink`` edges land on the
+        class metadata and re-emit with the same node / edge types."""
+        model = minimal_class_diagram_json["model"]
+        model["nodes"].append({
+            "id": "n-note",
+            "type": "comment",
+            "position": {"x": -300, "y": 0},
+            "width": 160, "height": 75,
+            "measured": {"width": 160, "height": 75},
+            "data": {"name": "Books are the unit of lending."},
+        })
+        model["edges"].append({
+            "id": "e-note",
+            "source": "n-note",
+            "target": "n-book",
+            "type": "CommentLink",
+            "sourceHandle": "Right",
+            "targetHandle": "Left",
+            "data": {"points": []},
+        })
+
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        book = next(t for t in domain_model.types if t.name == "Book")
+        assert book.metadata is not None
+        assert book.metadata.description == "Books are the unit of lending."
+
+        result = class_buml_to_json(domain_model)
+        comments = _nodes_by_type(result, "comment")
+        assert [_data(c).get("name") for c in comments] == [
+            "Books are the unit of lending.",
+        ]
+        links = _edges_by_type(result, "CommentLink")
+        assert len(links) == 1
+        linked = {links[0]["source"], links[0]["target"]}
+        assert comments[0]["id"] in linked
+        book_node = _class_node_by_name(result, "Book")
+        assert book_node["id"] in linked
+
+    def test_legacy_comments_link_spelling_still_ingests(self, minimal_class_diagram_json):
+        """Older fixtures use ``Comments`` / ``Link`` — keep accepting them."""
+        model = minimal_class_diagram_json["model"]
+        model["nodes"].append({
+            "id": "n-note",
+            "type": "Comments",
+            "position": {"x": -300, "y": 0},
+            "width": 160, "height": 75,
+            "measured": {"width": 160, "height": 75},
+            "data": {"name": "Legacy note."},
+        })
+        model["edges"].append({
+            "id": "e-note",
+            "source": "n-note",
+            "target": "n-book",
+            "type": "Link",
+            "sourceHandle": "Right",
+            "targetHandle": "Left",
+            "data": {"points": []},
+        })
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        book = next(t for t in domain_model.types if t.name == "Book")
+        assert book.metadata is not None
+        assert book.metadata.description == "Legacy note."
 
     def test_attribute_default_value_preserved(self):
         json_data = {
@@ -992,6 +1102,48 @@ class TestStateMachineRoundtrip:
         assert _data(guarded[0]).get("guard") == "x > 10"
         assert _data(guarded[0]).get("name") == "trigger_event"
 
+    def test_comment_round_trip(self, state_machine_json):
+        """``comment`` nodes tethered by ``CommentLink`` edges land on the
+        state metadata and re-emit with the same node / edge types."""
+        model = state_machine_json["model"]
+        model["nodes"].append({
+            "id": "n-note",
+            "type": "comment",
+            "position": {"x": -900, "y": -500},
+            "width": 160, "height": 75,
+            "measured": {"width": 160, "height": 75},
+            "data": {"name": "Waits for the next order."},
+        })
+        model["edges"].append({
+            "id": "e-note",
+            "source": "n-note",
+            "target": "n-idle",
+            "type": "CommentLink",
+            "sourceHandle": "Right",
+            "targetHandle": "Left",
+            "data": {"points": []},
+        })
+
+        sm = process_state_machine(state_machine_json)
+        idle = next(s for s in sm.states if s.name == "idle")
+        assert idle.metadata is not None
+        assert idle.metadata.description == "Waits for the next order."
+
+        result = state_machine_object_to_json(sm)
+        comments = _nodes_by_type(result, "comment")
+        assert [_data(c).get("name") for c in comments] == [
+            "Waits for the next order.",
+        ]
+        links = _edges_by_type(result, "CommentLink")
+        assert len(links) == 1
+        linked = {links[0]["source"], links[0]["target"]}
+        assert comments[0]["id"] in linked
+        idle_node = next(
+            n for n in _nodes_by_type(result, "State")
+            if _data(n).get("name") == "idle"
+        )
+        assert idle_node["id"] in linked
+
     def test_double_roundtrip_stable(self, state_machine_json):
         sm1 = process_state_machine(state_machine_json)
         json1 = state_machine_object_to_json(sm1)
@@ -1064,6 +1216,8 @@ class TestObjectDiagramRoundtrip:
         assert "Author" in end_types
 
     def test_object_attribute_values(self, object_diagram_with_attrs_json, minimal_class_diagram_json):
+        """Canonical v4 rows keep name and runtime value in separate
+        fields (``ObjectNodeAttribute.value``)."""
         domain_model = process_class_diagram(minimal_class_diagram_json)
         obj_model = process_object_diagram(object_diagram_with_attrs_json, domain_model)
 
@@ -1074,6 +1228,79 @@ class TestObjectDiagramRoundtrip:
                 assert slot_values.get("title") == "TheGreatGatsby"
             elif "author1" in label:
                 assert slot_values.get("name") == "Fitzgerald"
+
+    def test_object_attribute_values_legacy_combined_strings(
+        self, object_diagram_with_legacy_attrs_json, minimal_class_diagram_json,
+    ):
+        """Legacy rows bake ``"+ name: type = value"`` into ``name`` —
+        the fallback parser must keep ingesting them."""
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        obj_model = process_object_diagram(
+            object_diagram_with_legacy_attrs_json, domain_model,
+        )
+
+        slot_map: dict = {}
+        for obj in obj_model.objects:
+            for slot in obj.slots:
+                slot_map[slot.attribute.name] = slot.value.value
+        assert slot_map == {"title": "TheGreatGatsby", "name": "Fitzgerald"}
+
+    def test_user_model_nodes_and_user_model_link(
+        self, object_diagram_json, minimal_class_diagram_json,
+    ):
+        """UserDiagram payloads use ``UserModelName`` nodes whose rows
+        carry ``value`` / ``defaultValue`` plus an ``attributeOperator``
+        comparator, linked by ``UserModelLink`` edges — all must ingest
+        exactly like their Object-diagram counterparts."""
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        model = object_diagram_json["model"]
+        for node in model["nodes"]:
+            node["type"] = "UserModelName"
+        model["nodes"][0]["data"]["attributes"] = [
+            {"id": "ua-title", "name": "title", "attributeType": "str",
+             "attributeOperator": "==", "value": "TheGreatGatsby"},
+        ]
+        model["nodes"][1]["data"]["attributes"] = [
+            # ``defaultValue`` is the secondary carrier when ``value`` is
+            # absent (``UserModelAttributeRow``).
+            {"id": "ua-name", "name": "name", "attributeType": "str",
+             "attributeOperator": "==", "defaultValue": "Fitzgerald"},
+        ]
+        for edge in model["edges"]:
+            edge["type"] = "UserModelLink"
+
+        obj_model = process_object_diagram(object_diagram_json, domain_model)
+        assert len(obj_model.objects) == 2
+
+        slot_map: dict = {}
+        for obj in obj_model.objects:
+            for slot in obj.slots:
+                slot_map[slot.attribute.name] = slot.value.value
+        assert slot_map == {"title": "TheGreatGatsby", "name": "Fitzgerald"}
+
+        all_links = {link for obj in obj_model.objects for link in obj.links}
+        assert len(all_links) >= 1
+        link = next(iter(all_links))
+        end_types = {end.type.name for end in link.association.ends}
+        assert end_types == {"Book", "Author"}
+
+    def test_user_model_legacy_embedded_operator_string(
+        self, object_diagram_json, minimal_class_diagram_json,
+    ):
+        """Legacy user rows embed ``"name <op> value"`` in ``name`` —
+        the comparator split must keep working as a fallback."""
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        model = object_diagram_json["model"]
+        for node in model["nodes"]:
+            node["type"] = "UserModelName"
+        model["nodes"][0]["data"]["attributes"] = [
+            {"id": "ua-title", "name": "title == TheGreatGatsby",
+             "attributeOperator": "=="},
+        ]
+        obj_model = process_object_diagram(object_diagram_json, domain_model)
+        book1 = next(o for o in obj_model.objects if "book1" in (o.name or ""))
+        slot_values = {s.attribute.name: s.value.value for s in book1.slots}
+        assert slot_values == {"title": "TheGreatGatsby"}
 
 
 # ===========================================================================

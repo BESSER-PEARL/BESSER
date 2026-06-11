@@ -30,7 +30,7 @@ LAYOUT_MAX_COLUMNS = 3
 
 logger = logging.getLogger(__name__)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    VISIBILITY_MAP, RELATIONSHIP_TYPES,
+    RELATIONSHIP_TYPES,
 )
 
 
@@ -156,34 +156,19 @@ def _attr_row(attr: Property) -> dict:
 
 
 def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> dict:
-    """Build a v4 ``ClassifierMember`` row for a method."""
-    visibility_symbol = next(
-        k for k, v in VISIBILITY_MAP.items() if v == method.visibility
-    )
-    param_str = []
-    for param in method.parameters:
-        param_type = param.type.name if hasattr(param.type, "name") else str(param.type)
-        param_signature = f"{param.name}: {param_type}"
-        if hasattr(param, "default_value") and param.default_value is not None:
-            param_signature += f" = {param.default_value}"
-        param_str.append(param_signature)
-    method_signature = f"{visibility_symbol} {method.name}({', '.join(param_str)})"
+    """Build a v4 ``ClassifierMember`` row for a method.
+
+    Emits the canonical inspector-authored shape (``ClassNodeElement`` in
+    ``packages/library/lib/types/nodes/NodeProps.ts``): a *bare* ``name``,
+    structured ``parameters`` rows, and the return type on ``returnType``
+    mirrored onto ``attributeType`` (``any`` when absent) — exactly what
+    the frontend's add-method inspector writes, so the canvas renderer
+    (``formatDisplayName``) never double-decorates a fused signature.
+    """
+    return_type = None
     if hasattr(method, "type") and method.type:
         return_type = method.type.name if hasattr(method.type, "name") else str(method.type)
-        method_signature += f": {return_type}"
 
-    row: dict = {
-        "id": str(uuid.uuid4()),
-        "name": method_signature,
-        "visibility": method.visibility,
-        "attributeType": "any",
-    }
-
-    # Emit structured parameter rows + returnType so the v4 frontend can
-    # round-trip method signatures cleanly (previously these were only
-    # baked into ``name``). Mirrors the ``ClassifierMethodParameter`` /
-    # ``ClassNodeElement.returnType`` shape in
-    # ``packages/library/lib/types/nodes/NodeProps.ts``.
     structured_parameters: list = []
     for param in method.parameters:
         param_type = param.type.name if hasattr(param.type, "name") else str(param.type)
@@ -195,12 +180,15 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
         if hasattr(param, "default_value") and param.default_value is not None:
             param_row["defaultValue"] = param.default_value
         structured_parameters.append(param_row)
-    if structured_parameters:
-        row["parameters"] = structured_parameters
-    if hasattr(method, "type") and method.type:
-        row["returnType"] = (
-            method.type.name if hasattr(method.type, "name") else str(method.type)
-        )
+
+    row: dict = {
+        "id": str(uuid.uuid4()),
+        "name": method.name,
+        "visibility": method.visibility,
+        "attributeType": return_type or "any",
+        "returnType": return_type or "any",
+        "parameters": structured_parameters,
+    }
 
     if hasattr(method, "code") and method.code:
         row["code"] = method.code
@@ -275,19 +263,6 @@ def class_buml_to_json(domain_model):
 
     class_id_map: dict = {}  # type_obj -> node id
 
-    # Pre-compute OCL constraints to inline per class.
-    # ``Constraint.context`` is a Class; collapse the constraint onto that
-    # class as a row in ``data.oclConstraints``. Free-standing fallback
-    # (no class context) becomes its own ``class`` node with stereotype
-    # ``oclConstraint``.
-    constraints_by_class: dict = {}
-    standalone_constraints: list = []
-    for c in domain_model.constraints:
-        if isinstance(c, Constraint) and c.context is not None:
-            constraints_by_class.setdefault(c.context, []).append(c)
-        else:
-            standalone_constraints.append(c)
-
     # Emit class / abstract / interface / enumeration nodes.
     for type_obj in sorted(
         (t for t in domain_model.types if isinstance(t, (Class, Enumeration))),
@@ -309,41 +284,19 @@ def class_buml_to_json(domain_model):
 
         attribute_rows: list = []
         method_rows: list = []
-        ocl_rows: list = []
 
         if isinstance(type_obj, Class):
-            stereotype = "abstract" if type_obj.is_abstract else None
+            # The frontend compares stereotypes case-sensitively against
+            # the capitalized canonical forms ('Abstract' / 'Interface' /
+            # 'Enumeration'); the processor lowercases on read, so the
+            # capitalized emit is backward-safe.
+            stereotype = "Abstract" if type_obj.is_abstract else None
             for attr in sorted(type_obj.attributes, key=lambda a: a.name):
                 attribute_rows.append(_attr_row(attr))
             for method in sorted(type_obj.methods, key=lambda m: m.name):
                 method_rows.append(_method_row(method, type_obj, method_diagram_refs))
-
-            # OCL constraints anchored on this class.
-            for c in sorted(constraints_by_class.get(type_obj, []), key=lambda c: c.name):
-                row = {
-                    "id": str(uuid.uuid4()),
-                    "name": c.name,
-                    "expression": c.expression,
-                }
-                if getattr(c, "description", None):
-                    row["description"] = c.description
-                ocl_rows.append(row)
-
-            # Method-level pre/post become ocl rows on the owning class too.
-            for method in sorted(type_obj.methods, key=lambda m: m.name):
-                for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
-                                          ("postcondition", getattr(method, "post", []) or [])):
-                    for c in constraints:
-                        row = {
-                            "id": str(uuid.uuid4()),
-                            "name": c.name,
-                            "expression": c.expression,
-                        }
-                        if getattr(c, "description", None):
-                            row["description"] = c.description
-                        ocl_rows.append(row)
         else:
-            stereotype = "enumeration"
+            stereotype = "Enumeration"
             ordered_literals = getattr(type_obj, '_ordered_literals', None)
             if ordered_literals is not None:
                 literals_iter = ordered_literals
@@ -360,8 +313,6 @@ def class_buml_to_json(domain_model):
         data: dict = {"name": type_obj.name, "stereotype": stereotype}
         data["attributes"] = attribute_rows
         data["methods"] = method_rows
-        if ocl_rows:
-            data["oclConstraints"] = ocl_rows
 
         if isinstance(type_obj, Class) and getattr(type_obj, 'metadata', None):
             md = type_obj.metadata
@@ -384,27 +335,57 @@ def class_buml_to_json(domain_model):
         )
         nodes.append(node)
 
-    # Free-standing OCL constraints (rare fallback per the spec).
-    for c in sorted(standalone_constraints, key=lambda c: c.name):
+    # OCL constraints — every constraint is emitted as its own
+    # ``ClassOCLConstraint`` node (the sticky-note shape the frontend
+    # renders and edits via ``ClassOCLConstraintEditPanel``), tethered to
+    # its anchoring class by a visual ``ClassOCLLink`` edge when one
+    # resolves. Mirrors the develop baseline, where constraints are always
+    # visible boxes; the canonical full ``context ...`` text rides on
+    # ``data.expression`` so the ingest side re-derives the context class
+    # from the text itself (the link is purely visual).
+    def _emit_constraint_node(c, anchor_class) -> None:
         x, y = get_position()
         node_id = str(uuid.uuid4())
         data = {
             "name": c.name,
-            "stereotype": "oclConstraint",
-            "attributes": [],
-            "methods": [],
-            "constraint": c.expression,
+            "expression": c.expression,
         }
         if getattr(c, "description", None):
             data["description"] = c.description
         nodes.append(make_node(
             node_id=node_id,
-            type_="class",
+            type_="ClassOCLConstraint",
             data=data,
             position={"x": x, "y": y},
-            width=200,
-            height=100,
+            width=210,
+            height=90,
         ))
+        if anchor_class is not None and anchor_class in class_id_map:
+            edges.append(make_edge(
+                edge_id=str(uuid.uuid4()),
+                source=node_id,
+                target=class_id_map[anchor_class],
+                type_="ClassOCLLink",
+                data={"points": []},
+            ))
+
+    # Class-level invariants (and ownerless free-standing constraints).
+    for c in sorted(domain_model.constraints, key=lambda c: c.name):
+        anchor = c.context if isinstance(c, Constraint) else None
+        _emit_constraint_node(c, anchor)
+
+    # Method-level pre/post conditions, anchored on the owning class.
+    # These live on ``Method.pre`` / ``Method.post`` (not in
+    # ``domain_model.constraints``), so they need their own pass.
+    for type_obj in sorted(
+        (t for t in domain_model.types if isinstance(t, Class)),
+        key=lambda t: t.name,
+    ):
+        for method in sorted(type_obj.methods, key=lambda m: m.name):
+            for constraints in (getattr(method, "pre", []) or [],
+                                getattr(method, "post", []) or []):
+                for c in constraints:
+                    _emit_constraint_node(c, type_obj)
 
     # Associations.
     for association in sorted(domain_model.associations, key=lambda a: a.name):
@@ -514,13 +495,14 @@ def class_buml_to_json(domain_model):
                     target_handle="Up",
                 ))
 
-    # Comments (top-level Comments nodes + Link edges).
+    # Comments (top-level ``comment`` nodes + ``CommentLink`` edges — the
+    # node / edge types the React Flow frontend registers).
     for comment_text, linked_class_id in comments_to_create:
         x, y = get_position()
         comment_id = str(uuid.uuid4())
         nodes.append(make_node(
             node_id=comment_id,
-            type_="Comments",
+            type_="comment",
             data={"name": comment_text},
             position={"x": x, "y": y},
             width=160,
@@ -530,7 +512,7 @@ def class_buml_to_json(domain_model):
             edge_id=str(uuid.uuid4()),
             source=comment_id,
             target=linked_class_id,
-            type_="Link",
+            type_="CommentLink",
             data={"points": []},
         ))
 
@@ -538,7 +520,7 @@ def class_buml_to_json(domain_model):
         x, y = get_position()
         nodes.append(make_node(
             node_id=str(uuid.uuid4()),
-            type_="Comments",
+            type_="comment",
             data={"name": domain_model.metadata.description},
             position={"x": x, "y": y},
             width=160,

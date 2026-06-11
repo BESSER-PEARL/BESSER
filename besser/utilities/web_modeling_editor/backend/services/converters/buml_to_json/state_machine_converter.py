@@ -182,13 +182,14 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
                 data=edge_data,
             ))
 
-    # Comments.
+    # Comments (``comment`` nodes + ``CommentLink`` edges — the types the
+    # React Flow frontend registers).
     comment_x = -970
     comment_y = -300
     if sm.metadata and sm.metadata.description:
         nodes.append(make_node(
             node_id=str(uuid.uuid4()),
-            type_="Comments",
+            type_="comment",
             data={"name": sm.metadata.description},
             position={"x": comment_x, "y": comment_y},
             width=200,
@@ -201,7 +202,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             comment_id = str(uuid.uuid4())
             nodes.append(make_node(
                 node_id=comment_id,
-                type_="Comments",
+                type_="comment",
                 data={"name": state.metadata.description},
                 position={"x": comment_x, "y": comment_y},
                 width=200,
@@ -211,7 +212,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
                 edge_id=str(uuid.uuid4()),
                 source=comment_id,
                 target=state_id_map[state],
-                type_="Link",
+                type_="CommentLink",
                 data={"points": []},
             ))
             comment_y += 130
@@ -455,7 +456,7 @@ def state_machine_to_json(content: str):
     if sm_comment:
         nodes.append(make_node(
             node_id=str(uuid.uuid4()),
-            type_="Comments",
+            type_="comment",
             data={"name": sm_comment},
             position={"x": comment_x, "y": comment_y},
             width=200,
@@ -468,7 +469,7 @@ def state_machine_to_json(content: str):
             comment_id = str(uuid.uuid4())
             nodes.append(make_node(
                 node_id=comment_id,
-                type_="Comments",
+                type_="comment",
                 data={"name": comment_text},
                 position={"x": comment_x, "y": comment_y},
                 width=200,
@@ -478,7 +479,7 @@ def state_machine_to_json(content: str):
                 edge_id=str(uuid.uuid4()),
                 source=comment_id,
                 target=states[state_var]["id"],
-                type_="Link",
+                type_="CommentLink",
                 data={"points": []},
             ))
             comment_y += 130

@@ -24,7 +24,14 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     node_data, node_bounds,
 )
+from besser.utilities.web_modeling_editor.backend.constants.constants import VALID_PRIMITIVE_TYPES
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+
+# The React Flow frontend creates ``comment`` nodes tethered by
+# ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy v3-flavoured
+# spellings still produced by older fixtures. Accept both on read.
+COMMENT_NODE_TYPES = ("comment", "Comments")
+COMMENT_LINK_TYPES = ("CommentLink", "Link")
 
 
 def parse_method_signature_from_code(
@@ -138,8 +145,9 @@ def _process_enumerations(
         node_type = node.get("type") or ""
         node_id = node.get("id")
         data = node_data(node)
-        # Comments collapse to a top-level ``Comments`` node in v4 (same name).
-        if node_type == "Comments":
+        # Comments are top-level ``comment`` nodes in v4 (``Comments`` is
+        # the legacy spelling); the body text lives on ``data.name``.
+        if node_type in COMMENT_NODE_TYPES:
             comment_text = (data.get("name") or "").strip()
             comment_elements[node_id] = comment_text
             continue
@@ -289,6 +297,63 @@ def _process_classes(
                 method.get("name", ""), domain_model, type_lookup=type_lookup,
             )
 
+            # v4 method rows carry structured fields written by the React
+            # Flow inspector (``ClassNodeElement`` in
+            # packages/library/lib/types/nodes/NodeProps.ts): ``visibility``,
+            # ``parameters`` ([{id, name, parameterType, defaultValue}]) and
+            # ``returnType``. Prefer those over name-string parsing; the
+            # legacy "+ name(p: t): r" signature form stays as the fallback
+            # for older fixtures and imports.
+            row_visibility = method.get("visibility")
+            if isinstance(row_visibility, str) and row_visibility.strip():
+                visibility = row_visibility.strip()
+
+            structured_params = method.get("parameters")
+            if isinstance(structured_params, list) and structured_params:
+                parameters = []
+                for param_row in structured_params:
+                    if not isinstance(param_row, dict):
+                        continue
+                    param_name = (param_row.get("name") or "").strip()
+                    raw_type = param_row.get("parameterType") or param_row.get("type") or "any"
+                    if isinstance(raw_type, str):
+                        raw_type = raw_type.strip()
+                        raw_type = VALID_PRIMITIVE_TYPES.get(raw_type.lower(), raw_type)
+                    param_dict: dict = {"name": param_name, "type": raw_type or "any"}
+                    if param_row.get("defaultValue") is not None:
+                        param_dict["default"] = param_row["defaultValue"]
+                    parameters.append(param_dict)
+
+            # ``returnType`` is the canonical structured field (the
+            # inspector mirrors it onto ``attributeType``). v3->v4 migrated
+            # rows carry the return type *only* on ``attributeType``
+            # (versionConverter's ``parseLegacyNameFormat`` path), so
+            # consult it as a last resort — but only when neither
+            # ``returnType`` nor the legacy ``: type`` name suffix yielded
+            # one, and only when it resolves to a known type (older clients
+            # stored garbage like ``"int): any"`` in this field).
+            structured_return = method.get("returnType")
+            if not (isinstance(structured_return, str) and structured_return.strip()):
+                fallback_return = method.get("attributeType")
+                if (
+                    not return_type
+                    and isinstance(fallback_return, str)
+                    and (
+                        fallback_return.strip() in type_lookup
+                        or fallback_return.strip().lower() in VALID_PRIMITIVE_TYPES
+                    )
+                ):
+                    structured_return = fallback_return
+            if isinstance(structured_return, str) and structured_return.strip():
+                normalized_return = structured_return.strip()
+                # ``any`` is the frontend's "no explicit return type"
+                # default — treat it like the absent legacy ``: type``
+                # suffix so generators don't grow spurious annotations.
+                if normalized_return.lower() != "any":
+                    return_type = VALID_PRIMITIVE_TYPES.get(
+                        normalized_return.lower(), normalized_return,
+                    )
+
             method_code = method.get("code", "")
             method_name_is_malformed = (
                 isinstance(name, str) and name.count("(") != name.count(")")
@@ -398,7 +463,7 @@ def _process_relationships(
         if rel_type == "ClassOCLLink":
             continue
 
-        if rel_type == "Link":
+        if rel_type in COMMENT_LINK_TYPES:
             comment_id = None
             target = None
             if source_id in comment_elements:
@@ -627,13 +692,21 @@ def _ocl_box_to_full_text(
 
 def _process_constraints(
     nodes: list[dict],
+    edges: list[dict],
     domain_model: DomainModel,
     all_warnings: list[str],
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
 ) -> None:
     """Walk every class node's ``data.oclConstraints`` and any free-standing
-    ``ClassOCLConstraint`` nodes (rare fallback per the v4 spec)."""
+    ``ClassOCLConstraint`` nodes.
+
+    Free-standing nodes are the shape the frontend's palette and templates
+    produce: a ``ClassOCLConstraint`` node carrying ``data.expression``
+    (full ``context ...`` text), tethered to its class via a
+    ``ClassOCLLink`` edge. The link resolves the owner class for legacy
+    body-only rows; full-text rows derive the context from the OCL text
+    itself."""
     method_by_qualified_name: dict[tuple[str, str], Method] = {}
     duplicates: set[tuple[str, str]] = set()
 
@@ -671,20 +744,47 @@ def _process_constraints(
     extra_invariants: list = []
     counter = 0
 
+    # ClassOCLLink edges tether a free-standing constraint node to the
+    # class it constrains. Map constraint-node-id -> linked class node id
+    # so legacy body-only constraint nodes can resolve their owner.
+    ocl_link_targets: dict[str, str] = {}
+    for edge in edges:
+        if edge.get("type") != "ClassOCLLink":
+            continue
+        source_id = edge.get("source")
+        target_id = edge.get("target")
+        if source_id in class_id_to_class and target_id not in class_id_to_class:
+            ocl_link_targets.setdefault(target_id, source_id)
+        elif target_id in class_id_to_class:
+            ocl_link_targets.setdefault(source_id, target_id)
+
     # Collected OCL rows: (row_dict, owner_class_or_None).
     ocl_rows: list[tuple[dict, Optional[Class]]] = []
     for node in nodes:
-        if node.get("type") != "class":
-            continue
-        kind = _class_v4_kind(node)
+        node_type = node.get("type")
         data = node_data(node)
         node_id = node.get("id")
-        owner_class = class_id_to_class.get(node_id)
-        if kind == "ClassOCLConstraint":
-            # Free-standing fallback: synthesise a row dict from the node's
-            # data so the same parsing path applies.
+        if node_type == "ClassOCLConstraint":
+            # Free-standing constraint node (palette / template shape).
+            # Owner class comes from the ClassOCLLink edge when present.
             row = dict(data)
             row.setdefault("id", node_id)
+            linked_class_id = ocl_link_targets.get(node_id)
+            owner_class = class_id_to_class.get(linked_class_id) if linked_class_id else None
+            ocl_rows.append((row, owner_class))
+            continue
+        if node_type != "class":
+            continue
+        kind = _class_v4_kind(node)
+        owner_class = class_id_to_class.get(node_id)
+        if kind == "ClassOCLConstraint":
+            # Legacy fallback: a class-typed node with stereotype
+            # ``oclConstraint`` (older converter output).
+            row = dict(data)
+            row.setdefault("id", node_id)
+            linked_class_id = ocl_link_targets.get(node_id)
+            if owner_class is None and linked_class_id:
+                owner_class = class_id_to_class.get(linked_class_id)
             ocl_rows.append((row, owner_class))
             continue
         # Class / Abstract / Interface / Enumeration: walk their oclConstraints.
@@ -787,7 +887,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     )
 
     _process_constraints(
-        nodes, domain_model, all_warnings,
+        nodes, edges, domain_model, all_warnings,
         class_id_to_class, method_id_to_method,
     )
 

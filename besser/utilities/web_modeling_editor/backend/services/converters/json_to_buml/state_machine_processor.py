@@ -19,6 +19,11 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 
 logger = logging.getLogger(__name__)
 
+# The React Flow frontend creates ``comment`` nodes tethered by
+# ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy spellings.
+COMMENT_NODE_TYPES = ("comment", "Comments")
+COMMENT_LINK_TYPES = ("CommentLink", "Link")
+
 
 def _sanitize_identifier(name: str) -> str:
     """Sanitize a string to be a valid Python identifier."""
@@ -65,7 +70,7 @@ def process_state_machine(json_data):
         node_type = node.get("type")
         node_id = node.get("id")
         data = node_data(node)
-        if node_type == "Comments":
+        if node_type in COMMENT_NODE_TYPES:
             comment_nodes[node_id] = data.get("name", "")
             continue
         if node_type == "State":
@@ -87,7 +92,7 @@ def process_state_machine(json_data):
                 event_names.add(edge_data["name"])
             if edge_data.get("guard"):
                 guard_names.add(edge_data["guard"])
-        elif edge_type == "Link":
+        elif edge_type in COMMENT_LINK_TYPES:
             source_id = edge.get("source")
             target_id = edge.get("target")
             comment_id = None

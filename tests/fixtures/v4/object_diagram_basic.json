@@ -17,8 +17,8 @@
           "name": "myBook : Book",
           "classId": "n-book",
           "attributes": [
-            {"id": "n-mybook-a-title", "name": "title = \"1984\""},
-            {"id": "n-mybook-a-pages", "name": "pages = 328"}
+            {"id": "n-mybook-a-title", "name": "title", "attributeType": "str", "value": "1984"},
+            {"id": "n-mybook-a-pages", "name": "pages", "attributeType": "int", "value": "328"}
           ],
           "methods": []
         }

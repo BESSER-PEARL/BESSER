@@ -113,7 +113,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 msg = (action.get("message") or "").replace("\\'", "'")
                 result.append(_make_body_row(msg, "text"))
             elif t == "llm":
-                result.append(_make_body_row("AI response 🪄", "llm"))
+                # The system prompt rides on the row ``name`` (the
+                # inspector's "System prompt" textarea); ``llm_name`` is an
+                # optional passthrough.
+                result.append(_make_body_row(
+                    action.get("prompt") or "AI response 🪄",
+                    "llm",
+                    llm_name=action.get("llm_name") or None,
+                ))
             elif t == "rag":
                 rag_db_name = action.get("ragDatabaseName") or ""
                 display_name = (
@@ -188,7 +195,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 data={
                                     "name": intent_name,
                                     "intent_description": intent_description,
-                                    "bodies": body_rows,
+                                    # The frontend reads training utterances
+                                    # from ``data.training_phrases``
+                                    # (``AgentIntentNodeProps``).
+                                    "training_phrases": body_rows,
                                 },
                                 position={"x": states_x, "y": states_y},
                                 width=160,
@@ -299,7 +309,13 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     if fn_id == 'AgentReply' and len(node.value.args[0].args) == 1 and isinstance(node.value.args[0].args[0], ast.Constant) and isinstance(node.value.args[0].args[0].value, str):
                         actions.setdefault(body_var, []).append({"type": "text", "message": node.value.args[0].args[0].value})
                     elif fn_id == 'LLMReply':
-                        actions.setdefault(body_var, []).append({"type": "llm"})
+                        llm_action: Dict[str, Any] = {"type": "llm"}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_action["prompt"] = kw.value.value
+                            elif kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_action["llm_name"] = kw.value.value
+                        actions.setdefault(body_var, []).append(llm_action)
                     elif fn_id == 'RAGReply':
                         rag_db_name = ""
                         if (
@@ -357,7 +373,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
         # Collect states.
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            if not isinstance(node, ast.Assign):
+                continue
+            if isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
                     state_id = str(uuid.uuid4())
@@ -402,14 +420,18 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     else:
                         states_x = -280
                         states_y += 220
-                elif len(node.targets) == 1:
-                    target = node.targets[0]
-                    if isinstance(target, ast.Attribute) and target.attr == "metadata":
-                        state_var = target.value.id if isinstance(target.value, ast.Name) else None
-                        if state_var and isinstance(node.value, ast.Call):
-                            for kw in node.value.keywords:
-                                if kw.arg == "description":
-                                    state_comments[state_var] = ast.literal_eval(kw.value)
+            elif len(node.targets) == 1:
+                # ``state_var.metadata = Metadata(description=...)`` — the
+                # shape the agent code builder writes for state comments.
+                # The target is an ``ast.Attribute``, so this must be a
+                # sibling of the Name-target branch above.
+                target = node.targets[0]
+                if isinstance(target, ast.Attribute) and target.attr == "metadata":
+                    state_var = target.value.id if isinstance(target.value, ast.Name) else None
+                    if state_var and isinstance(node.value, ast.Call):
+                        for kw in node.value.keywords:
+                            if kw.arg == "description":
+                                state_comments[state_var] = ast.literal_eval(kw.value)
 
         nodes_by_id = {n["id"]: n for n in nodes}
 
@@ -644,12 +666,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 logger.error("Error processing agent state machine: %s", e, exc_info=True)
                 continue
 
+        # Comments (``comment`` nodes + ``CommentLink`` edges — the types
+        # the React Flow frontend registers).
         comment_x = -970
         comment_y = -300
         if agent_comment:
             nodes.append(make_node(
                 node_id=str(uuid.uuid4()),
-                type_="Comments",
+                type_="comment",
                 data={"name": agent_comment},
                 position={"x": comment_x, "y": comment_y},
                 width=200,
@@ -662,7 +686,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 comment_id = str(uuid.uuid4())
                 nodes.append(make_node(
                     node_id=comment_id,
-                    type_="Comments",
+                    type_="comment",
                     data={"name": comment_text},
                     position={"x": comment_x, "y": comment_y},
                     width=200,
@@ -672,7 +696,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     edge_id=str(uuid.uuid4()),
                     source=comment_id,
                     target=states[state_var]["id"],
-                    type_="Link",
+                    type_="CommentLink",
                     data={"points": []},
                 ))
                 comment_y += 130

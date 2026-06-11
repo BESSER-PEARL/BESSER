@@ -194,9 +194,13 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                     formatted_value = str(attr_value)
                 class_attr_info = class_attributes.get(attr_name)
                 attr_type = class_attr_info["type"] if class_attr_info else "str"
+                # v4 object rows keep the attribute name and runtime value
+                # in separate fields (``ObjectNodeAttribute.value``); the
+                # frontend renders "name = value" from the split fields.
                 row: dict = {
                     "id": str(uuid.uuid4()),
-                    "name": f"{attr_name} = {formatted_value}",
+                    "name": attr_name,
+                    "value": formatted_value,
                     "attributeType": attr_type,
                 }
                 if class_attr_info and class_attr_info.get("id"):
@@ -254,13 +258,14 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         target_handle="Topleft",
                                     ))
 
-        # Comments.
+        # Comments (``comment`` nodes + ``CommentLink`` edges — the types
+        # the React Flow frontend registers).
         comment_x = -970
         comment_y = -300
         if om_comment:
             nodes.append(make_node(
                 node_id=str(uuid.uuid4()),
-                type_="Comments",
+                type_="comment",
                 data={"name": om_comment},
                 position={"x": comment_x, "y": comment_y},
                 width=200,
@@ -273,7 +278,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                 comment_id = str(uuid.uuid4())
                 nodes.append(make_node(
                     node_id=comment_id,
-                    type_="Comments",
+                    type_="comment",
                     data={"name": comment_text},
                     position={"x": comment_x, "y": comment_y},
                     width=200,
@@ -283,7 +288,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                     edge_id=str(uuid.uuid4()),
                     source=comment_id,
                     target=object_var_to_node_id[obj_var],
-                    type_="Link",
+                    type_="CommentLink",
                     data={"points": []},
                 ))
                 comment_y += 130

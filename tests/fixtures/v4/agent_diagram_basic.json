@@ -31,6 +31,21 @@
         }
       },
       {
+        "id": "n-aihelp",
+        "type": "AgentState",
+        "position": {"x": 400, "y": 0},
+        "width": 160, "height": 100,
+        "measured": {"width": 160, "height": 100},
+        "data": {
+          "name": "AIHelp",
+          "replyType": "llm",
+          "bodies": [
+            {"id": "n-aihelp-b-1", "name": "You are a friendly gym assistant.", "replyType": "llm"}
+          ],
+          "fallbackBodies": []
+        }
+      },
+      {
         "id": "n-intent-greet",
         "type": "AgentIntent",
         "position": {"x": -200, "y": 200},
@@ -39,11 +54,19 @@
         "data": {
           "name": "greet",
           "intent_description": "Greeting intent",
-          "bodies": [
+          "training_phrases": [
             {"id": "n-intent-greet-t-1", "name": "hi"},
             {"id": "n-intent-greet-t-2", "name": "hello"}
           ]
         }
+      },
+      {
+        "id": "n-comment",
+        "type": "comment",
+        "position": {"x": -200, "y": -200},
+        "width": 160, "height": 100,
+        "measured": {"width": 160, "height": 100},
+        "data": {"name": "Welcomes the user."}
       }
     ],
     "edges": [
@@ -52,6 +75,28 @@
         "source": "n-init",
         "target": "n-greeting",
         "type": "AgentStateTransitionInit",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {"points": []}
+      },
+      {
+        "id": "e-greet-ai",
+        "source": "n-greeting",
+        "target": "n-aihelp",
+        "type": "AgentStateTransition",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {
+          "transitionType": "predefined",
+          "predefined": {"predefinedType": "when_intent_matched", "intentName": "greet"},
+          "points": []
+        }
+      },
+      {
+        "id": "e-comment",
+        "source": "n-comment",
+        "target": "n-greeting",
+        "type": "CommentLink",
         "sourceHandle": "Right",
         "targetHandle": "Left",
         "data": {"points": []}

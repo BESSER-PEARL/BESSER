@@ -2,8 +2,9 @@
 Tests for OCL invariant / precondition / postcondition handling in the
 WME class diagram converter pipeline.
 
-The canonical v4 wire shape inlines OCL constraints as rows in the
-owning class node's ``data.oclConstraints`` array — e.g.
+On ingest the processor accepts two shapes: rows inlined in a class
+node's ``data.oclConstraints`` array (the v3->v4 migrator's
+collapse-onto-owner output) — e.g.
 
     {
       "id": "n-account",
@@ -17,6 +18,11 @@ owning class node's ``data.oclConstraints`` array — e.g.
         ]
       }
     }
+
+— and free-standing ``ClassOCLConstraint`` nodes (the sticky-note shape
+the frontend authors), tethered to their class by a ``ClassOCLLink``
+edge. On emit the converter always produces the free-standing node
+shape (develop parity: constraints stay visible, editable boxes).
 
 Tests cover:
   * ``parse_constraint_text`` returning the right routing kind plus the
@@ -61,29 +67,40 @@ def _class_node_by_name(model_payload, class_name):
     return None
 
 
-def _ocl_rows(payload, class_name):
-    """Return the ``data.oclConstraints`` rows for the given class.
+def _all_ocl_rows(payload):
+    """Return every OCL constraint in ``payload`` as (anchor-class, row) pairs.
 
-    Accepts either the top-level ``{title, model}`` envelope or the bare
-    converter output ``{nodes, edges, ...}``.
+    Covers both wire shapes: rows inlined on a class node's
+    ``data.oclConstraints`` (anchor = the owning class) and free-standing
+    ``ClassOCLConstraint`` nodes (anchor = the class reached via the
+    ``ClassOCLLink`` edge, ``None`` when unlinked).
     """
     model = payload.get("model") if "model" in payload else payload
-    node = _class_node_by_name(model, class_name)
-    if not node:
-        return []
-    return list((node.get("data") or {}).get("oclConstraints") or [])
+    nodes = model.get("nodes") or []
+    nodes_by_id = {n.get("id"): n for n in nodes}
 
+    def _linked_class_name(constraint_node_id):
+        for e in model.get("edges") or []:
+            if e.get("type") != "ClassOCLLink":
+                continue
+            if e.get("source") == constraint_node_id:
+                other = nodes_by_id.get(e.get("target"))
+            elif e.get("target") == constraint_node_id:
+                other = nodes_by_id.get(e.get("source"))
+            else:
+                continue
+            if other is not None and other.get("type") == "class":
+                return (other.get("data") or {}).get("name")
+        return None
 
-def _all_ocl_rows(payload):
-    """Yield every ``oclConstraint`` row from every class in ``payload``."""
-    model = payload.get("model") if "model" in payload else payload
     out = []
-    for n in model.get("nodes") or []:
-        if n.get("type") != "class":
-            continue
+    for n in nodes:
         data = n.get("data") or {}
-        for row in data.get("oclConstraints") or []:
-            out.append((data.get("name"), row))
+        if n.get("type") == "class":
+            for row in data.get("oclConstraints") or []:
+                out.append((data.get("name"), row))
+        elif n.get("type") == "ClassOCLConstraint":
+            out.append((_linked_class_name(n.get("id")), data))
     return out
 
 
@@ -426,6 +443,14 @@ def test_round_trip_full_mix_is_byte_stable(account_diagram_json):
     dm2 = process_class_diagram({"title": "BankingTest", "model": out1})
     out2 = class_buml_to_json(dm2)
 
+    # All three constraints (inv + pre + post) survive as visible,
+    # Account-anchored ``ClassOCLConstraint`` nodes.
+    assert len(_all_ocl_rows(out1)) == 3
+    assert _summarize_anchors(out1) == [
+        ("context Account inv positive: self.balance >= 0", "Account"),
+        ("context Account::deposit(amount: int) post: self.balance >= 0", "Account"),
+        ("context Account::deposit(amount: int) pre: amount > 0", "Account"),
+    ]
     # Constraint text + description per row is stable.
     assert _summarize_ocl(out1) == _summarize_ocl(out2)
     # Row -> class anchoring is stable.
@@ -438,7 +463,9 @@ def test_emitted_ocl_boxes_carry_no_legacy_metadata(account_diagram_json):
     """The new shape strips kind / targetMethodId / constraintName on emit."""
     dm = process_class_diagram(account_diagram_json)
     out = class_buml_to_json(dm)
-    for _cls, row in _all_ocl_rows(out):
+    rows = _all_ocl_rows(out)
+    assert rows, "expected emitted OCL constraint nodes"
+    for _cls, row in rows:
         assert "kind" not in row
         assert "targetMethodId" not in row
         assert "constraintName" not in row

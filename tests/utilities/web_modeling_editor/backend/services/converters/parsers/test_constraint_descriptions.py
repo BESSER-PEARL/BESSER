@@ -253,13 +253,13 @@ class TestBumlToJsonRoundTripDescription:
         json_output = class_buml_to_json(professor_domain_model)
         # In v4, constraints with a class context are inlined as rows in
         # ``data.oclConstraints`` on the owning class node. Free-standing
-        # constraints surface as a class node with stereotype 'oclConstraint'.
+        # constraints surface as their own ``ClassOCLConstraint`` node.
         nodes = json_output.get("nodes") or []
         ocl_rows: list = []
         for node in nodes:
             data = node.get("data") or {}
             ocl_rows.extend(data.get("oclConstraints") or [])
-            if data.get("stereotype") == "oclConstraint":
+            if node.get("type") == "ClassOCLConstraint":
                 ocl_rows.append(data)
         assert ocl_rows, "expected at least one inlined OCL constraint row"
         assert ocl_rows[0].get("description") == "Realistic age"

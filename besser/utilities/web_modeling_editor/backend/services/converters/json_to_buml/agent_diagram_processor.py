@@ -46,6 +46,11 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
     node_data,
 )
 
+# The React Flow frontend creates ``comment`` nodes tethered by
+# ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy spellings.
+COMMENT_NODE_TYPES = ("comment", "Comments")
+COMMENT_LINK_TYPES = ("CommentLink", "Link")
+
 
 def _collect_body_messages(body_rows, language, source_language, translate_text,
                            serialize_db_reply_payload=None):
@@ -69,7 +74,15 @@ def _collect_body_messages(body_rows, language, source_language, translate_text,
                 msg = translate_text(msg, language, source_language)
             messages.append(msg)
         elif reply_type == "llm":
-            messages.append(f"LLM:{sanitize_text(body_content)}")
+            # The system prompt lives on ``body.name`` (the inspector's
+            # "System prompt" textarea); ``llm_name`` is an optional
+            # passthrough field. Serialize both so the body builder can
+            # hand them to ``LLMReply(prompt=..., llm_name=...)``.
+            llm_payload = {
+                "prompt": sanitize_text(body_content),
+                "llm_name": sanitize_text(body.get("llm_name", "") or ""),
+            }
+            messages.append(f"LLM:{json_lib.dumps(llm_payload)}")
         elif reply_type == "rag":
             rag_name = sanitize_text(body.get("ragDatabaseName", ""))
             if not rag_name:
@@ -112,7 +125,19 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
         for rag_db_name in rag_names:
             body.add_action(RAGReply(rag_db_name=rag_db_name))
     elif has_llm:
-        body.add_action(LLMReply())
+        for m in messages:
+            if not m.startswith("LLM:"):
+                continue
+            payload_str = m.split(":", 1)[1]
+            try:
+                payload = json_lib.loads(payload_str)
+            except (ValueError, TypeError):
+                payload = {"prompt": payload_str}
+            prompt = payload.get("prompt") or None
+            # ``llm_name`` stays in the serialized payload for forward
+            # compatibility, but this branch's ``LLMReply`` only accepts
+            # ``prompt`` (development adds ``llm_name``).
+            body.add_action(LLMReply(prompt=prompt))
     elif has_code:
         code_contents = [m[5:] for m in messages if m.startswith("CODE:")]
         for code_content in code_contents:
@@ -314,14 +339,22 @@ def process_agent_diagram(json_data):
         node_type = node.get("type")
         node_id = node.get("id")
         data = node_data(node)
-        if node_type == "Comments":
+        if node_type in COMMENT_NODE_TYPES:
             comment_nodes[node_id] = data.get("name", "")
             continue
         if node_type == "AgentIntent":
             intent_name = data.get("name")
             training_sentences = []
             intent_description = data.get("intent_description", None)
-            for body in data.get("bodies") or []:
+            # The frontend stores training utterances on
+            # ``data.training_phrases`` (``AgentIntentNodeProps``);
+            # ``bodies`` is the legacy spelling kept as a fallback.
+            phrase_rows = data.get("training_phrases")
+            if not isinstance(phrase_rows, list) or not phrase_rows:
+                phrase_rows = data.get("bodies") or []
+            for body in phrase_rows:
+                if not isinstance(body, dict):
+                    continue
                 training_sentence = sanitize_text(body.get("name", ""))
                 if language:
                     training_sentence = translate_text(training_sentence, language, source_language)
@@ -437,7 +470,7 @@ def process_agent_diagram(json_data):
     transition_count = 0
     for edge in edges:
         edge_type = edge.get("type")
-        if edge_type == "Link":
+        if edge_type in COMMENT_LINK_TYPES:
             source_id = edge.get("source")
             target_id = edge.get("target")
             comment_id = None

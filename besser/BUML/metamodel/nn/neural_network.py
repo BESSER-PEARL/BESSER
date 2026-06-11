@@ -74,6 +74,8 @@ class TensorOp(NamedElement):
                  pad_value: float = None,
                  dropout_rate: float = None,
                  dropout_training_aware: bool = False,
+                 split_dim: int = None,
+                 split_sizes: int = None,
                  name_module_input: str = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
@@ -95,6 +97,8 @@ class TensorOp(NamedElement):
         self.pad_value: float = pad_value
         self.dropout_rate: float = dropout_rate
         self.dropout_training_aware: bool = dropout_training_aware
+        self.split_dim: int = split_dim
+        self.split_sizes: int = split_sizes
         self.tns_type: str = tns_type
         self.name_module_input: str = name_module_input
 
@@ -117,7 +121,7 @@ class TensorOp(NamedElement):
             'reshape', 'concatenate', 'multiply',
             'matmultiply', 'permute', 'transpose', 'mean', 'max', 'squeeze', 'unsqueeze',
             'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'binop_floor_divide', 'subscript', 'shape_dim',
-            'normalize', 'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like'
+            'normalize', 'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like', 'split'
         ]:
             raise ValueError("Invalid value of tensorOp type")
         elif tns_type == 'reshape' and self.reshape_dim is None:
@@ -162,6 +166,13 @@ class TensorOp(NamedElement):
             if self.layers_of_tensors is None or len(self.layers_of_tensors) == 0:
                 raise ValueError("layers_of_tensors parameter cannot be None or empty \
                                  for subscript operations")
+        elif tns_type == 'split':
+            if self.split_dim is None:
+                raise ValueError("split_dim parameter cannot be None when type is 'split'")
+            if self.split_sizes is None:
+                raise ValueError("split_sizes parameter cannot be None when type is 'split'")
+            if self.layers_of_tensors is None or len(self.layers_of_tensors) == 0:
+                raise ValueError("layers_of_tensors parameter cannot be None or empty for split operations")
 
         self.__tns_type = tns_type
 

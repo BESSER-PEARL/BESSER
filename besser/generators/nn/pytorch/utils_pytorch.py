@@ -293,6 +293,15 @@ def _handle_reshape_pytorch(tensorop, modules_details, in_var, prev_out_var, par
     return f"{prev_out_var}.reshape({params})"
 
 
+def _handle_split_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle split tensorop syntax."""
+    split_sizes = tensorop.split_sizes
+    split_dim = tensorop.split_dim
+    if in_var is not None:
+        prev_out_var = in_var
+    return f"torch.split({prev_out_var}, {split_sizes}, dim={split_dim})"
+
+
 def _handle_concatenate_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle concatenate tensorop syntax."""
     dim = tensorop.concatenate_dim
@@ -483,6 +492,7 @@ def _handle_default_pytorch(tensorop, modules_details, in_var, prev_out_var, par
 # Dispatch table for PyTorch tensorop handlers
 _PYTORCH_TENSOROP_HANDLERS = {
     "reshape": _handle_reshape_pytorch,
+    "split": _handle_split_pytorch,
     "concatenate": _handle_concatenate_pytorch,
     "transpose": _handle_transpose_pytorch,
     "permute": _handle_permute_pytorch,

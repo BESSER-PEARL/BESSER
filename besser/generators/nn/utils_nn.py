@@ -83,8 +83,19 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
                         return layer_details[4]  # Hidden variable
                 # Fallback: return output variable
                 return layer_details[1]
+        # Check for split tensorop output suffixes
+        if isinstance(lyr_input, str) and "__split_" in lyr_input:
+            # e.g., "op_1__split_0" -> get specific split output variable
+            base_op, idx_str = lyr_input.rsplit("__split_", 1)
+            idx = int(idx_str)
+            if f"{base_op}_op" in modules_names:
+                op_details = modules_details[f"{base_op}_op"]
+                # op_details[1] is the tuple like "x_2_0, x_2_1, x_2_2"
+                var_list = [v.strip() for v in op_details[1].split(',')]
+                if idx < len(var_list):
+                    return var_list[idx]
         # Check for RNN hidden/cell state suffixes before checking layer names
-        if isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
+        elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
             base_module = lyr_input[:-8]  # Remove "__hidden"
             if f"{base_module}_layer" in modules_names:
                 layer_details = modules_details[f"{base_module}_layer"]
@@ -191,6 +202,27 @@ def _handle_bidirectional_backward(layer_name):
     return f"{base_name}_backward_h"
 
 
+def _handle_split_output(layer_name, modules_details):
+    """Handle split tensorop output with __split_N suffix."""
+    # Extract base op name and index: "op_1__split_0" -> ("op_1", 0)
+    base_name, idx_str = layer_name.rsplit("__split_", 1)
+    idx = int(idx_str)
+
+    # Get the split tensorop from modules_details
+    if base_name + "_op" in modules_details:
+        # The out_var is a tuple like "x_2_0, x_2_1, x_2_2"
+        # Extract the specific variable at index idx
+        out_var_tuple = modules_details[base_name + "_op"][1]
+        var_list = [v.strip() for v in out_var_tuple.split(',')]
+        if idx < len(var_list):
+            return var_list[idx]
+        else:
+            return f"{base_name}_{idx}"
+    else:
+        # Fallback if tensorop not found
+        return f"{base_name}_{idx}"
+
+
 def _handle_regular_layer(layer_name, modules_details, i, actual_vars):
     """Handle regular layer with optional RNN actual_vars."""
     layer_details = modules_details[layer_name + "_layer"]
@@ -276,6 +308,9 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__cell"):
             out_vars.append(_handle_rnn_cell_suffix(layer_name, modules_details))
+        # Handle split tensorop output suffixes
+        elif isinstance(layer_name, str) and "__split_" in layer_name:
+            out_vars.append(_handle_split_output(layer_name, modules_details))
         # Handle bidirectional RNN forward/backward suffixes
         elif isinstance(layer_name, str) and layer_name.endswith("__forward"):
             out_vars.append(_handle_bidirectional_forward(layer_name))
@@ -629,6 +664,45 @@ def _resolve_source_layer_var(source_layer, modules_details):
     if source_layer == 'INPUT':
         return 'inp'
 
+    # Handle RNN hidden/cell state suffixes before split suffixes
+    if isinstance(source_layer, str) and source_layer.endswith("__hidden"):
+        base_module = source_layer[:-8]  # Remove "__hidden"
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            # Check return_type to determine where hidden variable is
+            layer_obj = layer_details[3] if len(layer_details) > 3 else None
+            if layer_obj and hasattr(layer_obj, 'return_type'):
+                if layer_obj.return_type == "hidden":
+                    # For return_type="hidden", hidden is the main output (index 1)
+                    return layer_details[1]
+                elif layer_obj.return_type in ("both", "full") and len(layer_details) > 4:
+                    # For return_type="both", hidden is at index 4
+                    return layer_details[4]
+            # Fallback
+            return layer_details[1]
+    elif isinstance(source_layer, str) and source_layer.endswith("__cell"):
+        base_module = source_layer[:-6]  # Remove "__cell"
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return f"{layer_details[4]}_cell"  # Cell variable
+            return layer_details[1]  # Fallback
+
+    # Handle split output suffixes: "op_2__split_0" -> get specific split variable
+    if isinstance(source_layer, str) and "__split_" in source_layer:
+        base_op, idx_str = source_layer.rsplit("__split_", 1)
+        idx = int(idx_str)
+        if f"{base_op}_op" in modules_details:
+            # The out_var is a tuple like "x_2_0, x_2_1, x_2_2"
+            out_var_tuple = modules_details[f"{base_op}_op"][1]
+            var_list = [v.strip() for v in out_var_tuple.split(',')]
+            if idx < len(var_list):
+                return var_list[idx]
+            # Fallback if index out of range
+            return f"{base_op}_{idx}"
+
     modules_names = list(modules_details.keys())
     for suffix in ['_layer', '_op', '_activ', '_nn']:
         key = f"{source_layer}{suffix}"
@@ -844,6 +918,7 @@ _TENSOROP_HANDLERS = {
     "shape_dim": _handle_simple_op_params,
     "normalize": _handle_simple_op_params,
     "repeat": _handle_repeat_params,
+    "split": _handle_simple_op_params,
     "interpolate": lambda t, m: (None, None),
     "pad": lambda t, m: (None, None),
     "dropout": lambda t, m: (None, None),
@@ -947,6 +1022,9 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
             # Binary operations always get unique op_ prefix to avoid conflicts
             elif tensorop.tns_type.startswith("binop_"):
                 out_var = tensorop.name
+            # Split operations always use their own name to ensure unique tuple variables
+            elif tensorop.tns_type == "split":
+                out_var = tensorop.name
             # Tensorops with input_reused should also use their op_N name to avoid x_N conflicts
             elif hasattr(tensorop, 'input_reused') and tensorop.input_reused:
                 out_var = tensorop.name
@@ -957,6 +1035,13 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
     # This ensures downstream layers can correctly reference the skipped operation
     if isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:"):
         out_var = ts_op_synt[5:]  # Extract variable after "SKIP:"
+
+    # Special handling for split: generate tuple unpacking with indexed variable names
+    if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
+        num_splits = tensorop.split_sizes
+        # Generate variable names: out_var_0, out_var_1, out_var_2, ...
+        split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
+        out_var = ", ".join(split_vars)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
 

@@ -19,7 +19,6 @@ import logging
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
-    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     Artifact,
@@ -27,7 +26,6 @@ from besser.BUML.metamodel.bpmn import (
     BPMNModel,
     CallActivity,
     Collaboration,
-    CollaborationMode,
     DataAssociation,
     DataObject,
     DataStore,
@@ -40,7 +38,6 @@ from besser.BUML.metamodel.bpmn import (
     IntermediateEvent,
     Lane,
     LoopCharacteristics,
-    MergingStrategy,
     MessageFlow,
     Participant,
     Process,
@@ -173,22 +170,15 @@ def _build_node(elem: dict):
                     f"Unknown BPMN task type '{elem.get('taskType')}' on Task '{name}'."
                 ) from exc
             if elem.get("isAgentic"):
-                # SEAA'25 «AgenticTask» (paper §4.2 Fig 3b). WME's
-                # `collaborationMode` on Task is a deviation beyond the paper
-                # (04D1 D-D1); BESSER stores it as an independent field (S2).
+                # SEAA'25 «AgenticTask» (paper §4.2 Fig 3b).
+                # `collaborationMode` in the JSON is silently ignored
+                # (P3' rationalization — the field is no longer stored).
                 reflection_value = elem.get("reflectionMode", "none") or "none"
                 try:
                     reflection = ReflectionMode(reflection_value)
                 except ValueError as exc:
                     raise ConversionError(
                         f"Unknown reflectionMode '{reflection_value}' on AgenticTask '{name}'."
-                    ) from exc
-                collab_value = elem.get("collaborationMode", "voting") or "voting"
-                try:
-                    collaboration = CollaborationMode(collab_value)
-                except ValueError as exc:
-                    raise ConversionError(
-                        f"Unknown collaborationMode '{collab_value}' on AgenticTask '{name}'."
                     ) from exc
                 trust = _clamp_trust_score(elem.get("trustScore", 0))
                 # WME guide 11: optional opaque AgentDiagram id on the agentic
@@ -198,7 +188,6 @@ def _build_node(elem: dict):
                 return AgenticTask(
                     name=name, task_type=task_type, loop_characteristics=loop,
                     reflection_mode=reflection, trust_score=trust,
-                    collaboration_mode=collaboration,
                     agent_diagram_ref=agent_ref,
                 )
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
@@ -229,16 +218,9 @@ def _build_node(elem: dict):
             # SEAA'25 «AgenticGateway» (paper §4.3 Fig 4). AgenticGateway
             # constrains gateway_type to PARALLEL or INCLUSIVE; an ineligible
             # type with isAgentic=true is surfaced as ConversionError so the
-            # WME-side bug is not silently downgraded (03-... §2.3 decision).
-            try:
-                collaboration = CollaborationMode(
-                    elem.get("collaborationMode", "voting") or "voting"
-                )
-            except ValueError as exc:
-                raise ConversionError(
-                    f"Unknown collaborationMode '{elem.get('collaborationMode')}' "
-                    f"on AgenticGateway '{name}'."
-                ) from exc
+            # WME-side bug is not silently downgraded.
+            # `collaborationMode` and `mergingStrategy` in the JSON are
+            # silently ignored (P3' rationalization).
             try:
                 role = GatewayRole(elem.get("gatewayRole", "diverging") or "diverging")
             except ValueError as exc:
@@ -246,33 +228,19 @@ def _build_node(elem: dict):
                     f"Unknown gatewayRole '{elem.get('gatewayRole')}' "
                     f"on AgenticGateway '{name}'."
                 ) from exc
-            # mergingStrategy: WME always emits the field; BESSER stores None
-            # on DIVERGING gateways (INV-A). Read the value only when MERGING.
-            merging = None
-            if role == GatewayRole.MERGING:
-                ms_value = elem.get("mergingStrategy", "majority") or "majority"
-                try:
-                    merging = MergingStrategy(ms_value)
-                except ValueError as exc:
-                    raise ConversionError(
-                        f"Unknown mergingStrategy '{ms_value}' on AgenticGateway '{name}'."
-                    ) from exc
             trust = _clamp_trust_score(elem.get("trustScore", 0))
-            # Governance DSL (governance-dsl guide 02): opaque CDATA child on
-            # merging gateways. Empty / whitespace-only -> None (matches WME's
-            # emit gate). Pass through verbatim.
+            # Governance DSL: opaque CDATA child on merging gateways.
+            # Empty / whitespace-only -> None. Pass through verbatim.
             gov = elem.get("governanceDsl")
             gov = gov if (isinstance(gov, str) and gov.strip() != "") else None
             try:
                 return AgenticGateway(
                     name=name, gateway_type=gateway_type,
-                    gateway_role=role, collaboration_mode=collaboration,
-                    merging_strategy=merging, trust_score=trust,
+                    gateway_role=role, trust_score=trust,
                     governance_dsl=gov,
                 )
             except ValueError as exc:
-                # gateway_type ineligibility (EXCLUSIVE/COMPLEX/EVENT_BASED) or
-                # (collaboration_mode, merging_strategy) legality violation.
+                # gateway_type ineligibility (EXCLUSIVE/COMPLEX/EVENT_BASED).
                 raise ConversionError(
                     f"Cannot import AgenticGateway '{name}': {exc}"
                 ) from exc
@@ -340,38 +308,8 @@ def _build_flow(rel: dict, source, target):
                 )
         return flow
     if flow_type == "message":
-        if rel.get("isAgentic"):
-            # SEAA'25 «AgenticMessageFlow» (WME 04D1). Same enum-validation
-            # shape as AgenticGateway; no gateway_role (a message flow has no
-            # diverging/merging axis), so merging_strategy is always read.
-            try:
-                collaboration = CollaborationMode(
-                    rel.get("collaborationMode", "voting") or "voting"
-                )
-            except ValueError as exc:
-                raise ConversionError(
-                    f"Unknown collaborationMode '{rel.get('collaborationMode')}' "
-                    f"on AgenticMessageFlow '{name}'."
-                ) from exc
-            ms_value = rel.get("mergingStrategy", "majority") or "majority"
-            try:
-                merging = MergingStrategy(ms_value)
-            except ValueError as exc:
-                raise ConversionError(
-                    f"Unknown mergingStrategy '{ms_value}' on AgenticMessageFlow '{name}'."
-                ) from exc
-            trust = _clamp_trust_score(rel.get("trustScore", 0))
-            try:
-                return AgenticMessageFlow(
-                    source=source, target=target, name=name,
-                    collaboration_mode=collaboration, merging_strategy=merging,
-                    trust_score=trust,
-                )
-            except ValueError as exc:
-                # (collaboration_mode, merging_strategy) legality violation (INV-B).
-                raise ConversionError(
-                    f"Cannot import AgenticMessageFlow '{name}': {exc}"
-                ) from exc
+        # `isAgentic` message flows are silently downgraded to base MessageFlow
+        # (P3' rationalization — AgenticMessageFlow has been removed).
         return MessageFlow(source=source, target=target, name=name)
     if flow_type == "association":
         return Association(source=source, target=target, name=name)

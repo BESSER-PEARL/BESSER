@@ -21,7 +21,6 @@ from besser.BUML.metamodel.bpmn import (
     Activity,
     AgenticGateway,
     AgenticLane,
-    AgenticMessageFlow,
     AgenticTask,
     BPMNModel,
     CallActivity,
@@ -123,28 +122,20 @@ def _emit_agentic_extension(host_el, obj) -> None:
     Attribute presence + ordering mirror WME's ``emitAgenticExtension()``:
 
     * ``role`` -- iff ``AgenticLane``.
-    * ``reflectionMode`` + ``collaborationMode`` -- iff ``AgenticTask``.
-    * ``gatewayRole`` + ``collaborationMode`` -- iff ``AgenticGateway``;
-      ``mergingStrategy`` additionally iff ``obj.merging_strategy is not None``
-      (MERGING role; paper §4.3 sets the strategy on the merging gateway only).
-    * ``collaborationMode`` + ``mergingStrategy`` -- iff ``AgenticMessageFlow``
-      (no ``gatewayRole``; ``merging_strategy`` is always set there).
+    * ``reflectionMode`` -- iff ``AgenticTask``.
+    * ``gatewayRole`` -- iff ``AgenticGateway``.
     * ``trustScore`` -- on every agentic subclass.
     * ``agentDiagramRef`` -- iff carried + set (the agentic task, WME guide 11;
-      or the legacy lane carrier). Never on gateways / message flows.
+      or the legacy lane carrier). Never on gateways.
 
     A merging ``AgenticGateway`` with a ``governance_dsl`` additionally emits a
     sibling ``<agentic:governance>`` CDATA-style child (escaped text -- stdlib
     ET has no native CDATA, but the text content round-trips through any XML
-    parser identically; D-gov-cdata).
-
-    Enum values come through ``<enum>.value`` (the lowercase WME-mirrored
-    strings -- e.g. ``"voting"``, ``"majority"``, ``"diverging"``).
+    parser identically).
 
     No-op for non-agentic objects so callers can invoke it unconditionally.
     """
-    if not isinstance(obj, (AgenticTask, AgenticGateway, AgenticLane,
-                            AgenticMessageFlow)):
+    if not isinstance(obj, (AgenticTask, AgenticGateway, AgenticLane)):
         return
 
     attrs: dict = {}
@@ -156,15 +147,8 @@ def _emit_agentic_extension(host_el, obj) -> None:
             attrs["multiplicity"] = str(obj.multiplicity)
     if isinstance(obj, AgenticTask):
         attrs["reflectionMode"] = obj.reflection_mode.value
-        attrs["collaborationMode"] = obj.collaboration_mode.value
     if isinstance(obj, AgenticGateway):
         attrs["gatewayRole"] = obj.gateway_role.value
-        attrs["collaborationMode"] = obj.collaboration_mode.value
-        if obj.merging_strategy is not None:
-            attrs["mergingStrategy"] = obj.merging_strategy.value
-    if isinstance(obj, AgenticMessageFlow):
-        attrs["collaborationMode"] = obj.collaboration_mode.value
-        attrs["mergingStrategy"] = obj.merging_strategy.value
     attrs["trustScore"] = str(obj.trust_score)
     # agentDiagramRef rides whatever construct carries it (the agentic task,
     # WME guide 11; or the legacy lane), emitted only when set.
@@ -174,7 +158,7 @@ def _emit_agentic_extension(host_el, obj) -> None:
 
     ext_el = ET.SubElement(host_el, _qname("bpmn", "extensionElements"))
     ET.SubElement(ext_el, _qname("agentic", "agentic"), attrib=attrs)
-    # Governance DSL (governance-dsl guide 02): sibling child of <agentic:agentic>,
+    # Governance DSL: sibling child of <agentic:agentic>,
     # merging gateways only, emitted when set.
     gov = getattr(obj, "governance_dsl", None)
     if isinstance(obj, AgenticGateway) and gov is not None and gov.strip() != "":

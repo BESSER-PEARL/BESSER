@@ -12,7 +12,6 @@ emitted modules read the same way as the existing diagram-type builders.
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
-    AgenticMessageFlow,
     AgenticTask,
     Association,
     BPMNModel,
@@ -103,7 +102,6 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
         # AgenticTask is a Task subclass — emit it before the Task branch.
         needed.update({
             "AgenticTask", "TaskType", "LoopCharacteristics", "ReflectionMode",
-            "CollaborationMode",
         })
         ref_kwarg = ""
         if node.agent_diagram_ref is not None:
@@ -113,8 +111,7 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
             f"task_type=TaskType.{node.task_type.name}, "
             f"loop_characteristics=LoopCharacteristics.{node.loop_characteristics.name}, "
             f"reflection_mode=ReflectionMode.{node.reflection_mode.name}, "
-            f"trust_score={node.trust_score}, "
-            f"collaboration_mode=CollaborationMode.{node.collaboration_mode.name}{ref_kwarg})"
+            f"trust_score={node.trust_score}{ref_kwarg})"
         )
     elif isinstance(node, Task):
         needed.update({"Task", "TaskType", "LoopCharacteristics"})
@@ -167,12 +164,7 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
         # AgenticGateway is a Gateway subclass — emit it before the Gateway branch.
         needed.update({
             "AgenticGateway", "GatewayType", "GatewayRole",
-            "CollaborationMode", "MergingStrategy",
         })
-        if node.merging_strategy is None:
-            merging_repr = "None"
-        else:
-            merging_repr = f"MergingStrategy.{node.merging_strategy.name}"
         # _quoted escapes newlines, so a multi-line governance DSL stays a valid
         # single-line literal that exec's back to the original string.
         gov_kwarg = ""
@@ -182,8 +174,6 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
             f"{var} = AgenticGateway(name={_quoted(node.name)}, "
             f"gateway_type=GatewayType.{node.gateway_type.name}, "
             f"gateway_role=GatewayRole.{node.gateway_role.name}, "
-            f"collaboration_mode=CollaborationMode.{node.collaboration_mode.name}, "
-            f"merging_strategy={merging_repr}, "
             f"trust_score={node.trust_score}{gov_kwarg})"
         )
     elif isinstance(node, Gateway):
@@ -309,19 +299,8 @@ def _emit_message_flow(flow: MessageFlow, dispenser: _NameDispenser,
     parts = [f"source={src}", f"target={tgt}"]
     if flow.name:
         parts.append(f"name={_quoted(flow.name)}")
-    if isinstance(flow, AgenticMessageFlow):
-        # AgenticMessageFlow is a MessageFlow subclass — check it first.
-        # merging_strategy is always non-None (no diverging role), so no None
-        # handling is needed (unlike AgenticGateway).
-        needed.update({"AgenticMessageFlow", "CollaborationMode", "MergingStrategy"})
-        parts.append(f"collaboration_mode=CollaborationMode.{flow.collaboration_mode.name}")
-        parts.append(f"merging_strategy=MergingStrategy.{flow.merging_strategy.name}")
-        parts.append(f"trust_score={flow.trust_score}")
-        ctor = "AgenticMessageFlow"
-    else:
-        needed.add("MessageFlow")
-        ctor = "MessageFlow"
-    body.append(f"collaboration.add_message_flow({ctor}({', '.join(parts)}))")
+    needed.add("MessageFlow")
+    body.append(f"collaboration.add_message_flow(MessageFlow({', '.join(parts)}))")
     _emit_flow_layout_if_present(flow, body)
 
 

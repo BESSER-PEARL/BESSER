@@ -2,13 +2,10 @@
 
 Mirrors ``test_bpmn_model_builder.py`` but exercises the
 ``AgenticTask`` / ``AgenticGateway`` / ``AgenticLane`` subclass branches
-of ``_emit_flow_node`` and ``_emit_lane``. Covers:
+of ``_emit_flow_node`` and ``_emit_lane``.
 
-* Single-class round-trips (B-1, B-3, B-4, B-6, B-7).
-* Import-block correctness per subclass (B-2, B-5, B-8).
-* Mixed-class emission (B-9) and absence of agentic imports for vanilla
-  models (B-10).
-* Layout passthrough (B-11) and determinism (B-12).
+P3' rationalization: CollaborationMode, MergingStrategy, AgenticMessageFlow
+have been removed. Tests updated accordingly.
 """
 
 from __future__ import annotations
@@ -18,17 +15,14 @@ import pytest
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
-    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     BPMNModel,
     Collaboration,
-    CollaborationMode,
     EndEvent,
     Gateway,
     GatewayRole,
     GatewayType,
-    MergingStrategy,
     MessageFlow,
     Participant,
     Process,
@@ -87,17 +81,12 @@ def _agentic_task_model() -> BPMNModel:
     return BPMNModel(name="AgenticTaskModel", processes={p})
 
 
-def _agentic_gateway_merging_model(
-    collaboration_mode: CollaborationMode,
-    merging_strategy: MergingStrategy,
-) -> BPMNModel:
-    """Merging AgenticGateway with given collaboration_mode + merging_strategy."""
+def _agentic_gateway_merging_model() -> BPMNModel:
+    """Merging AgenticGateway with trust_score=42."""
     g = AgenticGateway(
         name="Merge",
         gateway_type=GatewayType.PARALLEL,
         gateway_role=GatewayRole.MERGING,
-        collaboration_mode=collaboration_mode,
-        merging_strategy=merging_strategy,
         trust_score=42,
     )
     p = Process(name="P", flow_nodes={g})
@@ -105,12 +94,11 @@ def _agentic_gateway_merging_model(
 
 
 def _agentic_gateway_diverging_model() -> BPMNModel:
-    """Diverging AgenticGateway -- merging_strategy must be None."""
+    """Diverging AgenticGateway."""
     g = AgenticGateway(
         name="Fork",
         gateway_type=GatewayType.INCLUSIVE,
         gateway_role=GatewayRole.DIVERGING,
-        collaboration_mode=CollaborationMode.VOTING,
         trust_score=10,
     )
     p = Process(name="P", flow_nodes={g})
@@ -142,7 +130,6 @@ def _mixed_model() -> BPMNModel:
         name="ParaFork",
         gateway_type=GatewayType.PARALLEL,
         gateway_role=GatewayRole.DIVERGING,
-        collaboration_mode=CollaborationMode.VOTING,
     )
     b_gw = Gateway(name="ExFork", gateway_type=GatewayType.EXCLUSIVE)
     p = Process(name="P", flow_nodes={a_task, b_task, a_gw, b_gw})
@@ -187,24 +174,8 @@ class TestAgenticTask:
         # The Task class itself is shadowed by AgenticTask -- no plain `Task,` line
         # should appear in the import list.
         assert "Task," not in block.replace("AgenticTask,", "")
-
-    def test_emit_agentic_task_collaboration_mode(self):  # S2-b-1
-        """A non-voting collaboration_mode round-trips through exec'd code."""
-        t = AgenticTask(name="Review", task_type=TaskType.USER,
-                        reflection_mode=ReflectionMode.CROSS, trust_score=80,
-                        collaboration_mode=CollaborationMode.DEBATE)
-        model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={t})})
-        source = bpmn_model_to_code(model)
-        assert "collaboration_mode=CollaborationMode.DEBATE" in source
-        recovered = _find_model(_exec_source(source))
-        node = next(iter(recovered.all_flow_nodes()))
-        assert isinstance(node, AgenticTask)
-        assert node.collaboration_mode == CollaborationMode.DEBATE
-
-    def test_emit_agentic_task_imports_collaboration_mode(self):  # S2-b-2
-        """The emitted import block contains CollaborationMode for an AgenticTask."""
-        source = bpmn_model_to_code(_agentic_task_model())
-        assert "CollaborationMode" in _import_block(source)
+        # CollaborationMode no longer imported (P3').
+        assert "CollaborationMode" not in block
 
     def test_emit_agentic_task_agent_diagram_ref(self):  # R-a-b-1
         """An AgenticTask with agent_diagram_ref round-trips through exec'd code."""
@@ -225,18 +196,12 @@ class TestAgenticTask:
 
 
 # ---------------------------------------------------------------------------
-# B-3 / B-4 / B-5 / B-6 -- AgenticGateway
+# B-3 / B-4 / B-5 -- AgenticGateway
 # ---------------------------------------------------------------------------
 
 class TestAgenticGateway:
-    @pytest.mark.parametrize("mode,strategy", [
-        (CollaborationMode.VOTING, MergingStrategy.MAJORITY),
-        (CollaborationMode.VOTING, MergingStrategy.ABSOLUTE_MAJORITY),
-        (CollaborationMode.ROLE, MergingStrategy.LEADER_DRIVEN),
-        (CollaborationMode.COMPETITION, MergingStrategy.FASTEST),
-    ])
-    def test_emit_agentic_gateway_merging_round_trips(self, mode, strategy):  # B-3
-        original = _agentic_gateway_merging_model(mode, strategy)
+    def test_emit_agentic_gateway_merging_round_trips(self):  # B-3
+        original = _agentic_gateway_merging_model()
         source = bpmn_model_to_code(original)
         ns = _exec_source(source)
         model = _find_model(ns)
@@ -244,53 +209,32 @@ class TestAgenticGateway:
         assert isinstance(node, AgenticGateway)
         assert node.gateway_type == GatewayType.PARALLEL
         assert node.gateway_role == GatewayRole.MERGING
-        assert node.collaboration_mode == mode
-        assert node.merging_strategy == strategy
         assert node.trust_score == 42
 
     def test_emit_agentic_gateway_diverging_round_trips(self):  # B-4
         original = _agentic_gateway_diverging_model()
         source = bpmn_model_to_code(original)
-        # Emitted source explicitly carries `merging_strategy=None`.
-        assert "merging_strategy=None" in source
         ns = _exec_source(source)
         model = _find_model(ns)
         node = next(iter(model.all_flow_nodes()))
         assert isinstance(node, AgenticGateway)
         assert node.gateway_role == GatewayRole.DIVERGING
-        assert node.merging_strategy is None
         assert node.gateway_type == GatewayType.INCLUSIVE
 
     def test_emit_agentic_gateway_imports(self):  # B-5
-        source = bpmn_model_to_code(
-            _agentic_gateway_merging_model(
-                CollaborationMode.VOTING, MergingStrategy.MAJORITY
-            )
-        )
+        source = bpmn_model_to_code(_agentic_gateway_merging_model())
         block = _import_block(source)
-        for name in ("AgenticGateway", "GatewayRole", "CollaborationMode",
-                     "MergingStrategy", "GatewayType"):
+        for name in ("AgenticGateway", "GatewayRole", "GatewayType"):
             assert name in block, f"expected {name} in import block, got: {block!r}"
-
-    def test_emit_agentic_gateway_debate_borrows_strategy(self):  # B-6
-        original = _agentic_gateway_merging_model(
-            CollaborationMode.DEBATE, MergingStrategy.LEADER_DRIVEN
-        )
-        source = bpmn_model_to_code(original)
-        ns = _exec_source(source)
-        model = _find_model(ns)
-        node = next(iter(model.all_flow_nodes()))
-        assert isinstance(node, AgenticGateway)
-        assert node.collaboration_mode == CollaborationMode.DEBATE
-        assert node.merging_strategy == MergingStrategy.LEADER_DRIVEN
+        # CollaborationMode and MergingStrategy no longer imported (P3').
+        assert "CollaborationMode" not in block
+        assert "MergingStrategy" not in block
 
     def test_emit_agentic_gateway_governance_dsl(self):  # R-b-b-1
         """A multi-line governance_dsl round-trips through exec'd code verbatim."""
         dsl = "Scopes:\n    Tasks:\n        Merge\nMajorityPolicy P {\n    ratio : 0.5\n}"
         gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
                             gateway_role=GatewayRole.MERGING,
-                            collaboration_mode=CollaborationMode.ROLE,
-                            merging_strategy=MergingStrategy.LEADER_DRIVEN,
                             governance_dsl=dsl)
         model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={gw})})
         source = bpmn_model_to_code(model)
@@ -301,9 +245,7 @@ class TestAgenticGateway:
 
     def test_emit_agentic_gateway_without_governance_omits_kwarg(self):  # R-b-b-2
         """An AgenticGateway with no governance_dsl emits no governance_dsl kwarg."""
-        source = bpmn_model_to_code(
-            _agentic_gateway_merging_model(CollaborationMode.VOTING, MergingStrategy.MAJORITY)
-        )
+        source = bpmn_model_to_code(_agentic_gateway_merging_model())
         assert "governance_dsl" not in source
 
 
@@ -377,77 +319,28 @@ class TestAgenticLane:
 
 
 # ---------------------------------------------------------------------------
-# S3 -- AgenticMessageFlow
+# Message flows — always emit as MessageFlow (P3' rationalization)
 # ---------------------------------------------------------------------------
 
-def _message_flow_model(mf_factory):
-    """Two pools, one task each, joined by the message flow that mf_factory builds.
-
-    ``mf_factory(t1, t2)`` returns a (Agentic)MessageFlow between the two tasks.
-    """
-    t1, t2 = Task(name="Ask"), Task(name="Answer")
-    p1 = Process(name="P1", flow_nodes={t1})
-    p2 = Process(name="P2", flow_nodes={t2})
-    part1 = Participant(name="Pool1", process=p1)
-    part2 = Participant(name="Pool2", process=p2)
-    mf = mf_factory(t1, t2)
-    return BPMNModel(
-        name="MFModel", processes={p1, p2},
-        collaboration=Collaboration(name="C", participants={part1, part2},
-                                    message_flows={mf}),
-    )
-
-
-class TestAgenticMessageFlow:
-    def test_emit_agentic_message_flow(self):  # S3-b-1
-        model = _message_flow_model(lambda t1, t2: AgenticMessageFlow(
-            source=t1, target=t2, name="msg",
-            collaboration_mode=CollaborationMode.VOTING,
-            merging_strategy=MergingStrategy.MINORITY, trust_score=50,
-        ))
-        source = bpmn_model_to_code(model)
-        assert "AgenticMessageFlow(" in source
-        recovered = _find_model(_exec_source(source))
-        [mf] = recovered.collaboration.message_flows
-        assert isinstance(mf, AgenticMessageFlow)
-        assert mf.collaboration_mode == CollaborationMode.VOTING
-        assert mf.merging_strategy == MergingStrategy.MINORITY
-        assert mf.trust_score == 50
-
-    def test_emit_agentic_message_flow_imports(self):  # S3-b-2
-        model = _message_flow_model(lambda t1, t2: AgenticMessageFlow(
-            source=t1, target=t2,
-            collaboration_mode=CollaborationMode.ROLE,
-            merging_strategy=MergingStrategy.COMPOSED,
-        ))
-        block = _import_block(bpmn_model_to_code(model))
-        for name in ("AgenticMessageFlow", "CollaborationMode", "MergingStrategy"):
-            assert name in block, f"expected {name} in import block, got: {block!r}"
-
-    def test_emit_mixed_message_flows(self):  # S3-b-3
-        """A collaboration with both a base and an agentic message flow emits both."""
-        t1, t2, t3, t4 = (Task(name="A"), Task(name="B"),
-                          Task(name="C"), Task(name="D"))
-        p1 = Process(name="P1", flow_nodes={t1, t3})
-        p2 = Process(name="P2", flow_nodes={t2, t4})
+class TestMessageFlow:
+    def test_emit_base_message_flow(self):
+        """A base MessageFlow round-trips as MessageFlow."""
+        t1, t2 = Task(name="Ask"), Task(name="Answer")
+        p1 = Process(name="P1", flow_nodes={t1})
+        p2 = Process(name="P2", flow_nodes={t2})
         part1 = Participant(name="Pool1", process=p1)
         part2 = Participant(name="Pool2", process=p2)
-        base_mf = MessageFlow(source=t1, target=t2, name="plain")
-        agentic_mf = AgenticMessageFlow(source=t3, target=t4, name="agent",
-                                        collaboration_mode=CollaborationMode.VOTING,
-                                        merging_strategy=MergingStrategy.MAJORITY)
+        mf = MessageFlow(source=t1, target=t2, name="msg")
         model = BPMNModel(
-            name="M", processes={p1, p2},
+            name="MFModel", processes={p1, p2},
             collaboration=Collaboration(name="C", participants={part1, part2},
-                                        message_flows={base_mf, agentic_mf}),
+                                        message_flows={mf}),
         )
         source = bpmn_model_to_code(model)
-        assert "AgenticMessageFlow(" in source
-        assert "MessageFlow(source=" in source.replace("AgenticMessageFlow(", "")
+        assert "MessageFlow(" in source
         recovered = _find_model(_exec_source(source))
-        flows = recovered.collaboration.message_flows
-        assert sum(1 for f in flows if isinstance(f, AgenticMessageFlow)) == 1
-        assert sum(1 for f in flows if type(f) is MessageFlow) == 1
+        [recovered_mf] = recovered.collaboration.message_flows
+        assert type(recovered_mf) is MessageFlow
 
 
 # ---------------------------------------------------------------------------
@@ -479,8 +372,8 @@ class TestMixedAndVanilla:
         source = bpmn_model_to_code(_vanilla_model())
         block = _import_block(source)
         for forbidden in ("AgenticTask", "AgenticGateway", "AgenticLane",
-                          "AgentRole", "CollaborationMode", "GatewayRole",
-                          "MergingStrategy", "ReflectionMode"):
+                          "AgentRole", "GatewayRole",
+                          "ReflectionMode"):
             assert forbidden not in block, (
                 f"vanilla model should not import {forbidden}; got: {block!r}"
             )

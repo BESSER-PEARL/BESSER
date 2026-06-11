@@ -30,7 +30,6 @@ from besser.BUML.metamodel.bpmn import (
     Activity,
     AgenticGateway,
     AgenticLane,
-    AgenticMessageFlow,
     AgenticTask,
     Association,
     BPMNConnectingObject,
@@ -120,7 +119,6 @@ _DEFAULT_BOUNDS = {
 _FLOW_TYPE_FOR_CLASS = {
     SequenceFlow: "sequence",
     MessageFlow: "message",
-    AgenticMessageFlow: "message",   # SEAA'25 subclass: same WME flowType
     Association: "association",
     DataAssociation: "data association",
 }
@@ -135,20 +133,10 @@ _WME_TASK_DEFAULTS = {
     "isAgentic": False,
     "reflectionMode": "none",
     "trustScore": 0,
-    # `collaborationMode` is a WME deviation beyond paper §4.2 Fig 3b. As of
-    # S2, AgenticTask stores it (overridden in _emit_node). This default
-    # applies to non-agentic Tasks, which have no collaboration_mode of their own.
-    "collaborationMode": "voting",
 }
 _WME_GATEWAY_DEFAULTS = {
     "isAgentic": False,
     "gatewayRole": "diverging",
-    "collaborationMode": "voting",
-    # WME's hard default; emitted unconditionally so the JSON shape stays
-    # WME-compatible even for non-agentic gateways (which have no merging
-    # strategy concept). BESSER's diverging AgenticGateway stores None and
-    # also emits this placeholder (03-... §3.3 decision).
-    "mergingStrategy": "majority",
     "trustScore": 0,
 }
 _WME_LANE_DEFAULTS = {
@@ -158,13 +146,8 @@ _WME_LANE_DEFAULTS = {
     "multiplicity": 1,
 }
 _WME_FLOW_AGENTIC_DEFAULTS = {
-    # WME's BPMNFlow.serialize() always emits these four fields (defaults
-    # voting / majority / 0 from bpmn-flow.ts static defaults). Emit them on
-    # every flow so the JSON shape stays byte-compatible; AgenticMessageFlow
-    # overrides them with its stored values in _emit_flow (S3).
+    # WME's BPMNFlow.serialize() always emits these fields on every flow.
     "isAgentic": False,
-    "collaborationMode": "voting",
-    "mergingStrategy": "majority",
     "trustScore": 0,
 }
 
@@ -374,10 +357,6 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             entry["isAgentic"] = True
             entry["reflectionMode"] = obj.reflection_mode.value
             entry["trustScore"] = obj.trust_score
-            # S2: collaborationMode is now stored on AgenticTask (04D1 D-D1
-            # deviation beyond paper §4.2). Emit the real value, not the
-            # _WME_TASK_DEFAULTS placeholder.
-            entry["collaborationMode"] = obj.collaboration_mode.value
             # WME guide 11: emit agentDiagramRef only when set (optional field;
             # WME's exporter drops it when undefined). Canonical task carrier.
             if obj.agent_diagram_ref is not None:
@@ -387,15 +366,8 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
         if isinstance(obj, AgenticGateway):
             entry["isAgentic"] = True
             entry["gatewayRole"] = obj.gateway_role.value
-            entry["collaborationMode"] = obj.collaboration_mode.value
-            # mergingStrategy: emit the agentic value when MERGING (non-None);
-            # on DIVERGING gateways (None in the metamodel) leave the WME
-            # placeholder "majority" from _WME_GATEWAY_DEFAULTS so the JSON
-            # shape stays byte-identical to WME's own export (03-... §3.3).
-            if obj.merging_strategy is not None:
-                entry["mergingStrategy"] = obj.merging_strategy.value
             entry["trustScore"] = obj.trust_score
-            # Governance DSL (governance-dsl guide 02): emit only when set
+            # Governance DSL: emit only when set
             # (WME's exporter drops it when undefined). Merging-gateway concept.
             if obj.governance_dsl is not None:
                 entry["governanceDsl"] = obj.governance_dsl
@@ -475,15 +447,8 @@ def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
     if isinstance(flow, SequenceFlow):
         entry["isDefault"] = flow.is_default
 
-    # WME's BPMNFlow always carries these fields; emit WME defaults first so
-    # the JSON shape stays WME-compatible regardless of flow class.
+    # WME's BPMNFlow always carries these fields; emit WME defaults.
     entry.update(_WME_FLOW_AGENTIC_DEFAULTS)
-    # S3: AgenticMessageFlow overrides the defaults with its stored values.
-    if isinstance(flow, AgenticMessageFlow):
-        entry["isAgentic"] = True
-        entry["collaborationMode"] = flow.collaboration_mode.value
-        entry["mergingStrategy"] = flow.merging_strategy.value
-        entry["trustScore"] = flow.trust_score
 
     relationships[id_for(flow)] = entry
 

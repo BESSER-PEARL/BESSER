@@ -1,13 +1,13 @@
 """Tests for the SEAA'25 agentic-extension wiring of the BPMN converters.
 
-Covers the test matrix in `.claude/bpmn-agentic/03-...md` §6:
+Covers:
 
 * I-1..I-13  Import (JSON -> BUML).
 * E-1..E-8   Export (BUML -> JSON).
 * R-1..R-5   Round-trip.
 
-Backward compatibility (B-1) is covered transitively by the existing
-vanilla-BPMN suite `test_bpmn_converters.py`, which continues to run unchanged.
+P3' rationalization: collaborationMode / mergingStrategy fields are silently
+ignored on import; AgenticMessageFlow has been removed. Tests updated accordingly.
 """
 
 import pytest
@@ -15,17 +15,14 @@ import pytest
 from besser.BUML.metamodel.bpmn import (
     AgenticGateway,
     AgenticLane,
-    AgenticMessageFlow,
     AgenticTask,
     AgentRole,
     BPMNModel,
     Collaboration,
-    CollaborationMode,
     Gateway,
     GatewayRole,
     GatewayType,
     Lane,
-    MergingStrategy,
     MessageFlow,
     Participant,
     Process,
@@ -110,7 +107,6 @@ def test_I1_import_agentic_task():
         "t1": _node(
             "t1", "BPMNTask", "Review", taskType="user", marker="none",
             isAgentic=True, reflectionMode="cross", trustScore=85,
-            collaborationMode="voting",
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
@@ -127,7 +123,6 @@ def test_I2_import_non_agentic_task_discards_seaa_fields():
         "t1": _node(
             "t1", "BPMNTask", "Plain", taskType="default", marker="none",
             isAgentic=False, reflectionMode="self", trustScore=99,
-            collaborationMode="role",
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
@@ -174,8 +169,9 @@ def test_I4_import_agentic_task_unknown_reflection_raises():
         process_bpmn_diagram(_envelope(elements, {}))
 
 
-def test_I5_import_agentic_task_stores_collaboration_mode():
-    """I-5 (S2): AgenticTask now STORES collaborationMode (04D1 D-D1; was discarded pre-S2)."""
+def test_I5_import_agentic_task_collaboration_mode_silently_ignored():
+    """I-5: collaborationMode in JSON is silently ignored (P3' rationalization);
+    task still imports as AgenticTask, no error raised."""
     elements = {
         "t1": _node(
             "t1", "BPMNTask", "Review", taskType="default", marker="none",
@@ -186,41 +182,38 @@ def test_I5_import_agentic_task_stores_collaboration_mode():
     model = process_bpmn_diagram(_envelope(elements, {}))
     [task] = next(iter(model.processes)).flow_nodes
     assert isinstance(task, AgenticTask)
-    assert task.collaboration_mode == CollaborationMode.COMPETITION
+    # No collaboration_mode attribute exists on P3' AgenticTask.
+    assert not hasattr(task, "collaboration_mode")
 
 
 def test_I6_import_agentic_gateway_diverging():
-    """I-6: Diverging gateway: mergingStrategy in JSON is ignored, merging_strategy=None."""
+    """I-6: Diverging gateway imports correctly; collaborationMode+mergingStrategy silently ignored."""
     elements = {
         "g1": _node(
             "g1", "BPMNGateway", "Fork", gatewayType="parallel",
-            isAgentic=True, gatewayRole="diverging", collaborationMode="voting",
-            mergingStrategy="majority", trustScore=85,
+            isAgentic=True, gatewayRole="diverging",
+            collaborationMode="voting", mergingStrategy="majority", trustScore=85,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     [gw] = next(iter(model.processes)).flow_nodes
     assert isinstance(gw, AgenticGateway)
     assert gw.gateway_role == GatewayRole.DIVERGING
-    assert gw.collaboration_mode == CollaborationMode.VOTING
-    assert gw.merging_strategy is None
     assert gw.trust_score == 85
 
 
-def test_I7_import_agentic_gateway_merging_voting_absolute():
-    """I-7: Full agentic-merging gateway."""
+def test_I7_import_agentic_gateway_merging():
+    """I-7: Full agentic-merging gateway; mergingStrategy silently ignored."""
     elements = {
         "g1": _node(
             "g1", "BPMNGateway", "Vote", gatewayType="parallel",
-            isAgentic=True, gatewayRole="merging", collaborationMode="voting",
-            mergingStrategy="absolute-majority", trustScore=70,
+            isAgentic=True, gatewayRole="merging",
+            collaborationMode="voting", mergingStrategy="absolute-majority", trustScore=70,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     [gw] = next(iter(model.processes)).flow_nodes
     assert gw.gateway_role == GatewayRole.MERGING
-    assert gw.collaboration_mode == CollaborationMode.VOTING
-    assert gw.merging_strategy == MergingStrategy.ABSOLUTE_MAJORITY
     assert gw.trust_score == 70
 
 
@@ -229,38 +222,42 @@ def test_I8_import_agentic_gateway_rejects_exclusive():
     elements = {
         "g1": _node(
             "g1", "BPMNGateway", "X", gatewayType="exclusive",
-            isAgentic=True, gatewayRole="diverging", collaborationMode="voting",
-            mergingStrategy="majority", trustScore=0,
+            isAgentic=True, gatewayRole="diverging", trustScore=0,
         ),
     }
     with pytest.raises(ConversionError, match="Cannot import AgenticGateway"):
         process_bpmn_diagram(_envelope(elements, {}))
 
 
-def test_I9_import_agentic_gateway_unknown_mode_raises():
-    """I-9: Unknown collaborationMode raises ConversionError."""
+def test_I9_import_agentic_gateway_unknown_collaboration_mode_silently_ignored():
+    """I-9: Unknown collaborationMode is silently ignored (P3' rationalization)."""
     elements = {
         "g1": _node(
             "g1", "BPMNGateway", "Vote", gatewayType="parallel",
-            isAgentic=True, gatewayRole="merging", collaborationMode="bogus",
-            mergingStrategy="majority", trustScore=0,
+            isAgentic=True, gatewayRole="merging",
+            collaborationMode="bogus", mergingStrategy="majority", trustScore=0,
         ),
     }
-    with pytest.raises(ConversionError, match="Unknown collaborationMode 'bogus'"):
-        process_bpmn_diagram(_envelope(elements, {}))
+    # No ConversionError — the field is simply not read.
+    model = process_bpmn_diagram(_envelope(elements, {}))
+    [gw] = next(iter(model.processes)).flow_nodes
+    assert isinstance(gw, AgenticGateway)
+    assert gw.gateway_role == GatewayRole.MERGING
 
 
-def test_I10_import_agentic_gateway_illegal_strategy_raises():
-    """I-10: (voting, fastest) is illegal per legality table -> ConversionError."""
+def test_I10_import_agentic_gateway_illegal_strategy_silently_ignored():
+    """I-10: An illegal mergingStrategy is silently ignored (P3' rationalization)."""
     elements = {
         "g1": _node(
             "g1", "BPMNGateway", "Vote", gatewayType="parallel",
-            isAgentic=True, gatewayRole="merging", collaborationMode="voting",
-            mergingStrategy="fastest", trustScore=0,
+            isAgentic=True, gatewayRole="merging",
+            collaborationMode="voting", mergingStrategy="fastest", trustScore=0,
         ),
     }
-    with pytest.raises(ConversionError, match="Cannot import AgenticGateway"):
-        process_bpmn_diagram(_envelope(elements, {}))
+    # No ConversionError — the field is simply not read.
+    model = process_bpmn_diagram(_envelope(elements, {}))
+    [gw] = next(iter(model.processes)).flow_nodes
+    assert isinstance(gw, AgenticGateway)
 
 
 def test_I11_import_agentic_lane():
@@ -296,12 +293,9 @@ def test_I12_import_non_agentic_lane():
     assert not isinstance(lane, AgenticLane)
 
 
-def test_I13_import_message_flow_agentic_now_typed():
-    """I-13 (S3): BPMNFlow with isAgentic=true now imports as AgenticMessageFlow.
-
-    Pre-S3 this asserted a silent discard to base MessageFlow; S3 introduces the
-    AgenticMessageFlow class, so the agentic fields are now preserved.
-    """
+def test_I13_import_message_flow_agentic_downgraded_to_base():
+    """I-13: BPMNFlow with isAgentic=true is silently downgraded to base MessageFlow
+    (P3' rationalization — AgenticMessageFlow removed)."""
     elements = {
         "p1": _node("p1", "BPMNPool", "P1"),
         "p2": _node("p2", "BPMNPool", "P2"),
@@ -317,32 +311,8 @@ def test_I13_import_message_flow_agentic_now_typed():
     }
     model = process_bpmn_diagram(_envelope(elements, rels))
     [mf] = model.collaboration.message_flows
-    assert isinstance(mf, AgenticMessageFlow)
-    assert mf.collaboration_mode == CollaborationMode.DEBATE
-    assert mf.merging_strategy == MergingStrategy.MAJORITY
-    assert mf.trust_score == 33
-
-
-def test_I14_import_pool_to_pool_agentic_message_flow_survives():
-    """R-R1: a pool-to-pool agentic message flow (Participant endpoints) is no longer
-    dropped on import. WME draws agentic collaboration flows pool-to-pool; pre-R-R1 the
-    base MessageFlow endpoint check rejected Participant ends and the converter skipped it."""
-    elements = {
-        "p1": _node("p1", "BPMNPool", "P1"),
-        "p2": _node("p2", "BPMNPool", "P2"),
-    }
-    rels = {
-        "f1": _flow("f1", "p1", "p2", flow_type="message",
-                    isAgentic=True, collaborationMode="role",
-                    mergingStrategy="leader-driven", trustScore=40),
-    }
-    model = process_bpmn_diagram(_envelope(elements, rels))
-    [mf] = model.collaboration.message_flows
-    assert isinstance(mf, AgenticMessageFlow)
-    assert isinstance(mf.source, Participant) and isinstance(mf.target, Participant)
-    assert mf.merging_strategy == MergingStrategy.LEADER_DRIVEN
-    # The model validates clean (E1 sees the pools; E3 sees two distinct pools).
-    assert model.validate(raise_exception=False)["success"]
+    # Silently downgraded to base MessageFlow.
+    assert type(mf) is MessageFlow
 
 
 def test_I15_roundtrip_pool_to_pool_message_flow():
@@ -372,52 +342,55 @@ def test_E1_export_agentic_task():
     assert entry["isAgentic"] is True
     assert entry["reflectionMode"] == "cross"
     assert entry["trustScore"] == 85
-    assert entry["collaborationMode"] == "voting"  # default VOTING (now a stored value, S2)
     assert entry["taskType"] == "user"
+    # collaborationMode no longer emitted (P3').
+    assert "collaborationMode" not in entry
 
 
 def test_E2_export_non_agentic_task_emits_wme_defaults():
-    """E-2: Base Task exports with isAgentic=false + all four WME-default SEAA fields."""
+    """E-2: Base Task exports with isAgentic=false + WME-default SEAA fields."""
     task = Task(name="Plain", task_type=TaskType.DEFAULT)
     out = _process_with_node(task)
     [entry] = out["elements"].values()
     assert entry["isAgentic"] is False
     assert entry["reflectionMode"] == "none"
     assert entry["trustScore"] == 0
-    assert entry["collaborationMode"] == "voting"
+    # collaborationMode no longer emitted (P3').
+    assert "collaborationMode" not in entry
 
 
 def test_E3_export_agentic_gateway_merging():
-    """E-3: Agentic merging gateway exports all five SEAA fields."""
+    """E-3: Agentic merging gateway exports gatewayRole + trustScore."""
     gw = AgenticGateway(
         name="Vote", gateway_type=GatewayType.PARALLEL,
         gateway_role=GatewayRole.MERGING,
-        collaboration_mode=CollaborationMode.ROLE,
-        merging_strategy=MergingStrategy.LEADER_DRIVEN, trust_score=75,
+        trust_score=75,
     )
     out = _process_with_node(gw)
     [entry] = out["elements"].values()
     assert entry["isAgentic"] is True
     assert entry["gatewayRole"] == "merging"
-    assert entry["collaborationMode"] == "role"
-    assert entry["mergingStrategy"] == "leader-driven"
     assert entry["trustScore"] == 75
+    # collaborationMode and mergingStrategy no longer emitted (P3').
+    assert "collaborationMode" not in entry
+    assert "mergingStrategy" not in entry
 
 
-def test_E4_export_agentic_gateway_diverging_emits_default_strategy():
-    """E-4: Diverging gateway (merging_strategy=None) emits WME placeholder 'majority'."""
+def test_E4_export_agentic_gateway_diverging():
+    """E-4: Diverging gateway exports correctly."""
     gw = AgenticGateway(
         name="Fork", gateway_type=GatewayType.PARALLEL,
         gateway_role=GatewayRole.DIVERGING,
-        collaboration_mode=CollaborationMode.VOTING, trust_score=85,
+        trust_score=85,
     )
-    assert gw.merging_strategy is None  # confirm metamodel state
     out = _process_with_node(gw)
     [entry] = out["elements"].values()
     assert entry["isAgentic"] is True
     assert entry["gatewayRole"] == "diverging"
-    # WME placeholder, not None / null:
-    assert entry["mergingStrategy"] == "majority"
+    assert entry["trustScore"] == 85
+    # No merging-related fields (P3').
+    assert "mergingStrategy" not in entry
+    assert "collaborationMode" not in entry
 
 
 def test_E5_export_non_agentic_gateway_emits_wme_defaults():
@@ -427,9 +400,10 @@ def test_E5_export_non_agentic_gateway_emits_wme_defaults():
     [entry] = out["elements"].values()
     assert entry["isAgentic"] is False
     assert entry["gatewayRole"] == "diverging"
-    assert entry["collaborationMode"] == "voting"
-    assert entry["mergingStrategy"] == "majority"
     assert entry["trustScore"] == 0
+    # collaborationMode and mergingStrategy no longer emitted (P3').
+    assert "collaborationMode" not in entry
+    assert "mergingStrategy" not in entry
 
 
 # ===========================================================================
@@ -440,7 +414,11 @@ _GOV_DSL = "Scopes:\n    Tasks:\n        MergeDecision\nMajorityPolicy P {\n    
 
 
 def _agentic_merging_gateway_elements(extra):
-    """One agentic merging BPMNGateway carrying the given extra fields."""
+    """One agentic merging BPMNGateway carrying the given extra fields.
+
+    Legacy fields collaborationMode/mergingStrategy are included to verify
+    tolerance (they are silently ignored on import).
+    """
     return {
         "g1": _node("g1", "BPMNGateway", "Vote", gatewayType="parallel",
                     isAgentic=True, gatewayRole="merging",
@@ -479,8 +457,6 @@ def test_Rb_c4_export_agentic_gateway_with_governance_emits_field():
     """R-b-c-4: an AgenticGateway with governance_dsl emits governanceDsl."""
     gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
                         gateway_role=GatewayRole.MERGING,
-                        collaboration_mode=CollaborationMode.ROLE,
-                        merging_strategy=MergingStrategy.LEADER_DRIVEN,
                         governance_dsl=_GOV_DSL)
     out = _process_with_node(gw)
     [entry] = out["elements"].values()
@@ -490,9 +466,7 @@ def test_Rb_c4_export_agentic_gateway_with_governance_emits_field():
 def test_Rb_c5_export_agentic_gateway_without_governance_omits_field():
     """R-b-c-5: an AgenticGateway with no governance_dsl omits governanceDsl."""
     gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
-                        gateway_role=GatewayRole.MERGING,
-                        collaboration_mode=CollaborationMode.ROLE,
-                        merging_strategy=MergingStrategy.LEADER_DRIVEN)
+                        gateway_role=GatewayRole.MERGING)
     out = _process_with_node(gw)
     [entry] = out["elements"].values()
     assert "governanceDsl" not in entry
@@ -565,9 +539,10 @@ def test_E8_export_message_flow_emits_isagentic_false():
     out = bpmn_object_to_json(model)
     [rel] = out["relationships"].values()
     assert rel["isAgentic"] is False
-    assert rel["collaborationMode"] == "voting"
-    assert rel["mergingStrategy"] == "majority"
-    assert rel["trustScore"] == 0  # S3: WME always serialises trustScore on flows
+    assert rel["trustScore"] == 0
+    # collaborationMode and mergingStrategy no longer emitted (P3').
+    assert "collaborationMode" not in rel
+    assert "mergingStrategy" not in rel
 
 
 # ===========================================================================
@@ -580,7 +555,6 @@ def test_R1_roundtrip_agentic_task():
         "t1": _node(
             "t1", "BPMNTask", "Review", taskType="user", marker="none",
             isAgentic=True, reflectionMode="cross", trustScore=85,
-            collaborationMode="voting",
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
@@ -608,26 +582,26 @@ def test_R2_roundtrip_agentic_gateway_merging():
     assert entry["isAgentic"] is True
     assert entry["gatewayType"] == "inclusive"
     assert entry["gatewayRole"] == "merging"
-    assert entry["collaborationMode"] == "competition"
-    assert entry["mergingStrategy"] == "most-complete"
     assert entry["trustScore"] == 60
+    # collaborationMode and mergingStrategy no longer in the output (P3').
+    assert "collaborationMode" not in entry
+    assert "mergingStrategy" not in entry
 
 
 def test_R3_roundtrip_agentic_gateway_diverging():
-    """R-3: Diverging round-trips with mergingStrategy='majority' WME placeholder."""
+    """R-3: Diverging gateway round-trips correctly."""
     elements = {
         "g1": _node(
             "g1", "BPMNGateway", "Fork", gatewayType="parallel",
-            isAgentic=True, gatewayRole="diverging", collaborationMode="role",
-            mergingStrategy="majority", trustScore=50,
+            isAgentic=True, gatewayRole="diverging",
+            collaborationMode="role", mergingStrategy="majority", trustScore=50,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     out = bpmn_object_to_json(model)
     [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNGateway")
     assert entry["gatewayRole"] == "diverging"
-    # Round-tripped via metamodel's None -> WME placeholder "majority":
-    assert entry["mergingStrategy"] == "majority"
+    assert entry["trustScore"] == 50
 
 
 def test_R4_roundtrip_agentic_lane():
@@ -753,8 +727,6 @@ def test_S1_c7_roundtrip_agentic_lane_with_ref():
     task_entry = next(e for e in out["elements"].values()
                       if e["type"] == "BPMNTask")
     assert lane_entry["agentDiagramRef"] == _REF
-    # The task here has no ref of its own, so it emits none (refs are
-    # presence-gated per element; R-a makes the task a first-class carrier).
     assert "agentDiagramRef" not in task_entry
 
 
@@ -803,7 +775,10 @@ def test_3c_export_non_agentic_lane_carries_default_multiplicity():
 # ===========================================================================
 
 def _agentic_task_elements(extra):
-    """One agentic BPMNTask carrying the given extra fields."""
+    """One agentic BPMNTask carrying the given extra fields.
+
+    Legacy collaborationMode field included to verify tolerance (silently ignored).
+    """
     return {
         "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
                     isAgentic=True, reflectionMode="cross", trustScore=80,
@@ -865,11 +840,11 @@ def test_Ra_c7_roundtrip_agentic_task_with_ref():
 
 
 # ===========================================================================
-# S2 — AgenticTask.collaboration_mode (WME 04D1 D-D1, paper deviation)
+# S2 tolerance — collaborationMode silently ignored (P3' rationalization)
 # ===========================================================================
 
-def test_S2_c1_import_agentic_task_stores_collaboration_mode():
-    """S2-c-1: collaborationMode='debate' imports onto the task (mirror of WME fixture)."""
+def test_S2_collaboration_mode_silently_ignored():
+    """S2: collaborationMode in the JSON is silently ignored — task imports OK."""
     elements = {
         "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
                     isAgentic=True, reflectionMode="cross", trustScore=80,
@@ -878,164 +853,5 @@ def test_S2_c1_import_agentic_task_stores_collaboration_mode():
     model = process_bpmn_diagram(_envelope(elements, {}))
     [task] = next(iter(model.processes)).flow_nodes
     assert isinstance(task, AgenticTask)
-    assert task.collaboration_mode == CollaborationMode.DEBATE
-
-
-def test_S2_c2_import_agentic_task_unknown_collaboration_mode_raises():
-    """S2-c-2: an unknown collaborationMode on a task raises ConversionError."""
-    elements = {
-        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
-                    isAgentic=True, reflectionMode="none", trustScore=0,
-                    collaborationMode="telepathy"),
-    }
-    with pytest.raises(ConversionError, match="Unknown collaborationMode 'telepathy'"):
-        process_bpmn_diagram(_envelope(elements, {}))
-
-
-def test_S2_c3_import_agentic_task_default_collaboration_mode():
-    """S2-c-3: absent collaborationMode defaults to VOTING."""
-    elements = {
-        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
-                    isAgentic=True, reflectionMode="none", trustScore=0),
-    }
-    model = process_bpmn_diagram(_envelope(elements, {}))
-    [task] = next(iter(model.processes)).flow_nodes
-    assert task.collaboration_mode == CollaborationMode.VOTING
-
-
-def test_S2_c4_export_agentic_task_emits_stored_collaboration_mode():
-    """S2-c-4: export emits the stored value, not a fixed placeholder."""
-    task = AgenticTask(name="Review", task_type=TaskType.USER,
-                       reflection_mode=ReflectionMode.CROSS, trust_score=80,
-                       collaboration_mode=CollaborationMode.DEBATE)
-    out = _process_with_node(task)
-    [entry] = out["elements"].values()
-    assert entry["collaborationMode"] == "debate"
-
-
-def test_S2_c5_roundtrip_agentic_task_collaboration_mode():
-    """S2-c-5: a non-voting collaborationMode round-trips JSON -> BUML -> JSON."""
-    elements = {
-        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
-                    isAgentic=True, reflectionMode="self", trustScore=30,
-                    collaborationMode="role"),
-    }
-    model = process_bpmn_diagram(_envelope(elements, {}))
-    out = bpmn_object_to_json(model)
-    [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNTask")
-    assert entry["collaborationMode"] == "role"
-
-
-# ===========================================================================
-# S3 — AgenticMessageFlow (WME 04D1)
-# ===========================================================================
-
-def _two_pool_message_flow(rel_extra):
-    """Two pools, one task each, and a message flow carrying the given extras."""
-    elements = {
-        "p1": _node("p1", "BPMNPool", "P1"),
-        "p2": _node("p2", "BPMNPool", "P2"),
-        "t1": _node("t1", "BPMNTask", "T1", owner="p1",
-                    taskType="default", marker="none"),
-        "t2": _node("t2", "BPMNTask", "T2", owner="p2",
-                    taskType="default", marker="none"),
-    }
-    rels = {"f1": _flow("f1", "t1", "t2", flow_type="message", **rel_extra)}
-    return _envelope(elements, rels)
-
-
-def test_S3_c1_import_agentic_message_flow():
-    """S3-c-1: message flow with isAgentic=true imports as AgenticMessageFlow."""
-    env = _two_pool_message_flow({
-        "isAgentic": True, "collaborationMode": "voting",
-        "mergingStrategy": "majority", "trustScore": 50,
-    })
-    model = process_bpmn_diagram(env)
-    [mf] = model.collaboration.message_flows
-    assert isinstance(mf, AgenticMessageFlow)
-    assert mf.collaboration_mode == CollaborationMode.VOTING
-    assert mf.merging_strategy == MergingStrategy.MAJORITY
-    assert mf.trust_score == 50
-
-
-def test_S3_c2_import_non_agentic_message_flow_still_base():
-    """S3-c-2: a flow with no isAgentic imports as base MessageFlow."""
-    env = _two_pool_message_flow({})
-    model = process_bpmn_diagram(env)
-    [mf] = model.collaboration.message_flows
-    assert type(mf) is MessageFlow
-
-
-def test_S3_c3_import_agentic_message_flow_unknown_mode_raises():
-    """S3-c-3: an unknown collaborationMode raises ConversionError."""
-    env = _two_pool_message_flow({
-        "isAgentic": True, "collaborationMode": "telepathy",
-        "mergingStrategy": "majority", "trustScore": 0,
-    })
-    with pytest.raises(ConversionError, match="Unknown collaborationMode 'telepathy'"):
-        process_bpmn_diagram(env)
-
-
-def test_S3_c4_import_agentic_message_flow_illegal_strategy_raises():
-    """S3-c-4: (voting, fastest) is illegal per the legality table -> ConversionError."""
-    env = _two_pool_message_flow({
-        "isAgentic": True, "collaborationMode": "voting",
-        "mergingStrategy": "fastest", "trustScore": 0,
-    })
-    with pytest.raises(ConversionError, match="Cannot import AgenticMessageFlow"):
-        process_bpmn_diagram(env)
-
-
-def _wrap_message_flow(mf, t1, t2):
-    """Two-pool model carrying a single (agentic or base) message flow."""
-    p1 = Process(name="P1", flow_nodes={t1})
-    p2 = Process(name="P2", flow_nodes={t2})
-    part1 = Participant(name="Pool1", process=p1)
-    part2 = Participant(name="Pool2", process=p2)
-    model = BPMNModel(
-        name="M", processes={p1, p2},
-        collaboration=Collaboration(name="C", participants={part1, part2},
-                                    message_flows={mf}),
-    )
-    return bpmn_object_to_json(model)
-
-
-def test_S3_c5_export_agentic_message_flow():
-    """S3-c-5: AgenticMessageFlow exports with isAgentic=true + the three fields."""
-    t1, t2 = Task(name="T1"), Task(name="T2")
-    mf = AgenticMessageFlow(source=t1, target=t2, name="msg",
-                            collaboration_mode=CollaborationMode.ROLE,
-                            merging_strategy=MergingStrategy.COMPOSED,
-                            trust_score=70)
-    out = _wrap_message_flow(mf, t1, t2)
-    [rel] = out["relationships"].values()
-    assert rel["isAgentic"] is True
-    assert rel["collaborationMode"] == "role"
-    assert rel["mergingStrategy"] == "composed"
-    assert rel["trustScore"] == 70
-
-
-def test_S3_c6_export_non_agentic_message_flow_emits_defaults():
-    """S3-c-6: a base MessageFlow keeps the WME flow defaults (isAgentic=false)."""
-    t1, t2 = Task(name="T1"), Task(name="T2")
-    mf = MessageFlow(source=t1, target=t2, name="msg")
-    out = _wrap_message_flow(mf, t1, t2)
-    [rel] = out["relationships"].values()
-    assert rel["isAgentic"] is False
-    assert rel["collaborationMode"] == "voting"
-    assert rel["mergingStrategy"] == "majority"
-    assert rel["trustScore"] == 0
-
-
-def test_S3_c7_roundtrip_agentic_message_flow():
-    """S3-c-7: JSON -> BUML -> JSON preserves all three agentic flow fields."""
-    env = _two_pool_message_flow({
-        "isAgentic": True, "collaborationMode": "competition",
-        "mergingStrategy": "most-complete", "trustScore": 40,
-    })
-    out = bpmn_object_to_json(process_bpmn_diagram(env))
-    [rel] = out["relationships"].values()
-    assert rel["isAgentic"] is True
-    assert rel["collaborationMode"] == "competition"
-    assert rel["mergingStrategy"] == "most-complete"
-    assert rel["trustScore"] == 40
+    # No collaboration_mode attribute on P3' AgenticTask.
+    assert not hasattr(task, "collaboration_mode")

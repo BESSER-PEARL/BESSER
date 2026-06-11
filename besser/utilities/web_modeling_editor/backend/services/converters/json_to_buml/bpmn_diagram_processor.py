@@ -17,10 +17,6 @@ Design points:
 import logging
 
 from besser.BUML.metamodel.bpmn import (
-    AgenticGateway,
-    AgenticLane,
-    AgenticTask,
-    AgentRole,
     Artifact,
     Association,
     BPMNModel,
@@ -32,7 +28,6 @@ from besser.BUML.metamodel.bpmn import (
     EndEvent,
     FlowNode,
     Gateway,
-    GatewayRole,
     GatewayType,
     Group,
     IntermediateEvent,
@@ -41,7 +36,6 @@ from besser.BUML.metamodel.bpmn import (
     MessageFlow,
     Participant,
     Process,
-    ReflectionMode,
     SequenceFlow,
     StartEvent,
     SubProcess,
@@ -110,37 +104,6 @@ def _flow_layout_dict(rel_id: str, rel: dict) -> dict:
     }
 
 
-def _clamp_trust_score(value) -> int:
-    """Clamp WME's tolerant trust score to BESSER's strict ``[0, 100]``.
-
-    Mirrors WME's ``clampTrustScore`` (packages/editor/.../common/types.ts).
-    Non-int / non-numeric inputs default to ``0`` (defensive). BESSER's
-    ``AgenticTask`` / ``AgenticGateway`` / ``AgenticLane`` ``trust_score``
-    setters are strict and would raise; the converter clamps on import to
-    bridge WME's tolerant data.
-    """
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return max(0, min(100, n))
-
-
-def _clamp_multiplicity(value) -> int:
-    """Clamp WME's tolerant multiplicity to BESSER's strict ``>= 1``.
-
-    Mirrors WME's ``clampMultiplicity`` (``Math.max(1, Math.round(n))``,
-    packages/editor/.../common/types.ts). Non-numeric input defaults to ``1``.
-    BESSER's strict ``AgenticLane.multiplicity`` setter would raise on < 1; the
-    converter clamps on import to bridge WME's tolerant data.
-    """
-    try:
-        n = round(float(value))
-    except (TypeError, ValueError):
-        return 1
-    return max(1, n)
-
-
 def _build_node(elem: dict):
     """Construct the metamodel object for one WME ``elements[id]`` entry.
 
@@ -169,31 +132,8 @@ def _build_node(elem: dict):
                 raise ConversionError(
                     f"Unknown BPMN task type '{elem.get('taskType')}' on Task '{name}'."
                 ) from exc
-            if elem.get("isAgentic"):
-                # SEAA'25 «AgenticTask» (paper §4.2 Fig 3b).
-                # `collaborationMode` in the JSON is silently ignored
-                # (P3' rationalization — the field is no longer stored).
-                reflection_value = elem.get("reflectionMode", "none") or "none"
-                try:
-                    reflection = ReflectionMode(reflection_value)
-                except ValueError as exc:
-                    raise ConversionError(
-                        f"Unknown reflectionMode '{reflection_value}' on AgenticTask '{name}'."
-                    ) from exc
-                trust = _clamp_trust_score(elem.get("trustScore", 0))
-                # WME guide 11: optional opaque AgentDiagram id on the agentic
-                # task (canonical carrier; supersedes the lane carrier of WME 08).
-                # Empty string / absent -> None. No UUID validation -- pass through.
-                agent_ref = elem.get("agentDiagramRef") or None
-                return AgenticTask(
-                    name=name, task_type=task_type, loop_characteristics=loop,
-                    reflection_mode=reflection, trust_score=trust,
-                    agent_diagram_ref=agent_ref,
-                )
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
-        # SubProcess / Transaction / CallActivity all take the same args (no
-        # task_type). WME's `isAgentic` flag on these activity subclasses is
-        # discarded -- only Task has an agentic variant (01-... D1 scope).
+        # SubProcess / Transaction / CallActivity all take the same args (no task_type).
         return cls(name=name, loop_characteristics=loop)
 
     if elem_type in _EVENT_CLASSES:
@@ -214,36 +154,6 @@ def _build_node(elem: dict):
             raise ConversionError(
                 f"Unknown BPMN gateway type '{elem.get('gatewayType')}' on Gateway '{name}'."
             ) from exc
-        if elem.get("isAgentic"):
-            # SEAA'25 «AgenticGateway» (paper §4.3 Fig 4). AgenticGateway
-            # constrains gateway_type to PARALLEL or INCLUSIVE; an ineligible
-            # type with isAgentic=true is surfaced as ConversionError so the
-            # WME-side bug is not silently downgraded.
-            # `collaborationMode` and `mergingStrategy` in the JSON are
-            # silently ignored (P3' rationalization).
-            try:
-                role = GatewayRole(elem.get("gatewayRole", "diverging") or "diverging")
-            except ValueError as exc:
-                raise ConversionError(
-                    f"Unknown gatewayRole '{elem.get('gatewayRole')}' "
-                    f"on AgenticGateway '{name}'."
-                ) from exc
-            trust = _clamp_trust_score(elem.get("trustScore", 0))
-            # Governance DSL: opaque CDATA child on merging gateways.
-            # Empty / whitespace-only -> None. Pass through verbatim.
-            gov = elem.get("governanceDsl")
-            gov = gov if (isinstance(gov, str) and gov.strip() != "") else None
-            try:
-                return AgenticGateway(
-                    name=name, gateway_type=gateway_type,
-                    gateway_role=role, trust_score=trust,
-                    governance_dsl=gov,
-                )
-            except ValueError as exc:
-                # gateway_type ineligibility (EXCLUSIVE/COMPLEX/EVENT_BASED).
-                raise ConversionError(
-                    f"Cannot import AgenticGateway '{name}': {exc}"
-                ) from exc
         return Gateway(name=name, gateway_type=gateway_type)
 
     if elem_type == "BPMNDataObject":
@@ -256,24 +166,6 @@ def _build_node(elem: dict):
     if elem_type == "BPMNGroup":
         return Group(name=name)
     if elem_type == "BPMNSwimlane":
-        if elem.get("isAgentic"):
-            # SEAA'25 «AgenticLane» (paper §4.1 Fig 3a).
-            role_value = elem.get("role", "worker") or "worker"
-            try:
-                role = AgentRole(role_value)
-            except ValueError as exc:
-                raise ConversionError(
-                    f"Unknown role '{role_value}' on AgenticLane '{name}'."
-                ) from exc
-            trust = _clamp_trust_score(elem.get("trustScore", 0))
-            # WME 08: optional opaque AgentDiagram id. Empty string / absent → None.
-            # No UUID validation (audit OQ-2) — pass through verbatim.
-            agent_ref = elem.get("agentDiagramRef") or None
-            # WME 3c: swarm size; absent → 1 (single agent).
-            multiplicity = _clamp_multiplicity(elem.get("multiplicity", 1))
-            return AgenticLane(name=name, role=role, trust_score=trust,
-                               agent_diagram_ref=agent_ref,
-                               multiplicity=multiplicity)
         return Lane(name=name)
     if elem_type == "BPMNPool":
         # Build the Pool's Process eagerly so pass 2 containment can attach to it.
@@ -308,8 +200,6 @@ def _build_flow(rel: dict, source, target):
                 )
         return flow
     if flow_type == "message":
-        # `isAgentic` message flows are silently downgraded to base MessageFlow
-        # (P3' rationalization — AgenticMessageFlow has been removed).
         return MessageFlow(source=source, target=target, name=name)
     if flow_type == "association":
         return Association(source=source, target=target, name=name)

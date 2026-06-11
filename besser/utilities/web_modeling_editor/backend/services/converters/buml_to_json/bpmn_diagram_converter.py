@@ -28,9 +28,6 @@ import uuid
 
 from besser.BUML.metamodel.bpmn import (
     Activity,
-    AgenticGateway,
-    AgenticLane,
-    AgenticTask,
     Association,
     BPMNConnectingObject,
     BPMNModel,
@@ -80,7 +77,6 @@ logger = logging.getLogger(__name__)
 # distinct WME ``elements[id]["type"]`` string.
 _TYPE_FOR_CLASS = {
     Task: "BPMNTask",
-    AgenticTask: "BPMNTask",          # SEAA'25 subclass: same WME element type
     Transaction: "BPMNTransaction",   # checked before SubProcess (subclass)
     SubProcess: "BPMNSubprocess",
     "CallActivity": "BPMNCallActivity",  # resolved below
@@ -88,13 +84,11 @@ _TYPE_FOR_CLASS = {
     IntermediateEvent: "BPMNIntermediateEvent",
     EndEvent: "BPMNEndEvent",
     Gateway: "BPMNGateway",
-    AgenticGateway: "BPMNGateway",    # SEAA'25 subclass: same WME element type
     DataObject: "BPMNDataObject",
     DataStore: "BPMNDataStore",
     TextAnnotation: "BPMNAnnotation",
     Group: "BPMNGroup",
     Lane: "BPMNSwimlane",
-    AgenticLane: "BPMNSwimlane",      # SEAA'25 subclass: same WME element type
     Participant: "BPMNPool",
 }
 
@@ -121,34 +115,6 @@ _FLOW_TYPE_FOR_CLASS = {
     MessageFlow: "message",
     Association: "association",
     DataAssociation: "data association",
-}
-
-
-# WME's BPMNTask / BPMNGateway / BPMNSwimlane always serialise these SEAA'25
-# fields with hard defaults when the element is not agentic. Mirror exactly so
-# BESSER-emitted JSON matches WME's own JSON byte-for-byte on non-agentic
-# elements. The values are taken from WME's `dev/bpmn`
-# packages/editor/.../bpmn-{task,gateway,swimlane}.ts ``default*`` statics.
-_WME_TASK_DEFAULTS = {
-    "isAgentic": False,
-    "reflectionMode": "none",
-    "trustScore": 0,
-}
-_WME_GATEWAY_DEFAULTS = {
-    "isAgentic": False,
-    "gatewayRole": "diverging",
-    "trustScore": 0,
-}
-_WME_LANE_DEFAULTS = {
-    "isAgentic": False,
-    "role": "worker",
-    "trustScore": 0,
-    "multiplicity": 1,
-}
-_WME_FLOW_AGENTIC_DEFAULTS = {
-    # WME's BPMNFlow.serialize() always emits these fields on every flow.
-    "isAgentic": False,
-    "trustScore": 0,
 }
 
 
@@ -349,43 +315,6 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
     if isinstance(obj, Gateway):
         entry["gatewayType"] = obj.gateway_type.value
 
-    # SEAA'25 agentic fields — every Task / Gateway / Lane entry carries
-    # them in WME's JSON shape (defaulted when the element is not agentic).
-    if isinstance(obj, Task):
-        entry.update(_WME_TASK_DEFAULTS)
-        if isinstance(obj, AgenticTask):
-            entry["isAgentic"] = True
-            entry["reflectionMode"] = obj.reflection_mode.value
-            entry["trustScore"] = obj.trust_score
-            # WME guide 11: emit agentDiagramRef only when set (optional field;
-            # WME's exporter drops it when undefined). Canonical task carrier.
-            if obj.agent_diagram_ref is not None:
-                entry["agentDiagramRef"] = obj.agent_diagram_ref
-    if isinstance(obj, Gateway):
-        entry.update(_WME_GATEWAY_DEFAULTS)
-        if isinstance(obj, AgenticGateway):
-            entry["isAgentic"] = True
-            entry["gatewayRole"] = obj.gateway_role.value
-            entry["trustScore"] = obj.trust_score
-            # Governance DSL: emit only when set
-            # (WME's exporter drops it when undefined). Merging-gateway concept.
-            if obj.governance_dsl is not None:
-                entry["governanceDsl"] = obj.governance_dsl
-    if isinstance(obj, Lane):
-        entry.update(_WME_LANE_DEFAULTS)
-        if isinstance(obj, AgenticLane):
-            entry["isAgentic"] = True
-            entry["role"] = obj.role.value
-            entry["trustScore"] = obj.trust_score
-            # WME 3c: swarm size; always emitted (WME serialises it on every
-            # lane, default 1).
-            entry["multiplicity"] = obj.multiplicity
-            # WME 08: emit agentDiagramRef only when set (optional field;
-            # WME's exporter drops it when undefined). Lane-only — never on
-            # tasks / gateways.
-            if obj.agent_diagram_ref is not None:
-                entry["agentDiagramRef"] = obj.agent_diagram_ref
-
     return entry
 
 
@@ -446,9 +375,6 @@ def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
     }
     if isinstance(flow, SequenceFlow):
         entry["isDefault"] = flow.is_default
-
-    # WME's BPMNFlow always carries these fields; emit WME defaults.
-    entry.update(_WME_FLOW_AGENTIC_DEFAULTS)
 
     relationships[id_for(flow)] = entry
 

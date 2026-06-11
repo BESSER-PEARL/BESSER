@@ -191,7 +191,7 @@ def _collect_valid_diagrams(project):
         "QuantumCircuitDiagram",
         "UserDiagram",
         "NNDiagram",
-        "BPMNDiagram",
+        "BPMN",
         "ComponentDiagram",
         "DeploymentDiagram",
     ]
@@ -351,7 +351,7 @@ def json_to_buml_project(project):
             nn_titles[id(nn_model)] = nn_title
 
     # ── Process ALL BPMNDiagrams ──────────────────────────────────────
-    for bpmn_diag in diagrams.get("BPMNDiagram", []):
+    for bpmn_diag in diagrams.get("BPMN", []):
         try:
             bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
             model_list.append(bpmn_model)

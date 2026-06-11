@@ -10,8 +10,6 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
-from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
-from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 
@@ -22,8 +20,6 @@ __all__ = [
     'gui_model_to_code',
     'state_machine_to_code',
     'bpmn_model_to_code',
-    'component_model_to_code',
-    'deployment_model_to_code',
     'project_to_code',
     'nn_model_to_code',
 ]

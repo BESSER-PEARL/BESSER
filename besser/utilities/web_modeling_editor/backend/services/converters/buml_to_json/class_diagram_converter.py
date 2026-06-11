@@ -84,6 +84,11 @@ def parse_buml_content(content: str) -> DomainModel:
             "DateTimeType": PrimitiveDataType("datetime"),
             "TimeDeltaType": PrimitiveDataType("timedelta"),
             "AnyType": PrimitiveDataType("any"),
+            # No-op stub: project-exported files often end with a
+            # `project = Project(name=..., models=[domain_model], ...)` tail.
+            # The class converter only cares about the DomainModel; swallowing
+            # the Project(...) call with a stub keeps the sandbox import-tolerant.
+            "Project": lambda *args, **kwargs: None,
         }
 
         # Ensure we have a string before preprocessing

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 RECOMMENDATION_ALLOWED_VALUES = {
     "agentLanguage": ["original", "english", "french", "german", "spanish", "luxembourgish", "portuguese"],
-    "agentStyle": ["original", "formal", "informal"],
+    "agentStyle": ["original", "formal", "informal", "friendly", "technical"],
     "languageComplexity": ["original", "simple", "medium", "complex"],
     "sentenceLength": ["original", "concise", "verbose"],
     "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed"],

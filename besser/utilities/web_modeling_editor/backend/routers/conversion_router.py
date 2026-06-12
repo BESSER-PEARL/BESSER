@@ -445,28 +445,55 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         try:
             parsed_project = project_to_json(buml_content)
 
-            # Find the first available diagram in the project
-            if parsed_project.get("ClassDiagram") and parsed_project["ClassDiagram"].get("model"):
-                diagram_data = parsed_project["ClassDiagram"]
-                diagram_type = "ClassDiagram"
-            elif parsed_project.get("ObjectDiagram") and parsed_project["ObjectDiagram"].get("model"):
-                diagram_data = parsed_project["ObjectDiagram"]
-                diagram_type = "ObjectDiagram"
-            elif parsed_project.get("StateMachineDiagram") and parsed_project["StateMachineDiagram"].get("model"):
-                diagram_data = parsed_project["StateMachineDiagram"]
-                diagram_type = "StateMachineDiagram"
-            elif parsed_project.get("AgentDiagram") and parsed_project["AgentDiagram"].get("model"):
-                diagram_data = parsed_project["AgentDiagram"]
-                diagram_type = "AgentDiagram"
-            elif parsed_project.get("GUINoCodeDiagram") and parsed_project["GUINoCodeDiagram"].get("model"):
-                diagram_data = parsed_project["GUINoCodeDiagram"]
-                diagram_type = "GUINoCodeDiagram"
-            elif parsed_project.get("NNDiagram") and parsed_project["NNDiagram"].get("model"):
-                diagram_data = parsed_project["NNDiagram"]
-                diagram_type = "NNDiagram"
-            elif parsed_project.get("QuantumCircuitDiagram") and parsed_project["QuantumCircuitDiagram"].get("model"):
-                diagram_data = parsed_project["QuantumCircuitDiagram"]
-                diagram_type = "QuantumCircuitDiagram"
+            # project_to_json emits the schemaVersion=3 project envelope with
+            # v4 diagram models:
+            #   { diagrams: { ClassDiagram: [ {id,title,model,...}, ... ], ... },
+            #     currentDiagramType: "...",
+            #     currentDiagramIndices: { ClassDiagram: 0, ... } }
+            # Pick the currently-active diagram first; fall back through the
+            # remaining types in the legacy priority order so single-diagram
+            # endpoints still surface *something* if the active one is empty.
+            diagrams_map = parsed_project.get("diagrams") or {}
+            current_indices = parsed_project.get("currentDiagramIndices") or {}
+            current_type = parsed_project.get("currentDiagramType")
+
+            def _entry_is_populated(entry):
+                # v4 models carry {nodes, edges}; GUI models keep their
+                # bespoke {pages} shape.
+                model = (entry or {}).get("model") or {}
+                return bool(
+                    model.get("nodes")
+                    or model.get("edges")
+                    or model.get("pages")
+                )
+
+            def _pick_entry(dtype):
+                entries = diagrams_map.get(dtype) or []
+                if not entries:
+                    return None
+                idx = current_indices.get(dtype, 0)
+                if not isinstance(idx, int) or idx < 0 or idx >= len(entries):
+                    idx = 0
+                entry = entries[idx]
+                return entry if _entry_is_populated(entry) else None
+
+            priority = []
+            if current_type:
+                priority.append(current_type)
+            for dtype in (
+                "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
+                "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
+                "QuantumCircuitDiagram",
+            ):
+                if dtype not in priority:
+                    priority.append(dtype)
+
+            for dtype in priority:
+                entry = _pick_entry(dtype)
+                if entry is not None:
+                    diagram_data = entry
+                    diagram_type = dtype
+                    break
 
             if diagram_data and diagram_data.get("title"):
                 diagram_title = diagram_data["title"]

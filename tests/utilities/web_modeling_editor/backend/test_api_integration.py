@@ -1569,16 +1569,6 @@ class TestStandaloneChatbotDeploy:
             ],
         }
 
-    @pytest.mark.skip(
-        reason=(
-            "SA-6.1 regression: github_deploy_api.deploy_webapp_to_github "
-            "still checks `agent_model_payload.get('elements')` (v3 shape) "
-            "before reaching the chatbot deploy path. With v4 payloads it "
-            "rejects with 400 'AgentDiagram must contain at least one "
-            "element'. The same v3-shape check appears at github_deploy_api.py "
-            "line 970. Production fix is a separate SA follow-up."
-        )
-    )
     def test_deploy_target_agent_invokes_chatbot_path(self, monkeypatch):
         """``deploy_target='agent'`` should drive the standalone-chatbot
         deployment branch: response.deployment_type == 'chatbot' and the

@@ -40,7 +40,11 @@ def parse_buml_content(content: str) -> DomainModel:
         if isinstance(content, DomainModel):
             return content
 
+        # __name__ is set to a sentinel (not "__main__") so any
+        # ``if __name__ == "__main__":`` guarded blocks in user files are
+        # skipped during import — matching normal Python import semantics.
         safe_globals = {
+            "__name__": "besser_buml_import",
             "__builtins__": {
                 "set": set,
                 "list": list,
@@ -83,6 +87,11 @@ def parse_buml_content(content: str) -> DomainModel:
             "DateTimeType": PrimitiveDataType("datetime"),
             "TimeDeltaType": PrimitiveDataType("timedelta"),
             "AnyType": PrimitiveDataType("any"),
+            # No-op stub: project-exported files often end with a
+            # `project = Project(name=..., models=[domain_model], ...)` tail.
+            # The class converter only cares about the DomainModel; swallowing
+            # the Project(...) call with a stub keeps the sandbox import-tolerant.
+            "Project": lambda *args, **kwargs: None,
         }
 
         if not isinstance(content, str):

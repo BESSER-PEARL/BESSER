@@ -95,6 +95,39 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
                 if idx < len(var_list):
                     return var_list[idx]
         # Check for RNN hidden/cell state suffixes before checking layer names
+        elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden_forward"):
+            base_module = lyr_input[:-16]  # Remove "__hidden_forward"
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                if len(layer_details) > 4:
+                    # For bidirectional, extract forward component: hidden[-2]
+                    return f"{layer_details[4]}[-2]"
+                return layer_details[1]
+        elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden_backward"):
+            base_module = lyr_input[:-17]  # Remove "__hidden_backward"
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                if len(layer_details) > 4:
+                    # For bidirectional, extract backward component: hidden[-1]
+                    return f"{layer_details[4]}[-1]"
+                    return f"{layer_details[4]}[-1]"
+                return layer_details[1]
+        elif isinstance(lyr_input, str) and lyr_input.endswith("__cell_forward"):
+            base_module = lyr_input[:-14]  # Remove "__cell_forward"
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                if len(layer_details) > 4:
+                    # For bidirectional LSTM, extract forward cell: cell[-2]
+                    return f"{layer_details[4]}_cell[-2]" if "_cell" not in layer_details[4] else f"{layer_details[4]}[-2]"
+                return layer_details[1]
+        elif isinstance(lyr_input, str) and lyr_input.endswith("__cell_backward"):
+            base_module = lyr_input[:-15]  # Remove "__cell_backward"
+            if f"{base_module}_layer" in modules_names:
+                layer_details = modules_details[f"{base_module}_layer"]
+                if len(layer_details) > 4:
+                    # For bidirectional LSTM, extract backward cell: cell[-1]
+                    return f"{layer_details[4]}_cell[-1]" if "_cell" not in layer_details[4] else f"{layer_details[4]}[-1]"
+                return layer_details[1]
         elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
             base_module = lyr_input[:-8]  # Remove "__hidden"
             if f"{base_module}_layer" in modules_names:
@@ -184,6 +217,68 @@ def _handle_rnn_cell_suffix(layer_name, modules_details):
         layer_details = modules_details[base_layer + "_layer"]
         if len(layer_details) > 4:
             return layer_details[4]
+        else:
+            return layer_details[1]
+    else:
+        return "x"
+
+
+def _handle_rnn_hidden_forward_suffix(layer_name, modules_details):
+    """Handle RNN __hidden_forward suffix for bidirectional RNNs."""
+    base_layer = layer_name[:-16]  # Remove "__hidden_forward"
+    my_keys = list(modules_details.keys())
+    if base_layer + "_layer" in my_keys:
+        layer_details = modules_details[base_layer + "_layer"]
+        if len(layer_details) > 4:
+            return f"{layer_details[4]}[-2]"  # Forward component
+        else:
+            return layer_details[1]
+    else:
+        return "x"
+
+
+def _handle_rnn_hidden_backward_suffix(layer_name, modules_details):
+    """Handle RNN __hidden_backward suffix for bidirectional RNNs."""
+    base_layer = layer_name[:-17]  # Remove "__hidden_backward"
+    my_keys = list(modules_details.keys())
+    if base_layer + "_layer" in my_keys:
+        layer_details = modules_details[base_layer + "_layer"]
+        if len(layer_details) > 4:
+            return f"{layer_details[4]}[-1]"  # Backward component
+        else:
+            return layer_details[1]
+    else:
+        return "x"
+
+
+def _handle_rnn_cell_forward_suffix(layer_name, modules_details):
+    """Handle RNN __cell_forward suffix for bidirectional LSTMs."""
+    base_layer = layer_name[:-14]  # Remove "__cell_forward"
+    my_keys = list(modules_details.keys())
+    if base_layer + "_layer" in my_keys:
+        layer_details = modules_details[base_layer + "_layer"]
+        if len(layer_details) > 4:
+            hidden_var = layer_details[4]
+            # Cell variable follows hidden variable naming
+            cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+            return f"{cell_var}[-2]"  # Forward component
+        else:
+            return layer_details[1]
+    else:
+        return "x"
+
+
+def _handle_rnn_cell_backward_suffix(layer_name, modules_details):
+    """Handle RNN __cell_backward suffix for bidirectional LSTMs."""
+    base_layer = layer_name[:-15]  # Remove "__cell_backward"
+    my_keys = list(modules_details.keys())
+    if base_layer + "_layer" in my_keys:
+        layer_details = modules_details[base_layer + "_layer"]
+        if len(layer_details) > 4:
+            hidden_var = layer_details[4]
+            # Cell variable follows hidden variable naming
+            cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+            return f"{cell_var}[-1]"  # Backward component
         else:
             return layer_details[1]
     else:
@@ -304,6 +399,14 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         elif isinstance(layer_name, (int, float)):
             out_vars.append(str(layer_name))
         # Handle RNN hidden/cell state suffixes
+        elif isinstance(layer_name, str) and layer_name.endswith("__hidden_forward"):
+            out_vars.append(_handle_rnn_hidden_forward_suffix(layer_name, modules_details))
+        elif isinstance(layer_name, str) and layer_name.endswith("__hidden_backward"):
+            out_vars.append(_handle_rnn_hidden_backward_suffix(layer_name, modules_details))
+        elif isinstance(layer_name, str) and layer_name.endswith("__cell_forward"):
+            out_vars.append(_handle_rnn_cell_forward_suffix(layer_name, modules_details))
+        elif isinstance(layer_name, str) and layer_name.endswith("__cell_backward"):
+            out_vars.append(_handle_rnn_cell_backward_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__hidden"):
             out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__cell"):
@@ -673,7 +776,43 @@ def _resolve_source_layer_var(source_layer, modules_details):
         return 'inp'
 
     # Handle RNN hidden/cell state suffixes before split suffixes
-    if isinstance(source_layer, str) and source_layer.endswith("__hidden"):
+    if isinstance(source_layer, str) and source_layer.endswith("__hidden_forward"):
+        base_module = source_layer[:-16]  # Remove "__hidden_forward"
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return f"{layer_details[4]}[-2]"  # Forward component
+            return layer_details[1]
+    elif isinstance(source_layer, str) and source_layer.endswith("__hidden_backward"):
+        base_module = source_layer[:-17]  # Remove "__hidden_backward"
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return f"{layer_details[4]}[-1]"  # Backward component
+            return layer_details[1]
+    elif isinstance(source_layer, str) and source_layer.endswith("__cell_forward"):
+        base_module = source_layer[:-14]  # Remove "__cell_forward"
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                hidden_var = layer_details[4]
+                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+                return f"{cell_var}[-2]"  # Forward component
+            return layer_details[1]
+    elif isinstance(source_layer, str) and source_layer.endswith("__cell_backward"):
+        base_module = source_layer[:-15]  # Remove "__cell_backward"
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                hidden_var = layer_details[4]
+                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+                return f"{cell_var}[-1]"  # Backward component
+            return layer_details[1]
+    elif isinstance(source_layer, str) and source_layer.endswith("__hidden"):
         base_module = source_layer[:-8]  # Remove "__hidden"
         modules_names = list(modules_details.keys())
         if f"{base_module}_layer" in modules_names:
@@ -744,6 +883,52 @@ def _resolve_prev_out_var_from_module_input(
     """Resolve prev_out_var from tensorop's name_module_input or layers_of_tensors."""
     if module_input == 'INPUT':
         return 'inp'
+
+    # Bidirectional RNN forward/backward hidden states
+    if module_input.endswith("__hidden_forward"):
+        base_module = module_input[:-16]
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return f"{layer_details[4]}[-2]"
+            return layer_details[1]
+        return "x"
+
+    if module_input.endswith("__hidden_backward"):
+        base_module = module_input[:-17]
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return f"{layer_details[4]}[-1]"
+            return layer_details[1]
+        return "x"
+
+    # Bidirectional LSTM forward/backward cell states
+    if module_input.endswith("__cell_forward"):
+        base_module = module_input[:-14]
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                hidden_var = layer_details[4]
+                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+                return f"{cell_var}[-2]"
+            return layer_details[1]
+        return "x"
+
+    if module_input.endswith("__cell_backward"):
+        base_module = module_input[:-15]
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                hidden_var = layer_details[4]
+                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+                return f"{cell_var}[-1]"
+            return layer_details[1]
+        return "x"
 
     # RNN hidden state
     if module_input.endswith("__hidden"):

@@ -118,7 +118,9 @@ import torch.nn.functional as F
         {{ module_details[1] }}, {{ module_details[4] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].params and 'hx_source' in module_details[3].params %}, hx={{ modules_details[module_details[3].params['hx_source'] + '_layer'][4] }}{% endif %})
                 {%- endif -%}
                 {%- if module_details[3].bidirectional %}
+                    {%- if not module_details[3].skip_hidden_concat %}
         {{ module_details[4] }} = torch.cat(({{ module_details[4] }}[-2], {{ module_details[4] }}[-1]), dim=1)
+                    {%- endif %}
                 {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
                 {%- endif -%}
@@ -129,9 +131,11 @@ import torch.nn.functional as F
         _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][1] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][1] }}_cell.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][1] }}.unsqueeze(0){% endif %}{% endif %})
                 {%- endif -%}
                 {%- if module_details[3].bidirectional %}
+                    {%- if not module_details[3].skip_hidden_concat %}
         {{ module_details[1] }} = torch.cat(({{ module_details[1] }}[-2], {{ module_details[1] }}[-1]), dim=1)
-                    {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
+                        {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
         {{ module_details[1] }}_cell = torch.cat(({{ module_details[1] }}_cell[-2], {{ module_details[1] }}_cell[-1]), dim=1)
+                        {%- endif %}
                     {%- endif %}
                 {%- else %}
         {{ module_details[1] }} = {{ module_details[1] }}[-1]

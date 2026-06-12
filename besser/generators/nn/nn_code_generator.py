@@ -142,7 +142,7 @@ class NNCodeGenerator(GeneratorInterface):
                 for sub_nn_layer in module.layers:
                     handle_layer(
                         sub_nn_layer, self.setup_layer, subnn_details,
-                        self.channel_last, actv_func, is_seq, is_subnn=True
+                        self.channel_last, actv_func, is_seq, is_subnn=True, model=self.model
                     )
                 name_sub_nn = f"{module.name}_{counter_subnn}_nn"
                 modules_details[name_sub_nn] = subnn_details
@@ -151,7 +151,7 @@ class NNCodeGenerator(GeneratorInterface):
             elif module_type != "TensorOp":
                 handle_layer(
                     module, self.setup_layer, modules_details,
-                    self.channel_last, actv_func, is_seq, is_subnn=False
+                    self.channel_last, actv_func, is_seq, is_subnn=False, model=self.model
                 )
                 # Mark inline_only layers in modules_details so template can skip them in forward
                 if getattr(module, 'inline_only', False):

@@ -28,6 +28,15 @@
     {%- endif -%}
 {%- endmacro -%}
 
+{%- macro get_bidirectional_var(layer_name, direction, inputs_outputs) -%}
+    {%- set key = layer_name + '__' + direction -%}
+    {%- if inputs_outputs and key in inputs_outputs -%}
+        {{- inputs_outputs[key][1] -}}
+    {%- else -%}
+        {{- layer_name + '_' + direction + '_h' -}}
+    {%- endif -%}
+{%- endmacro -%}
+
 {%- macro print_imports(model, modules_details, generation_type) %}
 {%- set si = namespace(sequential_imported=False) -%}
 {%- set tfa_needed = namespace(value=False) -%}
@@ -133,22 +142,6 @@ from datetime import datetime
 
 {%- macro print_forward(modules_details, model=None, inputs_outputs={}) %}
     {%- set return_variable =  namespace(value="") %}
-    {%- set needs_input_preservation = namespace(flag=False) %}
-    {%- for module_name, module_details in modules_details.items() -%}
-        {%- if module_name.endswith("_op") and module_details|length > 2 -%}
-            {%- if (module_details[2].name_module_input is defined and module_details[2].name_module_input == 'INPUT') or
-                   (module_details[2].layers_of_tensors is defined and module_details[2].layers_of_tensors is not none and 'INPUT' in module_details[2].layers_of_tensors) %}
-                {%- set needs_input_preservation.flag = True %}
-            {%- endif %}
-        {%- elif (module_name.endswith("_layer") or module_name.endswith("_activ")) and module_details|length > 3 -%}
-            {%- if module_details[3].name_module_input is defined and module_details[3].name_module_input == 'INPUT' %}
-                {%- set needs_input_preservation.flag = True %}
-            {%- endif %}
-        {%- endif %}
-    {%- endfor -%}
-    {% if needs_input_preservation.flag %}
-        inp = x
-    {% endif -%}
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
         {%- if not module_details[0].startswith("SKIP:") %}
@@ -172,28 +165,43 @@ from datetime import datetime
         {%- elif module_details[3].__class__.mro()[1].__name__ == "RNN" %}
             {%- if module_details[3].return_type == "both" %}
                 {%- if module_details[3].__class__.__name__ == "LSTMLayer" and module_details[3].bidirectional %}
-        {{ module_details[1] }}, {{ module_name.rsplit('_', 1)[0] }}_forward_h, _, {{ module_name.rsplit('_', 1)[0] }}_backward_h, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
-        {{ module_details[4] }} = tf.concat([{{ module_name.rsplit('_', 1)[0] }}_forward_h, {{ module_name.rsplit('_', 1)[0] }}_backward_h], axis=-1)
+                    {%- set layer_name = module_name.rsplit('_', 1)[0] %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', inputs_outputs) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', inputs_outputs) %}
+        {{ module_details[1] }}, {{ forward_var }}, _, {{ backward_var }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+        {{ module_details[4] }} = tf.concat([{{ forward_var }}, {{ backward_var }}], axis=-1)
                 {%- elif module_details[3].__class__.__name__ == "LSTMLayer" %}
         {{ module_details[1] }}, {{ module_details[4] }}, {% if module_details[3].cell_state_unused %}_{% else %}{{ module_details[4] }}_cell{% endif %} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}_cell]{% endif %})
                 {%- elif module_details[3].__class__.__name__ != "LSTMLayer" and module_details[3].bidirectional %}
-        {{ module_details[1] }}, {{ module_name.rsplit('_', 1)[0] }}_forward_h, {{ module_name.rsplit('_', 1)[0] }}_backward_h = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
-        {{ module_details[4] }} = tf.concat([{{ module_name.rsplit('_', 1)[0] }}_forward_h, {{ module_name.rsplit('_', 1)[0] }}_backward_h], axis=-1)
+                    {%- set layer_name = module_name.rsplit('_', 1)[0] %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', inputs_outputs) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', inputs_outputs) %}
+        {{ module_details[1] }}, {{ forward_var }}, {{ backward_var }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+        {{ module_details[4] }} = tf.concat([{{ forward_var }}, {{ backward_var }}], axis=-1)
                 {%- else %}
         {{ module_details[1] }}, {{ module_details[4] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
                 {%- endif -%}
             {%- elif module_details[3].return_type == "hidden" %}
                 {%- if module_details[3].__class__.__name__ == "LSTMLayer" and module_details[3].bidirectional %}
-        _, {{ module_name.rsplit('_', 1)[0] }}_forward_h, _, {{ module_name.rsplit('_', 1)[0] }}_backward_h, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+                    {%- set layer_name = module_name.rsplit('_', 1)[0] %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', inputs_outputs) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', inputs_outputs) %}
+        _, {{ forward_var }}, _, {{ backward_var }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
                 {%- elif module_details[3].__class__.__name__ == "LSTMLayer" %}
         _, {{ module_details[4] }}, {% if module_details[3].cell_state_unused %}_{% else %}{{ module_details[4] }}_cell{% endif %} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}_cell]{% endif %})
                 {%- elif module_details[3].__class__.__name__ != "LSTMLayer" and module_details[3].bidirectional %}
-        _, {{ module_name.rsplit('_', 1)[0] }}_forward_h, {{ module_name.rsplit('_', 1)[0] }}_backward_h = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}_cell]{% else %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %}{% endif %})
+                    {%- set layer_name = module_name.rsplit('_', 1)[0] %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', inputs_outputs) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', inputs_outputs) %}
+        _, {{ forward_var }}, {{ backward_var }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}_cell]{% else %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %}{% endif %})
                 {%- else %}
         _, {{ module_details[4] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
                 {%- endif -%}
                 {%- if module_details[3].bidirectional %}
-        {{ module_details[1] }} = tf.concat([{{ module_name.rsplit('_', 1)[0] }}_forward_h, {{ module_name.rsplit('_', 1)[0] }}_backward_h], axis=-1)
+                    {%- set layer_name = module_name.rsplit('_', 1)[0] %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', inputs_outputs) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', inputs_outputs) %}
+        {{ module_details[4] if (module_details|length > 4 and module_details[4]) else module_details[1] }} = tf.concat([{{ forward_var }}, {{ backward_var }}], axis=-1)
                 {%- endif -%}
             {%- else %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if module_details[3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}_cell]{% else %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %}{% endif %})

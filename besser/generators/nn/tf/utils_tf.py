@@ -873,6 +873,15 @@ def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     return f"tf.shape({source_var})[{dim_index}]"
 
 
+def _handle_identity_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle identity operation to preserve variable assignments."""
+    # Identity just assigns the input variable to the output variable
+    # Return the input variable directly (e.g., "x_1") so the template generates: output_var = x_1
+    if in_var is not None:
+        return in_var
+    return prev_out_var
+
+
 def _handle_default_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle default case (matmul)."""
     return f"tf.matmul({params})"
@@ -880,6 +889,7 @@ def _handle_default_syntax(tensorop, modules_details, in_var, prev_out_var, para
 
 # Dispatch table for tensorop handlers
 _TENSOROP_SYNTAX_HANDLERS = {
+    "identity": _handle_identity_syntax,
     "reshape": _handle_reshape_syntax,
     "concatenate": _handle_concatenate_syntax,
     "transpose": _handle_transpose_syntax,

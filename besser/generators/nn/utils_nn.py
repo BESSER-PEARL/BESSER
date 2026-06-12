@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from besser.generators.nn.nn_code_generator import NNCodeGenerator
 
 
-def get_previous_out_var(modules_details: dict, prev_module: str):
+def get_previous_out_var(modules_details: dict, prev_module: str, inputs_outputs: dict = None):
     """
     It retrieves the output variable of the previous module in order to
     use it as the input variable of the current module.
@@ -26,6 +26,7 @@ def get_previous_out_var(modules_details: dict, prev_module: str):
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         prev_module (str): The name of the previous module.
+        inputs_outputs (dict): Optional dictionary mapping module names to [input, output] variables.
 
     Returns:
         The previous output variable.
@@ -42,9 +43,19 @@ def get_previous_out_var(modules_details: dict, prev_module: str):
                 hasattr(layer_obj, 'use_hidden_as_output') and layer_obj.use_hidden_as_output):
                 # Use hidden variable (element [4]) instead of output variable (element [1])
                 return module_data[4]
+            # Check if there's a __hidden subscript that created a different output variable
+            # For example: x = h[-1] creates rnn__hidden entry with output var 'x'
+            if (inputs_outputs and hasattr(layer_obj, 'return_type') and
+                layer_obj.return_type == "hidden"):
+                # Remove the '_layer' suffix properly
+                layer_name = prev_module[:-6] if prev_module.endswith('_layer') else prev_module
+                hidden_key = layer_name + "__hidden"
+                if hidden_key in inputs_outputs and inputs_outputs[hidden_key][1]:
+                    # Use the variable from the subscript operation (e.g., 'x' from 'x = h[-1]')
+                    return inputs_outputs[hidden_key][1]
         return module_data[1]
 
-def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
+def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs_outputs: dict = None):
     """
     It determines the input variable of the current layer. It is either
     the output variable of the module in `name_module_input` attribute
@@ -56,6 +67,7 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         prev_out_var (str): The previous output variable.
+        inputs_outputs (dict): Optional dictionary mapping module names to [input, output] variables.
 
     Returns:
         The input variable.
@@ -73,14 +85,9 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
             base_module = lyr_input.replace("bidirectional_concat_", "")
             if f"{base_module}_layer" in modules_names:
                 layer_details = modules_details[f"{base_module}_layer"]
-                layer_obj = layer_details[3] if len(layer_details) > 3 else None
-                # For return_type="hidden": concat is assigned to output var (index 1)
-                # For return_type="both": concat is assigned to hidden var (index 4)
-                if layer_obj and hasattr(layer_obj, 'return_type'):
-                    if layer_obj.return_type == "hidden":
-                        return layer_details[1]  # Output variable
-                    elif layer_obj.return_type == "both" and len(layer_details) > 4:
-                        return layer_details[4]  # Hidden variable
+                # The concat variable name is now stored in index 4 for all bidirectional RNNs
+                if len(layer_details) > 4 and layer_details[4]:
+                    return layer_details[4]  # Concat variable (e.g., "gru_concat")
                 # Fallback: return output variable
                 return layer_details[1]
         # Check for split tensorop output suffixes
@@ -142,13 +149,23 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
                 if len(layer_details) > 4:
                     return layer_details[4]  # For now use hidden (cell state needs separate tracking)
                 return layer_details[1]
-        elif f"{lyr_input}_layer" in modules_names:
+        elif f"{lyr_input}_layer" in modules_details:
+            layer_details = modules_details[f"{lyr_input}_layer"]
+            # Check if this is an RNN with return_type="hidden" that had a subscript creating different var
+            # Example: x = h[-1] where h is the hidden state, x is the subscript result
+            if (len(layer_details) > 4 and hasattr(layer_details[3], 'return_type') and
+                layer_details[3].return_type == "hidden"):
+                # Check if prev_out_var matches the subscript output from inputs_outputs
+                if (inputs_outputs and f"{lyr_input}__hidden" in inputs_outputs and
+                    prev_out_var == inputs_outputs[f"{lyr_input}__hidden"][1]):
+                    # Use prev_out_var which is the subscript result variable
+                    return prev_out_var
             # Check if this layer should use RNN hidden state instead of sequence output
             if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
                 # Return hidden state variable (index 4) instead of sequence output (index 1)
-                if len(modules_details[f"{lyr_input}_layer"]) > 4:
-                    return modules_details[f"{lyr_input}_layer"][4]
-            return modules_details[f"{lyr_input}_layer"][1]
+                if len(layer_details) > 4:
+                    return layer_details[4]
+            return layer_details[1]
         if f"{lyr_input}_nn" in modules_names:
             return  modules_details[f"{lyr_input}_nn"]["in_out_variable"]
         if f"{lyr_input}_activ" in modules_names:
@@ -352,13 +369,14 @@ def _handle_bidirectional_concat(layer_name, modules_details):
 
     if layer_key in modules_details:
         layer_details = modules_details[layer_key]
+        # If module_details[4] exists, it's the hidden state variable
+        # which should already be set to the original concat variable name (e.g., "gru_concat")
+        if len(layer_details) > 4 and layer_details[4]:
+            return layer_details[4]
         layer_obj = layer_details[3] if len(layer_details) > 3 else None
         if layer_obj and hasattr(layer_obj, 'return_type'):
             if layer_obj.return_type == "hidden":
                 return layer_details[1]
-            elif (layer_obj.return_type == "both" and len(layer_details) > 4
-                  and layer_details[4]):
-                return layer_details[4]
         if len(layer_details) > 1:
             return layer_details[1]
     return "x"
@@ -514,7 +532,7 @@ def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
     return out_var
 
 
-def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
+def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict, inputs_outputs: dict | None = None):
     """
     It sets the input and output variables of the layer.
 
@@ -523,6 +541,7 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
         prev_out_var (str): The previous output variable.
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
+        inputs_outputs (dict | None): Dictionary mapping module names to [input_var, output_var].
 
     Returns:
         - The input variable and output variables of both the layer and
@@ -530,9 +549,12 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
 
     """
     out_var_actv, in_var_actv = None, None
-    in_var_layer = get_input_var(layer, modules_details, prev_out_var)
+    in_var_layer = get_input_var(layer, modules_details, prev_out_var, inputs_outputs)
 
-    if layer.input_reused:
+    # Check if inputs_outputs has the original output variable from the code
+    if inputs_outputs and layer.name in inputs_outputs:
+        out_var_layer = inputs_outputs[layer.name][1]
+    elif layer.input_reused:
         out_var_layer = get_out_var_input_reused(prev_out_var, modules_details)
     else:
         # If input != prev_out_var (e.g., input='x' from INPUT, prev='residual'),
@@ -545,7 +567,7 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
         out_var_actv, in_var_actv = out_var_layer, out_var_layer
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
-def initialize_layer_vars(layer: Layer):
+def initialize_layer_vars(layer: Layer, inputs_outputs: dict | None = None):
     """
     It sets the input and output variables of layer (and activation
     function for PyTorch) in the case it is the first module in
@@ -553,13 +575,19 @@ def initialize_layer_vars(layer: Layer):
 
     Arguments:
         layer (Layer): The BUML layer object.
+        inputs_outputs (dict | None): Dictionary mapping module names to [input_var, output_var].
 
     Returns:
         - The input variable and output variables of both the layer and
           its activation function.
     """
     out_var_actv, in_var_actv = None, None
-    if layer.input_reused is True:
+
+    # Check if inputs_outputs has the original output variable from the code
+    if inputs_outputs and layer.name in inputs_outputs:
+        out_var_layer = inputs_outputs[layer.name][1]
+        in_var_layer = inputs_outputs[layer.name][0] if inputs_outputs[layer.name][0] else "x"
+    elif layer.input_reused is True:
         out_var_layer, in_var_layer = "x_1", "x"
         if layer.actv_func is not None:
             out_var_actv, in_var_actv = "x_1", "x_1"
@@ -661,10 +689,10 @@ def _find_previous_non_shape_dim_module(modules_details: dict) -> str:
             return module_name
     return None
 
-def _initialize_layer_variables(layer, modules_details):
+def _initialize_layer_variables(layer, modules_details, inputs_outputs=None):
     """Initialize layer input/output variables based on modules_details."""
     if len(modules_details) == 0:
-        return initialize_layer_vars(layer), None
+        return initialize_layer_vars(layer, inputs_outputs), None
 
     prev_module = list(modules_details.keys())[-1]
 
@@ -677,8 +705,8 @@ def _initialize_layer_variables(layer, modules_details):
             return initialize_layer_vars(layer), None
 
     if prev_module is not None:
-        prev_out_var = get_previous_out_var(modules_details, prev_module)
-        return get_layer_vars(layer, prev_out_var, modules_details), prev_module
+        prev_out_var = get_previous_out_var(modules_details, prev_module, inputs_outputs)
+        return get_layer_vars(layer, prev_out_var, modules_details, inputs_outputs), prev_module
 
     return initialize_layer_vars(layer), None
 
@@ -693,13 +721,23 @@ def _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, i
         )
 
 
-def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details):
+def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details, model=None):
     """Store layer syntax and variables in modules_details."""
     if layer_synt is None:
         return
 
     if hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden"):
-        hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
+        # Check if there's a stored concat variable name for bidirectional RNNs
+        concat_var_names = getattr(model, 'bidirectional_concat_var_names', {}) if model else {}
+        inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
+
+        if layer.name in concat_var_names:
+            hidden_var = concat_var_names[layer.name]
+        elif inputs_outputs and (layer.name + "__hidden") in inputs_outputs:
+            # Use original hidden state variable name from inputs_outputs
+            hidden_var = inputs_outputs[layer.name + "__hidden"][1]
+        else:
+            hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
         modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
                                                   in_layer, layer, hidden_var]
     else:
@@ -718,7 +756,7 @@ def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq,
 def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
                  modules_details: dict, channel_last: bool | None,
                  actv_func_syntax: str | bool = False, is_seq: bool = False,
-                 is_subnn: bool = False):
+                 is_subnn: bool = False, model=None):
     """
     It populates the `modules_details` dictionary with layer's
     information: Its syntax, input and output variables, and the
@@ -743,8 +781,9 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         None, but stores the layer details in the modules_details dict.
 
     """
+    inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
     (out_layer, in_layer, out_actv, in_actv), prev_module = _initialize_layer_variables(
-        layer, modules_details
+        layer, modules_details, inputs_outputs
     )
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
@@ -754,7 +793,7 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 
     _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn)
 
-    _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details)
+    _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details, model)
 
     if actv_func_syntax:
         modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv, in_actv]
@@ -849,6 +888,17 @@ def _resolve_source_layer_var(source_layer, modules_details):
                 return var_list[idx]
             # Fallback if index out of range
             return f"{base_op}_{idx}"
+
+    # Handle bidirectional concat marker
+    if isinstance(source_layer, str) and source_layer.startswith("bidirectional_concat_"):
+        base_layer = source_layer.replace("bidirectional_concat_", "")
+        layer_key = f"{base_layer}_layer"
+        if layer_key in modules_details:
+            layer_details = modules_details[layer_key]
+            # The concat variable name is now stored in index 4 for all bidirectional RNNs
+            if len(layer_details) > 4 and layer_details[4]:
+                return layer_details[4]
+            return layer_details[1]
 
     modules_names = list(modules_details.keys())
     for suffix in ['_layer', '_op', '_activ', '_nn']:
@@ -946,13 +996,9 @@ def _resolve_prev_out_var_from_module_input(
         layer_key = f"{base_layer}_layer"
         if layer_key in modules_details:
             layer_details = modules_details[layer_key]
-            layer_obj = layer_details[3] if len(layer_details) > 3 else None
-            if layer_obj and hasattr(layer_obj, 'return_type'):
-                if layer_obj.return_type == "hidden":
-                    return layer_details[1]
-                if (layer_obj.return_type == "both" and
-                    len(layer_details) > 4 and layer_details[4]):
-                    return layer_details[4]
+            # The concat variable name is now stored in index 4 for all bidirectional RNNs
+            if len(layer_details) > 4 and layer_details[4]:
+                return layer_details[4]
             return layer_details[1]
         return "x"
 

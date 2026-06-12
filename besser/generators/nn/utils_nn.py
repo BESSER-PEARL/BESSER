@@ -734,8 +734,9 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
         if layer.name in concat_var_names:
             hidden_var = concat_var_names[layer.name]
         elif inputs_outputs and (layer.name + "__hidden") in inputs_outputs:
-            # Use original hidden state variable name from inputs_outputs
-            hidden_var = inputs_outputs[layer.name + "__hidden"][1]
+            # Use original hidden state variable name from tuple unpacking (first element [0])
+            # NOT the subscript result (second element [1]) to avoid name collisions
+            hidden_var = inputs_outputs[layer.name + "__hidden"][0]
         else:
             hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
         modules_details[layer.name + "_layer"] = [layer_synt, out_layer,

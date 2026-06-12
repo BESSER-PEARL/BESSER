@@ -439,10 +439,29 @@ def _handle_pad_pytorch(tensorop, modules_details, in_var, prev_out_var, params)
     pad_mode = tensorop.pad_mode.lower() if hasattr(tensorop, 'pad_mode') else 'constant'
 
     if pad_amount and isinstance(pad_amount, list):
+        # TensorFlow padding is in NHWC format: [[N], [H], [W], [C]]
+        # After permute to NCHW, we need to reorder to: [[N], [C], [H], [W]]
+        # PyTorch F.pad expects padding in reverse dimension order: (W, H, C, N)
+        # So we need indices: [2, 1, 3, 0] from original NHWC padding
+
+        # Extract padding for each dimension (ensure we have 4 dimensions)
+        padding_nhwc = pad_amount + [[0, 0]] * (4 - len(pad_amount))  # Pad with [0,0] if needed
+
+        # Reorder from NHWC to W, H, C, N (reverse of NCHW)
         pt_pad = []
-        for pair in reversed(pad_amount[1:]):
-            if isinstance(pair, list) and len(pair) == 2:
-                pt_pad.extend(pair)
+        # W (index 2 in NHWC)
+        if isinstance(padding_nhwc[2], list) and len(padding_nhwc[2]) == 2:
+            pt_pad.extend(padding_nhwc[2])
+        # H (index 1 in NHWC)
+        if isinstance(padding_nhwc[1], list) and len(padding_nhwc[1]) == 2:
+            pt_pad.extend(padding_nhwc[1])
+        # C (index 3 in NHWC)
+        if isinstance(padding_nhwc[3], list) and len(padding_nhwc[3]) == 2:
+            pt_pad.extend(padding_nhwc[3])
+        # N (index 0 in NHWC)
+        if isinstance(padding_nhwc[0], list) and len(padding_nhwc[0]) == 2:
+            pt_pad.extend(padding_nhwc[0])
+
         pad_tuple = tuple(pt_pad)
         return f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}')"
     else:

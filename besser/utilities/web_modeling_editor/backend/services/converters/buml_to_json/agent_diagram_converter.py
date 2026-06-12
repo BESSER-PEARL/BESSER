@@ -146,6 +146,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     dbQueryMode=db_query_mode,
                     dbOperation=db_operation,
                     dbSqlQuery=db_sql_query,
+                    llm_name=action.get("llm_name") or None,
                 ))
         return result
 
@@ -214,6 +215,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         and node.value.func.attr == "new_rag"
                     ):
                         rag_name = None
+                        rag_llm_name = ""
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
@@ -227,11 +229,19 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value.value, str)
                             ):
                                 rag_name = kw.value.value
+                            elif (
+                                kw.arg == "llm_name"
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                # Registered-LLM reference; empty means
+                                # "(use default)" at codegen time.
+                                rag_llm_name = kw.value.value
                         if isinstance(rag_name, str) and rag_name.strip():
                             nodes.append(make_node(
                                 node_id=str(uuid.uuid4()),
                                 type_="AgentRagElement",
-                                data={"name": rag_name},
+                                data={"name": rag_name, "llm_name": rag_llm_name},
                                 position={"x": states_x, "y": states_y},
                                 width=120,
                                 height=110,
@@ -241,6 +251,185 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             else:
                                 states_x = -280
                                 states_y += 220
+
+        # Collect Tool / Skill / Workspace primitives. The model builder
+        # emits them as bare expression statements (``agent.new_tool(...)``),
+        # not assignments, so this scan walks every Call node separately
+        # from the Assign-based loop above.
+        primitive_factories = {"new_tool", "new_skill", "new_workspace"}
+        seen_primitive_calls: set = set()
+        for call_node in ast.walk(tree):
+            if not (
+                isinstance(call_node, ast.Call)
+                and isinstance(call_node.func, ast.Attribute)
+                and call_node.func.attr in primitive_factories
+            ):
+                continue
+            if id(call_node) in seen_primitive_calls:
+                continue
+            seen_primitive_calls.add(id(call_node))
+
+            builder_attr = call_node.func.attr
+            primitive_kwargs: Dict[str, Any] = {}
+            for kw in call_node.keywords:
+                try:
+                    primitive_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    continue
+            positional = call_node.args or []
+            if positional and "name" not in primitive_kwargs:
+                try:
+                    primitive_kwargs["name"] = ast.literal_eval(positional[0])
+                except (ValueError, SyntaxError):
+                    pass
+
+            primitive_name = primitive_kwargs.get("name")
+            if not isinstance(primitive_name, str) or not primitive_name.strip():
+                continue
+
+            if builder_attr == "new_tool":
+                primitive_type = "AgentTool"
+                primitive_data: Dict[str, Any] = {
+                    "name": primitive_name,
+                    "description": primitive_kwargs.get("description", "") or "",
+                    "code": primitive_kwargs.get("code", "") or "",
+                }
+            elif builder_attr == "new_skill":
+                primitive_type = "AgentSkill"
+                primitive_data = {
+                    "name": primitive_name,
+                    "content": primitive_kwargs.get("content", "") or "",
+                    "description": primitive_kwargs.get("description") or "",
+                }
+            else:  # new_workspace
+                primitive_type = "AgentWorkspace"
+                primitive_data = {
+                    "name": primitive_name,
+                    "path": primitive_kwargs.get("path", "") or "",
+                    "description": primitive_kwargs.get("description") or "",
+                    "writable": bool(primitive_kwargs.get("writable", True)),
+                    "max_read_bytes": int(primitive_kwargs.get("max_read_bytes", 200_000)),
+                }
+            nodes.append(make_node(
+                node_id=str(uuid.uuid4()),
+                type_=primitive_type,
+                data=primitive_data,
+                position={"x": states_x, "y": states_y},
+                width=160,
+                height=80,
+            ))
+            if states_x < 200:
+                states_x += 300
+            else:
+                states_x = -280
+                states_y += 220
+
+        # Build a var-name -> LLM name map so reasoning states can resolve
+        # their ``llm=...`` kwarg back to the registered LLM name when the
+        # builder emitted a variable reference instead of a literal.
+        # Also collects full LLM definitions so we can emit ``AgentLLM``
+        # data-only nodes for each registered LLM (the Agent
+        # Customization panel's LLMs card round-trips through these).
+        llm_var_to_name: Dict[str, str] = {}
+        # Insertion-ordered name -> definition map.
+        llm_definitions: Dict[str, Dict[str, Any]] = {}
+        _direct_llm_class_to_provider = {
+            "LLMOpenAI": "openai",
+            "LLMHuggingFace": "huggingface",
+            "LLMHuggingFaceAPI": "huggingface_api",
+            "LLMReplicate": "replicate",
+        }
+
+        def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:
+            collected: Dict[str, Any] = {}
+            for kw in call.keywords:
+                if kw.arg is None:
+                    continue
+                try:
+                    collected[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    continue
+            return collected
+
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+            ):
+                continue
+            var_id = node.targets[0].id
+            # Legacy direct constructor: ``LLMOpenAI(agent=..., name=..., parameters=...)``
+            if (
+                isinstance(node.value.func, ast.Name)
+                and node.value.func.id in _direct_llm_class_to_provider
+            ):
+                llm_kwargs = _collect_llm_kwargs(node.value)
+                resolved_name = llm_kwargs.get("name")
+                if isinstance(resolved_name, str) and resolved_name:
+                    llm_var_to_name[var_id] = resolved_name
+                    llm_definitions.setdefault(resolved_name, {
+                        "provider": _direct_llm_class_to_provider[node.value.func.id],
+                        "parameters": llm_kwargs.get("parameters") or {},
+                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
+                        "global_context": llm_kwargs.get("global_context"),
+                    })
+            # New canonical form: ``agent.new_llm(name='...', provider='...', parameters=..., ...)``
+            elif (
+                isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "new_llm"
+            ):
+                llm_kwargs = _collect_llm_kwargs(node.value)
+                resolved_name = llm_kwargs.get("name")
+                if isinstance(resolved_name, str) and resolved_name:
+                    llm_var_to_name[var_id] = resolved_name
+                    llm_definitions.setdefault(resolved_name, {
+                        "provider": (llm_kwargs.get("provider") or "openai"),
+                        "parameters": llm_kwargs.get("parameters") or {},
+                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
+                        "global_context": llm_kwargs.get("global_context"),
+                    })
+
+        # Detect ``agent.set_default_llm('...')`` so we can round-trip the
+        # default-LLM choice through a ``config.default_llm_name`` payload
+        # (the LLM list itself is not rendered on the canvas).
+        default_llm_name_value = None
+        for call_node in ast.walk(tree):
+            if (
+                isinstance(call_node, ast.Call)
+                and isinstance(call_node.func, ast.Attribute)
+                and call_node.func.attr == "set_default_llm"
+                and call_node.args
+                and isinstance(call_node.args[0], ast.Constant)
+                and isinstance(call_node.args[0].value, str)
+            ):
+                default_llm_name_value = call_node.args[0].value
+
+        # Fallback: when no explicit set_default_llm is present, the agent's
+        # default is the first registered LLM (mirroring the metamodel).
+        if default_llm_name_value is None and llm_definitions:
+            default_llm_name_value = next(iter(llm_definitions))
+
+        # Emit AgentLLM nodes (one per registered LLM) so the WME
+        # round-trips the LLM list defined in the agent customization tab.
+        llm_y = 40
+        for llm_name, llm_def in llm_definitions.items():
+            nodes.append(make_node(
+                node_id=str(uuid.uuid4()),
+                type_="AgentLLM",
+                data={
+                    "name": llm_name,
+                    "provider": llm_def.get("provider", "openai"),
+                    "parameters": llm_def.get("parameters") or {},
+                    "num_previous_messages": llm_def.get("num_previous_messages", 1),
+                    "global_context": llm_def.get("global_context"),
+                },
+                position={"x": 40, "y": llm_y},
+                width=200,
+                height=90,
+            ))
+            llm_y += 110
 
         # Collect functions.
         states_x = -280
@@ -340,6 +529,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "dbQueryMode": "llm_query",
                             "dbOperation": "any",
                             "dbSqlQuery": "",
+                            "llm_name": "",
                         }
                         for kw in node.value.args[0].keywords:
                             if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
@@ -353,6 +543,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     db_action["dbOperation"] = kw.value.value
                                 elif kw.arg == 'db_sql_query':
                                     db_action["dbSqlQuery"] = kw.value.value
+                                elif kw.arg == 'llm_name':
+                                    db_action["llm_name"] = kw.value.value
                         actions.setdefault(body_var, []).append(db_action)
                 elif isinstance(node.value.args[0], ast.Name):
                     action_var = node.value.args[0].id
@@ -377,6 +569,78 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 continue
             if isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
+                if (
+                    isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "new_reasoning_state"
+                ):
+                    state_id = str(uuid.uuid4())
+                    state_name = var_name
+                    is_initial = False
+                    rs_kwargs: Dict[str, Any] = {}
+                    llm_var_ref = None
+                    llm_literal_name = None
+
+                    if (
+                        node.value.args
+                        and isinstance(node.value.args[0], ast.Constant)
+                        and isinstance(node.value.args[0].value, str)
+                    ):
+                        state_name = node.value.args[0].value
+
+                    for kw in node.value.keywords:
+                        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                            state_name = kw.value.value
+                        elif kw.arg == "initial" and isinstance(kw.value, ast.Constant):
+                            is_initial = bool(kw.value.value)
+                        elif kw.arg == "llm":
+                            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_literal_name = kw.value.value
+                            elif isinstance(kw.value, ast.Name):
+                                llm_var_ref = kw.value.id
+                        else:
+                            try:
+                                rs_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                            except (ValueError, SyntaxError):
+                                continue
+
+                    if llm_literal_name is not None:
+                        llm_name_resolved = llm_literal_name
+                    elif llm_var_ref:
+                        llm_name_resolved = llm_var_to_name.get(llm_var_ref) or ""
+                    else:
+                        llm_name_resolved = ""
+
+                    state_var_to_name[var_name] = state_name
+                    states[var_name] = {
+                        "id": state_id,
+                        "name": state_name,
+                        "is_initial": is_initial,
+                        "bodies": [],
+                        "fallbackBodies": [],
+                    }
+                    nodes.append(make_node(
+                        node_id=state_id,
+                        type_="AgentReasoningState",
+                        data={
+                            "name": state_name,
+                            "llm_name": llm_name_resolved,
+                            "max_steps": int(rs_kwargs.get("max_steps", 8)),
+                            "enable_task_planning": bool(rs_kwargs.get("enable_task_planning", True)),
+                            "stream_steps": bool(rs_kwargs.get("stream_steps", True)),
+                            "system_prompt": rs_kwargs.get("system_prompt") or "",
+                            "fallback_message": rs_kwargs.get("fallback_message") or "",
+                        },
+                        position={"x": states_x, "y": states_y},
+                        width=200,
+                        height=80,
+                    ))
+                    if states_x < 200:
+                        states_x += 490
+                    else:
+                        states_x = -280
+                        states_y += 220
+                    continue
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
                     state_id = str(uuid.uuid4())
                     state_name = var_name
@@ -701,7 +965,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 ))
                 comment_y += 130
 
-        return {
+        result = {
             "version": "4.0.0",
             "type": "AgentDiagram",
             "title": "",
@@ -711,6 +975,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "interactive": {"elements": {}, "relationships": {}},
             "assessments": {},
         }
+        if default_llm_name_value:
+            # Round-trip the default-LLM pointer; the frontend persists it
+            # on the agent diagram's ``config`` block (``default_llm_name``).
+            result["config"] = {"default_llm_name": default_llm_name_value}
+        return result
 
     except Exception:
         logger.exception("Error converting agent BUML to JSON; returning partial diagram")

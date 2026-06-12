@@ -15,6 +15,7 @@ from besser.generators.agents.agent_personalization import configure_agent, flat
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,9 @@ class BAFGenerator(GeneratorInterface):
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
+        # Shared helper so generated identifiers match the code builder and are
+        # always valid Python (handles leading digits, dashes, dots, spaces, …).
+        env.globals['safe_var_name'] = safe_var_name
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")

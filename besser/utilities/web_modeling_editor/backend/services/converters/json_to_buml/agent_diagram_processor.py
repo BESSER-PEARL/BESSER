@@ -132,12 +132,10 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
             try:
                 payload = json_lib.loads(payload_str)
             except (ValueError, TypeError):
-                payload = {"prompt": payload_str}
+                payload = {"prompt": payload_str, "llm_name": ""}
             prompt = payload.get("prompt") or None
-            # ``llm_name`` stays in the serialized payload for forward
-            # compatibility, but this branch's ``LLMReply`` only accepts
-            # ``prompt`` (development adds ``llm_name``).
-            body.add_action(LLMReply(prompt=prompt))
+            llm_name = payload.get("llm_name") or None
+            body.add_action(LLMReply(prompt=prompt, llm_name=llm_name))
     elif has_code:
         code_contents = [m[5:] for m in messages if m.startswith("CODE:")]
         for code_content in code_contents:
@@ -283,6 +281,7 @@ def process_agent_diagram(json_data):
             db_query_mode=sanitize_text(element.get("dbQueryMode", "llm_query")) or "llm_query",
             db_operation=sanitize_text(element.get("dbOperation", "any")) or "any",
             db_sql_query=element.get("dbSqlQuery") or None,
+            llm_name=sanitize_text(element.get("llm_name", "")) or None,
         )
 
     def serialize_db_reply_payload(element: dict) -> str:
@@ -292,6 +291,7 @@ def process_agent_diagram(json_data):
             "dbQueryMode": element.get("dbQueryMode", "llm_query") or "llm_query",
             "dbOperation": element.get("dbOperation", "any") or "any",
             "dbSqlQuery": element.get("dbSqlQuery", "") or "",
+            "llm_name": element.get("llm_name", "") or "",
         }
         return f"DB:{json_lib.dumps(payload)}"
 
@@ -342,6 +342,83 @@ def process_agent_diagram(json_data):
         if node_type in COMMENT_NODE_TYPES:
             comment_nodes[node_id] = data.get("name", "")
             continue
+        if node_type == "AgentLLM":
+            # Data-only LLM definition managed from the Agent
+            # Customization panel (LLMs card). Registers on the agent's
+            # ``llms`` list; the first registered LLM auto-becomes the
+            # default unless ``config.default_llm_name`` overrides it
+            # below.
+            llm_name = sanitize_text((data.get("name") or "").strip())
+            if not llm_name:
+                continue
+            if any(existing.name == llm_name for existing in agent.llms):
+                continue
+            provider = (data.get("provider") or "openai").lower()
+            llm_parameters = data.get("parameters")
+            if not isinstance(llm_parameters, dict):
+                llm_parameters = {}
+            num_prev = data.get("num_previous_messages")
+            try:
+                num_prev_int = int(num_prev) if num_prev is not None else 1
+            except (TypeError, ValueError):
+                num_prev_int = 1
+            global_ctx = data.get("global_context") or None
+            agent.new_llm(
+                name=llm_name,
+                provider=provider,
+                parameters=llm_parameters,
+                num_previous_messages=num_prev_int,
+                global_context=global_ctx,
+            )
+            continue
+        if node_type == "AgentTool":
+            tool_name = sanitize_text((data.get("name") or "").strip())
+            if not tool_name:
+                continue
+            if any(t.name == tool_name for t in agent.tools):
+                continue
+            agent.new_tool(
+                name=tool_name,
+                description=data.get("description", "") or "",
+                code=data.get("code", "") or "",
+            )
+            continue
+        if node_type == "AgentSkill":
+            skill_name = sanitize_text((data.get("name") or "").strip())
+            if not skill_name:
+                continue
+            if any(s.name == skill_name for s in agent.skills):
+                continue
+            agent.new_skill(
+                name=skill_name,
+                content=data.get("content", "") or "",
+                description=data.get("description") or None,
+            )
+            continue
+        if node_type == "AgentWorkspace":
+            ws_name = sanitize_text((data.get("name") or "").strip())
+            if not ws_name:
+                continue
+            if any(w.name == ws_name for w in agent.workspaces):
+                continue
+            writable = data.get("writable")
+            if writable is None:
+                writable = True
+            max_read_bytes = data.get("max_read_bytes")
+            if max_read_bytes is None:
+                max_read_bytes = 200_000
+            agent.new_workspace(
+                name=ws_name,
+                path=data.get("path", "") or "",
+                description=data.get("description") or None,
+                writable=bool(writable),
+                max_read_bytes=int(max_read_bytes),
+            )
+            continue
+        if node_type == "AgentReasoningState":
+            # Reasoning states are created in the state-construction passes
+            # below (alongside AgentState).
+            continue
         if node_type == "AgentIntent":
             intent_name = data.get("name")
             training_sentences = []
@@ -382,21 +459,25 @@ def process_agent_diagram(json_data):
                 chunk_size=1000,
                 chunk_overlap=100,
             )
+            # The LLM is referenced by name; an empty value means "resolve
+            # the agent default at codegen time" and passes the metamodel's
+            # LLM-reference validation (a hard-coded model name would not).
+            rag_llm_name = sanitize_text((data.get("llm_name") or "").strip()) or ""
             rag_config = agent.new_rag(
                 name=rag_name,
                 vector_store=vector_store,
                 splitter=splitter,
-                llm_name="gpt-4o-mini",
+                llm_name=rag_llm_name,
                 k=4,
                 num_previous_messages=0,
             )
             rag_dbs_by_id[node_id] = rag_config
             rag_dbs_by_name[rag_name] = rag_config
 
-    # Find initial state.
+    # Find initial state (regular or reasoning).
     initial_state_id = None
     for node in nodes:
-        if node.get("type") != "AgentState":
+        if node.get("type") not in ("AgentState", "AgentReasoningState"):
             continue
         for edge in edges:
             if edge.get("type") not in ("AgentStateTransition", "AgentStateTransitionInit"):
@@ -410,39 +491,41 @@ def process_agent_diagram(json_data):
         if initial_state_id:
             break
 
-    # Process initial state first if found.
-    if initial_state_id:
-        node = nodes_by_id[initial_state_id]
-        data = node_data(node)
-        state_name = data.get("name", "") or ""
-        agent_state = agent.new_state(name=state_name, initial=True)
-        states_by_id[initial_state_id] = agent_state
+    def _build_reasoning_state(node_id: str, data: dict, is_initial: bool):
+        """Create a ReasoningState from a v4 ``AgentReasoningState`` node.
 
-        body_messages = _collect_body_messages(
-            data.get("bodies"), language, source_language, translate_text,
-            serialize_db_reply_payload=serialize_db_reply_payload,
-        )
-        body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
-        if body:
-            agent_state.set_body(body)
-        fallback_messages = _collect_body_messages(
-            data.get("fallbackBodies"), language, source_language, translate_text,
-            serialize_db_reply_payload=serialize_db_reply_payload,
-        )
-        fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
-        if fallback_body:
-            agent_state.set_fallback_body(fallback_body)
-
-    # Process the rest of the states.
-    for node in nodes:
-        if node.get("type") != "AgentState":
-            continue
-        node_id = node.get("id")
-        if node_id == initial_state_id:
-            continue
-        data = node_data(node)
+        Field names mirror ``AgentReasoningStateNodeProps`` on the frontend
+        (``llm_name``, ``max_steps``, ``enable_task_planning``,
+        ``stream_steps``, ``system_prompt``, ``fallback_message``).
+        """
         state_name = data.get("name", "") or ""
-        agent_state = agent.new_state(name=state_name, initial=False)
+        llm_name = data.get("llm_name") or data.get("llm")
+        llm_value = llm_name.strip() if isinstance(llm_name, str) and llm_name.strip() else None
+        kwargs = {
+            "name": state_name,
+            "llm": llm_value,
+            "initial": is_initial,
+        }
+        if data.get("max_steps") is not None:
+            kwargs["max_steps"] = int(data.get("max_steps"))
+        if data.get("enable_task_planning") is not None:
+            kwargs["enable_task_planning"] = bool(data.get("enable_task_planning"))
+        if data.get("stream_steps") is not None:
+            kwargs["stream_steps"] = bool(data.get("stream_steps"))
+        if data.get("system_prompt") is not None:
+            kwargs["system_prompt"] = data.get("system_prompt")
+        if data.get("fallback_message") is not None:
+            kwargs["fallback_message"] = data.get("fallback_message")
+        rs = agent.new_reasoning_state(**kwargs)
+        # Tools, skills and workspaces are registered at the agent level and
+        # shared by every reasoning state; the metamodel has no per-state
+        # subset concept, so no per-state ref lists are parsed here.
+        states_by_id[node_id] = rs
+        return rs
+
+    def _build_agent_state(node_id: str, data: dict, is_initial: bool):
+        state_name = data.get("name", "") or ""
+        agent_state = agent.new_state(name=state_name, initial=is_initial)
         states_by_id[node_id] = agent_state
 
         body_messages = _collect_body_messages(
@@ -459,6 +542,26 @@ def process_agent_diagram(json_data):
         fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
         if fallback_body:
             agent_state.set_fallback_body(fallback_body)
+        return agent_state
+
+    # Process initial state first if found.
+    if initial_state_id:
+        node = nodes_by_id[initial_state_id]
+        data = node_data(node)
+        if node.get("type") == "AgentReasoningState":
+            _build_reasoning_state(initial_state_id, data, is_initial=True)
+        else:
+            _build_agent_state(initial_state_id, data, is_initial=True)
+
+    # Process the rest of the states (including reasoning states).
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id == initial_state_id:
+            continue
+        if node.get("type") == "AgentReasoningState":
+            _build_reasoning_state(node_id, node_data(node), is_initial=False)
+        elif node.get("type") == "AgentState":
+            _build_agent_state(node_id, node_data(node), is_initial=False)
 
     intent_lookup = {intent.name: intent for intent in agent.intents}
     intent_lookup_casefold = {
@@ -723,6 +826,15 @@ def process_agent_diagram(json_data):
             else:
                 existing_desc = agent.metadata.description or ""
                 agent.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
+
+    # Apply default LLM from the customization config block (if set).
+    # The customization tab persists which registered LLM is the default;
+    # without an explicit pointer the agent already auto-defaulted to the
+    # first one registered.
+    default_llm_name_cfg = (config or {}).get("default_llm_name")
+    if isinstance(default_llm_name_cfg, str) and default_llm_name_cfg.strip():
+        if any(existing.name == default_llm_name_cfg for existing in agent.llms):
+            agent.set_default_llm(default_llm_name_cfg)
 
     agent.validate(raise_exception=True)
     return agent

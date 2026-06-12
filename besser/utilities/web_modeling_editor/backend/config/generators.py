@@ -9,6 +9,7 @@ from besser.generators.java_classes import JavaGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
+from besser.generators.supabase import SupabaseGenerator
 from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
@@ -103,6 +104,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "sql": GeneratorInfo(
         generator_class=SQLGenerator,
+        output_type="file",
+        file_extension=".sql",
+        category="database",
+        requires_class_diagram=True
+    ),
+    "supabase": GeneratorInfo(
+        generator_class=SupabaseGenerator,
         output_type="file",
         file_extension=".sql",
         category="database",

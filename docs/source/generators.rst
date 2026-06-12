@@ -135,6 +135,7 @@ Generate database schemas, APIs, and data formats:
    :maxdepth: 1
 
    generators/sql
+   generators/supabase
    generators/alchemy
    generators/json_schema
    generators/rdf

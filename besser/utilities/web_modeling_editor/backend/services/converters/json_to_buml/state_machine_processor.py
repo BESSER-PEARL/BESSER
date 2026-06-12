@@ -163,8 +163,7 @@ def process_state_machine(json_data):
         try:
             state = sm.new_state(name=raw_name, initial=is_initial, final=is_final)
         except ValueError as e:
-            logger.warning("Could not create state '%s': %s", raw_name, e)
-            continue
+            raise ConversionError(str(e)) from e
         states_by_id[node_id] = state
 
     # Assign bodies / fallback bodies.
@@ -230,10 +229,7 @@ def process_state_machine(json_data):
                     builder = builder.with_condition(guard_condition)
                 builder.go_to(target_state)
             except ValueError as e:
-                logger.warning(
-                    "Could not create transition from '%s' to '%s': %s",
-                    source_state.name, target_state.name, e,
-                )
+                raise ConversionError(str(e)) from e
             if params and source_state.transitions:
                 last_transition = source_state.transitions[-1]
                 last_transition._event_params = params
@@ -241,10 +237,7 @@ def process_state_machine(json_data):
             try:
                 source_state.when_condition(guard_condition).go_to(target_state)
             except ValueError as e:
-                logger.warning(
-                    "Could not create guard-only transition from '%s' to '%s': %s",
-                    source_state.name, target_state.name, e,
-                )
+                raise ConversionError(str(e)) from e
 
     # Apply comments.
     for comment_id, comment_text in comment_nodes.items():

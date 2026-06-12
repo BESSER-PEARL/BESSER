@@ -567,14 +567,7 @@ class TestValidateDiagram:
         assert any("no states" in err.lower() for err in data["errors"])
 
     def test_validate_state_machine_duplicate_names(self):
-        """State machine with duplicate state names fails validation.
-
-        The state machine processor requires the first state to be initial
-        (via StateInitialNode). Duplicate state names are caught by the
-        StateMachine.new_state() method and logged as warnings, which
-        causes those states to be skipped -- effectively leading to fewer
-        states than expected, which counts as invalid.
-        """
+        """State machine with duplicate state names fails validation."""
         payload = {
             "title": "DupSM",
             "model": {
@@ -614,12 +607,8 @@ class TestValidateDiagram:
         response = client.post("/besser_api/validate-diagram", json=payload)
         assert response.status_code == 200
         data = response.json()
-        # The duplicate state is silently skipped by the processor, so
-        # validation might report duplicate names or the SM may have
-        # only one state. Either way, we check that the endpoint returns
-        # a valid response structure.
-        assert "isValid" in data
-        assert isinstance(data["errors"], list)
+        assert data["isValid"] is False
+        assert any("Alpha" in err for err in data["errors"])
 
     def test_validate_gui_diagram_always_valid(self):
         """GUINoCodeDiagram always returns valid (no metamodel validation)."""

@@ -191,14 +191,8 @@ def json_to_buml_project(project):
 
     # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):
-        try:
-            sm_model = process_state_machine(sm_diag.model_dump())
-            model_list.append(sm_model)
-        except Exception as e:
-            logger.warning(
-                "StateMachineDiagram '%s' could not be processed: %s",
-                getattr(sm_diag, "title", "unknown"), e,
-            )
+        sm_model = process_state_machine(sm_diag.model_dump())
+        model_list.append(sm_model)
 
     # ── Process ALL NNDiagrams ────────────────────────────────────────
     from .nn_diagram_processor import process_nn_diagram

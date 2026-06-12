@@ -65,9 +65,9 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     # Handle None and False (False means input not reused) - use previous output
     if lyr_input is not None and lyr_input is not False:
         # Special case: INPUT marker for network input
-        # Return 'inp' which is the preserved original input (template creates it when needed)
+        # Return 'x' (the original input variable)
         if lyr_input == 'INPUT':
-            return 'inp'
+            return 'x'
         # Handle bidirectional concat marker (from torch2tf bidirectional RNN migration)
         if isinstance(lyr_input, str) and lyr_input.startswith("bidirectional_concat_"):
             base_module = lyr_input.replace("bidirectional_concat_", "")

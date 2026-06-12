@@ -151,7 +151,7 @@ class TensorOp(NamedElement):
             'reshape', 'concatenate', 'multiply',
             'matmultiply', 'permute', 'transpose', 'mean', 'max', 'squeeze', 'unsqueeze',
             'binop_add', 'binop_subtract', 'binop_multiply', 'binop_divide', 'binop_floor_divide', 'subscript', 'shape_dim',
-            'normalize', 'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like', 'split'
+            'normalize', 'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like', 'split', 'identity'
         ]:
             raise ValueError("Invalid value of tensorOp type")
         elif tns_type == 'reshape' and self.reshape_dim is None:

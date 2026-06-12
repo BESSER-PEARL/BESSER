@@ -346,7 +346,10 @@ def initialize_tensorop_var(tensorop: TensorOp):
         The output variable of the tensorop.
 
     """
-    if tensorop.input_reused is True:
+    # Identity tensorops should use their name as the output variable
+    if tensorop.tns_type == "identity":
+        return tensorop.name
+    elif tensorop.input_reused is True:
         out_var = "x_1"
     else:
         out_var = "x"
@@ -424,12 +427,17 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
 
     """
     out_var_actv, in_var_actv = None, None
+    in_var_layer = get_input_var(layer, modules_details, prev_out_var)
+
     if layer.input_reused:
         out_var_layer = get_out_var_input_reused(prev_out_var, modules_details)
     else:
-        out_var_layer = prev_out_var
-    in_var_layer = get_input_var(layer, modules_details,
-                                           prev_out_var)
+        # If input != prev_out_var (e.g., input='x' from INPUT, prev='residual'),
+        # use input var as output to preserve original code pattern (x = lstm(x))
+        if in_var_layer != prev_out_var:
+            out_var_layer = in_var_layer
+        else:
+            out_var_layer = prev_out_var
     if layer.actv_func is not None:
         out_var_actv, in_var_actv = out_var_layer, out_var_layer
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
@@ -1006,6 +1014,12 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
 
     """
     ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
+
+    # If inputs_outputs has the actual output variable from original code, use it for ALL tensorop types
+    # This preserves original variable names (e.g., x = tf.add(x, y) uses 'x', not 'op_1')
+    if out_var is None and inputs_outputs and tensorop.name in inputs_outputs:
+        out_var = inputs_outputs[tensorop.name][1]
+
     if out_var is None:
         # For shape_dim TensorOps, use the TensorOp name as the output variable
         # (e.g., 'b' for extracting batch size, 't' for sequence length)
@@ -1021,11 +1035,18 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
             if referenced_tensorops and tensorop.name in referenced_tensorops:
                 # Create a unique intermediate variable name
                 out_var = tensorop.name
-            # Binary operations always get unique op_ prefix to avoid conflicts
+            # Binary operations: use actual target variable from TF code if available in inputs_outputs
             elif tensorop.tns_type.startswith("binop_"):
-                out_var = tensorop.name
+                # Check if we have the actual output variable from original code
+                if inputs_outputs and tensorop.name in inputs_outputs:
+                    out_var = inputs_outputs[tensorop.name][1]  # Use actual target variable
+                else:
+                    out_var = tensorop.name  # Fallback to op_N
             # Split operations always use their own name to ensure unique tuple variables
             elif tensorop.tns_type == "split":
+                out_var = tensorop.name
+            # Identity operations use their name to preserve variable assignments (e.g., residual = x)
+            elif tensorop.tns_type == "identity":
                 out_var = tensorop.name
             # Tensorops with input_reused should also use their op_N name to avoid x_N conflicts
             elif hasattr(tensorop, 'input_reused') and tensorop.input_reused:

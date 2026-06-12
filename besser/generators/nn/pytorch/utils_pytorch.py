@@ -551,6 +551,15 @@ def _handle_default_pytorch(tensorop, modules_details, in_var, prev_out_var, par
     return f"torch.matmul({params})"
 
 
+def _handle_identity_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle identity operation (variable assignment like residual = x)."""
+    # For identity, just return the input variable
+    # The input variable is determined by get_input_var
+    if in_var is not None:
+        return in_var
+    return prev_out_var
+
+
 # Dispatch table for PyTorch tensorop handlers
 _PYTORCH_TENSOROP_HANDLERS = {
     "reshape": _handle_reshape_pytorch,
@@ -576,6 +585,7 @@ _PYTORCH_TENSOROP_HANDLERS = {
     "binop_floor_divide": _handle_binop_floor_divide_pytorch,
     "subscript": _handle_subscript_pytorch,
     "shape_dim": _handle_shape_dim_pytorch,
+    "identity": _handle_identity_pytorch,
 }
 
 

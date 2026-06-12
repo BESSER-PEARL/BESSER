@@ -50,3 +50,6 @@ New folder/*
 reviews/
 .vscode/
 /output/
+
+# Local transfer artifacts (never commit)
+*.bundle

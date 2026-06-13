@@ -726,6 +726,8 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
     if layer_synt is None:
         return
 
+    print(f"[DEBUG _store_layer] layer.name={layer.name}, out_layer={out_layer}, in_layer={in_layer}")
+
     if hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden"):
         # Check if there's a stored concat variable name for bidirectional RNNs
         concat_var_names = getattr(model, 'bidirectional_concat_var_names', {}) if model else {}
@@ -737,9 +739,11 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
             # Use original hidden state variable name from tuple unpacking (first element [0])
             # NOT the subscript result (second element [1]) to avoid name collisions
             hidden_var = inputs_outputs[layer.name + "__hidden"][0]
-            # Safety check: if hidden_var is None, fall back to default
+            # Safety check: if hidden_var is None or "_", handle appropriately
             if hidden_var is None:
                 hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
+            # If hidden_var is "_", keep it as underscore (don't auto-generate)
+            # The generator will use this to preserve the underscore pattern
         else:
             hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
         modules_details[layer.name + "_layer"] = [layer_synt, out_layer,

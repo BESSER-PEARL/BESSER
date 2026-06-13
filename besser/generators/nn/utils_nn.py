@@ -214,7 +214,7 @@ def _handle_inline_call(layer_name):
 
 def _handle_rnn_hidden_suffix(layer_name, modules_details):
     """Handle RNN __hidden suffix."""
-    base_layer = layer_name[:-8]
+    base_layer = layer_name[:-8]  # Remove '__hidden' suffix
     my_keys = list(modules_details.keys())
     if base_layer + "_layer" in my_keys:
         layer_details = modules_details[base_layer + "_layer"]
@@ -737,6 +737,9 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
             # Use original hidden state variable name from tuple unpacking (first element [0])
             # NOT the subscript result (second element [1]) to avoid name collisions
             hidden_var = inputs_outputs[layer.name + "__hidden"][0]
+            # Safety check: if hidden_var is None, fall back to default
+            if hidden_var is None:
+                hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
         else:
             hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
         modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
@@ -1088,6 +1091,10 @@ def _handle_concatenate_params(tensorop, modules_details):
     tensors = get_layers_output_for_tensorops(
         tensorop.layers_of_tensors, modules_details, actual_vars
     )
+    # Filter out None values to prevent join errors (should not happen with proper layer handling)
+    tensors = [t for t in tensors if t is not None]
+    if not tensors:
+        raise ValueError(f"Concatenate operation '{tensorop.name}' has no valid input tensors")
     params = ', '.join(tensors)
     return None, params
 

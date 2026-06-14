@@ -747,6 +747,7 @@ def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var, para
 
 def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle unsqueeze tensorop syntax."""
+    print(f"[DEBUG _handle_unsqueeze_syntax] in_var={in_var}, prev_out_var={prev_out_var}")
     if in_var is not None:
         prev_out_var = in_var
 
@@ -754,7 +755,9 @@ def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     if axis == 0 and hasattr(tensorop, 'is_rnn_initial_state') and tensorop.is_rnn_initial_state:
         return f"SKIP:{prev_out_var}"
     else:
-        return f"tf.expand_dims({prev_out_var}, axis={axis})"
+        result = f"tf.expand_dims({prev_out_var}, axis={axis})"
+        print(f"[DEBUG _handle_unsqueeze_syntax] result={result}")
+        return result
 
 
 def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var, params):
@@ -913,7 +916,7 @@ _TENSOROP_SYNTAX_HANDLERS = {
 
 
 def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
-                        in_var: str | None = None):
+                        in_var: str | None = None, inputs_outputs: dict | None = None):
     """
     It defines the syntax of tensorops.
 
@@ -923,9 +926,10 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
             attributes.
         in_var (str | None): the input variable notation of the tensorop
             (e.g., 'x', 'x_1', ...).
+        inputs_outputs (dict | None): Optional dict mapping tensorop names to [input_var, output_var].
 
     Returns:
-        ts_op_synt (str): the syntax of the tensorop in PyTorch.
+        ts_op_synt (str): the syntax of the tensorop in TensorFlow.
 
     """
     tns_type = tensorop.tns_type
@@ -941,7 +945,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     # For other operations, get params
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details,
-                                                     get_rnn_hidden_var)
+                                                     get_rnn_hidden_var,
+                                                     inputs_outputs)
 
     # Dispatch to appropriate handler
     handler = _TENSOROP_SYNTAX_HANDLERS.get(tns_type, _handle_default_syntax)

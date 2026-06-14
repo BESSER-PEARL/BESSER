@@ -817,9 +817,17 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 # Helper functions for get_tensorop_params (refactored for maintainability)
 # ============================================================================
 
-def _resolve_source_layer_var(source_layer, modules_details):
+def _resolve_source_layer_var(source_layer, modules_details, inputs_outputs=None, tensorop=None):
     """Resolve a source layer name to its output variable."""
     if source_layer == 'INPUT':
+        # Check if we have actual input variable in inputs_outputs first
+        if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
+            actual_input_var = inputs_outputs[tensorop.name][0]
+            if actual_input_var:
+                print(f"[DEBUG _resolve_source_layer_var] Using '{actual_input_var}' from inputs_outputs")
+                return actual_input_var
+        # Fallback to 'inp' for backward compatibility
+        print(f"[DEBUG _resolve_source_layer_var] Falling back to 'inp' for INPUT")
         return 'inp'
 
     # Handle RNN hidden/cell state suffixes before split suffixes
@@ -936,10 +944,21 @@ def _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn):
 
 
 def _resolve_prev_out_var_from_module_input(
-    module_input, modules_details, get_rnn_hidden_var_fn
+    module_input, modules_details, get_rnn_hidden_var_fn, inputs_outputs=None, tensorop=None
 ):
     """Resolve prev_out_var from tensorop's name_module_input or layers_of_tensors."""
     if module_input == 'INPUT':
+        # Check if we have actual input variable in inputs_outputs first
+        print(f"[DEBUG _resolve_prev_out_var] module_input=INPUT, inputs_outputs={inputs_outputs is not None}, tensorop={tensorop}, has_name={hasattr(tensorop, 'name') if tensorop else False}")
+        if tensorop and hasattr(tensorop, 'name'):
+            print(f"[DEBUG _resolve_prev_out_var] tensorop.name={tensorop.name}, in_inputs_outputs={tensorop.name in inputs_outputs if inputs_outputs else False}")
+        if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
+            actual_input_var = inputs_outputs[tensorop.name][0]
+            print(f"[DEBUG _resolve_prev_out_var] actual_input_var={actual_input_var}")
+            if actual_input_var:
+                print(f"[DEBUG _resolve_prev_out_var] Using actual input var '{actual_input_var}' from inputs_outputs instead of 'inp'")
+                return actual_input_var
+        print(f"[DEBUG _resolve_prev_out_var] Falling back to 'inp'")
         return 'inp'
 
     # Bidirectional RNN forward/backward hidden states
@@ -1014,9 +1033,17 @@ def _resolve_prev_out_var_from_module_input(
     return _resolve_source_layer_var(module_input, modules_details)
 
 
-def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
+def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, inputs_outputs=None):
     """Get the initial prev_out_var before tensorop-specific handling."""
+    print(f"[DEBUG _get_initial_prev_out_var ENTRY] tensorop.name={tensorop.name}, modules_details empty={len(list(modules_details.keys())) == 0}")
     if len(list(modules_details.keys())) == 0:
+        print(f"[DEBUG _get_initial_prev_out_var] modules_details empty, but checking inputs_outputs for {tensorop.name}")
+        # Check if we have actual input variable in inputs_outputs even when modules_details is empty
+        if inputs_outputs and tensorop.name in inputs_outputs:
+            actual_input_var = inputs_outputs[tensorop.name][0]
+            if actual_input_var:
+                print(f"[DEBUG _get_initial_prev_out_var] Using '{actual_input_var}' from inputs_outputs for first tensorop")
+                return actual_input_var
         return "x"
 
     prev_module = list(modules_details.keys())[-1]
@@ -1031,24 +1058,32 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
 
     # Override with name_module_input or layers_of_tensors if available
     module_input = None
+    print(f"[DEBUG _get_initial_prev_out_var] tensorop.name={tensorop.name}, has_name_module_input={hasattr(tensorop, 'name_module_input')}, has_layers_of_tensors={hasattr(tensorop, 'layers_of_tensors')}")
+    if hasattr(tensorop, 'layers_of_tensors'):
+        print(f"[DEBUG _get_initial_prev_out_var] layers_of_tensors={tensorop.layers_of_tensors}")
     if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
         module_input = tensorop.name_module_input
+        print(f"[DEBUG _get_initial_prev_out_var] Set module_input from name_module_input: {module_input}")
     elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
         if len(tensorop.layers_of_tensors) == 1:
             module_input = tensorop.layers_of_tensors[0]
+            print(f"[DEBUG _get_initial_prev_out_var] Set module_input from layers_of_tensors[0]: {module_input}")
         elif 'INPUT' in tensorop.layers_of_tensors:
             module_input = 'INPUT'
+            print(f"[DEBUG _get_initial_prev_out_var] Set module_input to INPUT")
 
     if module_input is not None:
+        print(f"[DEBUG _get_initial_prev_out_var] module_input={module_input}, calling _resolve_prev_out_var_from_module_input")
         prev_out_var = _resolve_prev_out_var_from_module_input(
-            module_input, modules_details, get_rnn_hidden_var_fn
+            module_input, modules_details, get_rnn_hidden_var_fn, inputs_outputs, tensorop
         )
 
+    print(f"[DEBUG _get_initial_prev_out_var RETURN] prev_out_var={prev_out_var}")
     return prev_out_var
 
 
 def _override_prev_out_var_if_needed(
-    tensorop, modules_details, current_prev_out_var, check_name_module_input=True
+    tensorop, modules_details, current_prev_out_var, check_name_module_input=True, inputs_outputs=None
 ):
     """Override prev_out_var from layers_of_tensors if present."""
     # Skip if name_module_input is already set (unless told not to check)
@@ -1061,7 +1096,7 @@ def _override_prev_out_var_if_needed(
         tensorop.layers_of_tensors and
         isinstance(tensorop.layers_of_tensors[0], str)):
         source_layer = tensorop.layers_of_tensors[0]
-        return _resolve_source_layer_var(source_layer, modules_details)
+        return _resolve_source_layer_var(source_layer, modules_details, inputs_outputs, tensorop)
 
     return current_prev_out_var
 
@@ -1118,18 +1153,18 @@ def _handle_permute_params(tensorop, modules_details):
     return None, params
 
 
-def _handle_simple_op_params(tensorop, modules_details):
+def _handle_simple_op_params(tensorop, modules_details, inputs_outputs=None):
     """Handle simple ops (mean, max, squeeze, unsqueeze, normalize, shape_dim, subscript)."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, check_name_module_input=False
+        tensorop, modules_details, None, check_name_module_input=False, inputs_outputs=inputs_outputs
     )
     return prev_out_var, ""
 
 
-def _handle_repeat_params(tensorop, modules_details):
+def _handle_repeat_params(tensorop, modules_details, inputs_outputs=None):
     """Handle repeat tensorop parameters."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, check_name_module_input=False
+        tensorop, modules_details, None, check_name_module_input=False, inputs_outputs=inputs_outputs
     )
 
     # Resolve operation names in repeat_dim (similar to reshape_dim)
@@ -1176,7 +1211,7 @@ _TENSOROP_HANDLERS = {
 }
 
 
-def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidden_var_fn=None):
+def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidden_var_fn=None, inputs_outputs=None):
     """
     It retrieves tensorops parameters that are used by
     `get_tensorop_syntax` function defined in PyTorch and
@@ -1188,19 +1223,27 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidde
             attributes.
         get_rnn_hidden_var_fn (callable): Optional framework-specific function
             to get RNN hidden variable name. Should accept (layer_details, base_module).
+        inputs_outputs (dict): Optional dict mapping tensorop names to [input_var, output_var].
 
     Returns:
         - previous output variable and the parameters of the tensorop.
 
     """
+    print(f"[DEBUG get_tensorop_params] tensorop.name={tensorop.name}, tns_type={tensorop.tns_type}, inputs_outputs={inputs_outputs is not None}")
+    if inputs_outputs and tensorop.name in inputs_outputs:
+        print(f"[DEBUG get_tensorop_params] inputs_outputs[{tensorop.name}] = {inputs_outputs[tensorop.name]}")
     # Get initial prev_out_var
-    prev_out_var = _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn)
+    prev_out_var = _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, inputs_outputs)
 
     # Get tensorop-specific parameters and potentially override prev_out_var
     tns_type = tensorop.tns_type
     handler = _TENSOROP_HANDLERS.get(tns_type, _handle_generic_params)
 
-    override_prev_out_var, params = handler(tensorop, modules_details)
+    # Pass inputs_outputs to handlers that support it
+    if tns_type in ["mean", "max", "squeeze", "unsqueeze", "subscript", "shape_dim", "normalize", "split", "repeat"]:
+        override_prev_out_var, params = handler(tensorop, modules_details, inputs_outputs)
+    else:
+        override_prev_out_var, params = handler(tensorop, modules_details)
 
     # Use override if provided
     if override_prev_out_var is not None:
@@ -1256,7 +1299,7 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
         None, but stores the tensorop details in the modules_details dict.
 
     """
-    ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
+    ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var, inputs_outputs)
 
     # If inputs_outputs has the actual output variable from original code, use it for ALL tensorop types
     # This preserves original variable names (e.g., x = tf.add(x, y) uses 'x', not 'op_1')

@@ -17,7 +17,7 @@ from besser.generators.nn.pytorch.utils_pytorch import (
 )
 from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_name
 from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
-    add_in_out_var_to_subnn
+    add_in_out_var_to_subnn, renumber_tensorop_variables
 
 
 class NNCodeGenerator(GeneratorInterface):
@@ -167,6 +167,9 @@ class NNCodeGenerator(GeneratorInterface):
                 )
         if actv_func:
             adjust_actv_func_name(modules_details)
+
+        # Renumber op_X variables sequentially to avoid gaps
+        renumber_tensorop_variables(modules_details)
 
         return modules_details
 

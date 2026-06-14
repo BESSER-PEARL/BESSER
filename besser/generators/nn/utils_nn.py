@@ -1321,13 +1321,10 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
             if referenced_tensorops and tensorop.name in referenced_tensorops:
                 # Create a unique intermediate variable name
                 out_var = tensorop.name
-            # Binary operations: use actual target variable from TF code if available in inputs_outputs
-            elif tensorop.tns_type.startswith("binop_"):
-                # Check if we have the actual output variable from original code
-                if inputs_outputs and tensorop.name in inputs_outputs:
-                    out_var = inputs_outputs[tensorop.name][1]  # Use actual target variable
-                else:
-                    out_var = tensorop.name  # Fallback to op_N
+            # Operations with output variables in inputs_outputs: use actual target variable from original code
+            # This applies to binop, concatenate, subscript, and other operations that have explicit assignments
+            elif inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
+                out_var = inputs_outputs[tensorop.name][1]  # Use actual target variable
             # Split operations always use their own name to ensure unique tuple variables
             elif tensorop.tns_type == "split":
                 out_var = tensorop.name
@@ -1465,3 +1462,111 @@ class Permute(nn.Module):
     def forward(self, x):
         x = x.permute(self.dims)
         return x
+
+
+def renumber_tensorop_variables(modules_details):
+    """
+    Renumber op_X variables sequentially to avoid gaps when some operations
+    use their original variable names from the source code.
+    
+    This function:
+    1. Finds all tensorop entries that use op_X naming (not original names)
+    2. Creates a mapping from old op_X names to new sequential op_1, op_2, op_3...
+    3. Updates all references in modules_details (syntax, input/output vars)
+    
+    Args:
+        modules_details (dict): The modules details dictionary to update in-place
+    """
+    import re
+    
+    print("[DEBUG renumber_tensorop_variables] Starting renumbering...")
+    
+    # Step 1: Collect all op_X names that are actually used in output variables
+    op_names_in_use = set()
+    
+    for module_name, module_data in modules_details.items():
+        if module_name.endswith("_op"):
+            # module_data format: [syntax, out_var, tensorop_obj]
+            out_var = module_data[1]
+            # Check if output variable is op_X (not an original variable name)
+            if isinstance(out_var, str) and re.match(r'^op_\d+$', out_var):
+                op_names_in_use.add(out_var)
+            # Also check for tuple outputs like "op_5_0, op_5_1, op_5_2"
+            elif isinstance(out_var, str) and ', ' in out_var:
+                for var in out_var.split(', '):
+                    if re.match(r'^op_\d+(_\d+)?$', var.strip()):
+                        op_names_in_use.add(var.strip())
+    
+    print(f"[DEBUG renumber_tensorop_variables] Found {len(op_names_in_use)} op_X variables in use: {sorted(op_names_in_use)}")
+    
+    if not op_names_in_use:
+        print("[DEBUG renumber_tensorop_variables] No op_X variables to renumber")
+        return
+    
+    # Step 2: Sort by original number and create sequential mapping
+    # Extract base op names (op_5_0 -> op_5) for sorting
+    def get_base_op_num(op_name):
+        match = re.match(r'^op_(\d+)', op_name)
+        return int(match.group(1)) if match else 0
+    
+    sorted_op_names = sorted(op_names_in_use, key=get_base_op_num)
+    
+    # Create mapping: old op_X -> new op_Y
+    # Handle both simple (op_7) and indexed (op_7_0, op_7_1) names
+    old_to_new = {}
+    new_counter = 1
+    last_base_op = None
+    
+    for old_name in sorted_op_names:
+        match = re.match(r'^(op_)(\d+)(_\d+)?$', old_name)
+        if match:
+            prefix, old_num, suffix = match.groups()
+            base_old_name = f"op_{old_num}"
+            
+            # If this is a new base operation, increment counter
+            if base_old_name != last_base_op:
+                last_base_op = base_old_name
+                current_counter = new_counter
+                new_counter += 1
+            
+            # Map old to new (use _op_X prefix to avoid conflicts with user variables)
+            if suffix:  # op_7_0 -> _op_1_0
+                old_to_new[old_name] = f"_op_{current_counter}{suffix}"
+            else:  # op_7 -> _op_1
+                old_to_new[old_name] = f"_op_{current_counter}"
+    
+    print(f"[DEBUG renumber_tensorop_variables] Mapping: {old_to_new}")
+    
+    # Step 3: Update all references in modules_details
+    for module_name, module_data in modules_details.items():
+        if module_name.endswith("_op"):
+            # Update syntax (index 0)
+            syntax = module_data[0]
+            if isinstance(syntax, str):
+                for old_name, new_name in old_to_new.items():
+                    # Use word boundary to avoid partial replacements
+                    syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
+                module_data[0] = syntax
+            
+            # Update out_var (index 1)
+            out_var = module_data[1]
+            if isinstance(out_var, str):
+                # Handle tuple outputs
+                if ', ' in out_var:
+                    new_parts = []
+                    for part in out_var.split(', '):
+                        part = part.strip()
+                        new_parts.append(old_to_new.get(part, part))
+                    module_data[1] = ', '.join(new_parts)
+                else:
+                    module_data[1] = old_to_new.get(out_var, out_var)
+        
+        elif module_name.endswith("_layer"):
+            # Update in_var (index 2) for layers
+            if len(module_data) > 2:
+                in_var = module_data[2]
+                if isinstance(in_var, str) and in_var in old_to_new:
+                    module_data[2] = old_to_new[in_var]
+    
+    print("[DEBUG renumber_tensorop_variables] Renumbering complete")
+

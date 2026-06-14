@@ -746,8 +746,25 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
             # The generator will use this to preserve the underscore pattern
         else:
             hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
-        modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                  in_layer, layer, hidden_var]
+
+        # For LSTM layers, also extract cell state variable name
+        cell_var = None
+        if layer.__class__.__name__ == "LSTMLayer":
+            if inputs_outputs and (layer.name + "__cell") in inputs_outputs:
+                cell_var = inputs_outputs[layer.name + "__cell"][0]
+                # Safety check: if cell_var is None or "_", handle appropriately
+                if cell_var is None or cell_var == "_":
+                    cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+            else:
+                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+
+        # Store hidden_var and cell_var (if LSTM) in module_details
+        if cell_var is not None:
+            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                      in_layer, layer, hidden_var, cell_var]
+        else:
+            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
+                                                      in_layer, layer, hidden_var]
     else:
         modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
                                                   in_layer, layer]
@@ -888,8 +905,12 @@ def _resolve_source_layer_var(source_layer, modules_details, inputs_outputs=None
         modules_names = list(modules_details.keys())
         if f"{base_module}_layer" in modules_names:
             layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                return f"{layer_details[4]}_cell"  # Cell variable
+            # If module_details[5] exists, use actual cell variable name
+            if len(layer_details) > 5:
+                return layer_details[5]  # Actual cell variable name from inputs_outputs
+            elif len(layer_details) > 4:
+                # Fallback: construct cell var name from hidden var
+                return f"{layer_details[4]}_cell"
             return layer_details[1]  # Fallback
 
     # Handle split output suffixes: "op_2__split_0" -> get specific split variable

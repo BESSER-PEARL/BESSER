@@ -1490,19 +1490,33 @@ def renumber_tensorop_variables(modules_details):
         '_binop_temp_': set(),
         '_nested_temp_': set(),
         '_subscript_temp_': set(),
+        '_chain_temp_': set(),
     }
 
     for module_name, module_data in modules_details.items():
+        out_var = None
+
         if module_name.endswith("_op"):
             # module_data format: [syntax, out_var, tensorop_obj]
             out_var = module_data[1]
+        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
+            # module_data format: [syntax, out_var, in_var]
+            out_var = module_data[1]
+
+        if out_var:
             # Check if output variable is op_X (not an original variable name)
             if isinstance(out_var, str) and re.match(r'^op_\d+$', out_var):
                 op_names_in_use.add(out_var)
             # Check for temp variables
             elif isinstance(out_var, str):
                 for prefix in temp_vars_by_prefix.keys():
-                    if re.match(rf'^{re.escape(prefix)}\d+$', out_var):
+                    # For _chain_temp_, match pattern like _chain_temp_4_0 (two indices)
+                    if prefix == '_chain_temp_':
+                        if re.match(rf'^{re.escape(prefix)}\d+_\d+$', out_var):
+                            temp_vars_by_prefix[prefix].add(out_var)
+                            break
+                    # For other temp variables, match single index pattern
+                    elif re.match(rf'^{re.escape(prefix)}\d+$', out_var):
                         temp_vars_by_prefix[prefix].add(out_var)
                         break
             # Also check for tuple outputs like "op_5_0, op_5_1, op_5_2"
@@ -1555,19 +1569,23 @@ def renumber_tensorop_variables(modules_details):
     
     print(f"[DEBUG renumber_tensorop_variables] op_X mapping: {old_to_new}")
 
-    # Step 2b: Renumber temp variables (_binop_temp_X, _nested_temp_X, _subscript_temp_X)
+    # Step 2b: Renumber temp variables (_binop_temp_X, _nested_temp_X, _subscript_temp_X, _chain_temp_X_Y)
     for prefix, vars_set in temp_vars_by_prefix.items():
         if not vars_set:
             continue
 
-        # Sort by number
+        # Sort by number(s)
         def get_temp_num(temp_name):
-            match = re.match(rf'^{re.escape(prefix)}(\d+)$', temp_name)
+            # For _chain_temp_X_Y, extract first number for sorting
+            if prefix == '_chain_temp_':
+                match = re.match(rf'^{re.escape(prefix)}(\d+)_\d+$', temp_name)
+            else:
+                match = re.match(rf'^{re.escape(prefix)}(\d+)$', temp_name)
             return int(match.group(1)) if match else 0
 
         sorted_temp_names = sorted(vars_set, key=get_temp_num)
 
-        # Create sequential mapping: _binop_temp_7 -> _binop_temp_1, etc.
+        # Create sequential mapping: _binop_temp_7 -> _binop_temp_1, _chain_temp_4_0 -> _chain_temp_1, etc.
         temp_counter = 1
         for old_temp_name in sorted_temp_names:
             new_temp_name = f"{prefix}{temp_counter}"
@@ -1586,7 +1604,7 @@ def renumber_tensorop_variables(modules_details):
                     # Use word boundary to avoid partial replacements
                     syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
                 module_data[0] = syntax
-            
+
             # Update out_var (index 1)
             out_var = module_data[1]
             if isinstance(out_var, str):
@@ -1599,9 +1617,21 @@ def renumber_tensorop_variables(modules_details):
                     module_data[1] = ', '.join(new_parts)
                 else:
                     module_data[1] = old_to_new.get(out_var, out_var)
-        
-        elif module_name.endswith("_layer"):
-            # Update in_var (index 2) for layers
+
+        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
+            # Update syntax (index 0) for layers and activations
+            syntax = module_data[0]
+            if isinstance(syntax, str):
+                for old_name, new_name in old_to_new.items():
+                    syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
+                module_data[0] = syntax
+
+            # Update out_var (index 1) for layers and activations
+            out_var = module_data[1]
+            if isinstance(out_var, str) and out_var in old_to_new:
+                module_data[1] = old_to_new[out_var]
+
+            # Update in_var (index 2) for layers and activations
             if len(module_data) > 2:
                 in_var = module_data[2]
                 if isinstance(in_var, str) and in_var in old_to_new:

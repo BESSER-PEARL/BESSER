@@ -855,22 +855,22 @@ def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     return f"{prev_out_var}{subscript_pattern}"
 
 
-def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs=None):
     """Handle shape_dim tensorop syntax."""
-    tensors = tensorop.layers_of_tensors
-    if isinstance(tensors[0], str):
-        if tensors[0] == 'INPUT':
-            source_var = 'inp'
-        else:
-            # Check if the module exists in modules_details
+    # Check inputs_outputs to get the actual source variable from original code
+    if inputs_outputs and tensorop.name in inputs_outputs:
+        source_var = inputs_outputs[tensorop.name][0]
+    else:
+        # Fallback: check layers_of_tensors
+        tensors = tensorop.layers_of_tensors
+        if isinstance(tensors[0], str):
             if f"{tensors[0]}_layer" in modules_details or f"{tensors[0]}_op" in modules_details:
                 source_tensors = utils.get_layers_output_for_tensorops(tensors, modules_details)
                 source_var = source_tensors[0]
             else:
-                # Module not found, use the tensor name directly
                 source_var = tensors[0]
-    else:
-        source_var = tensors[0]
+        else:
+            source_var = tensors[0]
 
     dim_index = tensorop.reduce_dim
     return f"tf.shape({source_var})[{dim_index}]"
@@ -950,6 +950,9 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     # Dispatch to appropriate handler
     handler = _TENSOROP_SYNTAX_HANDLERS.get(tns_type, _handle_default_syntax)
+    # Pass inputs_outputs to shape_dim handler so it can use the correct source variable
+    if tns_type == "shape_dim":
+        return handler(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs)
     return handler(tensorop, modules_details, in_var, prev_out_var, params)
 
 

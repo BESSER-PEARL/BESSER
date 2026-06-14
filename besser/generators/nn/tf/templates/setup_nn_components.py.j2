@@ -180,7 +180,7 @@ from datetime import datetime
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
-        {%- if not module_details[0].startswith("SKIP:") %}
+        {%- if not module_details[0].startswith("SKIP:") and module_details[1] != module_details[0] %}
         {{ module_details[1] }} = {{ module_details[0] }}
         {%- endif %}
     {%- elif module_name.endswith("nn") %}

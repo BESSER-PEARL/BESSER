@@ -48,6 +48,18 @@
     {%- endif -%}
 {%- endmacro -%}
 
+{%- macro get_sequential_vars(module_name, inputs_outputs, default_var) -%}
+    {%- set base_name = module_name.rsplit('_', 2)[0] -%}
+    {%- if inputs_outputs and base_name in inputs_outputs -%}
+        {%- set input_var = inputs_outputs[base_name][0] if inputs_outputs[base_name][0] else default_var -%}
+        {%- set output_var = inputs_outputs[base_name][1] if inputs_outputs[base_name][1] else default_var -%}
+    {%- else -%}
+        {%- set input_var = default_var -%}
+        {%- set output_var = default_var -%}
+    {%- endif -%}
+    {{- output_var + '|||' + input_var -}}
+{%- endmacro -%}
+
 {%- macro print_imports(model, modules_details, generation_type) %}
 {%- set si = namespace(sequential_imported=False) -%}
 {%- set tfa_needed = namespace(value=False) -%}
@@ -159,7 +171,10 @@ from datetime import datetime
         {{ module_details[1] }} = {{ module_details[0] }}
         {%- endif %}
     {%- elif module_name.endswith("nn") %}
-        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+        {%- set vars = get_sequential_vars(module_name, inputs_outputs, module_details["in_out_variable"]) -%}
+        {%- set output_var = vars.split('|||')[0] -%}
+        {%- set input_var = vars.split('|||')[1] %}
+        {{ output_var }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ input_var }})
     {%- elif module_name.endswith("activ") %}
         {%- if module_details[0].startswith("CALL:") %}
         {{ module_details[1] }} = self.{{ module_details[0][5:] }}({{ module_details[2] }})
@@ -223,8 +238,10 @@ from datetime import datetime
     {%- endif -%}
     {%- endif -%}
     {%- if module_name.endswith("nn") %}
-    {%- set return_variable.value =  module_details["in_out_variable"] %}
-    {%- else %} 
+        {%- set vars = get_sequential_vars(module_name, inputs_outputs, module_details["in_out_variable"]) -%}
+        {%- set output_var = vars.split('|||')[0] %}
+    {%- set return_variable.value =  output_var %}
+    {%- else %}
     {%- set return_variable.value =  module_details[1] %}
     {%- endif -%}
     {%- endfor %}

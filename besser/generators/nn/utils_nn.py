@@ -708,7 +708,7 @@ def _initialize_layer_variables(layer, modules_details, inputs_outputs=None):
         prev_out_var = get_previous_out_var(modules_details, prev_module, inputs_outputs)
         return get_layer_vars(layer, prev_out_var, modules_details, inputs_outputs), prev_module
 
-    return initialize_layer_vars(layer), None
+    return initialize_layer_vars(layer, inputs_outputs), None
 
 
 def _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn):

@@ -1466,24 +1466,32 @@ class Permute(nn.Module):
 
 def renumber_tensorop_variables(modules_details):
     """
-    Renumber op_X variables sequentially to avoid gaps when some operations
+    Renumber op_X and temp variables sequentially to avoid gaps when some operations
     use their original variable names from the source code.
-    
+
     This function:
     1. Finds all tensorop entries that use op_X naming (not original names)
-    2. Creates a mapping from old op_X names to new sequential op_1, op_2, op_3...
-    3. Updates all references in modules_details (syntax, input/output vars)
-    
+    2. Creates a mapping from old op_X names to new sequential _op_1, _op_2, _op_3...
+    3. Finds all temp variables (_binop_temp_X, _nested_temp_X, _subscript_temp_X)
+    4. Renumbers them sequentially within their prefix category
+    5. Updates all references in modules_details (syntax, input/output vars)
+
     Args:
         modules_details (dict): The modules details dictionary to update in-place
     """
     import re
-    
+
     print("[DEBUG renumber_tensorop_variables] Starting renumbering...")
-    
+
     # Step 1: Collect all op_X names that are actually used in output variables
     op_names_in_use = set()
-    
+    # Also collect temp variables by prefix type
+    temp_vars_by_prefix = {
+        '_binop_temp_': set(),
+        '_nested_temp_': set(),
+        '_subscript_temp_': set(),
+    }
+
     for module_name, module_data in modules_details.items():
         if module_name.endswith("_op"):
             # module_data format: [syntax, out_var, tensorop_obj]
@@ -1491,16 +1499,26 @@ def renumber_tensorop_variables(modules_details):
             # Check if output variable is op_X (not an original variable name)
             if isinstance(out_var, str) and re.match(r'^op_\d+$', out_var):
                 op_names_in_use.add(out_var)
+            # Check for temp variables
+            elif isinstance(out_var, str):
+                for prefix in temp_vars_by_prefix.keys():
+                    if re.match(rf'^{re.escape(prefix)}\d+$', out_var):
+                        temp_vars_by_prefix[prefix].add(out_var)
+                        break
             # Also check for tuple outputs like "op_5_0, op_5_1, op_5_2"
-            elif isinstance(out_var, str) and ', ' in out_var:
+            if isinstance(out_var, str) and ', ' in out_var:
                 for var in out_var.split(', '):
-                    if re.match(r'^op_\d+(_\d+)?$', var.strip()):
-                        op_names_in_use.add(var.strip())
-    
+                    var = var.strip()
+                    if re.match(r'^op_\d+(_\d+)?$', var):
+                        op_names_in_use.add(var)
+
     print(f"[DEBUG renumber_tensorop_variables] Found {len(op_names_in_use)} op_X variables in use: {sorted(op_names_in_use)}")
-    
-    if not op_names_in_use:
-        print("[DEBUG renumber_tensorop_variables] No op_X variables to renumber")
+    for prefix, vars_set in temp_vars_by_prefix.items():
+        if vars_set:
+            print(f"[DEBUG renumber_tensorop_variables] Found {len(vars_set)} {prefix}X variables: {sorted(vars_set)}")
+
+    if not op_names_in_use and not any(temp_vars_by_prefix.values()):
+        print("[DEBUG renumber_tensorop_variables] No op_X or temp variables to renumber")
         return
     
     # Step 2: Sort by original number and create sequential mapping
@@ -1535,8 +1553,29 @@ def renumber_tensorop_variables(modules_details):
             else:  # op_7 -> _op_1
                 old_to_new[old_name] = f"_op_{current_counter}"
     
-    print(f"[DEBUG renumber_tensorop_variables] Mapping: {old_to_new}")
-    
+    print(f"[DEBUG renumber_tensorop_variables] op_X mapping: {old_to_new}")
+
+    # Step 2b: Renumber temp variables (_binop_temp_X, _nested_temp_X, _subscript_temp_X)
+    for prefix, vars_set in temp_vars_by_prefix.items():
+        if not vars_set:
+            continue
+
+        # Sort by number
+        def get_temp_num(temp_name):
+            match = re.match(rf'^{re.escape(prefix)}(\d+)$', temp_name)
+            return int(match.group(1)) if match else 0
+
+        sorted_temp_names = sorted(vars_set, key=get_temp_num)
+
+        # Create sequential mapping: _binop_temp_7 -> _binop_temp_1, etc.
+        temp_counter = 1
+        for old_temp_name in sorted_temp_names:
+            new_temp_name = f"{prefix}{temp_counter}"
+            old_to_new[old_temp_name] = new_temp_name
+            temp_counter += 1
+
+        print(f"[DEBUG renumber_tensorop_variables] {prefix}X mapping: {dict((k, v) for k, v in old_to_new.items() if k.startswith(prefix))}")
+
     # Step 3: Update all references in modules_details
     for module_name, module_data in modules_details.items():
         if module_name.endswith("_op"):

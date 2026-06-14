@@ -845,14 +845,18 @@ def _remap_subscript_for_conv(tensorop, modules_details, subscript_pattern):
     return subscript_pattern
 
 
-def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs=None):
     """Handle subscript tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
+    # Check inputs_outputs to get the actual source variable from original code
+    if inputs_outputs and tensorop.name in inputs_outputs:
+        source_var = inputs_outputs[tensorop.name][0]
+    else:
+        # Fallback: use prev_out_var or in_var
+        source_var = in_var if in_var is not None else prev_out_var
 
     subscript_pattern = tensorop.subscript_indices
     subscript_pattern = _remap_subscript_for_conv(tensorop, modules_details, subscript_pattern)
-    return f"{prev_out_var}{subscript_pattern}"
+    return f"{source_var}{subscript_pattern}"
 
 
 def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs=None):
@@ -950,8 +954,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     # Dispatch to appropriate handler
     handler = _TENSOROP_SYNTAX_HANDLERS.get(tns_type, _handle_default_syntax)
-    # Pass inputs_outputs to shape_dim handler so it can use the correct source variable
-    if tns_type == "shape_dim":
+    # Pass inputs_outputs to shape_dim and subscript handlers so they can use the correct source variable
+    if tns_type in ("shape_dim", "subscript"):
         return handler(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs)
     return handler(tensorop, modules_details, in_var, prev_out_var, params)
 

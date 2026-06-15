@@ -1327,12 +1327,10 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
     """
     ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var, inputs_outputs)
 
-    # If inputs_outputs has the actual output variable from original code, use it for ALL tensorop types
-    # This preserves original variable names (e.g., x = tf.add(x, y) uses 'x', not 'op_1')
-    if out_var is None and inputs_outputs and tensorop.name in inputs_outputs:
+    # Check inputs_outputs first: if it has the output variable from original code, use it
+    if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
         out_var = inputs_outputs[tensorop.name][1]
-
-    if out_var is None:
+    elif out_var is None:
         # For shape_dim TensorOps, use the TensorOp name as the output variable
         # (e.g., 'b' for extracting batch size, 't' for sequence length)
         if tensorop.tns_type == "shape_dim":
@@ -1365,8 +1363,12 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
 
     # If the tensorop syntax is SKIP:variable, extract the actual variable name
     # This ensures downstream layers can correctly reference the skipped operation
+    # BUT: don't override if we already have the user's variable name from inputs_outputs
     if isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:"):
-        out_var = ts_op_synt[5:]  # Extract variable after "SKIP:"
+        skip_var = ts_op_synt[5:]  # Extract variable after "SKIP:"
+        # Only use SKIP variable if we don't have a better name from inputs_outputs
+        if not (inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None):
+            out_var = skip_var
 
     # Special handling for split: generate tuple unpacking with indexed variable names
     if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
@@ -1391,6 +1393,19 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
                         out_var=in_var, channel_last=False)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
+
+    # When a tensorop is SKIP and has a user variable name, update the source layer's output variable
+    if isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:"):
+        if (inputs_outputs and tensorop.name in inputs_outputs and
+            inputs_outputs[tensorop.name][1] is not None and out_var != ts_op_synt[5:]):
+            # We have a user variable name (out_var) that differs from the intermediate var (SKIP:X)
+            # Find the source layer and update its output variable
+            if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+                source_layer_name = tensorop.layers_of_tensors[0]
+                layer_key = source_layer_name + "_layer"
+                if layer_key in modules_details:
+                    # Update the layer's output variable to use the final user variable name
+                    modules_details[layer_key][1] = out_var
 
     # Add output permute for spatial tensorops if needed
     if hasattr(tensorop, 'permute_out') and tensorop.permute_out and tensorop.tns_type in ("interpolate", "pad"):

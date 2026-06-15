@@ -17,12 +17,7 @@
 
 {%- macro get_hidden_state_var(hx_source, modules_details) -%}
     {%- if (hx_source + '_op') in modules_details -%}
-        {%- set op_syntax = modules_details[hx_source + '_op'][0] -%}
-        {%- if op_syntax.startswith('SKIP:') -%}
-            {{- op_syntax[5:] -}}
-        {%- else -%}
-            {{- modules_details[hx_source + '_op'][1] -}}
-        {%- endif -%}
+        {{- modules_details[hx_source + '_op'][1] -}}
     {%- else -%}
         {{- modules_details[hx_source + '_layer'][4] -}}
     {%- endif -%}

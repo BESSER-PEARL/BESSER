@@ -592,6 +592,9 @@ def initialize_layer_vars(layer: Layer, inputs_outputs: dict | None = None):
     if inputs_outputs and layer.name in inputs_outputs:
         out_var_layer = inputs_outputs[layer.name][1]
         in_var_layer = inputs_outputs[layer.name][0] if inputs_outputs[layer.name][0] else "x"
+        # BUGFIX: Set activation variables when layer has activation function
+        if layer.actv_func is not None:
+            out_var_actv, in_var_actv = out_var_layer, out_var_layer
     elif layer.input_reused is True:
         out_var_layer, in_var_layer = "x_1", "x"
         if layer.actv_func is not None:

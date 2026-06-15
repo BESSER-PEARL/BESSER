@@ -644,8 +644,9 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
     elif parent_class == "GeneralLayer":
         layer_synt = setup.setup_general_layer()
     elif cls_name == "GeneralLayer":
-        # Standalone activation layer created from functional API
+        # Standalone activation layer - don't call setup_actv_func since the layer itself IS the activation
         layer_synt = setup.setup_standalone_activation(out_var, in_var)
+        actv_func_synt = False
     else: #(parent_class == "LayerModifier" or
            #parent_class == "NormalizationLayer")
         layer_synt = setup.setup_layer_modifier()

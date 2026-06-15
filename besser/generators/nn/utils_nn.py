@@ -901,7 +901,9 @@ def _resolve_source_layer_var(source_layer, modules_details, inputs_outputs=None
             layer_obj = layer_details[3] if len(layer_details) > 3 else None
             if layer_obj and hasattr(layer_obj, 'return_type'):
                 if layer_obj.return_type == "hidden":
-                    # For return_type="hidden", hidden is the main output (index 1)
+                    # For return_type="hidden", hidden variable is at index 4
+                    if len(layer_details) > 4:
+                        return layer_details[4]
                     return layer_details[1]
                 elif layer_obj.return_type in ("both", "full") and len(layer_details) > 4:
                     # For return_type="both", hidden is at index 4

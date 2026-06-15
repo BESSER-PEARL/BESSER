@@ -778,8 +778,8 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
 
         # Store hidden_var and cell_var (if LSTM) in module_details
         if cell_var is not None:
-            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                      in_layer, layer, hidden_var, cell_var]
+            modules_details[unique_key] = [layer_synt, out_layer,
+                                          in_layer, layer, hidden_var, cell_var]
         else:
             modules_details[unique_key] = [layer_synt, out_layer,
                                           in_layer, layer, hidden_var]

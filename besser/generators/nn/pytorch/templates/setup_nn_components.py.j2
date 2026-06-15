@@ -144,9 +144,9 @@ import torch.nn.functional as F
                     {%- endif %}
                 {%- endif -%}
             {%- elif module_details[3].return_type == "full" %}
-        {{ module_details[1] }}, _ = self.{{ module_details[3].name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][1] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][1] }}_cell.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][1] }}.unsqueeze(0){% endif %}{% endif %})
+        {{ module_details[1] }}, _ = self.{{ module_details[3].name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %})
             {%- else %}
-        {{ module_details[1] }}, _ = self.{{ module_details[3].name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][1] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][1] }}_cell.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][1] }}.unsqueeze(0){% endif %}{% endif %})
+        {{ module_details[1] }}, _ = self.{{ module_details[3].name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %})
         {{ module_details[1] }} = {{ module_details[1] }}[:, -1, :]
             {%- endif -%}
 

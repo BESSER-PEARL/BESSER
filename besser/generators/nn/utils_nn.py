@@ -137,6 +137,11 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
                 return layer_details[1]
         elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
             base_module = lyr_input[:-8]  # Remove "__hidden"
+            # Check if there's a subscript operation that created a different output variable
+            # For example: x = h[-1] creates rnn_layer_1__hidden entry with output var 'x'
+            if inputs_outputs and lyr_input in inputs_outputs and inputs_outputs[lyr_input][1]:
+                # Use the variable from the subscript operation (e.g., 'x' from 'x = h[-1]')
+                return inputs_outputs[lyr_input][1]
             if f"{base_module}_layer" in modules_names:
                 layer_details = modules_details[f"{base_module}_layer"]
                 if len(layer_details) > 4:

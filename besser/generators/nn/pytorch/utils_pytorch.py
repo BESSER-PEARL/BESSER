@@ -51,7 +51,8 @@ class SetupLayerSyntax:
         if cls_name == "LinearLayer":
             in_f = self.layer.in_features
             out_f = self.layer.out_features
-            lyr = f"{lyr}.Linear(in_features={in_f}, out_features={out_f})"
+            bias = self.layer.bias
+            lyr = f"{lyr}.Linear(in_features={in_f}, out_features={out_f}, bias={bias})"
         elif cls_name == "FlattenLayer":
             st_dim = self.layer.start_dim
             en_dim = self.layer.end_dim

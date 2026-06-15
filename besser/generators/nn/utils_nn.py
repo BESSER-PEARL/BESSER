@@ -737,6 +737,15 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
 
     print(f"[DEBUG _store_layer] layer.name={layer.name}, out_layer={out_layer}, in_layer={in_layer}")
 
+    # Generate unique key for layer reuse - if the same layer is used multiple times,
+    # each usage gets a unique key in modules_details
+    base_key = layer.name + "_layer"
+    unique_key = base_key
+    use_counter = 1
+    while unique_key in modules_details:
+        unique_key = f"{base_key}_use_{use_counter}"
+        use_counter += 1
+
     if hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden"):
         # Check if there's a stored concat variable name for bidirectional RNNs
         concat_var_names = getattr(model, 'bidirectional_concat_var_names', {}) if model else {}
@@ -772,11 +781,11 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
             modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
                                                       in_layer, layer, hidden_var, cell_var]
         else:
-            modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                      in_layer, layer, hidden_var]
+            modules_details[unique_key] = [layer_synt, out_layer,
+                                          in_layer, layer, hidden_var]
     else:
-        modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
-                                                  in_layer, layer]
+        modules_details[unique_key] = [layer_synt, out_layer,
+                                       in_layer, layer]
 
 
 def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq, is_subnn):

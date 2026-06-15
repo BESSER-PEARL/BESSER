@@ -1364,6 +1364,12 @@ class BatchNormLayer(NormalizationLayer):
             input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input
             data to be normalized using batch normalization.
+        permute_in (bool): Whether the dimensions of the input need
+            to be permuted. Relevant for PyTorch. It is used to make
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need
+            to be permuted. Relevant for PyTorch. It is used to make
+            PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
@@ -1378,6 +1384,12 @@ class BatchNormLayer(NormalizationLayer):
             input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input
             data to be normalized using batch normalization.
+        permute_in (bool): Whether the dimensions of the input need
+            to be permuted. Relevant for PyTorch. It is used to make
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need
+            to be permuted. Relevant for PyTorch. It is used to make
+            PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -1386,12 +1398,15 @@ class BatchNormLayer(NormalizationLayer):
     def __init__(self, name: str, num_features: int, dimension: str,
                  eps: float = 1e-5, momentum: float = 0.1, affine: bool = True,
                  track_running_stats: bool = True, actv_func: str = None,
+                 permute_in: bool = None, permute_out: bool = None,
                  name_module_input: str = None, input_reused: bool = False):
         super().__init__(name, eps, affine, actv_func, name_module_input, input_reused)
         self.num_features: int = num_features
         self.dimension: str = dimension
         self.momentum: float = momentum
         self.track_running_stats: bool = track_running_stats
+        self.permute_in: bool = permute_in
+        self.permute_out: bool = permute_out
 
     @property
     def num_features(self) -> int:
@@ -1444,11 +1459,31 @@ class BatchNormLayer(NormalizationLayer):
         """bool: Set whether to track running mean/variance."""
         self.__track_running_stats = track_running_stats
 
+    @property
+    def permute_in(self) -> bool:
+        """bool: Get whether to permute the input dimensions."""
+        return self.__permute_in
+
+    @permute_in.setter
+    def permute_in(self, permute_in: bool):
+        """bool: Set whether to permute the input dimensions."""
+        self.__permute_in = permute_in
+
+    @property
+    def permute_out(self) -> bool:
+        """bool: Get whether to permute the output dimensions."""
+        return self.__permute_out
+
+    @permute_out.setter
+    def permute_out(self, permute_out: bool):
+        """bool: Set whether to permute the output dimensions."""
+        self.__permute_out = permute_out
+
     def __repr__(self):
         return (
-            f'BatchNormLayer({self.name}, {self.actv_func}, '
-            f'{self.num_features}, {self.dimension}, {self.eps}, '
-            f'{self.momentum}, {self.affine}, {self.track_running_stats}, '
+            f'BatchNormLayer({self.name}, {self.num_features}, {self.dimension}, '
+            f'{self.eps}, {self.momentum}, {self.affine}, {self.track_running_stats}, '
+            f'{self.actv_func}, {self.permute_in}, {self.permute_out}, '
             f'{self.name_module_input}, {self.input_reused})'
         )
 
@@ -1508,8 +1543,8 @@ class LayerNormLayer(NormalizationLayer):
 
     def __repr__(self):
         return (
-            f'LayerNormLayer({self.name}, {self.actv_func}, '
-            f'{self.normalized_shape}, {self.name_module_input}, '
+            f'LayerNormLayer({self.name}, {self.normalized_shape}, {self.eps}, '
+            f'{self.affine}, {self.actv_func}, {self.name_module_input}, '
             f'{self.input_reused})'
         )
 

@@ -98,6 +98,12 @@ class SetupLayerSyntax:
                 momentum = self.layer.momentum
                 affine = "True" if self.layer.affine else "False"
                 track_stats = "True" if self.layer.track_running_stats else "False"
+
+                # Set permute flags for TF->PyTorch channel order conversion
+                self.permute_in = self.layer.permute_in
+                self.permute_out = self.layer.permute_out
+                self.dim = dim
+
                 lyr = (
                     f"{lyr}.BatchNorm{dim}d(num_features={num_f}, eps={eps}, "
                     f"momentum={momentum}, affine={affine}, "

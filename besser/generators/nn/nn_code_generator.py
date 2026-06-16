@@ -69,6 +69,71 @@ class NNCodeGenerator(GeneratorInterface):
         self.modules_details: dict = self.get_modules_details()
 
 
+    def _detect_module_reuse(self):
+        """First pass: detect tensor value reuse (branching) by counting module usage."""
+        module_usage_count = {}
+        referenced_tensorops = set()
+
+        for module in self.model.modules:
+            if module.__class__.__name__ == "TensorOp":
+                if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
+                    for item in module.layers_of_tensors:
+                        if isinstance(item, str):
+                            module_usage_count[item] = module_usage_count.get(item, 0) + 1
+                            if item.startswith("op_"):
+                                referenced_tensorops.add(item)
+
+        return module_usage_count, referenced_tensorops
+
+    def _mark_tensorops_with_reused_inputs(self, module_usage_count):
+        """Second pass: mark tensorops using multi-use inputs with input_reused=True."""
+        for module in self.model.modules:
+            if module.__class__.__name__ == "TensorOp":
+                if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
+                    for input_module in module.layers_of_tensors:
+                        if (isinstance(input_module, str) and
+                                module_usage_count.get(input_module, 0) > 1):
+                            if (not hasattr(module, 'input_reused') or
+                                    not module.input_reused):
+                                module.input_reused = True
+                            break
+
+    def _process_module(self, module, modules_details, actv_func, is_seq, counter_subnn, referenced_tensorops):
+        """Process a single module (NN, Layer, or TensorOp) and update modules_details."""
+        module_type = module.__class__.__name__
+
+        if module_type == "NN":
+            subnn_details = {}
+            for sub_nn_layer in module.layers:
+                handle_layer(
+                    sub_nn_layer, self.setup_layer, subnn_details,
+                    self.channel_last, actv_func, is_seq, is_subnn=True, model=self.model
+                )
+            name_sub_nn = f"{module.name}_{counter_subnn}_nn"
+            modules_details[name_sub_nn] = subnn_details
+            add_in_out_var_to_subnn(modules_details)
+            return counter_subnn + 1
+
+        elif module_type != "TensorOp":
+            handle_layer(
+                module, self.setup_layer, modules_details,
+                self.channel_last, actv_func, is_seq, is_subnn=False, model=self.model
+            )
+            if getattr(module, 'inline_only', False):
+                layer_key = f"{module.name}_layer"
+                if layer_key in modules_details:
+                    modules_details[layer_key].append('INLINE_ONLY')
+            return counter_subnn
+
+        else:
+            handle_tensorop(
+                module, modules_details, self.get_tensorop_syntax,
+                referenced_tensorops=referenced_tensorops,
+                inputs_outputs=self.model.inputs_outputs,
+                channel_last=self.channel_last
+            )
+            return counter_subnn
+
     def get_modules_details(self) -> str:
         """
         A module can be a layer, a sub_nn or a tensorop.
@@ -89,86 +154,22 @@ class NNCodeGenerator(GeneratorInterface):
         For the case of layers, an additional element is added to
         the list, representing the layer object.
         """
-        counter_subnn: int = 0
         modules_details: dict = {}
-        if "torch" in self.template_name:
-            actv_func = True
-        else:
-            actv_func = False
+        actv_func = "torch" in self.template_name
+        is_seq = self.generation_type == "sequential"
 
-        is_seq = False
-        if self.generation_type == "sequential":
-            is_seq = True
+        module_usage_count, referenced_tensorops = self._detect_module_reuse()
+        self._mark_tensorops_with_reused_inputs(module_usage_count)
 
-        # First pass: detect tensor value reuse (branching) by counting
-        # how many times each module's output is used as input to
-        # subsequent operations. When a module output is used by multiple
-        # operations, mark those operations with input_reused=True so they
-        # create new variables instead of reassigning.
-        module_usage_count = {}
-        referenced_tensorops = set()
-
+        counter_subnn = 0
         for module in self.model.modules:
-            if module.__class__.__name__ == "TensorOp":
-                if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
-                    for item in module.layers_of_tensors:
-                        if isinstance(item, str):
-                            module_usage_count[item] = module_usage_count.get(item, 0) + 1
-                            if item.startswith("op_"):
-                                referenced_tensorops.add(item)
+            counter_subnn = self._process_module(
+                module, modules_details, actv_func, is_seq, counter_subnn, referenced_tensorops
+            )
 
-        # Second pass: mark tensorops that use multi-use inputs with
-        # input_reused=True. This ensures operations that use a branching
-        # input create new variables
-        for module in self.model.modules:
-            if module.__class__.__name__ == "TensorOp":
-                if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
-                    # Check if this tensorop uses a module whose output
-                    # is used multiple times
-                    for input_module in module.layers_of_tensors:
-                        if (isinstance(input_module, str) and
-                                module_usage_count.get(input_module, 0) > 1):
-                            # This tensorop uses a multi-use input
-                            if (not hasattr(module, 'input_reused') or
-                                    not module.input_reused):
-                                module.input_reused = True
-                            break
-
-        # Third pass: process modules and generate code
-        for module in self.model.modules:
-            module_type = module.__class__.__name__
-            if module_type == "NN":
-                subnn_details = {}
-                for sub_nn_layer in module.layers:
-                    handle_layer(
-                        sub_nn_layer, self.setup_layer, subnn_details,
-                        self.channel_last, actv_func, is_seq, is_subnn=True, model=self.model
-                    )
-                name_sub_nn = f"{module.name}_{counter_subnn}_nn"
-                modules_details[name_sub_nn] = subnn_details
-                counter_subnn += 1
-                add_in_out_var_to_subnn(modules_details)
-            elif module_type != "TensorOp":
-                handle_layer(
-                    module, self.setup_layer, modules_details,
-                    self.channel_last, actv_func, is_seq, is_subnn=False, model=self.model
-                )
-                # Mark inline_only layers in modules_details so template can skip them in forward
-                if getattr(module, 'inline_only', False):
-                    layer_key = f"{module.name}_layer"
-                    if layer_key in modules_details:
-                        modules_details[layer_key].append('INLINE_ONLY')
-            else:
-                handle_tensorop(
-                    module, modules_details, self.get_tensorop_syntax,
-                    referenced_tensorops=referenced_tensorops,
-                    inputs_outputs=self.model.inputs_outputs,
-                    channel_last=self.channel_last
-                )
         if actv_func:
             adjust_actv_func_name(modules_details)
 
-        # Renumber op_X variables sequentially to avoid gaps
         renumber_tensorop_variables(modules_details)
 
         return modules_details

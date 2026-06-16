@@ -55,6 +55,73 @@ def get_previous_out_var(modules_details: dict, prev_module: str, inputs_outputs
                     return inputs_outputs[hidden_key][1]
         return module_data[1]
 
+def _get_bidirectional_concat_var(lyr_input, modules_details):
+    """Get bidirectional concat variable from layer input marker."""
+    base_module = lyr_input.replace("bidirectional_concat_", "")
+    modules_names = list(modules_details.keys())
+    if f"{base_module}_layer" in modules_names:
+        layer_details = modules_details[f"{base_module}_layer"]
+        if len(layer_details) > 4 and layer_details[4]:
+            return layer_details[4]
+        return layer_details[1]
+    return None
+
+
+def _get_split_output_var(lyr_input, modules_details):
+    """Get specific split output variable from split tensorop."""
+    base_op, idx_str = lyr_input.rsplit("__split_", 1)
+    idx = int(idx_str)
+    modules_names = list(modules_details.keys())
+    if f"{base_op}_op" in modules_names:
+        op_details = modules_details[f"{base_op}_op"]
+        var_list = [v.strip() for v in op_details[1].split(',')]
+        if idx < len(var_list):
+            return var_list[idx]
+    return None
+
+
+def _get_rnn_state_component_var(lyr_input, suffix_len, index, modules_details, is_cell=False):
+    """Get RNN hidden or cell state component for bidirectional RNNs."""
+    base_module = lyr_input[:-suffix_len]
+    modules_names = list(modules_details.keys())
+    if f"{base_module}_layer" in modules_names:
+        layer_details = modules_details[f"{base_module}_layer"]
+        if len(layer_details) > 4:
+            hidden_var = layer_details[4]
+            if is_cell:
+                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+                return f"{cell_var}[{index}]"
+            return f"{hidden_var}[{index}]"
+        return layer_details[1]
+    return None
+
+
+def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inputs_outputs):
+    """Get output variable from regular module reference (_layer, _nn, _activ, _op)."""
+    modules_names = list(modules_details.keys())
+
+    if f"{lyr_input}_layer" in modules_details:
+        layer_details = modules_details[f"{lyr_input}_layer"]
+        if (len(layer_details) > 4 and hasattr(layer_details[3], 'return_type') and
+            layer_details[3].return_type == "hidden"):
+            if (inputs_outputs and f"{lyr_input}__hidden" in inputs_outputs and
+                prev_out_var == inputs_outputs[f"{lyr_input}__hidden"][1]):
+                return prev_out_var
+        if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
+            if len(layer_details) > 4:
+                return layer_details[4]
+        return layer_details[1]
+
+    if f"{lyr_input}_nn" in modules_names:
+        return modules_details[f"{lyr_input}_nn"]["in_out_variable"]
+    if f"{lyr_input}_activ" in modules_names:
+        return modules_details[f"{lyr_input}_activ"][1]
+    if f"{lyr_input}_op" in modules_names:
+        return modules_details[f"{lyr_input}_op"][1]
+
+    return None
+
+
 def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs_outputs: dict = None):
     """
     It determines the input variable of the current layer. It is either
@@ -72,115 +139,65 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
     Returns:
         The input variable.
     """
-    modules_names = list(modules_details.keys())
     lyr_input = layer.name_module_input
-    # Handle None and False (False means input not reused) - use previous output
-    if lyr_input is not None and lyr_input is not False:
-        # Special case: INPUT marker for network input
-        # Return 'x' (the original input variable)
-        if lyr_input == 'INPUT':
-            return 'x'
-        # Handle bidirectional concat marker (from torch2tf bidirectional RNN migration)
-        if isinstance(lyr_input, str) and lyr_input.startswith("bidirectional_concat_"):
-            base_module = lyr_input.replace("bidirectional_concat_", "")
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                # The concat variable name is now stored in index 4 for all bidirectional RNNs
-                if len(layer_details) > 4 and layer_details[4]:
-                    return layer_details[4]  # Concat variable (e.g., "gru_concat")
-                # Fallback: return output variable
-                return layer_details[1]
-        # Check for split tensorop output suffixes
-        if isinstance(lyr_input, str) and "__split_" in lyr_input:
-            # e.g., "op_1__split_0" -> get specific split output variable
-            base_op, idx_str = lyr_input.rsplit("__split_", 1)
-            idx = int(idx_str)
-            if f"{base_op}_op" in modules_names:
-                op_details = modules_details[f"{base_op}_op"]
-                # op_details[1] is the tuple like "x_2_0, x_2_1, x_2_2"
-                var_list = [v.strip() for v in op_details[1].split(',')]
-                if idx < len(var_list):
-                    return var_list[idx]
-        # Check for RNN hidden/cell state suffixes before checking layer names
-        elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden_forward"):
-            base_module = lyr_input[:-16]  # Remove "__hidden_forward"
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                if len(layer_details) > 4:
-                    # For bidirectional, extract forward component: hidden[-2]
-                    return f"{layer_details[4]}[-2]"
-                return layer_details[1]
-        elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden_backward"):
-            base_module = lyr_input[:-17]  # Remove "__hidden_backward"
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                if len(layer_details) > 4:
-                    # For bidirectional, extract backward component: hidden[-1]
-                    return f"{layer_details[4]}[-1]"
-                    return f"{layer_details[4]}[-1]"
-                return layer_details[1]
-        elif isinstance(lyr_input, str) and lyr_input.endswith("__cell_forward"):
-            base_module = lyr_input[:-14]  # Remove "__cell_forward"
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                if len(layer_details) > 4:
-                    # For bidirectional LSTM, extract forward cell: cell[-2]
-                    return f"{layer_details[4]}_cell[-2]" if "_cell" not in layer_details[4] else f"{layer_details[4]}[-2]"
-                return layer_details[1]
-        elif isinstance(lyr_input, str) and lyr_input.endswith("__cell_backward"):
-            base_module = lyr_input[:-15]  # Remove "__cell_backward"
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                if len(layer_details) > 4:
-                    # For bidirectional LSTM, extract backward cell: cell[-1]
-                    return f"{layer_details[4]}_cell[-1]" if "_cell" not in layer_details[4] else f"{layer_details[4]}[-1]"
-                return layer_details[1]
-        elif isinstance(lyr_input, str) and lyr_input.endswith("__hidden"):
-            base_module = lyr_input[:-8]  # Remove "__hidden"
-            # Check if there's a subscript operation that created a different output variable
-            # For example: x = h[-1] creates rnn_layer_1__hidden entry with output var 'x'
-            if inputs_outputs and lyr_input in inputs_outputs and inputs_outputs[lyr_input][1]:
-                # Use the variable from the subscript operation (e.g., 'x' from 'x = h[-1]')
-                return inputs_outputs[lyr_input][1]
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                if len(layer_details) > 4:
-                    return layer_details[4]  # Hidden variable
-                return layer_details[1]  # Fallback
-        elif isinstance(lyr_input, str) and lyr_input.endswith("__cell"):
-            base_module = lyr_input[:-6]  # Remove "__cell"
-            if f"{base_module}_layer" in modules_names:
-                layer_details = modules_details[f"{base_module}_layer"]
-                if len(layer_details) > 4:
-                    return layer_details[4]  # For now use hidden (cell state needs separate tracking)
-                return layer_details[1]
-        elif f"{lyr_input}_layer" in modules_details:
-            layer_details = modules_details[f"{lyr_input}_layer"]
-            # Check if this is an RNN with return_type="hidden" that had a subscript creating different var
-            # Example: x = h[-1] where h is the hidden state, x is the subscript result
-            if (len(layer_details) > 4 and hasattr(layer_details[3], 'return_type') and
-                layer_details[3].return_type == "hidden"):
-                # Check if prev_out_var matches the subscript output from inputs_outputs
-                if (inputs_outputs and f"{lyr_input}__hidden" in inputs_outputs and
-                    prev_out_var == inputs_outputs[f"{lyr_input}__hidden"][1]):
-                    # Use prev_out_var which is the subscript result variable
-                    return prev_out_var
-            # Check if this layer should use RNN hidden state instead of sequence output
-            if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
-                # Return hidden state variable (index 4) instead of sequence output (index 1)
-                if len(layer_details) > 4:
-                    return layer_details[4]
-            return layer_details[1]
-        if f"{lyr_input}_nn" in modules_names:
-            return  modules_details[f"{lyr_input}_nn"]["in_out_variable"]
-        if f"{lyr_input}_activ" in modules_names:
-            return modules_details[f"{lyr_input}_activ"][1]
-        #module.name_module_input+"_op" in my_keys
-        if f"{lyr_input}_op" in modules_names:
-            return modules_details[f"{lyr_input}_op"][1]
-        # Fallback: TensorOp not processed yet, use prev_out_var
-        # This can happen when layers reference TensorOps in parallel operations
+    if lyr_input is None or lyr_input is False:
         return prev_out_var
+
+    if lyr_input == 'INPUT':
+        return 'x'
+
+    if not isinstance(lyr_input, str):
+        return prev_out_var
+
+    if lyr_input.startswith("bidirectional_concat_"):
+        result = _get_bidirectional_concat_var(lyr_input, modules_details)
+        if result:
+            return result
+
+    if "__split_" in lyr_input:
+        result = _get_split_output_var(lyr_input, modules_details)
+        if result:
+            return result
+
+    if lyr_input.endswith("__hidden_forward"):
+        result = _get_rnn_state_component_var(lyr_input, 16, -2, modules_details)
+        if result:
+            return result
+    elif lyr_input.endswith("__hidden_backward"):
+        result = _get_rnn_state_component_var(lyr_input, 17, -1, modules_details)
+        if result:
+            return result
+    elif lyr_input.endswith("__cell_forward"):
+        result = _get_rnn_state_component_var(lyr_input, 14, -2, modules_details, is_cell=True)
+        if result:
+            return result
+    elif lyr_input.endswith("__cell_backward"):
+        result = _get_rnn_state_component_var(lyr_input, 15, -1, modules_details, is_cell=True)
+        if result:
+            return result
+    elif lyr_input.endswith("__hidden"):
+        base_module = lyr_input[:-8]
+        if inputs_outputs and lyr_input in inputs_outputs and inputs_outputs[lyr_input][1]:
+            return inputs_outputs[lyr_input][1]
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return layer_details[4]
+            return layer_details[1]
+    elif lyr_input.endswith("__cell"):
+        base_module = lyr_input[:-6]
+        modules_names = list(modules_details.keys())
+        if f"{base_module}_layer" in modules_names:
+            layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 4:
+                return layer_details[4]
+            return layer_details[1]
+
+    result = _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inputs_outputs)
+    if result:
+        return result
+
     return prev_out_var
 
 def add_in_out_var_to_subnn(modules_details: dict):
@@ -482,6 +499,31 @@ def initialize_tensorop_var(tensorop: TensorOp):
     return out_var
 
 
+def _collect_used_x_numbers(modules_details):
+    """Collect all used x_N variable numbers from modules_details."""
+    used_nums = set()
+    for module_details in modules_details.values():
+        if isinstance(module_details, list):
+            for idx in [1, 2]:  # Check both output (1) and input (2) variables
+                if len(module_details) > idx:
+                    var = module_details[idx]
+                    if isinstance(var, str) and var.startswith('x_'):
+                        try:
+                            num = int(var.split('_')[1])
+                            used_nums.add(num)
+                        except (ValueError, IndexError):
+                            pass
+    return used_nums
+
+
+def _find_next_available_x_number(used_nums):
+    """Find the first available x_N number."""
+    num = 1
+    while num in used_nums:
+        num += 1
+    return num
+
+
 def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
     """
     It sets the output variable of the module in the case the output
@@ -496,45 +538,19 @@ def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
 
     """
     if prev_out_var == "x":
-        out_var = "x_1"
-    else:
-        # Find the next available x_N by scanning existing variables
-        if modules_details:
-            used_nums = set()
-            for module_details in modules_details.values():
-                if isinstance(module_details, list) and len(module_details) > 1:
-                    var = module_details[1]  # Output variable
-                    if isinstance(var, str) and var.startswith('x_'):
-                        try:
-                            num = int(var.split('_')[1])
-                            used_nums.add(num)
-                        except (ValueError, IndexError):
-                            pass
-            # Also check input variables (module_details[2]) for nested/reused vars
-            for module_details in modules_details.values():
-                if isinstance(module_details, list) and len(module_details) > 2:
-                    var = module_details[2]  # Input variable
-                    if isinstance(var, str) and var.startswith('x_'):
-                        try:
-                            num = int(var.split('_')[1])
-                            used_nums.add(num)
-                        except (ValueError, IndexError):
-                            pass
+        return "x_1"
 
-            # Find the first available number starting from 1
-            num = 1
-            while num in used_nums:
-                num += 1
-            out_var = f"x_{num}"
-        else:
-            # Fallback: try to extract number from prev_out_var
-            parts = prev_out_var.split('_')
-            try:
-                num = int(parts[-1])
-                out_var = f"x_{num + 1}"
-            except ValueError:
-                out_var = "x_1"
-    return out_var
+    if modules_details:
+        used_nums = _collect_used_x_numbers(modules_details)
+        num = _find_next_available_x_number(used_nums)
+        return f"x_{num}"
+
+    parts = prev_out_var.split('_')
+    try:
+        num = int(parts[-1])
+        return f"x_{num + 1}"
+    except ValueError:
+        return "x_1"
 
 
 def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict, inputs_outputs: dict | None = None):
@@ -730,62 +746,64 @@ def _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, i
         )
 
 
-def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details, model=None):
-    """Store layer syntax and variables in modules_details."""
-    if layer_synt is None:
-        return
-
-    print(f"[DEBUG _store_layer] layer.name={layer.name}, out_layer={out_layer}, in_layer={in_layer}")
-
-    # Generate unique key for layer reuse - if the same layer is used multiple times,
-    # each usage gets a unique key in modules_details
-    base_key = layer.name + "_layer"
+def _get_unique_layer_key(layer_name, modules_details):
+    """Generate unique key for layer reuse."""
+    base_key = layer_name + "_layer"
     unique_key = base_key
     use_counter = 1
     while unique_key in modules_details:
         unique_key = f"{base_key}_use_{use_counter}"
         use_counter += 1
+    return unique_key
+
+
+def _get_rnn_hidden_var_name(layer, out_layer, model):
+    """Get RNN hidden state variable name from model or generate default."""
+    concat_var_names = getattr(model, 'bidirectional_concat_var_names', {}) if model else {}
+    inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
+
+    if layer.name in concat_var_names:
+        return concat_var_names[layer.name]
+
+    if inputs_outputs and (layer.name + "__hidden") in inputs_outputs:
+        hidden_var = inputs_outputs[layer.name + "__hidden"][0]
+        if hidden_var is None:
+            return f"{out_layer}_h" if out_layer != "x" else "h"
+        return hidden_var
+
+    return f"{out_layer}_h" if out_layer != "x" else "h"
+
+
+def _get_lstm_cell_var_name(layer, hidden_var, model):
+    """Get LSTM cell state variable name from model or generate default."""
+    inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
+
+    if inputs_outputs and (layer.name + "__cell") in inputs_outputs:
+        cell_var = inputs_outputs[layer.name + "__cell"][0]
+        if cell_var is None or cell_var == "_":
+            return f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+        return cell_var
+
+    return f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+
+
+def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modules_details, model=None):
+    """Store layer syntax and variables in modules_details."""
+    if layer_synt is None:
+        return
+
+    unique_key = _get_unique_layer_key(layer.name, modules_details)
 
     if hasattr(layer, 'return_type') and layer.return_type in ("both", "hidden"):
-        # Check if there's a stored concat variable name for bidirectional RNNs
-        concat_var_names = getattr(model, 'bidirectional_concat_var_names', {}) if model else {}
-        inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
+        hidden_var = _get_rnn_hidden_var_name(layer, out_layer, model)
 
-        if layer.name in concat_var_names:
-            hidden_var = concat_var_names[layer.name]
-        elif inputs_outputs and (layer.name + "__hidden") in inputs_outputs:
-            # Use original hidden state variable name from tuple unpacking (first element [0])
-            # NOT the subscript result (second element [1]) to avoid name collisions
-            hidden_var = inputs_outputs[layer.name + "__hidden"][0]
-            # Safety check: if hidden_var is None or "_", handle appropriately
-            if hidden_var is None:
-                hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
-            # If hidden_var is "_", keep it as underscore (don't auto-generate)
-            # The generator will use this to preserve the underscore pattern
-        else:
-            hidden_var = f"{out_layer}_h" if out_layer != "x" else "h"
-
-        # For LSTM layers, also extract cell state variable name
-        cell_var = None
         if layer.__class__.__name__ == "LSTMLayer":
-            if inputs_outputs and (layer.name + "__cell") in inputs_outputs:
-                cell_var = inputs_outputs[layer.name + "__cell"][0]
-                # Safety check: if cell_var is None or "_", handle appropriately
-                if cell_var is None or cell_var == "_":
-                    cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-            else:
-                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-
-        # Store hidden_var and cell_var (if LSTM) in module_details
-        if cell_var is not None:
-            modules_details[unique_key] = [layer_synt, out_layer,
-                                          in_layer, layer, hidden_var, cell_var]
+            cell_var = _get_lstm_cell_var_name(layer, hidden_var, model)
+            modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer, hidden_var, cell_var]
         else:
-            modules_details[unique_key] = [layer_synt, out_layer,
-                                          in_layer, layer, hidden_var]
+            modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer, hidden_var]
     else:
-        modules_details[unique_key] = [layer_synt, out_layer,
-                                       in_layer, layer]
+        modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer]
 
 
 def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq, is_subnn):
@@ -852,110 +870,135 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 # Helper functions for get_tensorop_params (refactored for maintainability)
 # ============================================================================
 
+def _get_bidirectional_hidden_component(source_layer, suffix_len, index, modules_details):
+    """Get bidirectional RNN hidden state component (forward or backward)."""
+    base_module = source_layer[:-suffix_len]
+    modules_names = list(modules_details.keys())
+    if f"{base_module}_layer" in modules_names:
+        layer_details = modules_details[f"{base_module}_layer"]
+        if len(layer_details) > 4:
+            return f"{layer_details[4]}[{index}]"
+        return layer_details[1]
+    return None
+
+
+def _get_bidirectional_cell_component(source_layer, suffix_len, index, modules_details):
+    """Get bidirectional LSTM cell state component (forward or backward)."""
+    base_module = source_layer[:-suffix_len]
+    modules_names = list(modules_details.keys())
+    if f"{base_module}_layer" in modules_names:
+        layer_details = modules_details[f"{base_module}_layer"]
+        if len(layer_details) > 4:
+            hidden_var = layer_details[4]
+            cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
+            return f"{cell_var}[{index}]"
+        return layer_details[1]
+    return None
+
+
+def _get_rnn_hidden_output(source_layer, modules_details):
+    """Get RNN hidden state output variable based on return_type."""
+    base_module = source_layer[:-8]
+    modules_names = list(modules_details.keys())
+    if f"{base_module}_layer" in modules_names:
+        layer_details = modules_details[f"{base_module}_layer"]
+        layer_obj = layer_details[3] if len(layer_details) > 3 else None
+        if layer_obj and hasattr(layer_obj, 'return_type'):
+            if layer_obj.return_type == "hidden":
+                if len(layer_details) > 4:
+                    return layer_details[4]
+                return layer_details[1]
+            elif layer_obj.return_type in ("both", "full") and len(layer_details) > 4:
+                return layer_details[4]
+        return layer_details[1]
+    return None
+
+
+def _get_lstm_cell_output(source_layer, modules_details):
+    """Get LSTM cell state output variable."""
+    base_module = source_layer[:-6]
+    modules_names = list(modules_details.keys())
+    if f"{base_module}_layer" in modules_names:
+        layer_details = modules_details[f"{base_module}_layer"]
+        if len(layer_details) > 5:
+            return layer_details[5]
+        elif len(layer_details) > 4:
+            return f"{layer_details[4]}_cell"
+        return layer_details[1]
+    return None
+
+
+def _get_split_indexed_output(source_layer, modules_details):
+    """Get specific indexed output from split operation."""
+    base_op, idx_str = source_layer.rsplit("__split_", 1)
+    idx = int(idx_str)
+    if f"{base_op}_op" in modules_details:
+        out_var_tuple = modules_details[f"{base_op}_op"][1]
+        var_list = [v.strip() for v in out_var_tuple.split(',')]
+        if idx < len(var_list):
+            return var_list[idx]
+        return f"{base_op}_{idx}"
+    return None
+
+
+def _get_bidirectional_concat_output(source_layer, modules_details):
+    """Get bidirectional RNN concatenated output variable."""
+    base_layer = source_layer.replace("bidirectional_concat_", "")
+    layer_key = f"{base_layer}_layer"
+    if layer_key in modules_details:
+        layer_details = modules_details[layer_key]
+        if len(layer_details) > 4 and layer_details[4]:
+            return layer_details[4]
+        return layer_details[1]
+    return None
+
+
 def _resolve_source_layer_var(source_layer, modules_details, inputs_outputs=None, tensorop=None):
     """Resolve a source layer name to its output variable."""
     if source_layer == 'INPUT':
-        # Check if we have actual input variable in inputs_outputs first
         if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
             actual_input_var = inputs_outputs[tensorop.name][0]
             if actual_input_var:
-                print(f"[DEBUG _resolve_source_layer_var] Using '{actual_input_var}' from inputs_outputs")
                 return actual_input_var
-        # Fallback to 'inp' for backward compatibility
-        print(f"[DEBUG _resolve_source_layer_var] Falling back to 'inp' for INPUT")
         return 'inp'
 
-    # Handle RNN hidden/cell state suffixes before split suffixes
-    if isinstance(source_layer, str) and source_layer.endswith("__hidden_forward"):
-        base_module = source_layer[:-16]  # Remove "__hidden_forward"
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                return f"{layer_details[4]}[-2]"  # Forward component
-            return layer_details[1]
-    elif isinstance(source_layer, str) and source_layer.endswith("__hidden_backward"):
-        base_module = source_layer[:-17]  # Remove "__hidden_backward"
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                return f"{layer_details[4]}[-1]"  # Backward component
-            return layer_details[1]
-    elif isinstance(source_layer, str) and source_layer.endswith("__cell_forward"):
-        base_module = source_layer[:-14]  # Remove "__cell_forward"
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                hidden_var = layer_details[4]
-                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-                return f"{cell_var}[-2]"  # Forward component
-            return layer_details[1]
-    elif isinstance(source_layer, str) and source_layer.endswith("__cell_backward"):
-        base_module = source_layer[:-15]  # Remove "__cell_backward"
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                hidden_var = layer_details[4]
-                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-                return f"{cell_var}[-1]"  # Backward component
-            return layer_details[1]
-    elif isinstance(source_layer, str) and source_layer.endswith("__hidden"):
-        base_module = source_layer[:-8]  # Remove "__hidden"
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            # Check return_type to determine where hidden variable is
-            layer_obj = layer_details[3] if len(layer_details) > 3 else None
-            if layer_obj and hasattr(layer_obj, 'return_type'):
-                if layer_obj.return_type == "hidden":
-                    # For return_type="hidden", hidden variable is at index 4
-                    if len(layer_details) > 4:
-                        return layer_details[4]
-                    return layer_details[1]
-                elif layer_obj.return_type in ("both", "full") and len(layer_details) > 4:
-                    # For return_type="both", hidden is at index 4
-                    return layer_details[4]
-            # Fallback
-            return layer_details[1]
-    elif isinstance(source_layer, str) and source_layer.endswith("__cell"):
-        base_module = source_layer[:-6]  # Remove "__cell"
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            # If module_details[5] exists, use actual cell variable name
-            if len(layer_details) > 5:
-                return layer_details[5]  # Actual cell variable name from inputs_outputs
-            elif len(layer_details) > 4:
-                # Fallback: construct cell var name from hidden var
-                return f"{layer_details[4]}_cell"
-            return layer_details[1]  # Fallback
+    if not isinstance(source_layer, str):
+        return source_layer
 
-    # Handle split output suffixes: "op_2__split_0" -> get specific split variable
-    if isinstance(source_layer, str) and "__split_" in source_layer:
-        base_op, idx_str = source_layer.rsplit("__split_", 1)
-        idx = int(idx_str)
-        if f"{base_op}_op" in modules_details:
-            # The out_var is a tuple like "x_2_0, x_2_1, x_2_2"
-            out_var_tuple = modules_details[f"{base_op}_op"][1]
-            var_list = [v.strip() for v in out_var_tuple.split(',')]
-            if idx < len(var_list):
-                return var_list[idx]
-            # Fallback if index out of range
-            return f"{base_op}_{idx}"
+    if source_layer.endswith("__hidden_forward"):
+        result = _get_bidirectional_hidden_component(source_layer, 16, -2, modules_details)
+        if result:
+            return result
+    elif source_layer.endswith("__hidden_backward"):
+        result = _get_bidirectional_hidden_component(source_layer, 17, -1, modules_details)
+        if result:
+            return result
+    elif source_layer.endswith("__cell_forward"):
+        result = _get_bidirectional_cell_component(source_layer, 14, -2, modules_details)
+        if result:
+            return result
+    elif source_layer.endswith("__cell_backward"):
+        result = _get_bidirectional_cell_component(source_layer, 15, -1, modules_details)
+        if result:
+            return result
+    elif source_layer.endswith("__hidden"):
+        result = _get_rnn_hidden_output(source_layer, modules_details)
+        if result:
+            return result
+    elif source_layer.endswith("__cell"):
+        result = _get_lstm_cell_output(source_layer, modules_details)
+        if result:
+            return result
 
-    # Handle bidirectional concat marker
-    if isinstance(source_layer, str) and source_layer.startswith("bidirectional_concat_"):
-        base_layer = source_layer.replace("bidirectional_concat_", "")
-        layer_key = f"{base_layer}_layer"
-        if layer_key in modules_details:
-            layer_details = modules_details[layer_key]
-            # The concat variable name is now stored in index 4 for all bidirectional RNNs
-            if len(layer_details) > 4 and layer_details[4]:
-                return layer_details[4]
-            return layer_details[1]
+    if "__split_" in source_layer:
+        result = _get_split_indexed_output(source_layer, modules_details)
+        if result:
+            return result
+
+    if source_layer.startswith("bidirectional_concat_"):
+        result = _get_bidirectional_concat_output(source_layer, modules_details)
+        if result:
+            return result
 
     modules_names = list(modules_details.keys())
     for suffix in ['_layer', '_op', '_activ', '_nn']:
@@ -965,7 +1008,6 @@ def _resolve_source_layer_var(source_layer, modules_details, inputs_outputs=None
                 return modules_details[key]["in_out_variable"]
             return modules_details[key][1]
 
-    # Fallback: treat as input variable if it's 'x', otherwise use as-is
     return 'inp' if source_layer == 'x' else source_layer
 
 
@@ -989,101 +1031,50 @@ def _resolve_prev_out_var_from_module_input(
 ):
     """Resolve prev_out_var from tensorop's name_module_input or layers_of_tensors."""
     if module_input == 'INPUT':
-        # Check if we have actual input variable in inputs_outputs first
-        print(f"[DEBUG _resolve_prev_out_var] module_input=INPUT, inputs_outputs={inputs_outputs is not None}, tensorop={tensorop}, has_name={hasattr(tensorop, 'name') if tensorop else False}")
-        if tensorop and hasattr(tensorop, 'name'):
-            print(f"[DEBUG _resolve_prev_out_var] tensorop.name={tensorop.name}, in_inputs_outputs={tensorop.name in inputs_outputs if inputs_outputs else False}")
         if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
             actual_input_var = inputs_outputs[tensorop.name][0]
-            print(f"[DEBUG _resolve_prev_out_var] actual_input_var={actual_input_var}")
             if actual_input_var:
-                print(f"[DEBUG _resolve_prev_out_var] Using actual input var '{actual_input_var}' from inputs_outputs instead of 'inp'")
                 return actual_input_var
-        print(f"[DEBUG _resolve_prev_out_var] Falling back to 'inp'")
         return 'inp'
 
-    # Bidirectional RNN forward/backward hidden states
     if module_input.endswith("__hidden_forward"):
-        base_module = module_input[:-16]
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                return f"{layer_details[4]}[-2]"
-            return layer_details[1]
-        return "x"
+        result = _get_bidirectional_hidden_component(module_input, 16, -2, modules_details)
+        return result if result else "x"
 
     if module_input.endswith("__hidden_backward"):
-        base_module = module_input[:-17]
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                return f"{layer_details[4]}[-1]"
-            return layer_details[1]
-        return "x"
+        result = _get_bidirectional_hidden_component(module_input, 17, -1, modules_details)
+        return result if result else "x"
 
-    # Bidirectional LSTM forward/backward cell states
     if module_input.endswith("__cell_forward"):
-        base_module = module_input[:-14]
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                hidden_var = layer_details[4]
-                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-                return f"{cell_var}[-2]"
-            return layer_details[1]
-        return "x"
+        result = _get_bidirectional_cell_component(module_input, 14, -2, modules_details)
+        return result if result else "x"
 
     if module_input.endswith("__cell_backward"):
-        base_module = module_input[:-15]
-        modules_names = list(modules_details.keys())
-        if f"{base_module}_layer" in modules_names:
-            layer_details = modules_details[f"{base_module}_layer"]
-            if len(layer_details) > 4:
-                hidden_var = layer_details[4]
-                cell_var = f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-                return f"{cell_var}[-1]"
-            return layer_details[1]
-        return "x"
+        result = _get_bidirectional_cell_component(module_input, 15, -1, modules_details)
+        return result if result else "x"
 
-    # RNN hidden state
     if module_input.endswith("__hidden"):
         base_module = module_input[:-8]
         return _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn)
 
-    # LSTM cell state
     if module_input.endswith("__cell"):
         base_module = module_input[:-6]
         return _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn)
 
-    # Bidirectional RNN concat
     if module_input.startswith("bidirectional_concat_"):
-        base_layer = module_input.replace("bidirectional_concat_", "")
-        layer_key = f"{base_layer}_layer"
-        if layer_key in modules_details:
-            layer_details = modules_details[layer_key]
-            # The concat variable name is now stored in index 4 for all bidirectional RNNs
-            if len(layer_details) > 4 and layer_details[4]:
-                return layer_details[4]
-            return layer_details[1]
-        return "x"
+        result = _get_bidirectional_concat_output(module_input, modules_details)
+        return result if result else "x"
 
-    # Regular module
     return _resolve_source_layer_var(module_input, modules_details)
 
 
 def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, inputs_outputs=None):
     """Get the initial prev_out_var before tensorop-specific handling."""
-    print(f"[DEBUG _get_initial_prev_out_var ENTRY] tensorop.name={tensorop.name}, modules_details empty={len(list(modules_details.keys())) == 0}")
     if len(list(modules_details.keys())) == 0:
-        print(f"[DEBUG _get_initial_prev_out_var] modules_details empty, but checking inputs_outputs for {tensorop.name}")
         # Check if we have actual input variable in inputs_outputs even when modules_details is empty
         if inputs_outputs and tensorop.name in inputs_outputs:
             actual_input_var = inputs_outputs[tensorop.name][0]
             if actual_input_var:
-                print(f"[DEBUG _get_initial_prev_out_var] Using '{actual_input_var}' from inputs_outputs for first tensorop")
                 return actual_input_var
         return "x"
 
@@ -1099,27 +1090,19 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, 
 
     # Override with name_module_input or layers_of_tensors if available
     module_input = None
-    print(f"[DEBUG _get_initial_prev_out_var] tensorop.name={tensorop.name}, has_name_module_input={hasattr(tensorop, 'name_module_input')}, has_layers_of_tensors={hasattr(tensorop, 'layers_of_tensors')}")
-    if hasattr(tensorop, 'layers_of_tensors'):
-        print(f"[DEBUG _get_initial_prev_out_var] layers_of_tensors={tensorop.layers_of_tensors}")
     if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
         module_input = tensorop.name_module_input
-        print(f"[DEBUG _get_initial_prev_out_var] Set module_input from name_module_input: {module_input}")
     elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
         if len(tensorop.layers_of_tensors) == 1:
             module_input = tensorop.layers_of_tensors[0]
-            print(f"[DEBUG _get_initial_prev_out_var] Set module_input from layers_of_tensors[0]: {module_input}")
         elif 'INPUT' in tensorop.layers_of_tensors:
             module_input = 'INPUT'
-            print(f"[DEBUG _get_initial_prev_out_var] Set module_input to INPUT")
 
     if module_input is not None:
-        print(f"[DEBUG _get_initial_prev_out_var] module_input={module_input}, calling _resolve_prev_out_var_from_module_input")
         prev_out_var = _resolve_prev_out_var_from_module_input(
             module_input, modules_details, get_rnn_hidden_var_fn, inputs_outputs, tensorop
         )
 
-    print(f"[DEBUG _get_initial_prev_out_var RETURN] prev_out_var={prev_out_var}")
     return prev_out_var
 
 
@@ -1270,23 +1253,16 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidde
         - previous output variable and the parameters of the tensorop.
 
     """
-    print(f"[DEBUG get_tensorop_params] tensorop.name={tensorop.name}, tns_type={tensorop.tns_type}, inputs_outputs={inputs_outputs is not None}")
-    if inputs_outputs and tensorop.name in inputs_outputs:
-        print(f"[DEBUG get_tensorop_params] inputs_outputs[{tensorop.name}] = {inputs_outputs[tensorop.name]}")
-    # Get initial prev_out_var
     prev_out_var = _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, inputs_outputs)
 
-    # Get tensorop-specific parameters and potentially override prev_out_var
     tns_type = tensorop.tns_type
     handler = _TENSOROP_HANDLERS.get(tns_type, _handle_generic_params)
 
-    # Pass inputs_outputs to handlers that support it
     if tns_type in ["mean", "max", "squeeze", "unsqueeze", "subscript", "shape_dim", "normalize", "split", "repeat"]:
         override_prev_out_var, params = handler(tensorop, modules_details, inputs_outputs)
     else:
         override_prev_out_var, params = handler(tensorop, modules_details)
 
-    # Use override if provided
     if override_prev_out_var is not None:
         prev_out_var = override_prev_out_var
 
@@ -1318,6 +1294,91 @@ def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str, modules_details:
             out_var = prev_out_var
     return out_var
 
+def _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops, inputs_outputs):
+    """Determine the output variable name for a tensorop."""
+    if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
+        return inputs_outputs[tensorop.name][1]
+
+    if out_var is not None:
+        return out_var
+
+    if tensorop.tns_type == "shape_dim":
+        return tensorop.name
+
+    if len(modules_details) == 0:
+        return initialize_tensorop_var(tensorop)
+
+    prev_module = list(modules_details.keys())[-1]
+    prev_out_var = get_previous_out_var(modules_details, prev_module)
+
+    if referenced_tensorops and tensorop.name in referenced_tensorops:
+        return tensorop.name
+    if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
+        return inputs_outputs[tensorop.name][1]
+    if tensorop.tns_type in ("split", "identity"):
+        return tensorop.name
+    if hasattr(tensorop, 'input_reused') and tensorop.input_reused:
+        return tensorop.name
+
+    return get_tensorop_out_var(tensorop, prev_out_var, modules_details)
+
+
+def _handle_skip_syntax(ts_op_synt, out_var, inputs_outputs, tensorop):
+    """Handle SKIP: syntax and extract actual variable name."""
+    if not (isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:")):
+        return out_var
+
+    skip_var = ts_op_synt[5:]
+    if not (inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None):
+        return skip_var
+    return out_var
+
+
+def _handle_split_tuple(tensorop, out_var):
+    """Generate tuple variable names for split operations."""
+    if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
+        num_splits = tensorop.split_sizes
+        split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
+        return ", ".join(split_vars)
+    return out_var
+
+
+def _add_tensorop_input_permute(tensorop, modules_details, get_tensorop_syntax):
+    """Add input permute for spatial tensorops (NHWC → NCHW)."""
+    if hasattr(tensorop, 'permute_in') and tensorop.permute_in and tensorop.tns_type in ("interpolate", "pad"):
+        from besser.BUML.metamodel.nn import TensorOp as TensorOpClass
+
+        in_permute_name = f"{tensorop.name}_in_op"
+        in_permute = TensorOpClass(name=in_permute_name, tns_type="permute", permute_dim=[0, 3, 1, 2])
+        prev_module = list(modules_details.keys())[-1] if modules_details else None
+        in_var = get_previous_out_var(modules_details, prev_module) if prev_module else "x"
+        handle_tensorop(in_permute, modules_details, get_tensorop_syntax, out_var=in_var, channel_last=False)
+
+
+def _update_skip_source_layer(ts_op_synt, out_var, inputs_outputs, tensorop, modules_details):
+    """Update source layer output variable for SKIP operations with user variable names."""
+    if not (isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:")):
+        return
+
+    if (inputs_outputs and tensorop.name in inputs_outputs and
+        inputs_outputs[tensorop.name][1] is not None and out_var != ts_op_synt[5:]):
+        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            source_layer_name = tensorop.layers_of_tensors[0]
+            layer_key = source_layer_name + "_layer"
+            if layer_key in modules_details:
+                modules_details[layer_key][1] = out_var
+
+
+def _add_tensorop_output_permute(tensorop, modules_details, get_tensorop_syntax, out_var):
+    """Add output permute for spatial tensorops (NCHW → NHWC)."""
+    if hasattr(tensorop, 'permute_out') and tensorop.permute_out and tensorop.tns_type in ("interpolate", "pad"):
+        from besser.BUML.metamodel.nn import TensorOp as TensorOpClass
+
+        out_permute_name = f"{tensorop.name}_out_op"
+        out_permute = TensorOpClass(name=out_permute_name, tns_type="permute", permute_dim=[0, 2, 3, 1])
+        handle_tensorop(out_permute, modules_details, get_tensorop_syntax, out_var=out_var, channel_last=False)
+
+
 def handle_tensorop(tensorop: TensorOp, modules_details: dict,
                     get_tensorop_syntax: callable, out_var: str | None = None,
                     referenced_tensorops: set | None = None,
@@ -1342,96 +1403,16 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
     """
     ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var, inputs_outputs)
 
-    # Check inputs_outputs first: if it has the output variable from original code, use it
-    if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
-        out_var = inputs_outputs[tensorop.name][1]
-    elif out_var is None:
-        # For shape_dim TensorOps, use the TensorOp name as the output variable
-        # (e.g., 'b' for extracting batch size, 't' for sequence length)
-        if tensorop.tns_type == "shape_dim":
-            out_var = tensorop.name
-        elif len(modules_details) == 0:
-            out_var  = initialize_tensorop_var(tensorop)
-        else:
-            prev_module = list(modules_details.keys())[-1]
-            prev_out_var = get_previous_out_var(modules_details, prev_module)
+    out_var = _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops, inputs_outputs)
+    out_var = _handle_skip_syntax(ts_op_synt, out_var, inputs_outputs, tensorop)
+    out_var = _handle_split_tuple(tensorop, out_var)
 
-            # If this tensorop is referenced by other operations, give it a unique variable
-            if referenced_tensorops and tensorop.name in referenced_tensorops:
-                # Create a unique intermediate variable name
-                out_var = tensorop.name
-            # Operations with output variables in inputs_outputs: use actual target variable from original code
-            # This applies to binop, concatenate, subscript, and other operations that have explicit assignments
-            elif inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
-                out_var = inputs_outputs[tensorop.name][1]  # Use actual target variable
-            # Split operations always use their own name to ensure unique tuple variables
-            elif tensorop.tns_type == "split":
-                out_var = tensorop.name
-            # Identity operations use their name to preserve variable assignments (e.g., residual = x)
-            elif tensorop.tns_type == "identity":
-                out_var = tensorop.name
-            # Tensorops with input_reused should also use their op_N name to avoid x_N conflicts
-            elif hasattr(tensorop, 'input_reused') and tensorop.input_reused:
-                out_var = tensorop.name
-            else:
-                out_var = get_tensorop_out_var(tensorop, prev_out_var, modules_details)
-
-    # If the tensorop syntax is SKIP:variable, extract the actual variable name
-    # This ensures downstream layers can correctly reference the skipped operation
-    # BUT: don't override if we already have the user's variable name from inputs_outputs
-    if isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:"):
-        skip_var = ts_op_synt[5:]  # Extract variable after "SKIP:"
-        # Only use SKIP variable if we don't have a better name from inputs_outputs
-        if not (inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None):
-            out_var = skip_var
-
-    # Special handling for split: generate tuple unpacking with indexed variable names
-    if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
-        num_splits = tensorop.split_sizes
-        # Generate variable names: out_var_0, out_var_1, out_var_2, ...
-        split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
-        out_var = ", ".join(split_vars)
-
-    # Add input permute for spatial tensorops if needed (PyTorch TF→PyTorch migration)
-    if hasattr(tensorop, 'permute_in') and tensorop.permute_in and tensorop.tns_type in ("interpolate", "pad"):
-        from besser.BUML.metamodel.nn import TensorOp as TensorOpClass
-
-        # Add input permute: NHWC → NCHW
-        in_permute_name = f"{tensorop.name}_in_op"
-        in_permute = TensorOpClass(name=in_permute_name, tns_type="permute",
-                                     permute_dim=[0, 3, 1, 2])
-        # Get the current input variable
-        prev_module = list(modules_details.keys())[-1] if modules_details else None
-        in_var = get_previous_out_var(modules_details, prev_module) if prev_module else "x"
-        # Store input permute
-        handle_tensorop(in_permute, modules_details, get_tensorop_syntax,
-                        out_var=in_var, channel_last=False)
+    _add_tensorop_input_permute(tensorop, modules_details, get_tensorop_syntax)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
 
-    # When a tensorop is SKIP and has a user variable name, update the source layer's output variable
-    if isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:"):
-        if (inputs_outputs and tensorop.name in inputs_outputs and
-            inputs_outputs[tensorop.name][1] is not None and out_var != ts_op_synt[5:]):
-            # We have a user variable name (out_var) that differs from the intermediate var (SKIP:X)
-            # Find the source layer and update its output variable
-            if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-                source_layer_name = tensorop.layers_of_tensors[0]
-                layer_key = source_layer_name + "_layer"
-                if layer_key in modules_details:
-                    # Update the layer's output variable to use the final user variable name
-                    modules_details[layer_key][1] = out_var
-
-    # Add output permute for spatial tensorops if needed
-    if hasattr(tensorop, 'permute_out') and tensorop.permute_out and tensorop.tns_type in ("interpolate", "pad"):
-        from besser.BUML.metamodel.nn import TensorOp as TensorOpClass
-
-        out_permute_name = f"{tensorop.name}_out_op"
-        out_permute = TensorOpClass(name=out_permute_name, tns_type="permute",
-                                      permute_dim=[0, 2, 3, 1])
-        # Use the current tensorop's output as input to the permute
-        handle_tensorop(out_permute, modules_details, get_tensorop_syntax,
-                        out_var=out_var, channel_last=False)
+    _update_skip_source_layer(ts_op_synt, out_var, inputs_outputs, tensorop, modules_details)
+    _add_tensorop_output_permute(tensorop, modules_details, get_tensorop_syntax, out_var)
 
 
 def preprocess_image(image_path: str, target_size: tuple):
@@ -1520,6 +1501,148 @@ class Permute(nn.Module):
         return x
 
 
+def _collect_op_and_temp_vars(modules_details):
+    """Collect op_X and temp variable names from modules_details."""
+    import re
+
+    op_names_in_use = set()
+    temp_vars_by_prefix = {
+        '_binop_temp_': set(),
+        '_nested_temp_': set(),
+        '_subscript_temp_': set(),
+        '_chain_temp_': set(),
+    }
+
+    for module_name, module_data in modules_details.items():
+        out_var = None
+
+        if module_name.endswith("_op"):
+            out_var = module_data[1]
+        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
+            out_var = module_data[1]
+
+        if out_var:
+            if isinstance(out_var, str) and re.match(r'^op_\d+$', out_var):
+                op_names_in_use.add(out_var)
+            elif isinstance(out_var, str):
+                for prefix in temp_vars_by_prefix.keys():
+                    if prefix == '_chain_temp_':
+                        if re.match(rf'^{re.escape(prefix)}\d+_\d+$', out_var):
+                            temp_vars_by_prefix[prefix].add(out_var)
+                            break
+                    elif re.match(rf'^{re.escape(prefix)}\d+$', out_var):
+                        temp_vars_by_prefix[prefix].add(out_var)
+                        break
+            if isinstance(out_var, str) and ', ' in out_var:
+                for var in out_var.split(', '):
+                    var = var.strip()
+                    if re.match(r'^op_\d+(_\d+)?$', var):
+                        op_names_in_use.add(var)
+
+    return op_names_in_use, temp_vars_by_prefix
+
+
+def _create_op_renaming_map(op_names_in_use):
+    """Create mapping from old op_X names to new sequential _op_Y names."""
+    import re
+
+    def get_base_op_num(op_name):
+        match = re.match(r'^op_(\d+)', op_name)
+        return int(match.group(1)) if match else 0
+
+    sorted_op_names = sorted(op_names_in_use, key=get_base_op_num)
+
+    old_to_new = {}
+    new_counter = 1
+    last_base_op = None
+
+    for old_name in sorted_op_names:
+        match = re.match(r'^(op_)(\d+)(_\d+)?$', old_name)
+        if match:
+            prefix, old_num, suffix = match.groups()
+            base_old_name = f"op_{old_num}"
+
+            if base_old_name != last_base_op:
+                last_base_op = base_old_name
+                current_counter = new_counter
+                new_counter += 1
+
+            if suffix:
+                old_to_new[old_name] = f"_op_{current_counter}{suffix}"
+            else:
+                old_to_new[old_name] = f"_op_{current_counter}"
+
+    return old_to_new
+
+
+def _create_temp_renaming_map(temp_vars_by_prefix):
+    """Create mapping from old temp variable names to new sequential names."""
+    import re
+
+    old_to_new = {}
+
+    for prefix, vars_set in temp_vars_by_prefix.items():
+        if not vars_set:
+            continue
+
+        def get_temp_num(temp_name):
+            if prefix == '_chain_temp_':
+                match = re.match(rf'^{re.escape(prefix)}(\d+)_\d+$', temp_name)
+            else:
+                match = re.match(rf'^{re.escape(prefix)}(\d+)$', temp_name)
+            return int(match.group(1)) if match else 0
+
+        sorted_temp_names = sorted(vars_set, key=get_temp_num)
+
+        temp_counter = 1
+        for old_temp_name in sorted_temp_names:
+            new_temp_name = f"{prefix}{temp_counter}"
+            old_to_new[old_temp_name] = new_temp_name
+            temp_counter += 1
+
+    return old_to_new
+
+
+def _apply_variable_renaming(modules_details, old_to_new):
+    """Apply variable renaming to all module entries in modules_details."""
+    import re
+
+    for module_name, module_data in modules_details.items():
+        if module_name.endswith("_op"):
+            syntax = module_data[0]
+            if isinstance(syntax, str):
+                for old_name, new_name in old_to_new.items():
+                    syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
+                module_data[0] = syntax
+
+            out_var = module_data[1]
+            if isinstance(out_var, str):
+                if ', ' in out_var:
+                    new_parts = []
+                    for part in out_var.split(', '):
+                        part = part.strip()
+                        new_parts.append(old_to_new.get(part, part))
+                    module_data[1] = ', '.join(new_parts)
+                else:
+                    module_data[1] = old_to_new.get(out_var, out_var)
+
+        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
+            syntax = module_data[0]
+            if isinstance(syntax, str):
+                for old_name, new_name in old_to_new.items():
+                    syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
+                module_data[0] = syntax
+
+            out_var = module_data[1]
+            if isinstance(out_var, str) and out_var in old_to_new:
+                module_data[1] = old_to_new[out_var]
+
+            if len(module_data) > 2:
+                in_var = module_data[2]
+                if isinstance(in_var, str) and in_var in old_to_new:
+                    module_data[2] = old_to_new[in_var]
+
+
 def renumber_tensorop_variables(modules_details):
     """
     Renumber op_X and temp variables sequentially to avoid gaps when some operations
@@ -1535,163 +1658,14 @@ def renumber_tensorop_variables(modules_details):
     Args:
         modules_details (dict): The modules details dictionary to update in-place
     """
-    import re
-
-    print("[DEBUG renumber_tensorop_variables] Starting renumbering...")
-
-    # Step 1: Collect all op_X names that are actually used in output variables
-    op_names_in_use = set()
-    # Also collect temp variables by prefix type
-    temp_vars_by_prefix = {
-        '_binop_temp_': set(),
-        '_nested_temp_': set(),
-        '_subscript_temp_': set(),
-        '_chain_temp_': set(),
-    }
-
-    for module_name, module_data in modules_details.items():
-        out_var = None
-
-        if module_name.endswith("_op"):
-            # module_data format: [syntax, out_var, tensorop_obj]
-            out_var = module_data[1]
-        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
-            # module_data format: [syntax, out_var, in_var]
-            out_var = module_data[1]
-
-        if out_var:
-            # Check if output variable is op_X (not an original variable name)
-            if isinstance(out_var, str) and re.match(r'^op_\d+$', out_var):
-                op_names_in_use.add(out_var)
-            # Check for temp variables
-            elif isinstance(out_var, str):
-                for prefix in temp_vars_by_prefix.keys():
-                    # For _chain_temp_, match pattern like _chain_temp_4_0 (two indices)
-                    if prefix == '_chain_temp_':
-                        if re.match(rf'^{re.escape(prefix)}\d+_\d+$', out_var):
-                            temp_vars_by_prefix[prefix].add(out_var)
-                            break
-                    # For other temp variables, match single index pattern
-                    elif re.match(rf'^{re.escape(prefix)}\d+$', out_var):
-                        temp_vars_by_prefix[prefix].add(out_var)
-                        break
-            # Also check for tuple outputs like "op_5_0, op_5_1, op_5_2"
-            if isinstance(out_var, str) and ', ' in out_var:
-                for var in out_var.split(', '):
-                    var = var.strip()
-                    if re.match(r'^op_\d+(_\d+)?$', var):
-                        op_names_in_use.add(var)
-
-    print(f"[DEBUG renumber_tensorop_variables] Found {len(op_names_in_use)} op_X variables in use: {sorted(op_names_in_use)}")
-    for prefix, vars_set in temp_vars_by_prefix.items():
-        if vars_set:
-            print(f"[DEBUG renumber_tensorop_variables] Found {len(vars_set)} {prefix}X variables: {sorted(vars_set)}")
+    op_names_in_use, temp_vars_by_prefix = _collect_op_and_temp_vars(modules_details)
 
     if not op_names_in_use and not any(temp_vars_by_prefix.values()):
-        print("[DEBUG renumber_tensorop_variables] No op_X or temp variables to renumber")
         return
+
+    old_to_new = _create_op_renaming_map(op_names_in_use)
+    old_to_new.update(_create_temp_renaming_map(temp_vars_by_prefix))
+
+    _apply_variable_renaming(modules_details, old_to_new)
     
-    # Step 2: Sort by original number and create sequential mapping
-    # Extract base op names (op_5_0 -> op_5) for sorting
-    def get_base_op_num(op_name):
-        match = re.match(r'^op_(\d+)', op_name)
-        return int(match.group(1)) if match else 0
-    
-    sorted_op_names = sorted(op_names_in_use, key=get_base_op_num)
-    
-    # Create mapping: old op_X -> new op_Y
-    # Handle both simple (op_7) and indexed (op_7_0, op_7_1) names
-    old_to_new = {}
-    new_counter = 1
-    last_base_op = None
-    
-    for old_name in sorted_op_names:
-        match = re.match(r'^(op_)(\d+)(_\d+)?$', old_name)
-        if match:
-            prefix, old_num, suffix = match.groups()
-            base_old_name = f"op_{old_num}"
-            
-            # If this is a new base operation, increment counter
-            if base_old_name != last_base_op:
-                last_base_op = base_old_name
-                current_counter = new_counter
-                new_counter += 1
-            
-            # Map old to new (use _op_X prefix to avoid conflicts with user variables)
-            if suffix:  # op_7_0 -> _op_1_0
-                old_to_new[old_name] = f"_op_{current_counter}{suffix}"
-            else:  # op_7 -> _op_1
-                old_to_new[old_name] = f"_op_{current_counter}"
-    
-    print(f"[DEBUG renumber_tensorop_variables] op_X mapping: {old_to_new}")
-
-    # Step 2b: Renumber temp variables (_binop_temp_X, _nested_temp_X, _subscript_temp_X, _chain_temp_X_Y)
-    for prefix, vars_set in temp_vars_by_prefix.items():
-        if not vars_set:
-            continue
-
-        # Sort by number(s)
-        def get_temp_num(temp_name):
-            # For _chain_temp_X_Y, extract first number for sorting
-            if prefix == '_chain_temp_':
-                match = re.match(rf'^{re.escape(prefix)}(\d+)_\d+$', temp_name)
-            else:
-                match = re.match(rf'^{re.escape(prefix)}(\d+)$', temp_name)
-            return int(match.group(1)) if match else 0
-
-        sorted_temp_names = sorted(vars_set, key=get_temp_num)
-
-        # Create sequential mapping: _binop_temp_7 -> _binop_temp_1, _chain_temp_4_0 -> _chain_temp_1, etc.
-        temp_counter = 1
-        for old_temp_name in sorted_temp_names:
-            new_temp_name = f"{prefix}{temp_counter}"
-            old_to_new[old_temp_name] = new_temp_name
-            temp_counter += 1
-
-        print(f"[DEBUG renumber_tensorop_variables] {prefix}X mapping: {dict((k, v) for k, v in old_to_new.items() if k.startswith(prefix))}")
-
-    # Step 3: Update all references in modules_details
-    for module_name, module_data in modules_details.items():
-        if module_name.endswith("_op"):
-            # Update syntax (index 0)
-            syntax = module_data[0]
-            if isinstance(syntax, str):
-                for old_name, new_name in old_to_new.items():
-                    # Use word boundary to avoid partial replacements
-                    syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
-                module_data[0] = syntax
-
-            # Update out_var (index 1)
-            out_var = module_data[1]
-            if isinstance(out_var, str):
-                # Handle tuple outputs
-                if ', ' in out_var:
-                    new_parts = []
-                    for part in out_var.split(', '):
-                        part = part.strip()
-                        new_parts.append(old_to_new.get(part, part))
-                    module_data[1] = ', '.join(new_parts)
-                else:
-                    module_data[1] = old_to_new.get(out_var, out_var)
-
-        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
-            # Update syntax (index 0) for layers and activations
-            syntax = module_data[0]
-            if isinstance(syntax, str):
-                for old_name, new_name in old_to_new.items():
-                    syntax = re.sub(r'\b' + re.escape(old_name) + r'\b', new_name, syntax)
-                module_data[0] = syntax
-
-            # Update out_var (index 1) for layers and activations
-            out_var = module_data[1]
-            if isinstance(out_var, str) and out_var in old_to_new:
-                module_data[1] = old_to_new[out_var]
-
-            # Update in_var (index 2) for layers and activations
-            if len(module_data) > 2:
-                in_var = module_data[2]
-                if isinstance(in_var, str) and in_var in old_to_new:
-                    module_data[2] = old_to_new[in_var]
-    
-    print("[DEBUG renumber_tensorop_variables] Renumbering complete")
 

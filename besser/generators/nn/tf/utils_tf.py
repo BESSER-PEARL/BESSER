@@ -105,6 +105,15 @@ class SetupLayerSyntax:
         # Return None to signal handle_layer not to add _layer entry
         return None
 
+    def _get_permute_dims_tf(self, dim: str, permute_in: bool):
+        """Calculate permute dimensions for TensorFlow transpose."""
+        if dim is None or dim == "1":
+            return [0, 2, 1]
+        elif dim == "2":
+            return [0, 3, 1, 2] if permute_in else [0, 2, 3, 1]
+        else:
+            return [0, 4, 1, 2, 3] if permute_in else [0, 2, 3, 4, 1]
+
     def add_permute(self, lyr_name: str, dim: str, in_var_layer: str,
                     permute_in: bool = True, sequential: bool = False,
                     is_subnn: bool = False):
@@ -122,85 +131,66 @@ class SetupLayerSyntax:
         Returns:
             None, but stores the transpose tensorop in modules_details.
         """
-        if permute_in:
-            perm_name = f"{lyr_name}_in_op"
-        else:
-            perm_name = f"{lyr_name}_out_op"
-
-        if dim is None:
-            perm_dim = [0, 2, 1]
-        else:
-            if dim == "1":
-                perm_dim = [0, 2, 1]
-            elif dim == "2":
-                if permute_in:
-                    perm_dim = [0, 3, 1, 2]
-                else:
-                    perm_dim = [0, 2, 3, 1]
-            else:
-                if permute_in:
-                    perm_dim = [0, 4, 1, 2, 3]
-                else:
-                    perm_dim = [0, 2, 3, 4, 1]
-
+        perm_name = f"{lyr_name}_{'in' if permute_in else 'out'}_op"
+        perm_dim = self._get_permute_dims_tf(dim, permute_in)
         perm_str = ', '.join(map(str, perm_dim))
         transpose_syntax = f"tf.transpose({in_var_layer}, perm=[{perm_str}])"
-
         self.modules_details[perm_name] = [transpose_syntax, in_var_layer]
+
+    def _build_batchnorm_tf(self, lyr_name: str):
+        """Build BatchNormalization syntax with PyTorch to TF param conversion."""
+        epsilon = self.layer.eps
+        momentum = 1 - self.layer.momentum  # INVERT: PyTorch 0.1 -> TF 0.9
+        center = "True" if self.layer.affine else "False"
+        scale = "True" if self.layer.affine else "False"
+
+        # Warn if track_running_stats=False (TF always tracks)
+        if not self.layer.track_running_stats:
+            print(f"Warning: BatchNorm '{lyr_name}' has track_running_stats=False. "
+                  f"TensorFlow will use running statistics during inference, "
+                  f"which differs from PyTorch behavior (batch stats).")
+
+        return (
+            f"self.{lyr_name} = layers.BatchNormalization(epsilon={epsilon}, "
+            f"momentum={momentum}, center={center}, scale={scale})"
+        )
+
+    def _build_layernorm_tf(self, lyr_name: str):
+        """Build LayerNormalization syntax with PyTorch to TF axis conversion."""
+        norm_shape = self.layer.normalized_shape
+        epsilon = self.layer.eps
+        center = "True" if self.layer.affine else "False"
+        scale = "True" if self.layer.affine else "False"
+
+        if isinstance(norm_shape, list):
+            num_axes = len(norm_shape)
+            axis_indices = list(range(-num_axes, 0))
+            return (
+                f"self.{lyr_name} = layers.LayerNormalization(axis={axis_indices}, "
+                f"epsilon={epsilon}, center={center}, scale={scale})"
+            )
+        else:
+            return (
+                f"self.{lyr_name} = layers.LayerNormalization(axis=-1, epsilon={epsilon}, "
+                f"center={center}, scale={scale})"
+            )
 
     def setup_layer_modifier(self):
         """It defines the syntax of layers' modifiers."""
         cls_name = self.layer.__class__.__name__
         parent_cls = self.layer.__class__.mro()[1].__name__
         lyr_name = self.layer.name
-        lyr = f"self.{lyr_name} = layers"
+
         if parent_cls == "NormalizationLayer":
             if cls_name == "BatchNormLayer":
-                # Convert PyTorch BatchNorm params to TensorFlow
-                epsilon = self.layer.eps  # Direct mapping
-                momentum = 1 - self.layer.momentum  # INVERT: PyTorch 0.1 -> TF 0.9
-                center = "True" if self.layer.affine else "False"  # Learn beta
-                scale = "True" if self.layer.affine else "False"   # Learn gamma
-
-                # Warn if track_running_stats=False (TF always tracks)
-                if not self.layer.track_running_stats:
-                    print(f"Warning: BatchNorm '{lyr_name}' has track_running_stats=False. "
-                          f"TensorFlow will use running statistics during inference, "
-                          f"which differs from PyTorch behavior (batch stats).")
-
-                lyr = (
-                    f"{lyr}.BatchNormalization(epsilon={epsilon}, momentum={momentum}, "
-                    f"center={center}, scale={scale})"
-                )
-            else: #cls_name == "LayerNormLayer"
-                # PyTorch LayerNorm(shape) vs TensorFlow LayerNormalization(axis):
-                # PyTorch takes dimension size, TF takes axis index
-                # nn.LayerNorm([d1, d2, ..., dn]) normalizes over last n dimensions
-                # LayerNormalization should use axis=[-n, ..., -1]
-                norm_shape = self.layer.normalized_shape
-                epsilon = self.layer.eps  # Direct mapping
-                center = "True" if self.layer.affine else "False"  # Learn beta
-                scale = "True" if self.layer.affine else "False"   # Learn gamma
-
-                if isinstance(norm_shape, list):
-                    num_axes = len(norm_shape)
-                    axis_indices = list(range(-num_axes, 0))
-                    lyr = (
-                        f"{lyr}.LayerNormalization(axis={axis_indices}, epsilon={epsilon}, "
-                        f"center={center}, scale={scale})"
-                    )
-                else:
-                    lyr = (
-                        f"{lyr}.LayerNormalization(axis=-1, epsilon={epsilon}, "
-                        f"center={center}, scale={scale})"
-                    )
-        else: #cls_name == "DropoutLayer"
-            # Use SpatialDropout for 1D/2D/3D variants, regular Dropout otherwise
+                return self._build_batchnorm_tf(lyr_name)
+            else: # cls_name == "LayerNormLayer"
+                return self._build_layernorm_tf(lyr_name)
+        else: # cls_name == "DropoutLayer"
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
-                lyr = f"{lyr}.SpatialDropout{self.layer.dimension}D(rate={self.layer.rate})"
+                return f"self.{lyr_name} = layers.SpatialDropout{self.layer.dimension}D(rate={self.layer.rate})"
             else:
-                lyr = f"{lyr}.Dropout(rate={self.layer.rate})"
-        return lyr
+                return f"self.{lyr_name} = layers.Dropout(rate={self.layer.rate})"
 
     def add_separate_activation_if_needed(self, out_var, in_var):
         """Add separate activation for layers that don't support activation param."""
@@ -314,6 +304,38 @@ class SetupLayerSyntax:
         )
         return lyr
 
+    def _build_standard_pooling_tf(self, lyr_name: str, pl_type: str, dim: str):
+        """Build syntax for standard max or average pooling."""
+        pl = "MaxPool" if pl_type == "max" else "AveragePooling"
+        kernel = utils.format_value(self.layer.kernel_dim)
+        stride = utils.format_value(self.layer.stride_dim)
+        pad_type = self.layer.padding_type
+
+        # Handle explicit padding with ZeroPadding layer
+        pad_amount = self.layer.padding_amount if hasattr(self.layer, 'padding_amount') else 0
+        lyr = ""
+        if pad_amount != 0:
+            lyr = f"self.{lyr_name}_pad = layers.ZeroPadding{dim}D(padding={pad_amount})#"
+            pad_type = 'valid'
+
+        lyr += (
+            f"self.{lyr_name} = layers.{pl}{dim}D(pool_size={kernel}, "
+            f"strides={stride}, padding='{pad_type}')"
+        )
+        return lyr
+
+    def _build_global_pooling_tf(self, lyr_name: str, pl_type: str, dim: str):
+        """Build syntax for global pooling."""
+        typ = pl_type.split("_")[1]
+        pl = f"Global{typ[0].upper()}{typ[1:]}Pooling"
+        return f"self.{lyr_name} = layers.{pl}{dim}D()"
+
+    def _build_adaptive_pooling_tf(self, lyr_name: str, pl_type: str, dim: str):
+        """Build syntax for adaptive pooling."""
+        pl = "AdaptiveAveragePooling" if pl_type == "adaptive_average" else "AdaptiveMaxPooling"
+        size = utils.format_value(self.layer.output_dim)
+        return f"self.{lyr_name} = tfa.layers.{pl}{dim}D(output_size={size})"
+
     def setup_pooling(self, lyr_name: str):
         """
         It defines the syntax of pooling layers.
@@ -330,44 +352,12 @@ class SetupLayerSyntax:
         self.permute_in = self.layer.permute_in
         self.permute_out = self.layer.permute_out
 
-        if pl_type == "max" or pl_type == "average":
-            pl = "MaxPool" if pl_type == "max" else "AveragePooling"
-            kernel = utils.format_value(self.layer.kernel_dim)
-            stride = utils.format_value(self.layer.stride_dim)
-            pad_type = self.layer.padding_type
-
-            # Handle explicit padding with ZeroPadding layer
-            pad_amount = self.layer.padding_amount if hasattr(self.layer, 'padding_amount') else 0
-            lyr = ""
-            if pad_amount != 0:
-                lyr = (
-                    f"self.{lyr_name}_pad = layers.ZeroPadding{dim}D("
-                    f"padding={pad_amount})#"
-                )
-                # When using explicit padding, pooling layer should use 'valid'
-                pad_type = 'valid'
-
-            lyr += (
-                f"self.{lyr_name} = layers.{pl}{dim}D(pool_size={kernel}, "
-                f"strides={stride}, padding='{pad_type}')"
-            )
+        if pl_type in ("max", "average"):
+            return self._build_standard_pooling_tf(lyr_name, pl_type, dim)
         elif pl_type.startswith("global"):
-            typ = pl_type.split("_")[1]
-            pl = f"Global{typ[0].upper()}{typ[1:]}Pooling"
-            lyr = (
-                f"self.{lyr_name} = layers.{pl}{dim}D()"
-            )
+            return self._build_global_pooling_tf(lyr_name, pl_type, dim)
         else:
-            if pl_type == "adaptive_average":
-                pl = "AdaptiveAveragePooling"
-            else:
-                pl = "AdaptiveMaxPooling"
-
-            size = utils.format_value(self.layer.output_dim)
-            lyr = (
-                f"self.{lyr_name} = tfa.layers.{pl}{dim}D(output_size={size})"
-            )
-        return lyr
+            return self._build_adaptive_pooling_tf(lyr_name, pl_type, dim)
 
     def setup_cnn(self):
         """It defines the syntax of cnn layers (conv and pooling)."""
@@ -747,7 +737,6 @@ def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var, para
 
 def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle unsqueeze tensorop syntax."""
-    print(f"[DEBUG _handle_unsqueeze_syntax] in_var={in_var}, prev_out_var={prev_out_var}")
     if in_var is not None:
         prev_out_var = in_var
 
@@ -755,9 +744,7 @@ def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     if axis == 0 and hasattr(tensorop, 'is_rnn_initial_state') and tensorop.is_rnn_initial_state:
         return f"SKIP:{prev_out_var}"
     else:
-        result = f"tf.expand_dims({prev_out_var}, axis={axis})"
-        print(f"[DEBUG _handle_unsqueeze_syntax] result={result}")
-        return result
+        return f"tf.expand_dims({prev_out_var}, axis={axis})"
 
 
 def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var, params):

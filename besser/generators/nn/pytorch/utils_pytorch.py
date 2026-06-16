@@ -57,7 +57,7 @@ class SetupLayerSyntax:
             st_dim = self.layer.start_dim
             en_dim = self.layer.end_dim
             lyr = f"{lyr}.Flatten(start_dim={st_dim}, end_dim={en_dim})"
-        else: #cls_name == "EmbeddingLayer"
+        else: # cls_name == "EmbeddingLayer"
             nm = self.layer.num_embeddings
             dm = self.layer.embedding_dim
             padding_idx = self.layer.padding_idx
@@ -109,7 +109,7 @@ class SetupLayerSyntax:
                     f"momentum={momentum}, affine={affine}, "
                     f"track_running_stats={track_stats})"
                 )
-            else: #cls_name == "LayerNormLayer"
+            else: # cls_name == "LayerNormLayer"
                 norm_shape = self.layer.normalized_shape
                 eps = self.layer.eps
                 elementwise_affine = "True" if self.layer.affine else "False"
@@ -117,13 +117,31 @@ class SetupLayerSyntax:
                     f"{lyr}.LayerNorm(normalized_shape={norm_shape}, eps={eps}, "
                     f"elementwise_affine={elementwise_affine})"
                 )
-        else: #cls_name == "DropoutLayer"
+        else: # cls_name == "DropoutLayer"
             # Use Dropout1d/2d/3d for spatial variants, regular Dropout otherwise
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
                 lyr = f"{lyr}.Dropout{self.layer.dimension}d(p={self.layer.rate})"
             else:
                 lyr = f"{lyr}.Dropout(p={self.layer.rate})"
         return lyr
+
+    def _get_permute_dims(self, dim: str, permute_in: bool):
+        """
+        Calculate permute dimensions based on layer dimensionality.
+
+        Args:
+            dim (str): the dimentionality of the layer ('1', '2' or '3').
+            permute_in (bool): Whether to permute the input of the layer.
+
+        Returns:
+            list: The permutation dimensions.
+        """
+        if dim is None or dim == "1":
+            return [0, 2, 1]
+        elif dim == "2":
+            return [0, 3, 1, 2] if permute_in else [0, 2, 3, 1]
+        else:
+            return [0, 4, 1, 2, 3] if permute_in else [0, 2, 3, 4, 1]
 
     def add_permute(self, lyr_name: str, dim: str, in_var_layer: str,
                     permute_in: bool = True, sequential: bool = False,
@@ -145,37 +163,14 @@ class SetupLayerSyntax:
             modules_details dictionary.
 
         """
-        if permute_in:
-            perm_name = f"{lyr_name}_in_op"
-        else:
-            perm_name = f"{lyr_name}_out_op"
-        if dim is None:
-            perm_dim = [0, 2, 1]
-        else:
-            if dim == "1":
-                perm_dim = [0, 2, 1]
-            elif dim == "2":
-                if permute_in:
-                    perm_dim = [0, 3, 1, 2]
-                else:
-                    perm_dim = [0, 2, 3, 1]
-            else:
-                if permute_in:
-                    perm_dim = [0, 4, 1, 2, 3]
-                else:
-                    perm_dim = [0, 2, 3, 4, 1]
+        perm_name = f"{lyr_name}_{'in' if permute_in else 'out'}_op"
+        perm_dim = self._get_permute_dims(dim, permute_in)
 
         if sequential or is_subnn:
-            self.modules_details[perm_name] = [f"Permute(dims={perm_dim})",
-                                               in_var_layer]
+            self.modules_details[perm_name] = [f"Permute(dims={perm_dim})", in_var_layer]
         else:
-            tns = TensorOp(
-                name=perm_name, tns_type="permute", permute_dim=perm_dim
-            )
-            tns_out = utils.handle_tensorop
-            tns_out(
-                tns, self.modules_details, get_tensorop_syntax, in_var_layer
-            )
+            tns = TensorOp(name=perm_name, tns_type="permute", permute_dim=perm_dim)
+            utils.handle_tensorop(tns, self.modules_details, get_tensorop_syntax, in_var_layer)
 
 
     def setup_rnn(self):
@@ -267,6 +262,27 @@ class SetupLayerSyntax:
         return lyr
 
 
+    def _build_standard_pooling(self, lyr_name: str, pl_type: str, dim: str):
+        """Build syntax for standard max or average pooling."""
+        pl = "Max" if pl_type == "max" else "Avg"
+        kernel = utils.format_value(self.layer.kernel_dim)
+        stride = utils.format_value(self.layer.stride_dim)
+        pad = self.layer.padding_amount
+        return (
+            f"self.{lyr_name} = nn.{pl}Pool{dim}d(kernel_size={kernel}, "
+            f"stride={stride}, padding={pad})"
+        )
+
+    def _build_adaptive_pooling(self, lyr_name: str, pl_type: str, dim: str):
+        """Build syntax for adaptive pooling layers."""
+        if pl_type.startswith("global"):
+            out_dim = (1,) * int(dim)
+            return f"self.{lyr_name} = nn.AdaptiveAvgPool{dim}d({out_dim})"
+        else:
+            pl = "AdaptiveAvg" if pl_type == "adaptive_average" else "AdaptiveMax"
+            size = utils.format_value(self.layer.output_dim)
+            return f"self.{lyr_name} = nn.{pl}Pool{dim}d(output_size={size})"
+
     def setup_pooling(self, lyr_name: str):
         """
         It defines the syntax of pooling layers.
@@ -280,36 +296,13 @@ class SetupLayerSyntax:
         pl_type = self.layer.pooling_type
         dim = self.layer.dimension[-2:-1]
         self.dim = dim
-
         self.permute_in = self.layer.permute_in
         self.permute_out = self.layer.permute_out
 
-        if pl_type == "max" or pl_type == "average":
-            pl = "Max" if pl_type == "max" else "Avg"
-            kernel = utils.format_value(self.layer.kernel_dim)
-            stride = utils.format_value(self.layer.stride_dim)
-            pad = self.layer.padding_amount
-            lyr = (
-                f"self.{lyr_name} = nn.{pl}Pool{dim}d(kernel_size={kernel}, "
-                f"stride={stride}, padding={pad})"
-            )
-        elif pl_type.startswith("global"):
-            out_dim = (1,) * int(dim)
-            lyr = (
-                f"self.{lyr_name} = nn.AdaptiveAvgPool{dim}d({out_dim})"
-            )
-            # or tensor.mean(dim=(2, 3, 4), keepdim=True)
+        if pl_type in ("max", "average"):
+            return self._build_standard_pooling(lyr_name, pl_type, dim)
         else:
-            if pl_type == "adaptive_average":
-                pl = "AdaptiveAvg"
-            else:
-                pl = "AdaptiveMax"
-
-            size = utils.format_value(self.layer.output_dim)
-            lyr = (
-                f"self.{lyr_name} = nn.{pl}Pool{dim}d(output_size={size})"
-            )
-        return lyr
+            return self._build_adaptive_pooling(lyr_name, pl_type, dim)
 
 
 def _handle_reshape_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
@@ -623,7 +616,7 @@ def adjust_actv_func_name(modules_details: dict):
                 activ_type = synt.split("(")[1].split(")")[0]
                 if activ_type not in actv_dict:
                     actv_dict[activ_type] = f"activ_func_{counter}"
-                    counter+=1
+                    counter += 1
                 activ_def = synt.split("=")[1]
                 mdl_details[0] = f"self.{actv_dict[activ_type]} = {activ_def}"
 

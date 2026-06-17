@@ -99,7 +99,7 @@ import torch.nn.functional as F
     {%- endfor -%}
 {% endmacro -%}
 
-{%- macro print_forward(modules_details) %}
+{%- macro print_forward(modules_details, inputs_outputs={}) %}
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
@@ -161,11 +161,15 @@ import torch.nn.functional as F
     {%- endif -%}
     {%- if module_name.endswith("nn") %}
     {%- set return_variable.value =  module_details["in_out_variable"] %}
-    {%- else %} 
+    {%- else %}
     {%- set return_variable.value =  module_details[1] %}
     {%- endif -%}
     {%- endfor %}
+    {%- if inputs_outputs and '__return__' in inputs_outputs %}
+        return {{ inputs_outputs['__return__'][1] -}}
+    {%- else %}
         return {{ return_variable.value -}}
+    {%- endif %}
 {% endmacro -%}
 
 {%- macro get_loss_function(configuration) %}

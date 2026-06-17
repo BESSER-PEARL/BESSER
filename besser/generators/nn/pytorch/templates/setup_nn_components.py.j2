@@ -79,7 +79,7 @@ import torch.nn.functional as F
         {%- if module_name.endswith("nn") %}
         self.{{ module_name.rsplit('_', 2)[0] }} = nn.Sequential(
             {%- for subnn_key, subnn_value in module_details.items() %}
-                {%- if subnn_key != "in_out_variable" %}
+                {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
                     {%- if "op" in subnn_key %}
             {{ subnn_value[0] }},
                     {%- else %}
@@ -105,7 +105,11 @@ import torch.nn.functional as F
     {%- if module_name.endswith("op") %}
         {{ module_details[1] }} = {{ module_details[0] }}
     {%- elif module_name.endswith("nn") %}
+        {%- if "subnn_input" in module_details and "subnn_output" in module_details %}
+        {{ module_details["subnn_output"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["subnn_input"] }})
+        {%- else %}
         {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+        {%- endif %}
     {%- else %}
         {%- if 'INLINE_ONLY' not in module_details %}
         {%- if module_name.endswith("activ") %}

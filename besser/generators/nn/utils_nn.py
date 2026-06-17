@@ -113,7 +113,11 @@ def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inp
         return layer_details[1]
 
     if f"{lyr_input}_nn" in modules_names:
-        return modules_details[f"{lyr_input}_nn"]["in_out_variable"]
+        nn_details = modules_details[f"{lyr_input}_nn"]
+        # Use subnn_output if available (for parallel branches), otherwise in_out_variable
+        if "subnn_output" in nn_details:
+            return nn_details["subnn_output"]
+        return nn_details["in_out_variable"]
     if f"{lyr_input}_activ" in modules_names:
         return modules_details[f"{lyr_input}_activ"][1]
     if f"{lyr_input}_op" in modules_names:
@@ -200,7 +204,7 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
 
     return prev_out_var
 
-def add_in_out_var_to_subnn(modules_details: dict):
+def add_in_out_var_to_subnn(modules_details: dict, inputs_outputs: dict | None = None):
     """
     It sets the in_out_variable of subnns, which refers to the input
     and output variable of the subnn.
@@ -208,12 +212,29 @@ def add_in_out_var_to_subnn(modules_details: dict):
     Arguments:
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
+        inputs_outputs (dict | None): Optional dictionary mapping module names to [input, output] variables.
 
     Returns:
         None, but stores the in_out_var in modules_details dict.
 
     """
     last_module = list(modules_details.keys())[-1]
+
+    # Extract the base module name (remove _nn suffix)
+    # e.g., "encoder_nn" -> "encoder"
+    if last_module.endswith("_nn"):
+        base_module_name = last_module[:-3]  # Remove "_nn"
+        # Check inputs_outputs for the original input/output variables
+        if inputs_outputs and base_module_name in inputs_outputs:
+            input_var = inputs_outputs[base_module_name][0]
+            output_var = inputs_outputs[base_module_name][1]
+            # Store both input and output separately
+            modules_details[last_module]["subnn_input"] = input_var
+            modules_details[last_module]["subnn_output"] = output_var
+            # Keep in_out_variable for backward compatibility (sequential case where input==output)
+            modules_details[last_module]["in_out_variable"] = output_var
+            return
+
     if len(modules_details) == 1:
         in_out_var = "x"
     else:

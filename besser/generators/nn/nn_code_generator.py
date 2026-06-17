@@ -109,10 +109,11 @@ class NNCodeGenerator(GeneratorInterface):
                     sub_nn_layer, self.setup_layer, subnn_details,
                     self.channel_last, actv_func, is_seq, is_subnn=True, model=self.model
                 )
-            name_sub_nn = f"{module.name}_{counter_subnn}_nn"
+            # Use original module name + _nn (no counter needed with original names)
+            name_sub_nn = f"{module.name}_nn"
             modules_details[name_sub_nn] = subnn_details
-            add_in_out_var_to_subnn(modules_details)
-            return counter_subnn + 1
+            add_in_out_var_to_subnn(modules_details, self.model.inputs_outputs)
+            return counter_subnn
 
         elif module_type != "TensorOp":
             handle_layer(

@@ -265,16 +265,7 @@ from datetime import datetime
     {%- endif -%}
     {%- endfor %}
         {%- if '__return__' in inputs_outputs %}
-            {%- set return_module_names = inputs_outputs['__return__'][1].split(',') %}
-            {%- set return_vars = [] %}
-            {%- for module_name in return_module_names %}
-                {%- if (module_name + "_layer") in modules_details %}
-                    {%- set _ = return_vars.append(modules_details[module_name + "_layer"][1]) %}
-                {%- elif (module_name + "_op") in modules_details %}
-                    {%- set _ = return_vars.append(modules_details[module_name + "_op"][1]) %}
-                {%- endif %}
-            {%- endfor %}
-        return {{ return_vars|join(', ') }}
+        return {{ inputs_outputs['__return__'][1] }}
         {%- elif "," in return_variable.value %}
             {%- set parts = return_variable.value.split(",") %}
             {%- set non_underscore = [] %}

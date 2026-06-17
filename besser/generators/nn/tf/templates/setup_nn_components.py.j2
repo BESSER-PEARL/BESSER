@@ -141,9 +141,9 @@ from datetime import datetime
         {%- for module_name, module_details in modules_details.items() -%}
         {%- if module_name.endswith("nn") %}
 
-        self.{{ module_name.rsplit('_', 2)[0] }} = Sequential([
+        self.{{ module_name[:-3] }} = Sequential([
             {%- for subnn_key, subnn_value in module_details.items() %}
-            {%- if subnn_key != "in_out_variable" %}
+            {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
             {%- if "layers.ZeroPadding" in subnn_value[0] %}
             {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
             {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
@@ -182,7 +182,7 @@ from datetime import datetime
         {%- set vars = get_sequential_vars(module_name, inputs_outputs, module_details["in_out_variable"]) -%}
         {%- set output_var = vars.split('|||')[0] -%}
         {%- set input_var = vars.split('|||')[1] %}
-        {{ output_var }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ input_var }})
+        {{ output_var }} = self.{{ module_name[:-3] }}({{ input_var }})
     {%- elif module_name.endswith("activ") %}
         {%- if module_details[0].startswith("CALL:") %}
         {{ module_details[1] }} = self.{{ module_details[0][5:] }}({{ module_details[2] }})

@@ -42,7 +42,7 @@ import torch.nn.functional as F
 {%- macro print_sequential(model, modules_details) %}
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-{{ module_name.rsplit('_', 2)[0] }} = nn.Sequential(
+{{ module_name[:-3] }} = nn.Sequential(
     {%- for subnn_key, subnn_value in module_details.items() %}
         {%- if subnn_key != "in_out_variable" %}
             {%- if subnn_key.endswith("activ") or subnn_key.endswith("layer") %}
@@ -60,7 +60,7 @@ import torch.nn.functional as F
 {{ model.name }} = nn.Sequential(
 {%- for module_name, module_details in modules_details.items() %}
     {%- if module_name.endswith("nn") %}
-    {{ module_name.rsplit('_', 2)[0] }},
+    {{ module_name[:-3] }},
     {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
     {{ module_details[0].split('=', 1)[1].strip() }},
     {%- else %}
@@ -77,7 +77,7 @@ import torch.nn.functional as F
     {%- set activ_func_list = [] -%}
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-        self.{{ module_name.rsplit('_', 2)[0] }} = nn.Sequential(
+        self.{{ module_name[:-3] }} = nn.Sequential(
             {%- for subnn_key, subnn_value in module_details.items() %}
                 {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
                     {%- if "op" in subnn_key %}
@@ -106,9 +106,9 @@ import torch.nn.functional as F
         {{ module_details[1] }} = {{ module_details[0] }}
     {%- elif module_name.endswith("nn") %}
         {%- if "subnn_input" in module_details and "subnn_output" in module_details %}
-        {{ module_details["subnn_output"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["subnn_input"] }})
+        {{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }})
         {%- else %}
-        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+        {{ module_details["in_out_variable"] }} = self.{{ module_name[:-3] }}({{ module_details["in_out_variable"] }})
         {%- endif %}
     {%- else %}
         {%- if 'INLINE_ONLY' not in module_details %}

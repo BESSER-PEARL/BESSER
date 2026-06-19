@@ -1540,15 +1540,16 @@ class Permute(nn.Module):
 
 
 def _collect_op_and_temp_vars(modules_details):
-    """Collect op_X and temp variable names from modules_details."""
+    """Collect op_X and temp variable names from modules_details in order."""
     import re
 
     op_names_in_use = set()
+    # Use lists to preserve order from modules_details (execution order)
     temp_vars_by_prefix = {
-        '_binop_temp_': set(),
-        '_nested_temp_': set(),
-        '_subscript_temp_': set(),
-        '_chain_temp_': set(),
+        '_binop_temp_': [],
+        '_nested_temp_': [],
+        '_subscript_temp_': [],
+        '_chain_temp_': [],
     }
 
     for module_name, module_data in modules_details.items():
@@ -1566,10 +1567,12 @@ def _collect_op_and_temp_vars(modules_details):
                 for prefix in temp_vars_by_prefix.keys():
                     if prefix == '_chain_temp_':
                         if re.match(rf'^{re.escape(prefix)}\d+_\d+$', out_var):
-                            temp_vars_by_prefix[prefix].add(out_var)
+                            if out_var not in temp_vars_by_prefix[prefix]:
+                                temp_vars_by_prefix[prefix].append(out_var)
                             break
                     elif re.match(rf'^{re.escape(prefix)}\d+$', out_var):
-                        temp_vars_by_prefix[prefix].add(out_var)
+                        if out_var not in temp_vars_by_prefix[prefix]:
+                            temp_vars_by_prefix[prefix].append(out_var)
                         break
             if isinstance(out_var, str) and ', ' in out_var:
                 for var in out_var.split(', '):
@@ -1614,26 +1617,21 @@ def _create_op_renaming_map(op_names_in_use):
 
 
 def _create_temp_renaming_map(temp_vars_by_prefix):
-    """Create mapping from old temp variable names to new sequential names."""
-    import re
+    """Create mapping from old temp variable names to new sequential names.
 
+    Renumbers in the order they appear in modules_details (execution order),
+    not by their original counter value.
+    """
     old_to_new = {}
 
-    for prefix, vars_set in temp_vars_by_prefix.items():
-        if not vars_set:
+    for prefix, vars_list in temp_vars_by_prefix.items():
+        if not vars_list:
             continue
 
-        def get_temp_num(temp_name):
-            if prefix == '_chain_temp_':
-                match = re.match(rf'^{re.escape(prefix)}(\d+)_\d+$', temp_name)
-            else:
-                match = re.match(rf'^{re.escape(prefix)}(\d+)$', temp_name)
-            return int(match.group(1)) if match else 0
-
-        sorted_temp_names = sorted(vars_set, key=get_temp_num)
-
+        # vars_list is already in execution order from modules_details
+        # Just renumber sequentially
         temp_counter = 1
-        for old_temp_name in sorted_temp_names:
+        for old_temp_name in vars_list:
             new_temp_name = f"{prefix}{temp_counter}"
             old_to_new[old_temp_name] = new_temp_name
             temp_counter += 1

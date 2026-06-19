@@ -211,7 +211,8 @@ from datetime import datetime
         {%- if module_details[0].startswith("CALL:") %}
         {{ module_details[1] }} = self.{{ module_details[0][5:] }}({{ module_details[2] }})
         {%- elif not module_details[0].startswith("DEF:") %}
-        {{ module_details[1] }} = self.{{ module_name }}({{ module_details[2] }})
+        {%- set layer_name = module_name[:-6] if module_name.endswith("_activ") else module_name %}
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[2] }})
         {%- endif %}
     {%- else %}
         {%- if "layers.ZeroPadding" in module_details[0] %}

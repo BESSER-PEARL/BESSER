@@ -84,23 +84,11 @@ class SetupLayerSyntax:
         actv_func = self.layer.actv_func
         lyr_name = self.layer.name
 
-        # Inside Sequential blocks, use direct layer call instead of shared activation
-        if self.is_subnn:
-            # Direct layer definition for use in Sequential
-            return f"self.{lyr_name} = layers.Activation('{actv_func}')"
+        # Use the actual layer name to preserve original PyTorch names
+        syntax = f"self.{lyr_name} = layers.Activation('{actv_func}')"
 
-        # For standalone activations outside Sequential, use shared activation pattern
-        if actv_func not in SetupLayerSyntax._shared_activations:
-            shared_name = f"activation_{actv_func}"
-            SetupLayerSyntax._shared_activations[actv_func] = shared_name
-            # Add shared activation definition (DEF: to skip forward generation)
-            syntax = f"self.{shared_name} = layers.Activation('{actv_func}')"
-            self.modules_details[shared_name + "_activ"] = [f"DEF:{syntax}", None, None]
-
-        # Add call entry for this specific activation
-        shared_name = SetupLayerSyntax._shared_activations[actv_func]
-        actv_call_key = f"{lyr_name}_activ"
-        self.modules_details[actv_call_key] = [f"CALL:{shared_name}", out_var, in_var]
+        # Store in modules_details with _activ suffix so it's recognized as activation
+        self.modules_details[lyr_name + "_activ"] = [syntax, out_var, in_var]
 
         # Return None to signal handle_layer not to add _layer entry
         return None

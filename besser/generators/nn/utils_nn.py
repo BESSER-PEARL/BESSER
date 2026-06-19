@@ -656,7 +656,7 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
                      layer: Layer, modules_details: dict,
                      actv_func_synt: str | bool,
                      out_var: str = None, in_var: str = None,
-                     is_subnn: bool = False):
+                     is_subnn: bool = False, original_layer_name: str = None):
     """
     It retrieves the syntax of the layer (and the activation
     function in the case of PyTorch) from the ´setup_layer_cls´ class.
@@ -690,7 +690,7 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
         layer_synt = setup.setup_general_layer()
     elif cls_name == "GeneralLayer":
         # Standalone activation layer - don't call setup_actv_func since the layer itself IS the activation
-        layer_synt = setup.setup_standalone_activation(out_var, in_var)
+        layer_synt = setup.setup_standalone_activation(out_var, in_var, original_layer_name)
         actv_func_synt = False
     else: #(parent_class == "LayerModifier" or
            #parent_class == "NormalizationLayer")
@@ -884,7 +884,7 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
         setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer,
-        is_subnn=is_subnn
+        is_subnn=is_subnn, original_layer_name=original_name
     )
 
     # Restore original name (with suffix) for modules_details key

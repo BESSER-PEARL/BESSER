@@ -68,7 +68,7 @@ class SetupLayerSyntax:
 
         return lyr
 
-    def setup_standalone_activation(self, out_var, in_var):
+    def setup_standalone_activation(self, out_var, in_var, original_layer_name=None):
         """It defines the syntax for standalone activation layer."""
         actv_func = self.layer.actv_func
         lyr_name = self.layer.name

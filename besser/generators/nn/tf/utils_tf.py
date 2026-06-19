@@ -89,7 +89,7 @@ class SetupLayerSyntax:
                 )
         return lyr
 
-    def setup_standalone_activation(self, out_var, in_var):
+    def setup_standalone_activation(self, out_var, in_var, original_layer_name=None):
         """It defines the syntax for standalone activation layer."""
         actv_func = self.layer.actv_func
         lyr_name = self.layer.name
@@ -97,8 +97,12 @@ class SetupLayerSyntax:
         # Use the actual layer name to preserve original PyTorch names
         syntax = f"self.{lyr_name} = layers.Activation('{actv_func}')"
 
+        # Use original_layer_name (with counter suffix) for modules_details key
+        key_name = original_layer_name if original_layer_name else lyr_name
+
         # Store in modules_details with _activ suffix so it's recognized as activation
-        self.modules_details[lyr_name + "_activ"] = [syntax, out_var, in_var]
+        # Include layer object so template can check is_layer_call
+        self.modules_details[key_name + "_activ"] = [syntax, out_var, in_var, self.layer]
 
         # Return None to signal handle_layer not to add _layer entry
         return None

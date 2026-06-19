@@ -1584,7 +1584,7 @@ class BPMNModel(Model):
         message flows."""
         if isinstance(node, Participant):
             return node
-        container = getattr(node, "container", None)
+        container = node.container
         while isinstance(container, SubProcess):
             container = container.container
         if not isinstance(container, Process) or self.__collaboration is None:

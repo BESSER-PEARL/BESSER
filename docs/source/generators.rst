@@ -148,7 +148,6 @@ Generate database schemas, APIs, and data formats:
    generators/json_schema
    generators/rdf
    generators/terraform
-   generators/docker_compose
 
 Machine Learning
 ----------------

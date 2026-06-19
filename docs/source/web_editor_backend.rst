@@ -37,8 +37,7 @@ auto-converted by a Pydantic model validator for backward compatibility.
 
 Supported diagram types: ``ClassDiagram``, ``ObjectDiagram``,
 ``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
-``QuantumCircuitDiagram``, ``NNDiagram``, ``ComponentDiagram``,
-``DeploymentDiagram``.
+``QuantumCircuitDiagram``, ``NNDiagram``, ``BPMN``.
 
 
 Neural Network Diagrams
@@ -83,29 +82,14 @@ identical BUML NN models across runs — element IDs are derived from a
 thread-local counter via ``uuid.uuid5`` under a fixed namespace.
 
 
-Component and Deployment Diagrams
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+BPMN Diagrams
+^^^^^^^^^^^^^
 
-The backend handles ``ComponentDiagram`` and ``DeploymentDiagram`` as two
-self-contained diagram types backing the :doc:`UML Component
-<buml_language/model_types/uml_component>` and :doc:`UML Deployment
-<buml_language/model_types/uml_deployment>` metamodels.
-
-**Agentic profile.** The agentic-swarm vocabulary is carried entirely in the
-WME ``stereotype`` string — the wire shape is unchanged whether a component
-is a plain UML component or an agent. The converter promotes a component to
-``AgenticComponent`` / ``Skill`` / ``Tool`` (and a dependency to
-``AgenticEdge``) by matching stereotype tokens; permission scopes ride in a
-``{permission: ...}`` suffix on agentic-edge stereotypes.
-
-**JSON ↔ BUML.** ``/export-buml`` converts a Component or Deployment diagram
-JSON into a BUML Python file; ``/get-json-model`` reads it back, autodetecting
-the diagram type. ``/validate-diagram`` runs the metamodel ``validate()`` for
-both types.
-
-**Cross-diagram references.** Within a project, an artifact's ``manifests``
-and a component's ``realizes`` are resolved against the peer Component / class
-diagrams; unresolved references are reported as project-level errors.
+The backend handles ``BPMN`` as a self-contained diagram type backed by the
+:doc:`BPMN metamodel <buml_language/model_types/bpmn>`. ``/export-buml``
+converts a BPMN diagram JSON to an executable Python BUML file;
+``/get-json-model`` reads it back; ``/validate-diagram`` runs the metamodel
+``validate()``.
 
 API Endpoints
 -------------

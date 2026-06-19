@@ -27,6 +27,7 @@ from besser.BUML.metamodel.bpmn import (
     Transaction,
 )
 from besser.utilities.buml_code_builder.common import (
+    _comment_safe,
     _escape_python_string,
     safe_var_name,
 )
@@ -278,7 +279,7 @@ def _emit_container(container, container_var: str, dispenser: _NameDispenser,
         if isinstance(node, SubProcess):
             sub_var = dispenser.name_for(node)
             body.append("")
-            body.append(f"# Sub-process contents: {node.name or '(unnamed)'}")
+            body.append(f"# Sub-process contents: {_comment_safe(node.name) or '(unnamed)'}")
             _emit_container(node, sub_var, dispenser, body, needed)
 
     if container.sequence_flows:
@@ -321,7 +322,7 @@ def bpmn_model_to_code(model: BPMNModel, file_path: str = None,
         needed.add("Process")
         var = dispenser.name_for(process)
         process_vars[process] = var
-        body.append(f"# --- Process: {process.name or '(unnamed)'} ---")
+        body.append(f"# --- Process: {_comment_safe(process.name) or '(unnamed)'} ---")
         body.append(f"{var} = Process(name={_quoted(process.name)})")
         _emit_layout_if_present(process, var, body)
         body.append(f"{model_var_name}.add_process({var})")
@@ -333,39 +334,39 @@ def bpmn_model_to_code(model: BPMNModel, file_path: str = None,
 
         # 4a — flow nodes (recursing into sub-processes) + sequence flows
         if process.flow_nodes:
-            body.append(f"# Flow nodes in: {process.name or '(unnamed)'}")
+            body.append(f"# Flow nodes in: {_comment_safe(process.name) or '(unnamed)'}")
             _emit_container(process, var, dispenser, body, needed)
             body.append("")
 
         # 4b — artifacts (annotations / groups)
         if process.artifacts:
-            body.append(f"# Artifacts in: {process.name or '(unnamed)'}")
+            body.append(f"# Artifacts in: {_comment_safe(process.name) or '(unnamed)'}")
             for artifact in sort_by_timestamp(process.artifacts):
                 _emit_artifact(artifact, var, dispenser, body, needed)
             body.append("")
 
         # 4c — data objects
         if process.data_objects:
-            body.append(f"# Data objects in: {process.name or '(unnamed)'}")
+            body.append(f"# Data objects in: {_comment_safe(process.name) or '(unnamed)'}")
             for data_object in sort_by_timestamp(process.data_objects):
                 _emit_data_object(data_object, var, dispenser, body, needed)
             body.append("")
 
         # 4d — lanes (after flow nodes so members are already emitted)
         if process.lanes:
-            body.append(f"# Lanes in: {process.name or '(unnamed)'}")
+            body.append(f"# Lanes in: {_comment_safe(process.name) or '(unnamed)'}")
             for lane in sort_by_timestamp(process.lanes):
                 _emit_lane(lane, var, dispenser, body, needed)
             body.append("")
 
         # 4e — associations + data associations
         if process.associations:
-            body.append(f"# Associations in: {process.name or '(unnamed)'}")
+            body.append(f"# Associations in: {_comment_safe(process.name) or '(unnamed)'}")
             for assoc in sort_by_timestamp(process.associations):
                 _emit_association(assoc, var, dispenser, body, needed)
             body.append("")
         if process.data_associations:
-            body.append(f"# Data associations in: {process.name or '(unnamed)'}")
+            body.append(f"# Data associations in: {_comment_safe(process.name) or '(unnamed)'}")
             for da in sort_by_timestamp(process.data_associations):
                 _emit_data_association(da, var, dispenser, body, needed)
             body.append("")

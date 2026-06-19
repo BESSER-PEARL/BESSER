@@ -31,15 +31,21 @@ from besser.BUML.metamodel.bpmn import (
     Association,
     BPMNConnectingObject,
     BPMNModel,
+    CallActivity,
+    Collaboration,
     DataAssociation,
     DataObject,
     DataStore,
     EndEvent,
     Event,
+    EventDefinitionType,
+    EventDirection,
     Gateway,
+    GatewayType,
     Group,
     IntermediateEvent,
     Lane,
+    LoopCharacteristics,
     MessageFlow,
     Participant,
     Process,
@@ -47,6 +53,7 @@ from besser.BUML.metamodel.bpmn import (
     StartEvent,
     SubProcess,
     Task,
+    TaskType,
     TextAnnotation,
     Transaction,
 )
@@ -485,13 +492,69 @@ def bpmn_to_json(content: str) -> dict:
         ConversionError: if the source fails to parse / execute, or if no
             ``BPMNModel`` instance is produced.
     """
-    namespace: dict = {}
+    safe_globals = {
+        "__name__": "besser_buml_import",
+        "__builtins__": {
+            "set": set, "list": list, "dict": dict, "tuple": tuple,
+            "str": str, "int": int, "float": float, "bool": bool,
+            "len": len, "range": range,
+            "True": True, "False": False, "None": None,
+            "print": lambda *a, **kw: None,
+        },
+        "BPMNModel": BPMNModel,
+        "Process": Process,
+        "Collaboration": Collaboration,
+        "Participant": Participant,
+        "Task": Task,
+        "TaskType": TaskType,
+        "LoopCharacteristics": LoopCharacteristics,
+        "SubProcess": SubProcess,
+        "Transaction": Transaction,
+        "CallActivity": CallActivity,
+        "StartEvent": StartEvent,
+        "IntermediateEvent": IntermediateEvent,
+        "EndEvent": EndEvent,
+        "EventDirection": EventDirection,
+        "EventDefinitionType": EventDefinitionType,
+        "Gateway": Gateway,
+        "GatewayType": GatewayType,
+        "SequenceFlow": SequenceFlow,
+        "MessageFlow": MessageFlow,
+        "Association": Association,
+        "DataAssociation": DataAssociation,
+        "DataObject": DataObject,
+        "DataStore": DataStore,
+        "Lane": Lane,
+        "Group": Group,
+        "TextAnnotation": TextAnnotation,
+        "set": set,
+        "Project": lambda *args, **kwargs: None,
+    }
+
+    cleaned_lines = []
+    in_import_block = False
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if in_import_block:
+            if ")" in line:
+                in_import_block = False
+            continue
+        if stripped.startswith(("import ", "from ")):
+            if "(" in line and ")" not in line:
+                in_import_block = True
+            continue
+        if any(gen in line for gen in ["Generator(", ".generate("]):
+            continue
+        cleaned_lines.append(line)
+    cleaned_content = "\n".join(cleaned_lines)
+
+    local_vars: dict = {}
     try:
-        exec(content, namespace)
+        exec(cleaned_content, safe_globals, local_vars)
     except (SyntaxError, NameError, TypeError, ValueError) as exc:
         raise ConversionError(f"BPMN BUML file failed to execute: {exc}") from exc
 
-    model = _find_bpmn_model(namespace)
+    model = _find_bpmn_model(local_vars)
     if model is None:
         raise ConversionError(
             "BPMN BUML file produced no BPMNModel — expected a top-level variable "

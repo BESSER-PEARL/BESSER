@@ -399,8 +399,7 @@ class BPMNGenerator(GeneratorInterface):
         elif isinstance(artifact, Group):
             ET.SubElement(
                 parent, _qname("bpmn", "group"),
-                attrib={"id": self._id_for_obj(artifact, "Group"),
-                        "categoryValueRef": ""},  # placeholder — no category metamodel
+                attrib={"id": self._id_for_obj(artifact, "Group")},
             )
 
     def _emit_data_association(self, process_el, da: DataAssociation) -> None:

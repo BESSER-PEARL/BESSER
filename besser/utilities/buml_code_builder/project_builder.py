@@ -13,7 +13,7 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.utilities.buml_code_builder.common import _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
     contains_user_class,
@@ -409,7 +409,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # fix; not reproduced here to keep `04-` scope tight).
                 section = ""
                 if n_bpmn > 1:
-                    label = getattr(bpmn, "name", f"BPMN {idx}")
+                    label = _comment_safe(bpmn.name) or f"BPMN {idx}"
                     section = f"# BPMN MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")

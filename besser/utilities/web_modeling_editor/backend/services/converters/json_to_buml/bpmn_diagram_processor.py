@@ -132,6 +132,8 @@ def _build_node(elem: dict):
                 raise ConversionError(
                     f"Unknown BPMN task type '{elem.get('taskType')}' on Task '{name}'."
                 ) from exc
+            # isAgentic / AgenticTask wiring is groundwork for a follow-up PR;
+            # the base release builds plain Task for all BPMNTask elements.
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
         # SubProcess / Transaction / CallActivity all take the same args (no task_type).
         return cls(name=name, loop_characteristics=loop)

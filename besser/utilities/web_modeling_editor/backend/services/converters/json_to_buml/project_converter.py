@@ -267,17 +267,11 @@ def json_to_buml_project(project):
 
     # ── Process ALL BPMNDiagrams ──────────────────────────────────────
     for bpmn_diag in diagrams.get("BPMN", []):
-        try:
-            bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
-            model_list.append(bpmn_model)
-            # Index by diagram UUID so a Component's processModelRefs resolves.
-            if getattr(bpmn_diag, "id", None):
-                diagram_index[bpmn_diag.id] = bpmn_model
-        except Exception as e:
-            logger.warning(
-                "BPMNDiagram '%s' could not be processed: %s",
-                getattr(bpmn_diag, "title", "unknown"), e,
-            )
+        bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
+        model_list.append(bpmn_model)
+        # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.
+        if getattr(bpmn_diag, "id", None):
+            diagram_index[bpmn_diag.id] = bpmn_model
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

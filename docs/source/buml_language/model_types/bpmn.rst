@@ -20,11 +20,6 @@ The top-level container is ``BPMNModel``. A diagram without pools has a single
 ``Process``; a diagram with pools has a ``Collaboration`` whose ``Participant``\s each
 reference one ``Process``.
 
-.. image:: ../../img/bpmn_metamodel.png
-   :width: 900
-   :alt: BPMN metamodel class diagram
-   :align: center
-
 Key concepts
 ^^^^^^^^^^^^
 

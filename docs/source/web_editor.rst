@@ -187,6 +187,41 @@ cost/runtime meter as it works.
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` are
        non-terminal warnings emitted just before ``done``.
 
+**Example** — start a run with ``curl`` and read the stream::
+
+   curl -N -X POST https://<host>/besser_api/smart-generate \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: text/event-stream' \
+     -d '{
+       "project": { "...": "full ProjectInput payload" },
+       "instructions": "FastAPI backend with JWT auth and a Dockerfile",
+       "api_key": "sk-...",
+       "provider": "openai",
+       "llm_model": "gpt-4o",
+       "max_cost_usd": 1.0,
+       "max_runtime_seconds": 600
+     }'
+
+The response is a Server-Sent Events stream::
+
+   event: start
+   data: {"event":"start","runId":"a1b2c3","provider":"openai","llmModel":"gpt-4o","maxCost":1.0,"maxRuntime":600}
+
+   event: phase
+   data: {"event":"phase","phase":"generate","message":"Running the FastAPI generator…"}
+
+   event: tool_call
+   data: {"event":"tool_call","turn":1,"tool":"write_file","status":"done","summary":"auth.py"}
+
+   event: cost
+   data: {"event":"cost","usd":0.07,"turns":3,"elapsedSeconds":24.1}
+
+   event: done
+   data: {"event":"done","runId":"a1b2c3","downloadUrl":"/besser_api/download-smart/a1b2c3","fileName":"besser-smartgen.zip","isZip":true}
+
+Then issue a ``GET`` to the ``downloadUrl`` to retrieve the ZIP — it is
+re-fetchable within the run's TTL.
+
 Backend API Reference
 ---------------------
 

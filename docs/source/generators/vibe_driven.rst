@@ -120,6 +120,41 @@ Server-Sent Events and returns a download URL on completion. The full
 endpoint contract — request fields, the SSE event types, preview, resume,
 cancel, and download endpoints — is documented in :doc:`../web_editor`.
 
+Worked example
+--------------
+
+Suppose your project contains a class diagram with ``Book``, ``Author``, and
+``Member`` (and their associations), and you ask:
+
+   *"Generate a FastAPI backend for this model with JWT authentication and a
+   Dockerfile."*
+
+The run unfolds like this:
+
+#. **select / generate** — the FastAPI (Backend) generator runs and produces a
+   model-faithful baseline: SQLAlchemy models for ``Book`` / ``Author`` /
+   ``Member``, Pydantic schemas, and CRUD routes.
+#. **gap** — the planner notes the request needs two things the template
+   doesn't provide: JWT auth and a Dockerfile.
+#. **customize** — the LLM adds them on top of the scaffold, e.g.::
+
+      app/
+      ├── models.py            # Book, Author, Member — from your diagram
+      ├── schemas.py
+      ├── routers/
+      │   ├── books.py         # CRUD, now behind auth
+      │   ├── authors.py
+      │   └── members.py
+      ├── auth.py              # NEW — JWT issue/verify, password hashing
+      ├── deps.py              # NEW — get_current_user dependency
+      └── main.py              # wires the auth router in
+      Dockerfile               # NEW
+      requirements.txt         # + python-jose, + passlib
+      pyproject.toml
+
+The domain classes come from your diagram — the model stays the source of
+truth; only the auth and container scaffolding are LLM-authored.
+
 Limitations
 -----------
 
@@ -132,3 +167,32 @@ Limitations
   the output as a strong starting point, not guaranteed-buildable.
 - **Quality depends on the model.** Output fidelity tracks the chosen LLM;
   a weaker or cheaper model produces a thinner result.
+
+Troubleshooting
+---------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Symptom
+     - What it means / what to do
+   * - ``INVALID_KEY`` error
+     - The provider rejected the API key. Check the key, and that it matches
+       the selected provider (``anthropic`` vs ``openai``).
+   * - ``COST_CAP`` warning
+     - The run reached ``max_cost_usd`` and stopped early. Whatever it
+       produced so far is still returned (a ``done`` event follows). Raise the
+       cap — up to the server hard cap — for a fuller result.
+   * - ``TIMEOUT`` warning
+     - The same, for ``max_runtime_seconds``: partial output is still
+       delivered.
+   * - ``UPSTREAM_LLM`` error
+     - The provider returned an error (rate limit, overload, content filter).
+       Usually transient — retry.
+   * - The run seems stuck
+     - Watch the ``cost`` ticks: while turns / elapsed keep advancing, the LLM
+       is working. A genuinely hung run is cancelled after the runtime cap.
+   * - "What counts against my budget?"
+     - Only the paid LLM calls (the planning pass + the customize loop). The
+       deterministic scaffold and the download are free.

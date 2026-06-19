@@ -40,6 +40,16 @@ class SetupLayerSyntax:
         if not hasattr(self, '_shared_activations'):
             SetupLayerSyntax._shared_activations = {}
 
+    @staticmethod
+    def _strip_counter_suffix(layer_name):
+        """
+        Strip the counter suffix (_N) added by the parser to ensure unique keys.
+        Example: 'dropout_1' -> 'dropout', 'lstm_layer_2' -> 'lstm_layer'
+        """
+        import re
+        # Remove trailing _N where N is one or more digits
+        return re.sub(r'_\d+$', '', layer_name)
+
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
         actv_func = self.setup_actv_func()

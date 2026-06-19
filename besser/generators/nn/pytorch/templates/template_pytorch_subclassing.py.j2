@@ -9,7 +9,7 @@ class NeuralNetwork(nn.Module):
 
 
     def forward(self, x):
-    {{- nn_components.print_forward(modules_details, inputs_outputs) }}
+    {{- nn_components.print_forward(modules_details, inputs_outputs, strip_layer_counter_suffix) }}
 
 {% if model.train_data is not none %}
 # Dataset preparation

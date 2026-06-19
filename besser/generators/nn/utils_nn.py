@@ -876,10 +876,19 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         layer, modules_details, inputs_outputs
     )
 
+    # Temporarily strip counter suffix from layer.name for syntax generation
+    # Save original name to restore after syntax is created
+    original_name = layer.name
+    import re
+    layer.name = re.sub(r'_c\d+$', '', layer.name)
+
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
         setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer,
         is_subnn=is_subnn
     )
+
+    # Restore original name (with suffix) for modules_details key
+    layer.name = original_name
 
     _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn)
 

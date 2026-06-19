@@ -331,6 +331,9 @@ class Layer(NamedElement):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse). When True, the generator should NOT define this
+            layer in __init__, only call it in forward/call.
 
     Attributes:
         name (str): The name of the layer.
@@ -339,13 +342,16 @@ class Layer(NamedElement):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this is a call to an already-defined layer.
     """
     def __init__(self, name: str, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False):
+                 name_module_input: str = None, input_reused: bool = False,
+                 is_layer_call: bool = False):
         super().__init__(name)
         self.actv_func: str = actv_func
         self.name_module_input: str = name_module_input
         self.input_reused: bool = input_reused
+        self.is_layer_call: bool = is_layer_call
 
     @property
     def actv_func(self) -> str:
@@ -391,10 +397,24 @@ class Layer(NamedElement):
         """
         self.__input_reused = input_reused
 
+    @property
+    def is_layer_call(self) -> bool:
+        """
+        bool: Get whether this represents a call to an already-defined layer.
+        """
+        return self.__is_layer_call
+
+    @is_layer_call.setter
+    def is_layer_call(self, is_layer_call: bool):
+        """
+        bool: Set whether this represents a call to an already-defined layer.
+        """
+        self.__is_layer_call = is_layer_call
+
     def __repr__(self):
         return (
             f'Layer({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class CNN(Layer):
@@ -453,8 +473,9 @@ class CNN(Layer):
                  stride_dim: List[int], padding_amount: int = 0,
                  padding_type: str = "valid", actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 permute_in: bool = False, permute_out: bool = False,
+                 is_layer_call: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.kernel_dim: List[int] = kernel_dim
         self.stride_dim: List[int] = stride_dim
         self.padding_amount: int = padding_amount
@@ -623,10 +644,10 @@ class ConvolutionalLayer(CNN):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False):
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out)
+                         input_reused, permute_in, permute_out, is_layer_call)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
         self.dilation: List[int] = dilation if dilation is not None else [1]
@@ -765,13 +786,13 @@ class Conv1D(ConvolutionalLayer):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False):
         if stride_dim is None:
             stride_dim = [1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, dilation,
                          groups, bias, actv_func, name_module_input, input_reused,
-                         permute_in, permute_out)
+                         permute_in, permute_out, is_layer_call)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -885,13 +906,13 @@ class Conv2D(ConvolutionalLayer):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False):
         if stride_dim is None:
             stride_dim = [1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, dilation,
                          groups, bias, actv_func, name_module_input, input_reused,
-                         permute_in, permute_out)
+                         permute_in, permute_out, is_layer_call)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1005,13 +1026,13 @@ class Conv3D(ConvolutionalLayer):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False):
         if stride_dim is None:
             stride_dim = [1, 1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, dilation,
                          groups, bias, actv_func, name_module_input, input_reused,
-                         permute_in, permute_out)
+                         permute_in, permute_out, is_layer_call)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1129,7 +1150,8 @@ class PoolingLayer(CNN):
                  padding_amount: int = 0, padding_type: str = "valid",
                  output_dim: List[int] = None, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False):
+                 permute_in: bool = False, permute_out: bool = False,
+                 is_layer_call: bool = False):
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
         self.output_dim: List[int] = output_dim
@@ -1137,7 +1159,7 @@ class PoolingLayer(CNN):
             output_dim = []
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out)
+                         input_reused, permute_in, permute_out, is_layer_call)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1289,7 +1311,7 @@ class LayerModifier(Layer):
     def __repr__(self):
         return (
             f'LayerModifier({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class NormalizationLayer(LayerModifier):
@@ -1320,8 +1342,8 @@ class NormalizationLayer(LayerModifier):
     """
     def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 input_reused: bool = False, is_layer_call: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.eps: float = eps
         self.affine: bool = affine
 
@@ -1399,8 +1421,9 @@ class BatchNormLayer(NormalizationLayer):
                  eps: float = 1e-5, momentum: float = 0.1, affine: bool = True,
                  track_running_stats: bool = True, actv_func: str = None,
                  permute_in: bool = None, permute_out: bool = None,
-                 name_module_input: str = None, input_reused: bool = False):
-        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused)
+                 name_module_input: str = None, input_reused: bool = False,
+                 is_layer_call: bool = False):
+        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused, is_layer_call)
         self.num_features: int = num_features
         self.dimension: str = dimension
         self.momentum: float = momentum
@@ -1521,8 +1544,8 @@ class LayerNormLayer(NormalizationLayer):
     def __init__(self, name: str, normalized_shape: List[int],
                  eps: float = 1e-5, affine: bool = True,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
-        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused)
+                 input_reused: bool = False, is_layer_call: bool = False):
+        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused, is_layer_call)
         self.normalized_shape: List[int] = normalized_shape
 
     @property
@@ -1577,8 +1600,9 @@ class DropoutLayer(LayerModifier):
             this layer is reused as input to another layer.
     """
     def __init__(self, name: str, rate: float, dimension: str | None = None,
-                 name_module_input: str = None, input_reused: bool = False):
-        super().__init__(name, None, name_module_input, input_reused)
+                 name_module_input: str = None, input_reused: bool = False,
+                 is_layer_call: bool = False):
+        super().__init__(name, None, name_module_input, input_reused, is_layer_call)
         self.rate: float = rate
         self.dimension: str | None = dimension
 
@@ -1654,8 +1678,9 @@ class RNN(Layer):
                  input_size: int = None, bidirectional: bool = False,
                  dropout: float = 0.0, batch_first: bool = True, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, hx_source: str = None):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 input_reused: bool = False, hx_source: str = None,
+                 is_layer_call: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
         self.batch_first: bool = batch_first
@@ -1983,7 +2008,7 @@ class GeneralLayer(Layer):
     def __repr__(self):
         return (
             f'GeneralLayer({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class LinearLayer(GeneralLayer):
@@ -2015,8 +2040,9 @@ class LinearLayer(GeneralLayer):
     """
     def __init__(self, name: str, out_features: int, in_features: int = None,
                  bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 name_module_input: str = None, input_reused: bool = False,
+                 is_layer_call: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.in_features: int = in_features
         self.out_features: int = out_features
         self.bias: bool = bias
@@ -2087,8 +2113,8 @@ class FlattenLayer(GeneralLayer):
     """
     def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 input_reused: bool = False, is_layer_call: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.start_dim: int = start_dim
         self.end_dim: int = end_dim
 
@@ -2150,8 +2176,9 @@ class EmbeddingLayer(GeneralLayer):
     """
     def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
                  padding_idx: int = None, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused)
+                 name_module_input: str = None, input_reused: bool = False,
+                 is_layer_call: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
         self.padding_idx: int = padding_idx

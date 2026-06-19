@@ -51,7 +51,8 @@ class NNCodeGenerator(GeneratorInterface):
                  setup_layer: SetupLayerTF | SetupLayerTorch,
                  get_tensorop_syntax: Callable, generation_type: str,
                  template_dir: str, channel_last: bool | None = None,
-                 file_name: str = "nn.py", output_dir: str = None):
+                 file_name: str = "nn.py", output_dir: str = None,
+                 strip_layer_counter_suffix: bool = False):
 
         super().__init__(model, output_dir)
         self.setup_layer: SetupLayerTF | SetupLayerTorch = setup_layer
@@ -60,6 +61,9 @@ class NNCodeGenerator(GeneratorInterface):
         self.channel_last: bool = channel_last
         self.template_dir: str = template_dir
         self.file_name: str = file_name
+        # Flag to control stripping of counter suffix (_N) from layer names
+        # Set to True for migration (where parser adds suffixes), False for direct BUML generation
+        self.strip_layer_counter_suffix: bool = strip_layer_counter_suffix
 
         if self.generation_type == "subclassing":
             self.template_name = f"template_{template_dir}_subclassing.py.j2"
@@ -190,6 +194,14 @@ class NNCodeGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), self.template_dir, "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
+
+        # Add custom filter to strip counter suffix
+        def strip_counter_suffix_filter(name):
+            """Strip trailing _cN where N is one or more digits (counter added by parser)."""
+            import re
+            return re.sub(r'_c\d+$', '', name)
+        env.filters['strip_counter_suffix'] = strip_counter_suffix_filter
+
         template = env.get_template(self.template_name)
 
         with open(file_path, mode="w", encoding="utf-8") as f:
@@ -198,6 +210,7 @@ class NNCodeGenerator(GeneratorInterface):
             generated_code = template.render(
                 model=self.model, modules_details=self.modules_details,
                 generation_type=self.generation_type,
-                inputs_outputs=inputs_outputs)
+                inputs_outputs=inputs_outputs,
+                strip_layer_counter_suffix=self.strip_layer_counter_suffix)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

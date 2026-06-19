@@ -143,6 +143,14 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
     Returns:
         The input variable.
     """
+    # Check if inputs_outputs has explicit input for this layer that differs from prev_out_var
+    # This handles cases like: z = tf.zeros_like(x); x = self.dense(x)
+    # where prev_out_var is 'z' but the layer actually takes 'x' as input
+    if inputs_outputs and layer.name in inputs_outputs:
+        actual_input = inputs_outputs[layer.name][0]
+        if actual_input and actual_input != prev_out_var:
+            return actual_input
+
     lyr_input = layer.name_module_input
     if lyr_input is None or lyr_input is False:
         return prev_out_var

@@ -1,0 +1,134 @@
+Vibe-Driven (LLM-Augmented) Generator
+=====================================
+
+.. note::
+   **Experimental.** The Vibe-Driven Generator is under active development.
+   Its pipeline, request shape, and defaults may change between releases.
+
+The Vibe-Driven Generator (also called the *smart generator* or
+*LLM-augmented generator*) bridges the gap between BESSER's deterministic,
+template-based generators and free-form natural-language code generation.
+
+Where a template generator (Django, FastAPI, SQLAlchemy, …) emits a fixed
+scaffold from your :doc:`structural model <../buml_language/model_types/structural>`,
+the Vibe-Driven Generator **starts from that deterministic scaffold and then
+lets an LLM customise it** to satisfy a natural-language request — adding
+features the templates don't cover (authentication, JWT, Docker, custom
+middleware, migrations, tests) or targeting a stack BESSER has no built-in
+generator for (Rails, Rust/Axum, Kotlin/Spring, Next.js, …).
+
+The key idea: the model remains the source of truth. The LLM never starts
+from a blank page — it edits a correct, model-faithful baseline, which keeps
+the output anchored to your diagram instead of drifting into invention.
+
+How it works
+------------
+
+A run advances through a sequence of phases (surfaced live as the run
+streams):
+
+#. **select** — pick the deterministic Phase-1 generator that best matches
+   the request (or honour an explicitly approved target). Only generators
+   whose required models are present are offered.
+#. **generate** — run that deterministic generator to produce a correct
+   baseline scaffold (ORM models, schemas, CRUD, pages).
+#. **gap** — a cheap *planning* LLM call analyses the gap between the
+   scaffold and the request and produces a task list (or determines the
+   scaffold already suffices and Phase 2 is skipped).
+#. **customize** — the main LLM loop. The LLM reads and edits files through
+   a constrained tool surface (read / write / modify files, run further
+   generators), making surgical, scoped changes on top of the scaffold.
+#. **validate** — an optional toolchain/compile pass. *Disabled by default
+   in production* for cost and latency; the benchmark harness enables it.
+
+The whole run streams progress over Server-Sent Events, so the editor shows
+the phase timeline, the LLM's tool calls, a live cost/runtime meter, and the
+streamed text as it happens.
+
+Bring Your Own Key (BYOK)
+-------------------------
+
+The Vibe-Driven Generator calls a commercial LLM with **the user's own API
+key**. The key:
+
+- is sent only in the request body, never in the URL;
+- is held as a Pydantic ``SecretStr`` so it never appears in logs or
+  ``repr`` output;
+- is read exactly once to construct the LLM client and is **never stored or
+  persisted** server-side.
+
+Two providers are supported: ``anthropic`` and ``openai``.
+
+Models
+------
+
+The model is chosen per run. If the request doesn't specify one, the
+provider default is used:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 40 40
+
+   * - Provider
+     - Default model
+     - Override field
+   * - ``anthropic``
+     - ``claude-sonnet-4-6``
+     - ``llm_model``
+   * - ``openai``
+     - ``gpt-4o``
+     - ``llm_model``
+
+The cheap **planning** call (the *gap* phase) always uses a small model
+(``gpt-4o-mini``) regardless of the main model, so planning never costs more
+than it needs to.
+
+Budgets and caps
+----------------
+
+Every run is bounded by two soft caps, each clamped to a server-side hard
+cap so a client can never exceed them:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 25 25
+
+   * - Cap
+     - Default
+     - Hard limit
+   * - ``max_cost_usd``
+     - 1.0
+     - 2.0
+   * - ``max_runtime_seconds``
+     - 600
+     - 900
+
+When a run hits a cap it still returns whatever it has produced so far — the
+cap is surfaced as a non-terminal warning before the final result, not as a
+hard failure.
+
+Using it
+--------
+
+**From the editor.** Open the AI assistant, describe what you want
+("a FastAPI backend for this model with JWT auth and Docker"), provide your
+API key in the BYOK dialog, and confirm the run. See
+:doc:`../web_editor` for the assistant workflow.
+
+**From the API.** ``POST /besser_api/smart-generate`` streams the run as
+Server-Sent Events and returns a download URL on completion. The full
+endpoint contract — request fields, the SSE event types, preview, resume,
+cancel, and download endpoints — is documented in :doc:`../web_editor`.
+
+Limitations
+-----------
+
+- **Round-trip preservation.** Each run regenerates from the model and
+  instructions; hand-written edits that aren't re-derivable from the model
+  are not yet carried across re-generations. Closing this gap is the most
+  significant planned improvement.
+- **No build gate in production.** The *validate* phase is disabled by
+  default, so generated code is not compiled before it is returned. Treat
+  the output as a strong starting point, not guaranteed-buildable.
+- **Quality depends on the model.** Output fidelity tracks the chosen LLM;
+  a weaker or cheaper model produces a thinner result.

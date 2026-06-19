@@ -79,6 +79,114 @@ The *Deploy chatbot* action reuses the same pipeline to push a standalone,
 Streamlit-based agent to a GitHub repository with a ready-to-use Render
 blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
 
+AI Assistant & Vibe-Driven Generation
+-------------------------------------
+
+The editor ships with an AI assistant (a floating widget and a workspace
+drawer) backed by the :doc:`modeling agent <generators/baf>`. Through it you
+can create and modify diagrams in natural language, ask questions about your
+model, and trigger code generation — including the
+:doc:`Vibe-Driven (LLM-Augmented) Generator <generators/vibe_driven>`.
+
+When you ask for a customised codebase ("a FastAPI backend for this model with
+JWT auth and Docker", "build this in Rust"), the assistant routes the request
+to the Vibe-Driven Generator. Because that generator calls a commercial LLM
+with **your own API key** (BYOK), the assistant always asks for explicit
+confirmation before starting — a run never spends your key silently.
+
+The run streams over `Server-Sent Events
+<https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events>`_ so the
+assistant can show the phase timeline, the LLM's tool calls, and a live
+cost/runtime meter as it works.
+
+**Endpoints** (all under the ``/besser_api`` prefix):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 15 50
+
+   * - Endpoint
+     - Method
+     - Purpose
+   * - ``/smart-generate``
+     - POST
+     - Start a run; streams SSE, returns a download URL on completion.
+   * - ``/smart-preview``
+     - POST
+     - Pre-flight plan (primary model + target generator). No API key, no
+       LLM call.
+   * - ``/smart-gen/config``
+     - GET
+     - Feature flags and provider default models.
+   * - ``/resume-smart-gen/{run_id}``
+     - POST
+     - Resume an interrupted run from its checkpoint (streams SSE).
+   * - ``/cancel-smart-gen/{run_id}``
+     - POST
+     - Cancel an in-flight run.
+   * - ``/download-smart/{run_id}``
+     - GET
+     - Download the generated ZIP/file (re-fetchable within a TTL).
+
+**Request body of** ``POST /smart-generate``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 22 50
+
+   * - Field
+     - Type
+     - Notes
+   * - ``project``
+     - ProjectInput
+     - The full project payload (same shape as ``/generate-output-from-project``).
+   * - ``instructions``
+     - string
+     - Natural-language description of what to build (1–8000 chars).
+   * - ``api_key``
+     - string (secret)
+     - BYOK. Sent only in the body, never logged or persisted.
+   * - ``provider``
+     - ``anthropic`` | ``openai``
+     - Which provider the key is for. Default ``anthropic``.
+   * - ``llm_model``
+     - string (optional)
+     - Model override; falls back to the provider default.
+   * - ``max_cost_usd``
+     - float
+     - Soft spend cap, clamped to the server hard cap (default 1.0, max 2.0).
+   * - ``max_runtime_seconds``
+     - int
+     - Soft runtime cap, clamped to the server hard cap (default 600, max 900).
+
+**SSE event types** emitted by ``/smart-generate``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Event
+     - Meaning
+   * - ``start``
+     - Run accepted; carries ``runId``, provider, model, and caps.
+   * - ``phase``
+     - Pipeline advanced to a phase: ``select``, ``generate``, ``gap``,
+       ``customize``, ``validate``.
+   * - ``phase_update``
+     - Extra detail for the current phase (e.g. the gap task list).
+   * - ``text``
+     - A streaming text delta from the LLM.
+   * - ``tool_call``
+     - The LLM invoked a tool (read/write/modify a file, run a generator).
+   * - ``cost``
+     - Periodic cost / runtime / turn-count tick.
+   * - ``done``
+     - Success. Carries ``downloadUrl``, ``fileName``, and the run recipe.
+   * - ``error``
+     - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
+       ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` are
+       non-terminal warnings emitted just before ``done``.
+
 Backend API Reference
 ---------------------
 

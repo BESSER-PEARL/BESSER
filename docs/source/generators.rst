@@ -97,6 +97,12 @@ Choosing a Generator
      - ZIP
      - You want a BAF agent adapted to an end-user profile (language, style,
        accessibility, modality); see :doc:`generators/agent_personalization`
+   * - **Vibe-Driven (LLM)**
+     - Any model + instructions
+     - ZIP (any stack)
+     - You want a customised codebase — extra features (auth, JWT, Docker,
+       tests) or a stack with no built-in generator (Rails, Rust, Kotlin,
+       Next.js). Bring your own API key; see :doc:`generators/vibe_driven`
 
 
 Web Application
@@ -171,6 +177,16 @@ Generate conversational agents:
 
    generators/baf
    generators/agent_personalization
+
+LLM-Augmented
+-------------
+
+Generate and customise code with an LLM on top of a deterministic scaffold:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/vibe_driven
 
 Build Your Own
 --------------

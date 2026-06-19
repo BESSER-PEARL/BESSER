@@ -194,14 +194,23 @@ class ToolExecutor:
         gui_model: Any = None,
         agent_model: Any = None,
         agent_config: dict | None = None,
+        quantum_circuit: Any = None,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.domain_model = domain_model
         self.gui_model = gui_model
         self.agent_model = agent_model
         self.agent_config = agent_config
+        self.quantum_circuit = quantum_circuit
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Per-path modify_file counts. Once the LLM has demonstrably
+        # tried targeted edits on a small generator file (>= 2), the
+        # write_file guardrail relaxes and allows a full rewrite —
+        # otherwise the modify-streak reminder ("call write_file") and
+        # the write_file rejection ("use modify_file") contradict each
+        # other and ping-pong the model.
+        self._modify_counts: dict[str, int] = {}
 
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.
@@ -443,6 +452,24 @@ class ToolExecutor:
         PythonGenerator(model=self.domain_model, output_dir=out).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
+    def _gen_qiskit(self, args: dict) -> dict:
+        if self.quantum_circuit is None:
+            return {
+                "error": (
+                    "generate_qiskit requires a quantum circuit model but this "
+                    "project does not include one. Skip this tool and use "
+                    "write_file / run_command instead."
+                ),
+            }
+        from besser.generators.qiskit.qiskit_generator import QiskitGenerator
+        out = self._gen_dir("qiskit")
+        QiskitGenerator(
+            model=self.quantum_circuit, output_dir=out,
+            backend_type=args.get("backend_type", "aer_simulator"),
+            shots=int(args.get("shots", 1024)),
+        ).generate()
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
     def _gen_java_classes(self, args: dict) -> dict:
         err = self._require_domain_model("generate_java_classes")
         if err:
@@ -596,19 +623,27 @@ class ToolExecutor:
 
         # Guardrail for small generated files: suggest modify_file instead.
         # For large files (>200 lines), allow rewriting — it's more efficient
-        # than 20 modify_file calls on a 5000-line file.
+        # than 20 modify_file calls on a 5000-line file. The guard also
+        # relaxes once the LLM has already made >= 2 modify_file edits on
+        # the path: at that point a full rewrite is exactly what the
+        # modify-streak reminder asks for, so rejecting it would put the
+        # two guardrails in direct contradiction.
         if rel_path in self._generator_files and os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 existing_lines = f.read().count("\n") + 1
-            if existing_lines <= 200:
+            if existing_lines <= 200 and self._modify_counts.get(rel_path, 0) < 2:
                 return {
                     "error": (
                         f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines). "
-                        "Use modify_file for targeted edits on small generated files."
+                        "Use modify_file for targeted edits, or delete_file + "
+                        "write_file to replace it wholesale."
                     ),
                 }
-            # Large file — allow rewrite but log it
-            logger.info("Allowing rewrite of large generated file: %s (%d lines)", rel_path, existing_lines)
+            # Rewrite allowed (large file, or repeated modifies already tried) — log it
+            logger.info(
+                "Allowing rewrite of generated file: %s (%d lines, %d prior modifies)",
+                rel_path, existing_lines, self._modify_counts.get(rel_path, 0),
+            )
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -619,6 +654,8 @@ class ToolExecutor:
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
             return {"error": f"File not found: {args['path']}"}
+        rel_path = args["path"].replace("\\", "/")
+        self._modify_counts[rel_path] = self._modify_counts.get(rel_path, 0) + 1
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         old_text = args["old_text"]
@@ -983,6 +1020,7 @@ class ToolExecutor:
         "generate_flutter": _gen_flutter,
         "generate_web_app": _gen_web_app,
         "generate_rdf": _gen_rdf,
+        "generate_qiskit": _gen_qiskit,
         # Files
         "list_files": _list_files,
         "read_file": _read_file,

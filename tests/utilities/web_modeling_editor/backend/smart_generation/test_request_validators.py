@@ -59,6 +59,18 @@ class TestRequestValidators:
         req = _build_request(llm_model="claude-sonnet-4-6")
         assert req.llm_model == "claude-sonnet-4-6"
 
+    def test_target_generator_override_accepts_registered_name(self):
+        req = _build_request(target_generator_override="generate_fastapi_backend")
+        assert req.target_generator_override == "generate_fastapi_backend"
+
+    def test_target_generator_override_rejects_unknown_name(self):
+        with pytest.raises(ValidationError, match="target_generator_override"):
+            _build_request(target_generator_override="generate_made_up")
+
+    def test_target_generator_override_blank_normalizes_to_none(self):
+        req = _build_request(target_generator_override="  ")
+        assert req.target_generator_override is None
+
     def test_llm_model_with_slashes_accepted(self):
         """Some Anthropic model IDs use vendor/model format."""
         req = _build_request(llm_model="anthropic/claude-3-5-sonnet")

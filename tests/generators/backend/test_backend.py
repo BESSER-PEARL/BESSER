@@ -381,6 +381,40 @@ def test_pydantic_formatting(relationship_model, tmpdir):
     assert any("p_asset" in line for line in field_lines), "p_asset field not found"
 
 
+def test_backend_sqlalchemy_and_main_api_share_one_database(simple_model, tmpdir):
+    """The composite backend must touch ONE database: sql_alchemy.py and
+    main_api.py default to the same sqlite URL, importing sql_alchemy.py has
+    no side effects, and check_same_thread is only passed for sqlite URLs."""
+    import re
+
+    output_dir = tmpdir.mkdir("output_single_db")
+    generator = BackendGenerator(model=simple_model, output_dir=str(output_dir))
+    generator.generate()
+
+    with open(os.path.join(str(output_dir), "sql_alchemy.py"), encoding="utf-8") as f:
+        sqlalchemy_code = f.read()
+    with open(os.path.join(str(output_dir), "main_api.py"), encoding="utf-8") as f:
+        api_code = f.read()
+
+    url_pattern = r'os\.getenv\("DATABASE_URL",\s*"([^"]+)"\)'
+    sqlalchemy_default = re.search(url_pattern, sqlalchemy_code)
+    api_default = re.search(url_pattern, api_code)
+    assert sqlalchemy_default is not None, "sql_alchemy.py must read DATABASE_URL from the environment"
+    assert api_default is not None, "main_api.py must read DATABASE_URL from the environment"
+    assert sqlalchemy_default.group(1) == api_default.group(1) == "sqlite:///./data/Name.db"
+
+    # check_same_thread is sqlite-only: main_api must guard it on the URL scheme
+    assert ('connect_args = {"check_same_thread": False} '
+            'if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}') in api_code
+    assert "connect_args=connect_args" in api_code
+
+    # Importing sql_alchemy.py must never create tables as a side effect
+    assert "echo=True" not in sqlalchemy_code
+    assert 'if __name__ == "__main__":' in sqlalchemy_code
+    assert (sqlalchemy_code.index("Base.metadata.create_all")
+            > sqlalchemy_code.index('if __name__ == "__main__":'))
+
+
 def test_rest_api_inherited_constructor_args(tmpdir):
     """
     Ensure REST API creation endpoints include constructor arguments

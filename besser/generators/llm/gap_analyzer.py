@@ -5,10 +5,21 @@ deterministic generator's output and produces a focused task list for
 the customise (Phase 2) loop to execute.
 
 Model selection:
-    The call uses ``llm_client``, which is the *same* client (and
-    therefore the same provider+model) the orchestrator was constructed
-    with — i.e. whatever the user picked in the BYOK dialog. There is no
-    separate "cheap" model. Cost scales with the user's chosen tier.
+    The call prefers the provider's cheap planning sibling
+    (``llm_client.planning_model`` — Haiku for Anthropic keys,
+    gpt-4o-mini for OpenAI keys, overridable via the
+    ``BESSER_LLM_PLANNING_MODEL`` env var, ``primary`` to disable). If
+    the cheap model is unavailable on the user's gateway the call is
+    retried once on the primary model, so cheap routing can never fail
+    a run. Cost is billed at the effective model's own pricing.
+
+Output contract (load-bearing — the orchestrator branches on it):
+    * ``None``  — the analysis FAILED (LLM error, unparseable reply,
+      mock client). Phase 2 proceeds without a checklist, exactly as
+      before.
+    * ``[]``    — the model judged the scaffold ALREADY COVERS the
+      user's request. The orchestrator may skip Phase 2 entirely.
+    * ``[...]`` — a focused task list for Phase 2.
 
 Why keep this when Phase 2 has a frontier model?
     * It anchors Phase 2 on every model class, attribute, relationship,
@@ -19,16 +30,15 @@ Why keep this when Phase 2 has a frontier model?
     * It can flag dead files left over from the deterministic generator
       so the customise loop deletes them via the ``delete_file`` tool
       (e.g. a leftover ``main_api.py`` after a switch to Flask).
-    * Failure mode is graceful: no list = the smart Phase 2 model still
-      plans, just without the upfront scaffold.
 
-Inputs are passed *verbatim* — we no longer truncate the user's
-instructions or the file inventory to 1500 chars, since the planner has
-to see the whole picture to find genuine gaps. The serialized domain
-model (relationships, multiplicities, inheritance, constraints) is fed
-in as JSON via :func:`besser.generators.llm.model_serializer.serialize_domain_model`.
+Inputs are soft-clipped to the ``_MAX_*_CHARS`` budgets below (a
+runaway 100k-line inventory would otherwise burn the context window
+before the customise phase gets a chance). The serialized domain model
+is pruned progressively but is ALWAYS valid JSON — the planner never
+receives a raw character clip.
 """
 
+import inspect
 import json
 import logging
 from typing import Any, Callable
@@ -46,6 +56,35 @@ _MAX_MODEL_JSON_CHARS = 12_000
 _MAX_TASKS = 16
 
 
+# Forced-tool schema for the planning reply. Structured-by-construction
+# beats parsing free text: prose with brackets can no longer corrupt
+# extraction, and "no work needed" is an explicit empty array instead
+# of an accident.
+_SUBMIT_TASKS_TOOL = {
+    "name": "submit_tasks",
+    "description": (
+        "Submit the final task list for the customisation pass. "
+        "Submit an EMPTY list when the generated scaffold already "
+        "fully covers the user's request."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": _MAX_TASKS,
+                "description": (
+                    "One-line imperative tasks, each anchored to a "
+                    "specific model element or user requirement."
+                ),
+            },
+        },
+        "required": ["tasks"],
+    },
+}
+
+
 def analyze_gaps_via_llm(
     instructions: str,
     generator_used: str | None,
@@ -54,29 +93,35 @@ def analyze_gaps_via_llm(
     llm_client,
     on_progress: Callable[[int, str, str], None] | None = None,
     on_phase_details: Callable[[str, str], None] | None = None,
-) -> list[str]:
+    generator_failure: str | None = None,
+) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
     Args:
-        instructions: Raw user request, untruncated.
+        instructions: Raw user request.
         generator_used: Name of the deterministic generator that ran in
-            Phase 1, or ``None`` if no generator was selected.
+            Phase 1, or ``None`` if no generator ran (none selected, or
+            the selected one failed — see ``generator_failure``).
         domain_model: The assembled BUML ``DomainModel`` (or ``None``
             for non-class primaries like agent/state-machine runs).
         inventory: Output-tree inventory string from
             ``prompt_builder.build_inventory``.
-        llm_client: The orchestrator's primary LLM client. **Same model
-            the user selected** — no second cheap model is constructed.
+        llm_client: The orchestrator's LLM client. The call is routed
+            to ``llm_client.planning_model`` when available.
         on_progress: Optional callback so the orchestrator can fire a
             ``gap`` SSE phase event before the LLM call. Signature
             mirrors the orchestrator's existing ``on_progress``:
             ``(turn, tool, status)``.
+        on_phase_details: Optional callback surfacing the task list to
+            the SSE consumer.
+        generator_failure: When Phase 1 selected a generator but it
+            FAILED, the reason string (``"<generator>: <error>"``). It
+            is woven into the from-scratch fallback task so Phase 2
+            knows why the scaffold is missing and can avoid the cause.
 
     Returns:
-        - A list of task strings on success.
-        - ``[]`` if the LLM call fails or no work is needed.
-        - A 1-element "build everything from scratch" list when no
-          generator ran.
+        ``None`` on failure, ``[]`` when no work is needed, otherwise
+        the task list (see the module docstring for the full contract).
     """
     if on_progress is not None:
         try:
@@ -86,18 +131,32 @@ def analyze_gaps_via_llm(
             logger.debug("on_progress callback raised; continuing", exc_info=True)
 
     if not generator_used:
-        fallback = [
-            "No BESSER generator was used. Build the entire application "
-            "from scratch using the domain model as your specification. "
-            "Every entity, attribute, type, and relationship in your code "
-            "must match the model."
-        ]
-        _emit_phase_details(on_phase_details, fallback, fallback_label=True)
+        if generator_failure:
+            fallback = [
+                f"The deterministic generator failed ({generator_failure}). "
+                "Build the entire application from scratch using the domain "
+                "model as your specification, and avoid the cause of that "
+                "failure (e.g. rename reserved identifiers in the code you "
+                "write). Every entity, attribute, type, and relationship in "
+                "your code must match the model."
+            ]
+        else:
+            fallback = [
+                "No BESSER generator was used. Build the entire application "
+                "from scratch using the domain model as your specification. "
+                "Every entity, attribute, type, and relationship in your code "
+                "must match the model."
+            ]
+        _emit_phase_details(
+            on_phase_details, fallback,
+            fallback_label=True, generator_failure=generator_failure,
+        )
         return fallback
 
     if not _is_real_provider(llm_client):
-        # Test client / mock — skip the LLM call.
-        return []
+        # Test client / mock — skip the LLM call. Counts as "no
+        # analysis", not as "scaffold is sufficient".
+        return None
 
     model_json = _safe_serialize_model(domain_model)
     user_prompt = _build_user_prompt(
@@ -107,30 +166,122 @@ def analyze_gaps_via_llm(
         inventory=inventory,
     )
 
-    try:
-        response = llm_client.chat(
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-            tools=[],
-        )
-    except Exception:
-        logger.warning("Gap analyzer LLM call failed; falling back to no checklist")
-        return []
-
-    text = _extract_text(response)
-    tasks = _parse_task_array(text)
+    tasks = _call_planner(llm_client, user_prompt)
     if tasks is None:
-        logger.warning("Gap analyzer returned non-JSON response: %r", text[:200])
-        return []
+        return None
     cleaned = [t.strip() for t in tasks[:_MAX_TASKS] if isinstance(t, str) and t.strip()]
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
+
+
+def _call_planner(llm_client, user_prompt: str) -> list | None:
+    """Run the planning call: cheap model first, primary on error, one
+    repair retry on an unparseable reply. Returns the raw task list or
+    ``None`` on failure."""
+    structured = _chat_supports_kwargs(llm_client, "force_tool", "model_override")
+    planning_model = getattr(llm_client, "planning_model", None) if structured else None
+
+    def _chat(prompt: str, model_override: str | None):
+        messages = [{"role": "user", "content": prompt}]
+        if structured:
+            return llm_client.chat(
+                system=_SYSTEM_PROMPT,
+                messages=messages,
+                tools=[_SUBMIT_TASKS_TOOL],
+                force_tool="submit_tasks",
+                model_override=model_override,
+            )
+        return llm_client.chat(system=_SYSTEM_PROMPT, messages=messages, tools=[])
+
+    response = None
+    try:
+        response = _chat(user_prompt, planning_model)
+    except Exception:
+        if planning_model:
+            # The cheap sibling may not exist on this gateway — retry
+            # once on the primary model before giving up.
+            logger.info(
+                "Gap analyzer: planning model %r failed; retrying on primary",
+                planning_model,
+            )
+            try:
+                response = _chat(user_prompt, None)
+            except Exception:
+                logger.warning("Gap analyzer LLM call failed; no checklist")
+                return None
+        else:
+            logger.warning("Gap analyzer LLM call failed; no checklist")
+            return None
+
+    tasks = _extract_tasks(response)
+    if tasks is not None:
+        return tasks
+
+    # One repair retry: tell the model exactly what was wrong.
+    repair_prompt = (
+        f"{user_prompt}\n\n"
+        "Your previous reply could not be parsed. Reply with ONLY a JSON "
+        "array of task strings (or call the submit_tasks tool). No prose, "
+        "no markdown."
+    )
+    try:
+        response = _chat(repair_prompt, planning_model)
+    except Exception:
+        logger.warning("Gap analyzer repair retry failed; no checklist")
+        return None
+    tasks = _extract_tasks(response)
+    if tasks is None:
+        logger.warning("Gap analyzer returned unparseable response twice; no checklist")
+    return tasks
+
+
+def _extract_tasks(response: dict[str, Any]) -> list | None:
+    """Pull the task list from a planner response.
+
+    Prefers the forced ``submit_tasks`` tool_use block; falls back to
+    parsing a JSON array out of the text (for providers/gateways that
+    ignore ``tool_choice``)."""
+    if not isinstance(response, dict):
+        return None
+    for block in response.get("content", []):
+        block_type = getattr(block, "type", None) or (
+            block.get("type") if isinstance(block, dict) else None
+        )
+        if block_type != "tool_use":
+            continue
+        name = getattr(block, "name", None) or (
+            block.get("name") if isinstance(block, dict) else None
+        )
+        if name != _SUBMIT_TASKS_TOOL["name"]:
+            continue
+        payload = getattr(block, "input", None) or (
+            block.get("input") if isinstance(block, dict) else None
+        )
+        if isinstance(payload, dict) and isinstance(payload.get("tasks"), list):
+            return payload["tasks"]
+    return _parse_task_array(_extract_text(response))
+
+
+def _chat_supports_kwargs(llm_client, *names: str) -> bool:
+    """True when ``llm_client.chat`` accepts every kwarg in ``names``.
+
+    Older/mock clients with a positional ``chat(system, messages,
+    tools)`` signature get the legacy free-text protocol."""
+    try:
+        sig = inspect.signature(llm_client.chat)
+    except (TypeError, ValueError):
+        return False
+    params = sig.parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return all(n in params for n in names)
 
 
 def _emit_phase_details(
     callback: Callable[[str, str], None] | None,
     tasks: list[str],
     fallback_label: bool = False,
+    generator_failure: str | None = None,
 ) -> None:
     """Best-effort: surface the gap task list to the SSE consumer.
 
@@ -144,10 +295,17 @@ def _emit_phase_details(
         if not tasks:
             return
         if fallback_label:
-            details = (
-                "No deterministic generator ran. The LLM will scaffold the "
-                "entire codebase from the domain model."
-            )
+            if generator_failure:
+                details = (
+                    f"The deterministic generator failed ({generator_failure}). "
+                    "The LLM will scaffold the entire codebase from the "
+                    "domain model."
+                )
+            else:
+                details = (
+                    "No deterministic generator ran. The LLM will scaffold the "
+                    "entire codebase from the domain model."
+                )
         else:
             bullets = "\n".join(f"- {t}" for t in tasks)
             details = (
@@ -186,8 +344,12 @@ _SYSTEM_PROMPT = (
     "  * Skip nice-to-haves (auth, tests, Docker) unless the user asked.\n"
     "  * If the user named a target framework or language, every task must "
     "respect it — do not propose tasks for the generator's default stack.\n"
-    "  * Hard cap: 16 tasks. Prioritise correctness over completeness.\n\n"
-    "Return ONLY a JSON array of task strings. No prose, no markdown."
+    "  * If the generated scaffold already fully covers the user's request, "
+    "return an EMPTY array — do not invent work.\n"
+    f"  * Hard cap: {_MAX_TASKS} tasks. Prioritise correctness over completeness.\n\n"
+    "Call the submit_tasks tool with your final list. If tool calling is "
+    "unavailable, return ONLY a JSON array of task strings — no prose, no "
+    "markdown."
 )
 
 
@@ -205,9 +367,11 @@ def _build_user_prompt(
         f"DOMAIN MODEL (JSON):\n{model_json}\n\n"
         f"FILE INVENTORY (paths + sizes):\n{inventory_clipped}\n\n"
         "List the missing or incorrect work as a JSON array of short task "
-        "strings (max 16). Tie every task to either a specific model element "
-        "or a specific user requirement. Include explicit delete tasks for "
-        "any generator-output files that no longer fit the customised stack."
+        f"strings (max {_MAX_TASKS}). Tie every task to either a specific model "
+        "element or a specific user requirement. Include explicit delete tasks "
+        "for any generator-output files that no longer fit the customised "
+        "stack. Submit an empty array if the scaffold already covers the "
+        "request."
     )
 
 
@@ -224,9 +388,14 @@ def _safe_serialize_model(domain_model) -> str:
     """Best-effort JSON dump of the domain model.
 
     Returns ``"null"`` when there is no model (agent/state-machine runs)
-    and an error sentinel string when serialisation fails — never
-    raises, since a failed gap analysis is recoverable but a crashed
-    one isn't.
+    and an error sentinel when serialisation fails — never raises, since
+    a failed gap analysis is recoverable but a crashed one isn't.
+
+    Whatever happens, the returned string is ALWAYS valid JSON: when the
+    full payload exceeds the budget it is pruned progressively
+    (inherited members → methods → attribute detail → bare class names)
+    with an explicit ``"__truncated__": true`` marker, never raw-clipped
+    into broken syntax.
     """
     if domain_model is None:
         return "null"
@@ -240,22 +409,57 @@ def _safe_serialize_model(domain_model) -> str:
             return json.dumps({"classes": [{"name": n} for n in names]})
         except Exception:
             return "{}"
-    payload = json.dumps(data, default=str, separators=(",", ":"))
-    if len(payload) <= _MAX_MODEL_JSON_CHARS:
-        return payload
-    # Pretty-print is more compressible by the LLM than raw truncation,
-    # but if we're over budget the safest move is to drop the
-    # ``inherited_*`` keys (the bulkiest part) and re-serialise.
+
+    def _dump(payload: Any) -> str:
+        return json.dumps(payload, default=str, separators=(",", ":"))
+
+    serialized = _dump(data)
+    if len(serialized) <= _MAX_MODEL_JSON_CHARS:
+        return serialized
+
+    # Pruning step 1: drop inherited_* keys (the bulkiest part).
     pruned: dict[str, Any] = dict(data)
+    pruned["__truncated__"] = True
     for cls in pruned.get("classes", []):
-        cls.pop("inherited_attributes", None)
-        cls.pop("inherited_methods", None)
-    payload = json.dumps(pruned, default=str, separators=(",", ":"))
-    if len(payload) <= _MAX_MODEL_JSON_CHARS:
-        return payload
-    # Last resort — raw clip with an explicit marker so the LLM knows
-    # the JSON is partial.
-    return payload[:_MAX_MODEL_JSON_CHARS] + '..."__truncated__"'
+        if isinstance(cls, dict):
+            cls.pop("inherited_attributes", None)
+            cls.pop("inherited_methods", None)
+    serialized = _dump(pruned)
+    if len(serialized) <= _MAX_MODEL_JSON_CHARS:
+        return serialized
+
+    # Pruning step 2: drop methods entirely.
+    for cls in pruned.get("classes", []):
+        if isinstance(cls, dict):
+            cls.pop("methods", None)
+    serialized = _dump(pruned)
+    if len(serialized) <= _MAX_MODEL_JSON_CHARS:
+        return serialized
+
+    # Pruning step 3: reduce attributes to name + type.
+    for cls in pruned.get("classes", []):
+        if not isinstance(cls, dict):
+            continue
+        attrs = cls.get("attributes")
+        if isinstance(attrs, list):
+            cls["attributes"] = [
+                {"name": a.get("name"), "type": a.get("type")}
+                if isinstance(a, dict) else a
+                for a in attrs
+            ]
+    serialized = _dump(pruned)
+    if len(serialized) <= _MAX_MODEL_JSON_CHARS:
+        return serialized
+
+    # Last resort: bare class names — still valid JSON, never a raw clip.
+    try:
+        names = [
+            cls.get("name") for cls in pruned.get("classes", [])
+            if isinstance(cls, dict) and cls.get("name")
+        ]
+    except Exception:
+        names = []
+    return _dump({"classes": [{"name": n} for n in names], "__truncated__": True})
 
 
 # ----------------------------------------------------------------------
@@ -282,8 +486,9 @@ def _extract_text(response: dict[str, Any]) -> str:
 def _parse_task_array(text: str) -> list | None:
     """Best-effort parse of a JSON array from a model response.
 
-    Handles raw arrays, arrays wrapped in ```json fences, and trailing
-    prose by extracting the first ``[...]`` block.
+    Tries the whole (fence-stripped) text as JSON first, then falls
+    back to extracting the first ``[...]`` block for replies with
+    surrounding prose.
     """
     if not text:
         return None
@@ -292,6 +497,16 @@ def _parse_task_array(text: str) -> list | None:
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    # Whole-text parse first — immune to brackets inside task strings.
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
     start = cleaned.find("[")
     end = cleaned.rfind("]")
     if start == -1 or end == -1 or end <= start:

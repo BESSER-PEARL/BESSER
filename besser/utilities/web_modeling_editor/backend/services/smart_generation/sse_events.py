@@ -113,12 +113,15 @@ class DoneEvent(BaseSseEvent):
     """Terminal event on successful completion.
 
     ``downloadUrl`` points to the sibling ``GET /download-smart/{runId}``
-    endpoint which single-use-serves the generated ZIP or file. The
-    ``recipe`` field carries the contents of ``.besser_recipe.json``
-    that ``LLMOrchestrator`` writes at the end of every run.
+    endpoint which single-use-serves the generated ZIP or file. ``runId``
+    is carried explicitly so clients don't have to parse it back out of
+    the URL. The ``recipe`` field carries the contents of
+    ``.besser_recipe.json`` that ``LLMOrchestrator`` writes at the end
+    of every run.
     """
 
     event: Literal["done"] = "done"
+    runId: str = ""
     downloadUrl: str
     fileName: str
     isZip: bool

@@ -32,14 +32,22 @@ from typing import AsyncGenerator, Optional
 
 from pydantic import ValidationError as PydanticValidationError
 
-from besser.generators.llm.llm_client import create_llm_client
+from besser.generators.llm.errors import (
+    CheckpointMismatchError,
+    EmptyInstructionsError,
+    InvalidApiKeyError,
+    UpstreamLLMError,
+)
+from besser.generators.llm.llm_client import DEFAULT_MODELS, create_llm_client
 from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
     LLM_ENABLE_CHECKPOINTING,
+    LLM_ENABLE_TOOLCHAIN_VALIDATION,
     LLM_ENABLE_TRACING,
     LLM_TEMP_DIR_PREFIX,
+    LLM_WATCHDOG_GRACE_SECONDS,
 )
 from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
     SmartGenerateRequest,
@@ -67,10 +75,9 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-6",
-    "openai": "gpt-4o",
-}
+# Provider default models — single source in llm_client.DEFAULT_MODELS
+# (kept under the old module-local name so existing imports keep working).
+_DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
 
@@ -85,6 +92,14 @@ _EVENT_QUEUE_MAXSIZE = 2048
 # the final DoneEvent. A malformed or maliciously huge recipe would
 # otherwise bloat the last SSE frame beyond any reasonable size.
 _MAX_RECIPE_BYTES = 256 * 1024  # 256 KB
+
+# Build-output directories that must never reach the download zip.
+# These are created when the LLM (or Phase 3 validation) runs package
+# managers / compilers inside the workspace.
+_EXCLUDED_OUTPUT_DIRS = {
+    "target", "node_modules", "__pycache__", ".git", "dist", "build",
+    ".next", ".gradle", "venv", ".venv", ".besser_snapshot",
+}
 
 
 class _EmptyGenerationError(Exception):
@@ -116,10 +131,11 @@ class SmartRunEntry:
 class SmartRunRegistry:
     """In-memory, TTL-bounded map of ``run_id → SmartRunEntry``.
 
-    The sibling ``GET /download-smart/{run_id}`` endpoint pops the entry
-    on first download (single-use semantics). Anything not claimed within
-    ``LLM_DOWNLOAD_TTL_SECONDS`` is swept by the periodic task started
-    from the backend's lifespan.
+    The sibling ``GET /download-smart/{run_id}`` endpoint reads entries
+    non-destructively (``get``) so a failed blob fetch can be retried.
+    Cleanup is owned by the periodic sweep: anything older than
+    ``LLM_DOWNLOAD_TTL_SECONDS`` is removed (entry + temp dir) by the
+    task started from the backend's lifespan.
     """
 
     def __init__(self) -> None:
@@ -133,6 +149,12 @@ class SmartRunRegistry:
     async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
         async with self._lock:
             return self._entries.pop(run_id, None)
+
+    async def get(self, run_id: str) -> Optional[SmartRunEntry]:
+        """Non-destructive lookup — the entry stays re-downloadable
+        until the TTL sweep removes it."""
+        async with self._lock:
+            return self._entries.get(run_id)
 
     async def periodic_sweep(
         self,
@@ -546,6 +568,15 @@ class SmartGenerationRunner:
                 # sees a silent jump from `generate` to `customize`.
                 _put(PhaseEvent(phase="gap", message="Analysing gaps"))
                 return
+            if tool == "__customize_skipped__":
+                # The gap analyser judged the deterministic scaffold
+                # sufficient — Phase 2 was skipped entirely. Surface it
+                # so the run doesn't look like it silently dropped work.
+                _put(PhaseEvent(
+                    phase="customize",
+                    message=f"skipped — {status}" if status else "skipped",
+                ))
+                return
             if turn == 0:
                 if tool == "__skipped__":
                     # Phase 1 skipped — surface a clear reason on the
@@ -564,6 +595,12 @@ class SmartGenerationRunner:
                     else:
                         msg = "skipped"
                     _put(PhaseEvent(phase="generate", message=msg))
+                    return
+                if status.startswith("failed:"):
+                    # Generator failure — without this the card shows
+                    # "generating" forever and the user never learns the
+                    # run fell back to from-scratch LLM generation.
+                    _put(PhaseEvent(phase="generate", message=f"{tool} {status}"))
                     return
                 _put(PhaseEvent(phase="generate", message=f"running {tool}"))
                 return
@@ -619,6 +656,15 @@ class SmartGenerationRunner:
             # BESSER_LLM_ENABLE_* env vars without a code change.
             enable_tracing=LLM_ENABLE_TRACING,
             enable_checkpointing=LLM_ENABLE_CHECKPOINTING,
+            # Heavy per-project compilers (tsc / cargo / kotlinc) are
+            # opt-in for the web deployment — they were the main driver
+            # of the duration/cost regression on non-Python stacks.
+            enable_toolchain_validation=LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            # Binding generator choice from an approved preview plan
+            # (validated by the request model). None = auto-select.
+            target_generator=getattr(
+                self.request, "target_generator_override", None
+            ),
         )
 
         # ---- 6. Spawn the worker + the cost emitter --------------------
@@ -710,6 +756,35 @@ class SmartGenerationRunner:
             disconnect_watcher(), name="smart-gen-disconnect-watcher",
         )
 
+        # Hard runtime watchdog. The orchestrator checks its runtime cap
+        # only at turn boundaries, so a hung provider call (bounded by
+        # the SDK timeout but still minutes) or a runaway Phase 3 could
+        # exceed the cap by a lot. After max_runtime + grace, flip the
+        # cancel event so the worker stops at the next opportunity; the
+        # terminal event is reported as TIMEOUT, not CANCELLED.
+        watchdog_fired = {"value": False}
+
+        async def runtime_watchdog() -> None:
+            try:
+                await asyncio.sleep(
+                    self.request.max_runtime_seconds + LLM_WATCHDOG_GRACE_SECONDS
+                )
+            except asyncio.CancelledError:
+                raise
+            if not cancel_event.is_set():
+                logger.warning(
+                    "smart-gen watchdog fired for run %s (cap %ds + %ds grace)",
+                    self.run_id,
+                    self.request.max_runtime_seconds,
+                    LLM_WATCHDOG_GRACE_SECONDS,
+                )
+                watchdog_fired["value"] = True
+                cancel_event.set()
+
+        watchdog_task = asyncio.create_task(
+            runtime_watchdog(), name="smart-gen-runtime-watchdog",
+        )
+
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
         result_path: Optional[str] = None
@@ -742,14 +817,24 @@ class SmartGenerationRunner:
                     break
 
             # ---- 8. Collect worker result or exception -----------------
+            # Specific (typed) exceptions first, then the built-in
+            # fallbacks for legacy raise sites. Order matters: the typed
+            # classes subclass ValueError/RuntimeError.
             try:
                 result_path = await worker_task
-            except _EmptyGenerationError as exc:
+            except (CheckpointMismatchError, EmptyInstructionsError) as exc:
                 worker_exception = exc
-                logger.error(
-                    "Smart-gen worker %s produced no output files", self.run_id
-                )
-                yield format_sse(ErrorEvent(code="INTERNAL", message=str(exc)))
+                yield format_sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+            except FileNotFoundError as exc:
+                # resume() with no checkpoint on disk.
+                worker_exception = exc
+                yield format_sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+            except InvalidApiKeyError as exc:
+                worker_exception = exc
+                yield format_sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
+            except UpstreamLLMError as exc:
+                worker_exception = exc
+                yield format_sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
             except ValueError as exc:
                 worker_exception = exc
                 yield format_sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
@@ -772,6 +857,9 @@ class SmartGenerationRunner:
             disconnect_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await disconnect_task
+            watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog_task
 
             # Drain any events the emitter enqueued between the sentinel
             # being put and the task being cancelled. These are cost
@@ -790,13 +878,27 @@ class SmartGenerationRunner:
             # cleanly and the dict doesn't leak entries.
             await _deregister_active_run(self.run_id)
 
-            # If the user cancelled, surface that explicitly so the
-            # frontend stops waiting for `done` and shows a clear status.
-            if cancel_event.is_set():
-                yield format_sse(ErrorEvent(
-                    code="CANCELLED",
-                    message="Smart generation cancelled by user request",
-                ))
+            # Terminal events are mutually exclusive: CANCELLED (or
+            # TIMEOUT when the watchdog fired) is emitted ONLY when the
+            # cancellation actually interrupted the run. A run cancelled
+            # at the very end that still produced output falls through
+            # to the normal `done` path below — emitting both signals
+            # contradicted the documented contract (CANCELLED is
+            # terminal) and confused clients.
+            if cancel_event.is_set() and (worker_exception is not None or not result_path):
+                if watchdog_fired["value"]:
+                    yield format_sse(ErrorEvent(
+                        code="TIMEOUT",
+                        message=(
+                            "Runtime cap exceeded — the run was stopped by "
+                            "the server watchdog before completing."
+                        ),
+                    ))
+                else:
+                    yield format_sse(ErrorEvent(
+                        code="CANCELLED",
+                        message="Smart generation cancelled by user request",
+                    ))
 
         # ---- 9. Surface cost / runtime cap warnings -------------------
         if worker_exception is None and result_path:
@@ -843,6 +945,16 @@ class SmartGenerationRunner:
                 )
                 await SMART_RUN_REGISTRY.put(self.run_id, entry)
                 yield format_sse(done_event)
+            except _EmptyGenerationError as exc:
+                # Raised inside _package_result when the orchestrator
+                # returned but produced zero user files. Surfaced with
+                # its real message (previously swallowed by the generic
+                # packaging branch below).
+                logger.error(
+                    "Smart-gen worker %s produced no output files", self.run_id
+                )
+                yield format_sse(ErrorEvent(code="INTERNAL", message=str(exc)))
+                self._cleanup_temp_dir()
             except Exception:
                 logger.exception(
                     "Failed to package smart-generate output for run %s", self.run_id
@@ -870,9 +982,14 @@ class SmartGenerationRunner:
 
         recipe = self._read_recipe(result_path)
 
-        # Collect every user file (skip internal artefacts like .besser_recipe.json)
+        # Collect every user file. Skips internal artefacts
+        # (.besser_recipe.json etc.) AND build-output directories —
+        # cargo/npm runs during the customise or validate phases would
+        # otherwise put thousands of dependency files (target/,
+        # node_modules/) into the download zip.
         user_files: list[str] = []
-        for root, _dirs, files in os.walk(result_path):
+        for root, dirs, files in os.walk(result_path):
+            dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
             for name in files:
                 if name.startswith(".besser_"):
                     continue
@@ -911,6 +1028,7 @@ class SmartGenerationRunner:
             )
 
         event = DoneEvent(
+            runId=self.run_id,
             downloadUrl=f"/besser_api/download-smart/{self.run_id}",
             fileName=entry.file_name,
             isZip=entry.is_zip,

@@ -96,14 +96,24 @@ def test_tool_filter_hides_domain_generators_when_no_model():
 
 def test_tool_filter_restores_domain_generators_when_model_present():
     """Sanity check: the non-filtered tool list is strictly a superset."""
-    with_model = {t["name"] for t in get_tools_for(has_domain_model=True, has_gui_model=True)}
+    with_all_models = {
+        t["name"]
+        for t in get_tools_for(
+            has_domain_model=True, has_gui_model=True, has_quantum_circuit=True,
+        )
+    }
+    with_domain_gui = {
+        t["name"] for t in get_tools_for(has_domain_model=True, has_gui_model=True)
+    }
     without_model = {t["name"] for t in get_tools_for(has_domain_model=False)}
     all_tools = {t["name"] for t in get_all_tools_including_generators()}
 
-    # With domain + gui we should have everything
-    assert with_model == all_tools
+    # With every model present we should have everything
+    assert with_all_models == all_tools
+    # The quantum-only generator is hidden when no circuit is loaded
+    assert "generate_qiskit" not in with_domain_gui
     # Without domain, we lose the domain-requiring tools
-    assert with_model > without_model
+    assert with_domain_gui > without_model
 
 
 def test_tool_executor_surfaces_clear_error_without_domain_model(tmp_path):

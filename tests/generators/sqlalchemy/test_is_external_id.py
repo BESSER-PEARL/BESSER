@@ -9,7 +9,6 @@ We import the generated module and verify the schema via
 
 import importlib.util
 import os
-import re
 import sys
 
 import pytest
@@ -22,30 +21,14 @@ from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
 
 def _import_generated(model: DomainModel, tmpdir, module_name: str):
-    """Render the generator, patch out the file-backed sqlite URL so nothing
-    touches disk, and return the imported module."""
+    """Render the generator and import the file directly — importing the
+    generated module must be side-effect free (table creation is gated behind
+    ``if __name__ == "__main__":``), so nothing touches disk."""
     output_dir = tmpdir.mkdir(module_name)
     SQLAlchemyGenerator(model=model, output_dir=str(output_dir)).generate(dbms="sqlite")
     path = os.path.join(str(output_dir), "sql_alchemy.py")
 
-    with open(path, "r", encoding="utf-8") as f:
-        code = f.read()
-
-    # Drop the Base.metadata.create_all block — the test drives that itself.
-    code = re.sub(
-        r"# Database connection.*?Base\.metadata\.create_all\(engine, checkfirst=True\)",
-        (
-            "DATABASE_URL = 'sqlite:///:memory:'\n"
-            "engine = create_engine(DATABASE_URL, echo=False)"
-        ),
-        code,
-        flags=re.DOTALL,
-    )
-    patched = os.path.join(str(output_dir), "patched.py")
-    with open(patched, "w", encoding="utf-8") as f:
-        f.write(code)
-
-    spec = importlib.util.spec_from_file_location(module_name, patched)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)

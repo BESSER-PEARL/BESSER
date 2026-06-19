@@ -46,9 +46,14 @@ from besser.generators.llm.checkpoint import (
     load_checkpoint,
     save_checkpoint,
 )
+from besser.generators.llm.errors import (
+    CheckpointMismatchError,
+    EmptyInstructionsError,
+)
 from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
 from besser.generators.llm.llm_client import ClaudeLLMClient
 from besser.generators.llm.prompt_builder import (
+    build_scaffold_snapshot,
     build_system_prompt,
     build_inventory,
 )
@@ -82,6 +87,13 @@ logger = logging.getLogger(__name__)
 
 # Snapshot directory name (inside output_dir)
 _SNAPSHOT_DIR = ".besser_snapshot"
+
+# Dependency / build directories excluded from the recipe's output_files
+# manifest (mirrors the web runner's zip exclusions).
+_RECIPE_EXCLUDED_DIRS = {
+    "target", "node_modules", "__pycache__", ".git", "dist", "build",
+    ".next", ".gradle", "venv", ".venv", _SNAPSHOT_DIR,
+}
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,8 @@ class LLMOrchestrator:
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
+        enable_toolchain_validation: bool = True,
+        target_generator: str | None = None,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -264,6 +278,7 @@ class LLMOrchestrator:
             gui_model=gui_model,
             agent_model=agent_model,
             agent_config=agent_config,
+            quantum_circuit=quantum_circuit,
         )
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
@@ -280,6 +295,16 @@ class LLMOrchestrator:
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues
+        # Phase 3 toolchain checks (tsc / cargo / kotlinc) compile real
+        # projects and can add minutes of wall-clock per run. The web
+        # runner disables them per deploy (BESSER_LLM_ENABLE_TOOLCHAIN_
+        # VALIDATION); library users keep the default. The cheap checks
+        # (ast.parse, Dockerfile refs, ruff, pip dry-run) always run.
+        self.enable_toolchain_validation = enable_toolchain_validation
+        # Binding Phase-1 generator choice (e.g. from a user-approved
+        # preview plan). When set, _select_generator returns it directly —
+        # no selection LLM call, no keyword fallback.
+        self.target_generator = target_generator
         # Cooperative cancellation hook. The orchestrator polls this at
         # the top of each Phase 2 turn. Returning False causes the loop
         # to exit cleanly — used by the SSE runner to honour
@@ -303,6 +328,11 @@ class LLMOrchestrator:
         self._last_modify_warning_path: str | None = None
         self._compaction_count = 0
         self._generator_used: str | None = None
+        # When Phase 1 selected a generator but the generator FAILED,
+        # the reason ("<generator>: <error>") is stored here and woven
+        # into the gap-analyser fallback + SSE stream, so neither the
+        # user nor Phase 2 is left guessing why the scaffold is missing.
+        self._phase1_failure_reason: str | None = None
         # Phase 0.5 stack id (e.g. ``"nextjs"``) and the list of metadata
         # files it created. Both stay None / [] when Phase 0.5 didn't
         # run (Python stacks, or unknown target). Used by the inventory
@@ -389,7 +419,7 @@ class LLMOrchestrator:
     def run(self, instructions: str) -> str:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
-            raise ValueError("Instructions cannot be empty")
+            raise EmptyInstructionsError("Instructions cannot be empty")
 
         self._start_time = time.monotonic()
         # Re-compute fingerprint now that we know the instructions — the
@@ -529,7 +559,7 @@ class LLMOrchestrator:
             quantum_circuit=self.quantum_circuit,
         )
         if expected != checkpoint.project_fingerprint:
-            raise ValueError(
+            raise CheckpointMismatchError(
                 "Checkpoint fingerprint does not match the supplied "
                 "project/instructions — refusing to resume. Start a "
                 "fresh run if you changed the model or the request."
@@ -538,6 +568,15 @@ class LLMOrchestrator:
         # Re-hydrate the counters that drive Phase 2 semantics.
         self._start_time = time.monotonic()
         self.total_turns = checkpoint.total_turns
+        # Seed the fresh UsageTracker with what the crashed run already
+        # spent — otherwise the cost cap only covers post-resume spend
+        # and a crash-resume cycle could legally double the user's bill.
+        try:
+            self.client.usage.seed_cost(float(checkpoint.estimated_cost_usd or 0.0))
+        except (AttributeError, TypeError, ValueError):
+            # Older checkpoints / mock clients without seed_cost — keep
+            # resuming rather than failing the run over cost accounting.
+            logger.debug("Could not seed resumed cost", exc_info=True)
         self._resume_from_turn = checkpoint.turn
         self._resume_messages = checkpoint.messages
         self._inventory = checkpoint.inventory
@@ -620,7 +659,16 @@ class LLMOrchestrator:
                 )
                 logger.info("Phase 1: Generated %d files", len(result.get("files", [])))
             else:
-                logger.warning("Phase 1: Generator failed: %s", result.get("error"))
+                error_text = str(result.get("error") or "unknown error")
+                self._phase1_failure_reason = f"{generator_name}: {error_text}"
+                logger.warning("Phase 1: Generator failed: %s", error_text)
+                # Surface the failure on the SSE stream — without this
+                # the smart-gen card shows "generating" forever and the
+                # user never learns why the scaffold was skipped.
+                if self.on_progress:
+                    self.on_progress(
+                        0, generator_name, f"failed: {error_text[:120]}"
+                    )
         else:
             logger.info("Phase 1: No matching generator -- LLM will write from scratch")
             if self.on_progress:
@@ -634,6 +682,16 @@ class LLMOrchestrator:
         matching. Respects what the user asked for — if they want NestJS,
         returns None so the LLM writes from scratch.
         """
+        # A binding override (user-approved preview plan) wins outright —
+        # no LLM call, no keywords. Validated upstream against the
+        # registered generator tools.
+        if self.target_generator:
+            logger.info(
+                "Phase 1: using caller-specified generator %s",
+                self.target_generator,
+            )
+            return self.target_generator
+
         # LLM decides first
         llm_result = self._select_generator_with_llm(instructions)
 
@@ -671,7 +729,7 @@ class LLMOrchestrator:
     def _select_generator_with_llm(self, instructions: str) -> str | None:
         """Use a cheap LLM call to pick the best generator for Phase 1."""
         try:
-            from besser.generators.llm.tools import GENERATOR_TOOLS
+            from besser.generators.llm.tools import get_available_generator_names
 
             classes = [c.name for c in self.domain_model.get_classes()] if self.domain_model else []
 
@@ -702,14 +760,25 @@ class LLMOrchestrator:
             else:
                 available_models.append("Quantum circuit: NO")
 
-            # Build generator list dynamically from the tool registry.
-            gen_lines = []
-            for tool in GENERATOR_TOOLS:
-                name = tool["name"]
-                desc = tool["description"]
-                needs_gui = "REQUIRES GUI model" in desc
-                available = "AVAILABLE" if (not needs_gui or self.gui_model) else "NOT available (no GUI model)"
-                gen_lines.append(f"- {name} → {desc} [{available}]")
+            # Build the generator menu from the tool registry, restricted
+            # to generators whose required models are actually loaded.
+            # Offering an unavailable generator (e.g. generate_web_app
+            # with no GUI model) lets the LLM pick it, Phase 1 fails,
+            # and the run silently degrades to expensive from-scratch
+            # generation — seen in production logs.
+            from besser.generators.llm.tools import GENERATOR_TOOLS
+            selectable_names = get_available_generator_names(
+                has_domain_model=self.domain_model is not None,
+                has_gui_model=self.gui_model is not None,
+                has_agent_model=self.agent_model is not None,
+                has_state_machines=bool(self.state_machines),
+                has_quantum_circuit=self.quantum_circuit is not None,
+            )
+            gen_lines = [
+                f"- {tool['name']} → {tool['description']}"
+                for tool in GENERATOR_TOOLS
+                if tool["name"] in selectable_names
+            ]
 
             prompt = (
                 f"User request: {instructions[:500]}\n\n"
@@ -738,6 +807,19 @@ class LLMOrchestrator:
             if not hasattr(self.client, '_client'):
                 return None
 
+            registered_names = selectable_names
+
+            # Preferred path: force a choose_generator tool call so the
+            # answer is exact by construction (an enum), routed to the
+            # cheap planning sibling when one exists. Falls back to the
+            # legacy free-text protocol for clients that don't support
+            # tool_choice (older providers, gateways, duck-typed mocks).
+            if self._client_supports_structured_chat():
+                choice = self._select_generator_structured(prompt, registered_names)
+                if choice is not None:
+                    return choice
+                # Structured path failed entirely — fall through to text.
+
             response = self.client.chat(
                 system="You select the best code generator. Reply with only the generator name or NONE.",
                 messages=[{"role": "user", "content": prompt}],
@@ -755,17 +837,10 @@ class LLMOrchestrator:
             answer = answer.strip().lower().replace("`", "").replace("'", "").replace('"', '')
             logger.info("Phase 1 (LLM): Raw answer: '%s'", answer[:100])
 
-            # Match against EVERY registered generator (was previously a hand-
-            # maintained subset that omitted qiskit, flutter, java, etc.).
-            # Sort by name length descending so longer prefixes win first
-            # (e.g. ``generate_python_classes`` is checked before
-            # ``generate_python``).
-            registered_names = sorted(
-                (tool["name"] for tool in GENERATOR_TOOLS),
-                key=len,
-                reverse=True,
-            )
-            for gen in registered_names:
+            # Match against EVERY registered generator. Sort by name
+            # length descending so longer prefixes win first (e.g.
+            # ``generate_python_classes`` before ``generate_python``).
+            for gen in sorted(registered_names, key=len, reverse=True):
                 if gen in answer:
                     logger.info("Phase 1 (LLM): Selected %s", gen)
                     return gen
@@ -782,6 +857,84 @@ class LLMOrchestrator:
         except Exception as e:
             logger.debug("Phase 1: LLM selection skipped (%s), using keywords", e)
             return None
+
+    def _client_supports_structured_chat(self) -> bool:
+        """True when ``client.chat`` accepts force_tool / model_override."""
+        import inspect
+        try:
+            sig = inspect.signature(self.client.chat)
+        except (TypeError, ValueError):
+            return False
+        params = sig.parameters
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return True
+        return "force_tool" in params and "model_override" in params
+
+    def _select_generator_structured(
+        self, prompt: str, registered_names: list[str],
+    ) -> str | None:
+        """Selection via a forced choose_generator tool call.
+
+        Returns the generator name, ``""`` for an explicit NONE, or
+        ``None`` when the structured path failed (caller falls back to
+        the free-text protocol).
+        """
+        choose_tool = {
+            "name": "choose_generator",
+            "description": (
+                "Select the best BESSER generator for this request, or "
+                "NONE to write from scratch."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "generator": {
+                        "type": "string",
+                        "enum": registered_names + ["NONE"],
+                    },
+                },
+                "required": ["generator"],
+            },
+        }
+        planning_model = getattr(self.client, "planning_model", None)
+        for model_override in dict.fromkeys([planning_model, None]):
+            try:
+                response = self.client.chat(
+                    system=(
+                        "You select the best code generator. Call "
+                        "choose_generator with your selection."
+                    ),
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=[choose_tool],
+                    force_tool="choose_generator",
+                    model_override=model_override,
+                )
+            except Exception as exc:
+                logger.info(
+                    "Phase 1 (LLM): structured selection failed on %s (%s)",
+                    model_override or "primary", exc,
+                )
+                continue
+            for block in response.get("content", []):
+                block_type = getattr(block, "type", None) or (
+                    block.get("type") if isinstance(block, dict) else None
+                )
+                if block_type != "tool_use":
+                    continue
+                payload = getattr(block, "input", None) or (
+                    block.get("input") if isinstance(block, dict) else None
+                )
+                choice = (payload or {}).get("generator", "")
+                if choice == "NONE":
+                    logger.info("Phase 1 (LLM): Explicitly no generator")
+                    return ""
+                if choice in registered_names:
+                    logger.info("Phase 1 (LLM): Selected %s", choice)
+                    return choice
+            # No usable tool_use block (gateway ignored tool_choice?) —
+            # don't retry the other model for this; bail to text protocol.
+            return None
+        return None
 
     def _select_generator_keyword(self, instructions: str) -> str | None:
         """Keyword-based generator selection. Returns generator name, '' for none, or None if undecided."""
@@ -994,7 +1147,9 @@ class LLMOrchestrator:
         # now would contradict the mid-run reasoning.
         resumed = self._resume_messages is not None
         if resumed:
-            gap_tasks: list[str] = []
+            # Skip gap analysis — the checkpoint's message history already
+            # contains whatever task list the original run established.
+            gap_tasks: list[str] | None = None
             messages = list(self._resume_messages or [])
         else:
             gap_tasks = analyze_gaps_via_llm(
@@ -1005,8 +1160,32 @@ class LLMOrchestrator:
                 llm_client=self.client,
                 on_progress=self.on_progress,
                 on_phase_details=self.on_phase_details,
+                generator_failure=self._phase1_failure_reason,
             )
             messages = [{"role": "user", "content": instructions}]
+
+            # Short-circuit: the planner explicitly judged the scaffold
+            # sufficient (empty list — distinct from None, which means
+            # the analysis failed). Only trusted when a deterministic
+            # generator actually ran clean and Phase 1.5 found nothing
+            # to fix; Phase 3 validation still runs as the safety net.
+            if (
+                gap_tasks == []
+                and self._generator_used
+                and not scoped_issues
+            ):
+                logger.info(
+                    "Phase 2: skipped — gap analysis found the %s scaffold "
+                    "already covers the request",
+                    self._generator_used,
+                )
+                self._phase2_exited_cleanly = True
+                if self.on_progress:
+                    self.on_progress(
+                        1, "__customize_skipped__",
+                        "scaffold already covers the request",
+                    )
+                return
 
         system = self._build_system_prompt(
             instructions=instructions,
@@ -1041,6 +1220,17 @@ class LLMOrchestrator:
                         "Runtime timeout: %.1fs > %ds", elapsed, self.max_runtime_seconds,
                     )
                     break
+
+            # -- Pre-call cost check ---------------------------------------
+            # The post-call check below catches the overrun; this one
+            # prevents firing ANOTHER billable request when the budget
+            # is already spent (e.g. after an expensive streaming turn).
+            if self.client.usage.estimated_cost > self.max_cost_usd:
+                logger.warning(
+                    "Cost cap already reached before turn %d: $%.4f > $%.4f",
+                    turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
+                )
+                break
 
             logger.info("LLM generation turn %d/%d", turn + 1, self.max_turns)
 
@@ -1197,7 +1387,18 @@ class LLMOrchestrator:
         logger.info("Executing tool: %s", tool_name)
 
         if tool_name not in _READONLY_TOOLS:
-            self._recent_tool_calls.append(tool_name)
+            # Loop detection keys on (tool, path) when the tool targets a
+            # file: a from-scratch run legitimately calls write_file
+            # dozens of times in a row on DIFFERENT paths — that is
+            # progress, not a loop. Same tool on the SAME path (or a
+            # path-less tool like run_command repeated verbatim by name)
+            # still trips the guard.
+            loop_key = tool_name
+            if isinstance(block.input, dict):
+                raw_loop_path = block.input.get("path")
+                if isinstance(raw_loop_path, str) and raw_loop_path.strip():
+                    loop_key = f"{tool_name}:{raw_loop_path.replace(chr(92), '/').strip()}"
+            self._recent_tool_calls.append(loop_key)
             # Cap the ring buffer so long runs don't leak memory. Keeping
             # 2x the loop threshold is plenty — _is_stuck() only checks
             # the tail.
@@ -1801,12 +2002,21 @@ class LLMOrchestrator:
         # ``ruff``, ``tsc``, ``cargo``, and ``kotlinc`` are best-effort
         # static checks — each skips silently if the binary isn't on
         # PATH. They catch the per-project compile errors that would
-        # otherwise only surface at deploy time (and which are the
-        # remaining gap in the bench's per-project compile-pass score).
+        # otherwise only surface at deploy time. ruff is near-instant
+        # and always runs; the project compilers (tsc / cargo /
+        # kotlinc) can add minutes of wall-clock and are gated behind
+        # ``enable_toolchain_validation`` so the web deployment can
+        # opt out per deploy.
         raw_issues.extend(self._collect_ruff_issues())
-        raw_issues.extend(self._collect_tsc_issues())
-        raw_issues.extend(self._collect_cargo_issues())
-        raw_issues.extend(self._collect_kotlinc_issues())
+        if self.enable_toolchain_validation:
+            raw_issues.extend(self._collect_tsc_issues())
+            raw_issues.extend(self._collect_cargo_issues())
+            raw_issues.extend(self._collect_kotlinc_issues())
+        else:
+            logger.info(
+                "Phase 3: toolchain validation (tsc/cargo/kotlinc) disabled "
+                "for this run"
+            )
 
         return [_classify_issue(s) for s in raw_issues]
 
@@ -1941,6 +2151,17 @@ class LLMOrchestrator:
         if not crates:
             return []
 
+        # Redirect cargo's build cache OUT of the user workspace: without
+        # this, ``target/`` (thousands of files for a typical axum crate)
+        # lands inside the output dir — bloating the download zip — and
+        # every check cold-compiles all dependency crates from scratch.
+        # A shared per-host cache dir makes repeat checks incremental.
+        cargo_env = {**os.environ}
+        cargo_env.setdefault(
+            "CARGO_TARGET_DIR",
+            os.path.join(tempfile.gettempdir(), "besser_cargo_cache"),
+        )
+
         issues: list[str] = []
         for crate_dir in crates:
             rel = os.path.relpath(crate_dir, self.output_dir).replace("\\", "/") or "."
@@ -1953,6 +2174,7 @@ class LLMOrchestrator:
                     ],
                     capture_output=True, text=True, timeout=180,
                     cwd=crate_dir,
+                    env=cargo_env,
                 )
             except (subprocess.TimeoutExpired, OSError):
                 continue
@@ -2335,6 +2557,20 @@ class LLMOrchestrator:
         concrete bugs (not user requests). ``gap_tasks`` is the optional
         focused checklist produced by the cheap gap-analyzer LLM call.
         """
+        # Inline small scaffold files so the LLM doesn't burn its first
+        # turns on read_file calls. Per-run constant, so it caches like
+        # the rest of the prompt. Disable via BESSER_LLM_INLINE_SCAFFOLD=0.
+        scaffold_snapshot = ""
+        if (
+            os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "1").lower()
+            not in ("0", "false")
+            and (self._generator_used or self._phase0_5_files)
+        ):
+            try:
+                scaffold_snapshot = build_scaffold_snapshot(self.output_dir)
+            except Exception:
+                logger.debug("Scaffold snapshot build failed", exc_info=True)
+
         return build_system_prompt(
             domain_model=self.domain_model,
             gui_model=self.gui_model,
@@ -2348,6 +2584,7 @@ class LLMOrchestrator:
             state_machines=self.state_machines,
             quantum_circuit=self.quantum_circuit,
             primary_kind=self.primary_kind,
+            scaffold_snapshot=scaffold_snapshot,
         )
 
     def _build_inventory(self, generator_name: str) -> str:
@@ -2448,10 +2685,12 @@ class LLMOrchestrator:
             f"<system-reminder>You've called modify_file on `{path}` "
             f"{n} times in a row. Stop incrementally editing this file. "
             "EITHER call write_file with the complete new contents for "
-            f"`{path}` in a single call, OR stop modifying this file "
-            "and move on to other work (or call end_turn / produce your "
-            "final response if the file is satisfactory). Do NOT issue "
-            "another modify_file on this same path."
+            f"`{path}` in a single call (generator-created files become "
+            "rewritable after repeated modify_file edits — an earlier "
+            "write_file rejection no longer applies), OR stop modifying "
+            "this file and move on to other work (or call end_turn / "
+            "produce your final response if the file is satisfactory). "
+            "Do NOT issue another modify_file on this same path."
             "</system-reminder>"
         )
 
@@ -2460,11 +2699,16 @@ class LLMOrchestrator:
     # ==================================================================
 
     def _save_recipe(self, instructions: str, elapsed: float) -> None:
-        # Build file manifest
+        # Build file manifest. Dependency / build directories are pruned:
+        # an LLM-run ``npm install`` would otherwise put thousands of
+        # node_modules entries in the manifest, ballooning the recipe
+        # past the SSE embed cap (a production run hit 4.9 MB and the
+        # whole recipe was dropped from the done event).
         output_files = []
         generator_files = self.executor._generator_files if hasattr(self.executor, '_generator_files') else set()
         try:
-            for root, _, fnames in os.walk(self.output_dir):
+            for root, dirs, fnames in os.walk(self.output_dir):
+                dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
                 for f in fnames:
                     if f.startswith(".besser_"):
                         continue

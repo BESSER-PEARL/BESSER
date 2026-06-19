@@ -74,12 +74,36 @@ class SmartGenerateRequest(BaseModel):
     primary_kind_override: Optional[
         Literal["class", "gui", "agent", "state_machine", "object", "quantum"]
     ] = None
+    # Optional binding choice of the Phase-1 deterministic generator.
+    # When set (e.g. from an approved /smart-preview plan), the
+    # orchestrator skips its own LLM/keyword selection entirely — the
+    # plan the user approved is the plan that runs, and one paid LLM
+    # call is saved. Validated against the registered generator tools.
+    target_generator_override: Optional[str] = Field(default=None, max_length=80)
 
     @field_validator("instructions")
     @classmethod
     def _validate_instructions_not_whitespace(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("instructions cannot be empty or whitespace-only")
+        return value
+
+    @field_validator("target_generator_override")
+    @classmethod
+    def _validate_target_generator(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        from besser.generators.llm.tools import GENERATOR_TOOLS
+
+        registered = {tool["name"] for tool in GENERATOR_TOOLS}
+        if value not in registered:
+            raise ValueError(
+                f"target_generator_override must be one of: "
+                f"{', '.join(sorted(registered))}"
+            )
         return value
 
     @field_validator("api_key")

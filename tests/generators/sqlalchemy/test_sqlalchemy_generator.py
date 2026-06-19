@@ -5,7 +5,6 @@ import pytest
 from sqlalchemy import create_engine, inspect, MetaData
 from sqlalchemy.orm import sessionmaker, declarative_base
 import datetime
-import re
 
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
@@ -26,30 +25,9 @@ def generated_sqlalchemy_module(domain_model, tmpdir):
     generator.generate(dbms="sqlite")
     file_path = os.path.join(str(output_dir), "sql_alchemy.py")
 
-    # Read and patch the generated file to use in-memory DB
-    with open(file_path, "r", encoding="utf-8") as f:
-        code = f.read()
-
-    # Remove or replace the database connection and table creation section
-    code = re.sub(
-        r"# Database connection.*?Base\.metadata\.create_all\(engine, checkfirst=True\)",
-        (
-            "# Database connection (patched for testing)\n"
-            "DATABASE_URL = 'sqlite:///:memory:'\n"
-            "engine = create_engine(DATABASE_URL, echo=False)\n"
-            "# Table creation will be handled by the test"
-        ),
-        code,
-        flags=re.DOTALL,
-    )
-
-    # Write the patched code to a new temp file
-    patched_file_path = os.path.join(str(output_dir), "sql_alchemy_patched.py")
-    with open(patched_file_path, "w", encoding="utf-8") as f:
-        f.write(code)
-
-    # Dynamically import the patched module
-    spec = importlib.util.spec_from_file_location("sql_alchemy", patched_file_path)
+    # Import the generated file directly: importing must be side-effect free
+    # (no echo, no table creation — that is gated behind `if __name__ == "__main__":`).
+    spec = importlib.util.spec_from_file_location("sql_alchemy", file_path)
     module = importlib.util.module_from_spec(spec)
     sys.modules["sql_alchemy"] = module
     spec.loader.exec_module(module)

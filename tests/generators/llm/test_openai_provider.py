@@ -271,7 +271,8 @@ class TestOpenAIPricing:
         assert p["input"] == 2.5
         assert p["output"] == 10.0
         assert p["cache_write"] == 0
-        assert p["cache_read"] == 0
+        # OpenAI's cached-input discount (early-2026 rates).
+        assert p["cache_read"] == 1.25
 
     def test_gpt4o_mini_pricing(self):
         p = _get_pricing("gpt-4o-mini")
@@ -279,9 +280,14 @@ class TestOpenAIPricing:
         assert p["output"] == 0.6
 
     def test_gpt5_pricing(self):
+        # Early-2026 rates; gpt-5.5 (the pricier tier) is matched first
+        # by _get_pricing so plain gpt-5 gets its own cheaper rate.
         p = _get_pricing("gpt-5")
-        assert p["input"] == 5.0
-        assert p["output"] == 20.0
+        assert p["input"] == 1.25
+        assert p["output"] == 10.0
+        p55 = _get_pricing("gpt-5.5")
+        assert p55["input"] == 5.0
+        assert p55["output"] == 30.0
 
     def test_o3_pricing(self):
         p = _get_pricing("o3")
@@ -312,9 +318,11 @@ class TestOpenAIPricing:
         assert p["input"] == 3.0
         assert p["output"] == 15.0
 
-    def test_unknown_model_defaults_to_sonnet(self):
+    def test_unknown_model_defaults_to_gpt4o(self):
+        # _get_pricing falls back to the gpt-4o middle tier for unknown
+        # model ids (see the function's docstring).
         p = _get_pricing("some-unknown-model")
-        assert p["input"] == 3.0  # sonnet default
+        assert p["input"] == 2.5
 
 
 # ======================================================================

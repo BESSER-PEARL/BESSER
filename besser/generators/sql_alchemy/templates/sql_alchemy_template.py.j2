@@ -1,10 +1,12 @@
 {% import "helpers.py.j2" as helper -%}
 import enum
+import os
 from typing import List as List_, Optional as Optional_
 from sqlalchemy import (
-    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_, 
-    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_, 
-    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_, Enum
+    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
+    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
+    Interval as Interval_, PickleType as PickleType_, Enum
 )
 {%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
@@ -12,10 +14,13 @@ from sqlalchemy.ext.declarative import AbstractConcreteBase
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
 )
-from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
 
 class Base(DeclarativeBase):
     pass
+{%- for association in associations|sort(attribute='name') if association.ends|length > 2 %}
+# WARNING: n-ary association '{{ association.name }}' is not supported by this generator — model it manually.
+{%- endfor %}
 
 {% if enumerations %}# Definitions of Enumerations{% endif %}
 {%- for enum in enumerations %}
@@ -197,22 +202,26 @@ class {{ asso_class.name }}(Base):
     {%- endfor %}
 {%- endfor %}
 
-# Database connection
+# Database connection (override the default with the DATABASE_URL environment variable)
 {%- if dbms == "sqlite" %}
-DATABASE_URL = "sqlite:///{{model_name}}.db"  # SQLite connection
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/{{model_name}}.db")  # SQLite connection
 {%- elif dbms == "postgresql" %}
-DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name"  # PostgreSQL connection
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://username:password@localhost:5432/db_name")  # PostgreSQL connection
 {%- elif dbms == "mysql" or dbms == "mariadb" %}
-DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://username:password@localhost:3306/db_name")  # MySQL or MariaDB connection
 {%- elif dbms == "mssql" %}
-DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
+DATABASE_URL = os.getenv("DATABASE_URL", "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server")  # MSSQL connection
 {%- elif dbms == "oracle" %}
-DATABASE_URL = "oracle+oracledb://username:password@localhost:1521/?service_name=your_service"
+DATABASE_URL = os.getenv("DATABASE_URL", "oracle+oracledb://username:password@localhost:1521/?service_name=your_service")
 {% else %}
     {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")
 {% endif %}
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL)
 
-# Create tables in the database
-Base.metadata.create_all(engine, checkfirst=True)
+if __name__ == "__main__":
+    # Create tables in the database only when this module is executed directly,
+    # so importing it never touches the database as a side effect.
+    if DATABASE_URL.startswith("sqlite"):
+        os.makedirs("data", exist_ok=True)  # folder for the default SQLite database
+    Base.metadata.create_all(engine, checkfirst=True)

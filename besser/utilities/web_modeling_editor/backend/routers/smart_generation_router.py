@@ -25,12 +25,10 @@ import logging
 import mimetypes
 import os
 import re
-import shutil
 from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
-from starlette.background import BackgroundTask
 
 from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
     SmartGenerateRequest,
@@ -55,6 +53,7 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation.runn
     request_cancellation,
     try_acquire_run_slot,
 )
+from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -86,19 +85,6 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
     # Cap the length so a ludicrously long LLM filename can't bloat the
     # header. 120 chars matches common filesystem limits.
     return candidate[:120]
-
-
-def _background_rmtree(temp_dir: str) -> None:
-    """Delete a temp dir, logging failures instead of swallowing them."""
-    try:
-        shutil.rmtree(temp_dir)
-    except FileNotFoundError:
-        # Already gone — expected if the periodic sweep got there first.
-        pass
-    except Exception:
-        logger.exception(
-            "Failed to remove smart-gen temp dir in background task: %s", temp_dir
-        )
 
 
 async def _stream_with_slot_release(
@@ -206,8 +192,13 @@ async def smart_gen_config():
             "tracing_enabled": C.LLM_ENABLE_TRACING,
             "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
+            "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
         },
         "supported_providers": ["anthropic", "openai"],
+        # Per-provider default model names, sourced from the LLM client
+        # layer (single source of truth — the BYOK dialog should read
+        # these instead of hardcoding its own copies).
+        "default_models": dict(_LLM_DEFAULT_MODELS),
     }
 
 
@@ -378,14 +369,16 @@ async def download_smart(
         description="Hex run ID returned in the `done` SSE event",
     ),
 ):
-    """Single-use download of the output produced by a completed run.
+    """Download the output produced by a completed run.
 
-    The first successful GET returns the file and deletes the run from
-    the registry; subsequent GETs return 404. The underlying temp dir is
-    removed after the response body is flushed, via a Starlette
-    background task.
+    Re-downloadable until the TTL sweep expires the entry
+    (``LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
+    failure during the blob fetch must not permanently lose an artifact
+    the user paid minutes and dollars to produce. Cleanup is owned
+    entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no
+    longer deletes anything.
     """
-    entry = await SMART_RUN_REGISTRY.pop(run_id)
+    entry = await SMART_RUN_REGISTRY.get(run_id)
     if entry is None:
         raise HTTPException(
             status_code=404,
@@ -422,7 +415,6 @@ async def download_smart(
         entry.file_name,
         fallback="besser_smart_output.zip" if entry.is_zip else "besser_smart_output.bin",
     )
-    cleanup = BackgroundTask(_background_rmtree, entry.temp_dir)
 
     return StreamingResponse(
         _iter_file(),
@@ -431,5 +423,4 @@ async def download_smart(
             "Content-Disposition": f'attachment; filename="{safe_filename}"',
             "Cache-Control": "no-store",
         },
-        background=cleanup,
     )

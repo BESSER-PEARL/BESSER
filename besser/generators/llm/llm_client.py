@@ -16,9 +16,20 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
+
+from besser.generators.llm.errors import InvalidApiKeyError, UpstreamLLMError
 
 logger = logging.getLogger(__name__)
+
+# Total per-request timeout passed to the provider SDKs. Without it both
+# SDKs fall back to their own defaults (up to 10 minutes), so a hung
+# provider call can stall a turn for that long with no signal. 300s is
+# generous enough for a full 16k-token streaming turn while still
+# bounding the worst case.
+_DEFAULT_SDK_TIMEOUT_SECONDS = float(
+    os.environ.get("BESSER_LLM_CALL_TIMEOUT_SECONDS", "300")
+)
 
 
 # ======================================================================
@@ -78,6 +89,11 @@ class UsageTracker:
         self.cache_creation_tokens = 0
         self.cache_read_tokens = 0
         self.api_calls = 0
+        # Cost corrections that the token counters can't express: the
+        # (negative) delta for calls billed at a cheaper override model,
+        # and cost seeded from a checkpoint on resume. ``estimated_cost``
+        # adds this on top of the token-derived amount.
+        self._extra_cost_usd = 0.0
         # The actual model name OpenAI / Anthropic returned in the
         # response. May differ from ``self.model`` (the requested name)
         # if the provider aliases server-side. Captured once and held;
@@ -103,8 +119,17 @@ class UsageTracker:
             )
             self.served_model = name
 
-    def record(self, usage) -> None:
-        """Record usage from an API response."""
+    def record(self, usage, model: str | None = None) -> None:
+        """Record usage from an API response.
+
+        Args:
+            usage: The provider usage object.
+            model: When the call was made with a per-call model override
+                (e.g. a cheap planning model), pass that model so the
+                call is billed at its own pricing instead of the
+                tracker's primary tier. The token counters still
+                accumulate normally; only the cost is corrected.
+        """
         if usage is None:
             return
         self.api_calls += 1
@@ -116,8 +141,28 @@ class UsageTracker:
         self.output_tokens += out
         self.cache_creation_tokens += cw
         self.cache_read_tokens += cr
+        if model and model != self.model:
+            override = _get_pricing(model)
+            primary = self.pricing
+            delta = (
+                inp * (override["input"] - primary["input"])
+                + out * (override["output"] - primary["output"])
+                + cw * (override["cache_write"] - primary["cache_write"])
+                + cr * (override["cache_read"] - primary["cache_read"])
+            ) / 1_000_000
+            self._extra_cost_usd += delta
         logger.debug("API call #%d: in=%d out=%d cache_w=%d cache_r=%d",
                      self.api_calls, inp, out, cw, cr)
+
+    def seed_cost(self, usd: float) -> None:
+        """Add already-spent cost (e.g. from a checkpoint on resume).
+
+        Without this, a crash-resume cycle restarts the tracker at $0
+        and the cost cap only covers post-resume spend — a resumed run
+        could legally spend up to twice the user's ``max_cost_usd``.
+        """
+        if usd and usd > 0:
+            self._extra_cost_usd += float(usd)
 
     @property
     def total_tokens(self) -> int:
@@ -125,13 +170,14 @@ class UsageTracker:
 
     @property
     def estimated_cost(self) -> float:
-        """Estimated cost in USD."""
+        """Estimated cost in USD (token-derived + corrections/seed)."""
         p = self.pricing
         return (
             (self.input_tokens * p["input"] / 1_000_000)
             + (self.output_tokens * p["output"] / 1_000_000)
             + (self.cache_creation_tokens * p["cache_write"] / 1_000_000)
             + (self.cache_read_tokens * p["cache_read"] / 1_000_000)
+            + self._extra_cost_usd
         )
 
     def summary(self) -> dict[str, Any]:
@@ -175,7 +221,7 @@ def _resolve_api_key(
         value = os.environ.get(env_var)
         if value:
             return value
-    raise ValueError(
+    raise InvalidApiKeyError(
         "No Anthropic API key found. Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN."
     )
 
@@ -214,10 +260,37 @@ class LLMProvider(ABC):
     def usage(self) -> UsageTracker:
         """Return the usage tracker instance."""
 
+    @property
+    def planning_model(self) -> str | None:
+        """Cheap sibling model for one-shot planning calls, or ``None``.
+
+        ``None`` means "use the primary model". Overridable per deploy
+        via the ``BESSER_LLM_PLANNING_MODEL`` env var (set it to
+        ``primary`` to disable cheap routing — important for gateways
+        where the cheap sibling may not be available).
+        """
+        return None
+
     @abstractmethod
-    def chat(self, system: str, messages: list[dict], tools: list[dict]) -> dict:
+    def chat(
+        self,
+        system: str,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        force_tool: str | None = None,
+        model_override: str | None = None,
+    ) -> dict:
         """
         Send a message with tools.
+
+        Args:
+            force_tool: Name of a tool the model MUST call (translated
+                to the provider's ``tool_choice`` mechanism). Makes
+                planning calls structured-by-construction instead of
+                free-text-parsed.
+            model_override: Use this model for this single call instead
+                of the configured one (billed at its own pricing).
 
         Returns a dict with keys:
         - ``stop_reason``: ``"end_turn"`` or ``"tool_use"``
@@ -258,6 +331,16 @@ def _is_retryable(error: Exception) -> bool:
     return False
 
 
+def _is_auth_error(error: Exception) -> bool:
+    """Heuristic: did the provider reject our credentials?"""
+    error_str = str(error).lower()
+    return any(
+        marker in error_str
+        for marker in ("401", "403", "authentication", "invalid x-api-key",
+                       "invalid api key", "incorrect api key")
+    )
+
+
 # ======================================================================
 # Client
 # ======================================================================
@@ -270,12 +353,15 @@ class ClaudeLLMClient(LLMProvider):
     DEFAULT_MODEL = "claude-sonnet-4-6"
     DEFAULT_MAX_TOKENS = 16384
 
+    PLANNING_MODEL = "claude-haiku-4-5"
+
     def __init__(
         self,
         api_key: str,
         model: str | None = None,
         max_tokens: int | None = None,
         base_url: str | None = None,
+        timeout: float | None = None,
     ):
         try:
             import anthropic
@@ -285,7 +371,10 @@ class ClaudeLLMClient(LLMProvider):
                 "Install it with: pip install anthropic"
             ) from None
 
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
+        }
         resolved_base = base_url or os.environ.get("ANTHROPIC_BASE_URL")
         if resolved_base:
             client_kwargs["base_url"] = resolved_base
@@ -307,26 +396,42 @@ class ClaudeLLMClient(LLMProvider):
     def usage(self, value: UsageTracker) -> None:
         self._usage = value
 
+    @property
+    def planning_model(self) -> str | None:
+        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        if env:
+            return None if env.lower() == "primary" else env
+        if "haiku" in self._model.lower():
+            return None  # already on the cheap tier
+        return self.PLANNING_MODEL
+
     def chat(
         self,
         system: str,
         messages: list[dict],
         tools: list[dict],
+        *,
+        force_tool: str | None = None,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         """Send a message with tools. Retries on transient errors."""
         last_error = None
+        effective_model = model_override or self._model
 
         for attempt in range(_MAX_RETRIES + 1):
             try:
-                response = self._client.messages.create(
-                    model=self._model,
-                    max_tokens=self._max_tokens,
-                    system=_with_cache_control(system),
-                    messages=messages,
-                    tools=_with_tool_cache(tools),
-                )
-                # Track usage
-                self.usage.record(response.usage)
+                request_kwargs: dict[str, Any] = {
+                    "model": effective_model,
+                    "max_tokens": self._max_tokens,
+                    "system": _with_cache_control(system),
+                    "messages": messages,
+                    "tools": _with_tool_cache(tools),
+                }
+                if force_tool:
+                    request_kwargs["tool_choice"] = {"type": "tool", "name": force_tool}
+                response = self._client.messages.create(**request_kwargs)
+                # Track usage (billed at the effective model's pricing)
+                self.usage.record(response.usage, model=model_override)
                 return {
                     "stop_reason": response.stop_reason,
                     "content": response.content,
@@ -341,9 +446,11 @@ class ClaudeLLMClient(LLMProvider):
                     )
                     time.sleep(backoff)
                     continue
-                raise RuntimeError(f"Claude API call failed: {e}") from None
+                if _is_auth_error(e):
+                    raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
+                raise UpstreamLLMError(f"Claude API call failed: {e}") from None
 
-        raise RuntimeError(f"Claude API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"Claude API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
 
     def chat_stream(
         self,
@@ -382,9 +489,11 @@ class ClaudeLLMClient(LLMProvider):
                     logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)
                     continue
-                raise RuntimeError(f"Claude API streaming failed: {e}") from None
+                if _is_auth_error(e):
+                    raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
+                raise UpstreamLLMError(f"Claude API streaming failed: {e}") from None
 
-        raise RuntimeError(f"Streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"Streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
 
 
 # ======================================================================
@@ -656,6 +765,7 @@ class OpenAIProvider(LLMProvider):
 
     DEFAULT_MODEL = "gpt-4o"
     DEFAULT_MAX_TOKENS = 16384
+    PLANNING_MODEL = "gpt-4o-mini"
 
     def __init__(
         self,
@@ -663,6 +773,7 @@ class OpenAIProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int | None = None,
         base_url: str | None = None,
+        timeout: float | None = None,
     ):
         try:
             from openai import OpenAI
@@ -672,7 +783,10 @@ class OpenAIProvider(LLMProvider):
                 "Install it with: pip install openai"
             ) from None
 
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
+        }
         resolved_base = base_url or os.environ.get("OPENAI_BASE_URL")
         if resolved_base:
             client_kwargs["base_url"] = resolved_base
@@ -694,37 +808,62 @@ class OpenAIProvider(LLMProvider):
     def usage(self, value: UsageTracker) -> None:
         self._usage = value
 
+    @property
+    def planning_model(self) -> str | None:
+        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        if env:
+            return None if env.lower() == "primary" else env
+        if any(tier in self._model.lower() for tier in ("mini", "nano")):
+            return None  # already on a cheap tier
+        return self.PLANNING_MODEL
+
     def chat(
         self,
         system: str,
         messages: list[dict],
         tools: list[dict],
+        *,
+        force_tool: str | None = None,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         """Send a message with tools. Retries on transient errors."""
         last_error = None
         api_messages = _openai_messages_to_api(system, messages)
         openai_tools = _anthropic_tools_to_openai(tools) if tools else None
+        effective_model = model_override or self._model
 
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 # Newer models (GPT-5+, o3+) use max_completion_tokens
                 # instead of max_tokens
-                tok_key = _openai_max_tokens_key(self._model)
+                tok_key = _openai_max_tokens_key(effective_model)
                 kwargs: dict[str, Any] = {
-                    "model": self._model,
+                    "model": effective_model,
                     tok_key: self._max_tokens,
                     "messages": api_messages,
                 }
                 if openai_tools:
                     kwargs["tools"] = openai_tools
+                    if force_tool:
+                        kwargs["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": force_tool},
+                        }
 
                 response = self._client.chat.completions.create(**kwargs)
 
                 # Track usage + the actual served model (audit signal:
                 # the requested model name may be aliased server-side).
+                # Planning calls on the cheap override model are excluded
+                # from served-model tracking — otherwise every run logs a
+                # spurious "served model changed mid-run" warning when the
+                # primary call follows a planning call.
                 if response.usage:
-                    self._usage.record(_OpenAIUsageAdapter(response.usage))
-                self._usage.set_served_model(getattr(response, "model", None))
+                    self._usage.record(
+                        _OpenAIUsageAdapter(response.usage), model=model_override
+                    )
+                if not model_override:
+                    self._usage.set_served_model(getattr(response, "model", None))
 
                 return _openai_response_to_common(response)
 
@@ -738,9 +877,11 @@ class OpenAIProvider(LLMProvider):
                     )
                     time.sleep(backoff)
                     continue
-                raise RuntimeError(f"OpenAI API call failed: {e}") from None
+                if _is_auth_error(e):
+                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                raise UpstreamLLMError(f"OpenAI API call failed: {e}") from None
 
-        raise RuntimeError(f"OpenAI API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"OpenAI API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
 
     def chat_stream(
         self,
@@ -868,9 +1009,22 @@ class OpenAIProvider(LLMProvider):
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)
                     continue
-                raise RuntimeError(f"OpenAI API streaming failed: {e}") from None
+                if _is_auth_error(e):
+                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                raise UpstreamLLMError(f"OpenAI API streaming failed: {e}") from None
 
-        raise RuntimeError(f"OpenAI streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"OpenAI streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+
+
+# ======================================================================
+# Provider defaults (single source — the web runner and the config
+# endpoint import this instead of keeping their own copies in sync)
+# ======================================================================
+
+DEFAULT_MODELS: dict[str, str] = {
+    "anthropic": ClaudeLLMClient.DEFAULT_MODEL,
+    "openai": OpenAIProvider.DEFAULT_MODEL,
+}
 
 
 # ======================================================================
@@ -891,7 +1045,7 @@ def _resolve_openai_api_key(
         value = os.environ.get(env_var)
         if value:
             return value
-    raise ValueError(
+    raise InvalidApiKeyError(
         "No OpenAI API key found. Set OPENAI_API_KEY or pass api_key explicitly."
     )
 

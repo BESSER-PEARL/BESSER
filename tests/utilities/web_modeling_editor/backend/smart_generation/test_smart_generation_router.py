@@ -171,11 +171,16 @@ class TestSmartGenerateEndpoint:
 
 
 class TestDownloadEndpoint:
-    def test_download_returns_file_then_404_on_second_call(self, stub_backend):
+    def test_download_is_repeatable_within_ttl(self, stub_backend):
+        """A transient network failure on the first fetch must not lose
+        the artifact — the entry stays downloadable until the TTL sweep
+        removes it (cleanup is owned by the sweep, not the endpoint)."""
         status, events = asyncio.run(_post_sse(_build_project_body()))
         assert status == 200
         done = [e for e in events if e["event"] == "done"][0]
         run_id = done["downloadUrl"].rsplit("/", 1)[-1]
+        # Newer backends also carry the run id explicitly on the event.
+        assert done.get("runId") == run_id
 
         transport = ASGITransport(app=app)
 
@@ -188,9 +193,10 @@ class TestDownloadEndpoint:
         assert r1.status_code == 200
         assert r1.content.startswith(b"# fake generated content")
 
-        # Second GET is 404 (single-use)
+        # Second GET succeeds too (re-downloadable within TTL)
         r2 = asyncio.run(_get(f"/besser_api/download-smart/{run_id}"))
-        assert r2.status_code == 404
+        assert r2.status_code == 200
+        assert r2.content == r1.content
 
     def test_unknown_run_id_returns_404(self, stub_backend):
         transport = ASGITransport(app=app)

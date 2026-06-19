@@ -23,6 +23,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "time": "Time_",
         "date": "Date_",
         "datetime": "DateTime_",
+        "timedelta": "Interval_",
+        "any": "PickleType_",
     }
 
     VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"}
@@ -34,7 +36,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "Base",              # Defined in template as DeclarativeBase subclass
         "Enum",              # SQLAlchemy Enum class (required by SQL generator's isinstance check)
         "enum",              # Python enum module imported at top of generated code
-        
+        "os",                # Python os module imported at top of generated code
+
         # SQLAlchemy import aliases (underscore suffix)
         "Table_",           # sqlalchemy.Table
         "Column_",          # sqlalchemy.Column
@@ -49,8 +52,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "Date_",            # sqlalchemy.Date
         "Time_",            # sqlalchemy.Time
         "DateTime_",        # sqlalchemy.DateTime
+        "Interval_",        # sqlalchemy.Interval
+        "PickleType_",      # sqlalchemy.PickleType
         "Text_",            # sqlalchemy.Text
-        
+
         # Typing module aliases (underscore suffix)
         "List_",            # typing.List
         "Optional_",        # typing.Optional
@@ -58,6 +63,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
+        # Work on an instance-level copy so per-model enum entries never leak
+        # into the class-level mapping (and never mask validation errors for
+        # other models generated in the same process).
+        self.TYPES = dict(type(self).TYPES)
         # Add enums to TYPES dictionary
         for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
@@ -154,6 +163,30 @@ class SQLAlchemyGenerator(GeneratorInterface):
             )
             raise ValueError(error_message)
 
+    def validate_attribute_types(self):
+        """
+        Validates that every attribute type in the model maps to a known SQLAlchemy type.
+
+        Without this check, an unknown type would render as an empty string in the
+        template and produce a generated file that crashes on import.
+
+        Raises:
+            ValueError: If any attribute uses a type not present in TYPES.
+        """
+        unsupported = []
+        for cls in self.model.get_classes():
+            for attr in cls.attributes:
+                if attr.type.name not in self.TYPES:
+                    unsupported.append(
+                        f"  - Attribute '{cls.name}.{attr.name}' has unsupported type '{attr.type.name}'."
+                    )
+        if unsupported:
+            raise ValueError(
+                "SQLAlchemy code generation failed: unsupported attribute types found:\n"
+                + "\n".join(sorted(unsupported))
+                + f"\n\nSupported types: {', '.join(sorted(self.TYPES))}."
+            )
+
     def generate(self, dbms: str = "sqlite"):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
@@ -174,6 +207,9 @@ class SQLAlchemyGenerator(GeneratorInterface):
         
         # Validate the model for reserved name conflicts
         self.validate_model()
+
+        # Validate that every attribute type can be mapped to a SQLAlchemy type
+        self.validate_attribute_types()
 
         classes, asso_classes = self.separate_classes()
         concrete_parents = self.get_concrete_table_inheritance()

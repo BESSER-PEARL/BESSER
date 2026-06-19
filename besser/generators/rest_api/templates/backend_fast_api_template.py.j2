@@ -25,9 +25,11 @@ def init_db():
     SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/{{name}}.db")
     # Ensure local SQLite directory exists (safe no-op for other DBs)
     os.makedirs("data", exist_ok=True)
+    # check_same_thread is a SQLite-only argument; do not pass it to other drivers
+    connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
-        connect_args={"check_same_thread": False},
+        connect_args=connect_args,
         pool_size=10,
         max_overflow=20,
         pool_pre_ping=True,

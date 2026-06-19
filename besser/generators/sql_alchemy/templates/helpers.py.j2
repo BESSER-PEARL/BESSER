@@ -4,6 +4,8 @@
     {%- if type_name == 'time' -%}dt_time
     {%- elif type_name == 'date' -%}dt_date
     {%- elif type_name == 'datetime' -%}dt_datetime
+    {%- elif type_name == 'timedelta' -%}dt_timedelta
+    {%- elif type_name == 'any' -%}object
     {%- else -%}{{ type_name }}
     {%- endif -%}
 {%- endmacro %}

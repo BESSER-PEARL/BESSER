@@ -190,10 +190,15 @@ def _predict_target_generator(
             if assembled.gui_model is not None:
                 return "generate_web_app", 0.8
             return "generate_fastapi_backend", 0.6
-        if _has("pydantic"):
+        # Guarded like the orchestrator's keyword branch: "pydantic
+        # models for my API" should predict the backend generator (which
+        # includes pydantic), not bare pydantic classes.
+        if _has("pydantic") and not _has("api") and not _has("backend"):
             return "generate_pydantic", 0.8
         if _has("sqlalchemy"):
             return "generate_sqlalchemy", 0.8
+        # Not in the orchestrator's keyword fallback — models the LLM
+        # vote, which reliably picks generate_sql for plain SQL asks.
         if _has("sql"):
             return "generate_sql", 0.7
         # Defaults based on what's available

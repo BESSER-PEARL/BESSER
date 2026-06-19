@@ -81,6 +81,21 @@ LLM_MAX_CONCURRENT_RUNS = _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10)
 LLM_ENABLE_TRACING = _env_bool("BESSER_LLM_ENABLE_TRACING", True)
 LLM_ENABLE_CHECKPOINTING = _env_bool("BESSER_LLM_ENABLE_CHECKPOINTING", True)
 
+# Phase 3 toolchain validation (tsc / cargo / kotlinc) compiles real
+# projects server-side and can add minutes of wall-clock + real billing
+# to a run. Off by default in the web deployment — the cheap checks
+# (ast.parse, Dockerfile refs, ruff, pip dry-run) always run. Enable
+# per deploy when the host has the toolchains installed and the extra
+# latency is acceptable.
+LLM_ENABLE_TOOLCHAIN_VALIDATION = _env_bool(
+    "BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION", False,
+)
+
+# Grace period added on top of the request's max_runtime_seconds before
+# the runner-level watchdog force-cancels a run (covers Phase 3 +
+# packaging time after the Phase 2 loop hits its own runtime check).
+LLM_WATCHDOG_GRACE_SECONDS = _env_int("BESSER_LLM_WATCHDOG_GRACE_SECONDS", 120)
+
 # Output defaults
 OUTPUT_DIR_NAME = "output"
 AGENT_MODEL_FILENAME = "agent_model.py"

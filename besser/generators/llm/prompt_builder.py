@@ -35,6 +35,7 @@ def build_system_prompt(
     state_machines=None,
     quantum_circuit=None,
     primary_kind: str | None = None,
+    scaffold_snapshot: str = "",
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -80,12 +81,32 @@ def build_system_prompt(
 
     gui_json = serialize_gui_model(gui_model)
     if gui_json:
+        if primary_kind == "gui":
+            # GUI-driven run: the screens ARE the spec — match them.
+            gui_framing = (
+                "Screens, components and data bindings declared in the editor. "
+                "This is the UI spec — build the React/Flutter output to match "
+                "these screens and wire components to the domain classes."
+            )
+        else:
+            # Class/other-driven run: the GUI model here is incidental and is
+            # frequently auto-generated (e.g. by the modeling agent), so it's
+            # rough and over-literal adherence drags the output down. Frame it
+            # as a hint, not a contract — the domain model and good UX win.
+            gui_framing = (
+                "A rough UI sketch from the editor — often auto-generated and "
+                "incomplete. Treat it as a LOOSE HINT for which screens and "
+                "fields matter, NOT a spec to reproduce literally. The domain "
+                "model and good UX take priority: freely restructure, merge, "
+                "add, drop, or relayout screens and components to produce a "
+                "clean app. Do NOT degrade the result just to mirror this "
+                "sketch, and don't treat its omissions as restrictions."
+            )
         model_sections.extend([
             "",
             "## GUI Model",
             "",
-            "Screens, components and data bindings declared in the editor. "
-            "Use this to drive React/Flutter output and wire components to domain classes.",
+            gui_framing,
             "",
             "```json",
             json.dumps(gui_json, indent=2),
@@ -174,6 +195,20 @@ def build_system_prompt(
     inventory_section = ""
     if inventory:
         inventory_section = f"\n## What was already generated\n\n{inventory}\n"
+
+    # Inline scaffold contents — saves the LLM 2-4 read_file round-trips
+    # at the start of nearly every run. Constant ACROSS TURNS within a
+    # run, so it caches like the rest of the prompt.
+    snapshot_section = ""
+    if scaffold_snapshot:
+        snapshot_section = (
+            "\n## Scaffold file contents (snapshot at end of Phase 1)\n\n"
+            "These were the contents when customisation started. Files "
+            "reproduced here do NOT need a read_file before their first "
+            "edit. Once you edit a file, your edits supersede this "
+            "snapshot — re-read only files you have modified.\n\n"
+            f"{scaffold_snapshot}\n"
+        )
 
     # Phase 1 validator findings — concrete bugs the LLM must fix on top of
     # whatever the user asked for. Kept separate from the user request so
@@ -301,7 +336,7 @@ than re-reading or guessing:
     variable_tail = f"""\
 
 ## Variable context (per-run — not cached below this line)
-{inventory_section}
+{inventory_section}{snapshot_section}
 ## User request
 
 The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to
@@ -391,6 +426,83 @@ def _compute_cross_model_links(
         links["agent_present"] = True
 
     return links or None
+
+
+# File extensions that are never worth inlining (binary, locks, archives).
+_SNAPSHOT_SKIP_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".gz",
+    ".woff", ".woff2", ".ttf", ".eot", ".pyc", ".db", ".sqlite",
+    ".lock",
+}
+_SNAPSHOT_SKIP_NAMES = {"package-lock.json", "yarn.lock", "poetry.lock", "Cargo.lock"}
+_SNAPSHOT_SKIP_DIRS = {
+    ".besser_snapshot", "node_modules", "target", "__pycache__", ".git",
+    "dist", "build", ".next", ".gradle", "venv", ".venv",
+}
+
+
+def build_scaffold_snapshot(
+    output_dir: str,
+    max_file_lines: int = 150,
+    total_char_budget: int = 24_000,
+) -> str:
+    """Render the contents of small scaffold files for the system prompt.
+
+    The inventory only lists paths + sizes, while Rule 8 ("read before
+    modify") forces the LLM to spend its first 2-4 turns on read_file
+    calls against the same scaffold files. Inlining them up front — the
+    system prompt is constant across turns, so this is paid once — cuts
+    those round-trips entirely.
+
+    Files are included smallest-first, only when <= ``max_file_lines``
+    lines, under a global ``total_char_budget``. Binary / lock files and
+    dependency dirs are skipped. Returns "" when nothing qualifies.
+    """
+    candidates: list[tuple[int, str, str]] = []  # (size, rel_path, content)
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+        for fname in files:
+            if fname.startswith(".besser_") or fname in _SNAPSHOT_SKIP_NAMES:
+                continue
+            if os.path.splitext(fname)[1].lower() in _SNAPSHOT_SKIP_EXTENSIONS:
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, output_dir).replace("\\", "/")
+            try:
+                size = os.path.getsize(fpath)
+                if size > total_char_budget:
+                    continue
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if content.count("\n") + 1 > max_file_lines:
+                continue
+            candidates.append((size, rel, content))
+
+    if not candidates:
+        return ""
+
+    sections: list[str] = []
+    used = 0
+    skipped: list[str] = []
+    for size, rel, content in sorted(candidates):
+        block = f"### `{rel}`\n\n```\n{content}\n```\n"
+        if used + len(block) > total_char_budget:
+            skipped.append(rel)
+            continue
+        used += len(block)
+        sections.append(block)
+
+    if not sections:
+        return ""
+    if skipped:
+        sections.append(
+            "_Not shown (budget): "
+            + ", ".join(f"`{p}`" for p in skipped[:20])
+            + " — use read_file for these._\n"
+        )
+    return "\n".join(sections)
 
 
 def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:

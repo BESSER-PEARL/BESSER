@@ -171,6 +171,26 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [
         "description": "Generate RDF/OWL vocabulary (Turtle format). Output: vocabulary.ttl",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "generate_qiskit",
+        "description": (
+            "Generate a Qiskit Python script from the Quantum Circuit model. "
+            "REQUIRES a quantum circuit. Output: qiskit_circuit.py"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "backend_type": {
+                    "type": "string",
+                    "description": "Qiskit backend (default: aer_simulator)",
+                },
+                "shots": {
+                    "type": "integer",
+                    "description": "Number of shots for the simulation (default: 1024)",
+                },
+            },
+        },
+    },
 ]
 
 # ======================================================================
@@ -484,12 +504,47 @@ _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
     "generate_react":           frozenset({"domain", "gui"}),
     "generate_flutter":         frozenset({"domain", "gui"}),
     "generate_web_app":         frozenset({"domain", "gui"}),
+    # Generators driven by other models
+    "generate_qiskit":          frozenset({"quantum"}),
     # Model-query tools need the domain model
     "query_class":              frozenset({"domain"}),
     "list_classes_with":        frozenset({"domain"}),
     "get_constraints_for":      frozenset({"domain"}),
     "validate_model":           frozenset({"domain"}),
 }
+
+
+def get_available_generator_names(
+    has_domain_model: bool = True,
+    has_gui_model: bool = False,
+    has_agent_model: bool = False,
+    has_state_machines: bool = False,
+    has_quantum_circuit: bool = False,
+) -> list[str]:
+    """Names of the generators whose required models are present.
+
+    Used by the orchestrator's Phase-1 selector so the LLM is only ever
+    offered generators that can actually run — offering e.g.
+    ``generate_web_app`` without a GUI model lets the model pick it,
+    Phase 1 fails, and the run silently degrades to expensive
+    from-scratch generation.
+    """
+    available: set[str] = set()
+    if has_domain_model:
+        available.add("domain")
+    if has_gui_model:
+        available.add("gui")
+    if has_agent_model:
+        available.add("agent")
+    if has_state_machines:
+        available.add("state_machine")
+    if has_quantum_circuit:
+        available.add("quantum")
+    return [
+        tool["name"]
+        for tool in GENERATOR_TOOLS
+        if _TOOL_MODEL_REQUIREMENTS.get(tool["name"], frozenset()).issubset(available)
+    ]
 
 
 def get_tools_for(

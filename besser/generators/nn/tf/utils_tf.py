@@ -754,6 +754,36 @@ def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var, p
     return f"tf.zeros_like({prev_out_var})"
 
 
+def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+    """Handle split tensorop syntax.
+
+    TensorFlow's tf.split returns a list of tensors.
+    The outputs will be unpacked in the template based on the assignment.
+    """
+    if in_var is not None:
+        prev_out_var = in_var
+
+    split_dim = tensorop.split_dim if hasattr(tensorop, 'split_dim') else 0
+    split_sizes = tensorop.split_sizes if hasattr(tensorop, 'split_sizes') else None
+
+    if split_sizes is None:
+        # If no split size specified, return the input unchanged (shouldn't happen)
+        return prev_out_var
+
+    # tf.split expects num_or_size_splits and axis
+    # If split_sizes is an int, it's the size of each chunk
+    # If it's a list, it's the sizes of each chunk
+    if isinstance(split_sizes, list):
+        # List of sizes: tf.split(x, num_or_size_splits=[32, 32], axis=1)
+        sizes_str = str(split_sizes)
+        return f"tf.split({prev_out_var}, num_or_size_splits={sizes_str}, axis={split_dim})"
+    else:
+        # Single size: need to determine number of splits from context
+        # For now, assume equal splits with given size
+        # This will create: tf.split(x, num_or_size_splits=2, axis=1) if splitting into 2 parts
+        return f"tf.split({prev_out_var}, num_or_size_splits={split_sizes}, axis={split_dim})"
+
+
 def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle normalize tensorop syntax."""
     if in_var is not None:
@@ -894,6 +924,7 @@ _TENSOROP_SYNTAX_HANDLERS = {
     "squeeze": _handle_squeeze_syntax,
     "unsqueeze": _handle_unsqueeze_syntax,
     "zeros_like": _handle_zeros_like_syntax,
+    "split": _handle_split_syntax,
     "normalize": _handle_normalize_syntax,
     "repeat": _handle_repeat_syntax,
     "binop_add": _handle_binop_add_syntax,

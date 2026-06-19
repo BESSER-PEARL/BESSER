@@ -56,6 +56,27 @@
     {%- endif -%}
 {%- endmacro -%}
 
+{%- macro get_split_output_vars(op_name, inputs_outputs) -%}
+    {%- set output_vars = [] -%}
+    {%- set i = 0 -%}
+    {%- for key, value in inputs_outputs.items() -%}
+        {%- if key.startswith(op_name + '__split_') -%}
+            {%- set _ = output_vars.append(value[1]) -%}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- ', '.join(output_vars) if output_vars else '' -}}
+{%- endmacro -%}
+
+{%- macro is_split_op(op_name, inputs_outputs) -%}
+    {%- set is_split = namespace(value=false) -%}
+    {%- for key in inputs_outputs.keys() -%}
+        {%- if key.startswith(op_name + '__split_') -%}
+            {%- set is_split.value = true -%}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- 'true' if is_split.value else '' -}}
+{%- endmacro -%}
+
 {%- macro get_sequential_vars(module_name, inputs_outputs, default_var) -%}
     {%- set base_name = module_name.rsplit('_', 2)[0] -%}
     {%- if inputs_outputs and base_name in inputs_outputs -%}
@@ -175,7 +196,10 @@ from datetime import datetime
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
-        {%- if not module_details[0].startswith("SKIP:") and module_details[1] != module_details[0] %}
+        {%- set split_outputs = get_split_output_vars(module_name[:-3], inputs_outputs) -%}
+        {%- if split_outputs %}
+        {{ split_outputs }} = {{ module_details[0] }}
+        {%- elif not module_details[0].startswith("SKIP:") and module_details[1] != module_details[0] %}
         {{ module_details[1] }} = {{ module_details[0] }}
         {%- endif %}
     {%- elif module_name.endswith("nn") %}

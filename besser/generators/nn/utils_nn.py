@@ -1372,9 +1372,13 @@ def _handle_skip_syntax(ts_op_synt, out_var, inputs_outputs, tensorop):
     return out_var
 
 
-def _handle_split_tuple(tensorop, out_var):
+def _handle_split_tuple(tensorop, out_var, inputs_outputs):
     """Generate tuple variable names for split operations."""
     if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
+        # Use actual variable names from inputs_outputs if available (preserves original names)
+        if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
+            return inputs_outputs[tensorop.name][1]  # This is already a comma-joined string
+        # Fallback to auto-generated names
         num_splits = tensorop.split_sizes
         split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
         return ", ".join(split_vars)
@@ -1443,7 +1447,7 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
 
     out_var = _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops, inputs_outputs)
     out_var = _handle_skip_syntax(ts_op_synt, out_var, inputs_outputs, tensorop)
-    out_var = _handle_split_tuple(tensorop, out_var)
+    out_var = _handle_split_tuple(tensorop, out_var, inputs_outputs)
 
     _add_tensorop_input_permute(tensorop, modules_details, get_tensorop_syntax)
 

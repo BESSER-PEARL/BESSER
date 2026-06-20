@@ -313,12 +313,24 @@ def _handle_reshape_pytorch(tensorop, modules_details, in_var, prev_out_var, par
 
 
 def _handle_split_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
-    """Handle split tensorop syntax."""
+    """Handle split tensorop syntax.
+
+    Uses torch.chunk when split_sizes is an integer (number of chunks, e.g., from TF migration).
+    torch.chunk(tensor, chunks, dim) splits into N equal chunks (like TF's num_or_size_splits).
+    torch.split(tensor, size, dim) splits into chunks of SIZE (different semantics).
+    """
     split_sizes = tensorop.split_sizes
     split_dim = tensorop.split_dim
     if in_var is not None:
         prev_out_var = in_var
-    return f"torch.split({prev_out_var}, {split_sizes}, dim={split_dim})"
+
+    # Use torch.chunk for integer split_sizes (number of chunks)
+    # This matches TF's tf.split(num_or_size_splits=N) behavior
+    if isinstance(split_sizes, int):
+        return f"torch.chunk({prev_out_var}, {split_sizes}, dim={split_dim})"
+    else:
+        # If split_sizes is a list, use torch.split with list of sizes
+        return f"torch.split({prev_out_var}, {split_sizes}, dim={split_dim})"
 
 
 def _handle_concatenate_pytorch(tensorop, modules_details, in_var, prev_out_var, params):

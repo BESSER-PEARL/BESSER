@@ -1067,7 +1067,7 @@ def _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn):
 def _resolve_prev_out_var_from_module_input(
     module_input, modules_details, get_rnn_hidden_var_fn, inputs_outputs=None, tensorop=None
 ):
-    """Resolve prev_out_var from tensorop's name_module_input or layers_of_tensors."""
+    """Resolve prev_out_var from tensorop's layers_of_tensors."""
     if module_input == 'INPUT':
         if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
             actual_input_var = inputs_outputs[tensorop.name][0]
@@ -1126,11 +1126,9 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, 
 
     prev_out_var = get_previous_out_var(modules_details, prev_module)
 
-    # Override with name_module_input or layers_of_tensors if available
+    # Override with layers_of_tensors if available
     module_input = None
-    if hasattr(tensorop, 'name_module_input') and tensorop.name_module_input is not None:
-        module_input = tensorop.name_module_input
-    elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+    if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
         if len(tensorop.layers_of_tensors) == 1:
             module_input = tensorop.layers_of_tensors[0]
         elif 'INPUT' in tensorop.layers_of_tensors:
@@ -1145,15 +1143,9 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, 
 
 
 def _override_prev_out_var_if_needed(
-    tensorop, modules_details, current_prev_out_var, check_name_module_input=True, inputs_outputs=None
+    tensorop, modules_details, current_prev_out_var, inputs_outputs=None
 ):
     """Override prev_out_var from layers_of_tensors if present."""
-    # Skip if name_module_input is already set (unless told not to check)
-    if (check_name_module_input and
-        hasattr(tensorop, 'name_module_input') and
-        tensorop.name_module_input is not None):
-        return current_prev_out_var
-
     if (hasattr(tensorop, 'layers_of_tensors') and
         tensorop.layers_of_tensors and
         isinstance(tensorop.layers_of_tensors[0], str)):
@@ -1203,7 +1195,7 @@ def _handle_concatenate_params(tensorop, modules_details):
 def _handle_transpose_params(tensorop, modules_details):
     """Handle transpose tensorop parameters."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, check_name_module_input=False
+        tensorop, modules_details, None
     )
     params = ", ".join([str(i) for i in tensorop.transpose_dim])
     return prev_out_var, params
@@ -1218,7 +1210,7 @@ def _handle_permute_params(tensorop, modules_details):
 def _handle_simple_op_params(tensorop, modules_details, inputs_outputs=None):
     """Handle simple ops (mean, max, squeeze, unsqueeze, normalize, shape_dim, subscript)."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, check_name_module_input=False, inputs_outputs=inputs_outputs
+        tensorop, modules_details, None, inputs_outputs=inputs_outputs
     )
     return prev_out_var, ""
 
@@ -1226,7 +1218,7 @@ def _handle_simple_op_params(tensorop, modules_details, inputs_outputs=None):
 def _handle_repeat_params(tensorop, modules_details, inputs_outputs=None):
     """Handle repeat tensorop parameters."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, check_name_module_input=False, inputs_outputs=inputs_outputs
+        tensorop, modules_details, None, inputs_outputs=inputs_outputs
     )
 
     # Resolve operation names in repeat_dim (similar to reshape_dim)

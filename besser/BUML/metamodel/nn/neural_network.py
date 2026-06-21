@@ -46,7 +46,6 @@ class TensorOp(NamedElement):
         dropout_training_aware (bool): Whether dropout is training aware.
         split_dim (int): Dimension along which to split the tensor.
         split_sizes (int): Number of splits or list of split sizes.
-        name_module_input (str): Name of the input module.
         permute_in (bool): Whether to permute input dimensions for spatial ops.
         permute_out (bool): Whether to permute output dimensions for spatial ops.
 
@@ -75,7 +74,6 @@ class TensorOp(NamedElement):
         dropout_training_aware (bool): Training aware dropout flag.
         split_dim (int): Split dimension.
         split_sizes (int): Number or sizes of splits.
-        name_module_input (str): Input module name.
         permute_in (bool): Input permute flag.
         permute_out (bool): Output permute flag.
     """
@@ -101,7 +99,6 @@ class TensorOp(NamedElement):
                  dropout_training_aware: bool = False,
                  split_dim: int = None,
                  split_sizes: int = None,
-                 name_module_input: str = None,
                  permute_in: bool = False,
                  permute_out: bool = False):
         super().__init__(name)
@@ -128,7 +125,6 @@ class TensorOp(NamedElement):
         self.split_dim: int = split_dim
         self.split_sizes: int = split_sizes
         self.tns_type: str = tns_type
-        self.name_module_input: str = name_module_input
         self.permute_in: bool = permute_in
         self.permute_out: bool = permute_out
 
@@ -311,12 +307,187 @@ class TensorOp(NamedElement):
         """
         self.__input_reused = input_reused
 
+    @property
+    def reduce_dim(self) -> int:
+        """int: Get the dimension for reduction operations."""
+        return self.__reduce_dim
+
+    @reduce_dim.setter
+    def reduce_dim(self, reduce_dim: int):
+        """int: Set the dimension for reduction operations."""
+        self.__reduce_dim = reduce_dim
+
+    @property
+    def reduce_keepdims(self) -> bool:
+        """bool: Get whether to keep dimensions after reduction."""
+        return self.__reduce_keepdims
+
+    @reduce_keepdims.setter
+    def reduce_keepdims(self, reduce_keepdims: bool):
+        """bool: Set whether to keep dimensions after reduction."""
+        self.__reduce_keepdims = reduce_keepdims
+
+    @property
+    def actual_vars(self) -> List[str]:
+        """List[str]: Get the actual variable names for tracking."""
+        return self.__actual_vars
+
+    @actual_vars.setter
+    def actual_vars(self, actual_vars: List[str]):
+        """List[str]: Set the actual variable names for tracking."""
+        self.__actual_vars = actual_vars
+
+    @property
+    def subscript_indices(self) -> str:
+        """str: Get the indices for subscript operations."""
+        return self.__subscript_indices
+
+    @subscript_indices.setter
+    def subscript_indices(self, subscript_indices: str):
+        """str: Set the indices for subscript operations."""
+        self.__subscript_indices = subscript_indices
+
+    @property
+    def repeat_dim(self) -> List[int]:
+        """List[int]: Get repetition counts for repeat operation."""
+        return self.__repeat_dim
+
+    @repeat_dim.setter
+    def repeat_dim(self, repeat_dim: List[int]):
+        """List[int]: Set repetition counts for repeat operation."""
+        self.__repeat_dim = repeat_dim
+
+    @property
+    def interpolate_size(self):
+        """Get target size for interpolation."""
+        return self.__interpolate_size
+
+    @interpolate_size.setter
+    def interpolate_size(self, interpolate_size):
+        """Set target size for interpolation."""
+        self.__interpolate_size = interpolate_size
+
+    @property
+    def interpolate_scale(self) -> float:
+        """float: Get scale factor for interpolation."""
+        return self.__interpolate_scale
+
+    @interpolate_scale.setter
+    def interpolate_scale(self, interpolate_scale: float):
+        """float: Set scale factor for interpolation."""
+        self.__interpolate_scale = interpolate_scale
+
+    @property
+    def interpolate_mode(self) -> str:
+        """str: Get interpolation mode."""
+        return self.__interpolate_mode
+
+    @interpolate_mode.setter
+    def interpolate_mode(self, interpolate_mode: str):
+        """str: Set interpolation mode."""
+        self.__interpolate_mode = interpolate_mode
+
+    @property
+    def pad_amount(self):
+        """Get padding amounts for pad operation."""
+        return self.__pad_amount
+
+    @pad_amount.setter
+    def pad_amount(self, pad_amount):
+        """Set padding amounts for pad operation."""
+        self.__pad_amount = pad_amount
+
+    @property
+    def pad_mode(self) -> str:
+        """str: Get padding mode."""
+        return self.__pad_mode
+
+    @pad_mode.setter
+    def pad_mode(self, pad_mode: str):
+        """str: Set padding mode."""
+        self.__pad_mode = pad_mode
+
+    @property
+    def pad_value(self) -> float:
+        """float: Get value for constant padding."""
+        return self.__pad_value
+
+    @pad_value.setter
+    def pad_value(self, pad_value: float):
+        """float: Set value for constant padding."""
+        self.__pad_value = pad_value
+
+    @property
+    def dropout_rate(self) -> float:
+        """float: Get dropout probability."""
+        return self.__dropout_rate
+
+    @dropout_rate.setter
+    def dropout_rate(self, dropout_rate: float):
+        """float: Set dropout probability."""
+        self.__dropout_rate = dropout_rate
+
+    @property
+    def dropout_training_aware(self) -> bool:
+        """bool: Get whether dropout is training aware."""
+        return self.__dropout_training_aware
+
+    @dropout_training_aware.setter
+    def dropout_training_aware(self, dropout_training_aware: bool):
+        """bool: Set whether dropout is training aware."""
+        self.__dropout_training_aware = dropout_training_aware
+
+    @property
+    def split_dim(self) -> int:
+        """int: Get dimension along which to split."""
+        return self.__split_dim
+
+    @split_dim.setter
+    def split_dim(self, split_dim: int):
+        """int: Set dimension along which to split."""
+        self.__split_dim = split_dim
+
+    @property
+    def split_sizes(self) -> int:
+        """int: Get number of splits or list of split sizes."""
+        return self.__split_sizes
+
+    @split_sizes.setter
+    def split_sizes(self, split_sizes: int):
+        """int: Set number of splits or list of split sizes."""
+        self.__split_sizes = split_sizes
+
+    @property
+    def permute_in(self) -> bool:
+        """bool: Get whether to permute input dimensions."""
+        return self.__permute_in
+
+    @permute_in.setter
+    def permute_in(self, permute_in: bool):
+        """bool: Set whether to permute input dimensions."""
+        self.__permute_in = permute_in
+
+    @property
+    def permute_out(self) -> bool:
+        """bool: Get whether to permute output dimensions."""
+        return self.__permute_out
+
+    @permute_out.setter
+    def permute_out(self, permute_out: bool):
+        """bool: Set whether to permute output dimensions."""
+        self.__permute_out = permute_out
+
     def __repr__(self):
         return (
             f'TensorOp({self.name}, {self.tns_type}, {self.concatenate_dim}, '
-            f'{self.layers_of_tensors}, {self.reshape_dim}, '
-            f'{self.transpose_dim}, {self.permute_dim}, {self.reduce_dim}, '
-            f'{self.reduce_keepdims}, {self.input_reused}, {self.permute_in}, {self.permute_out})'
+            f'{self.layers_of_tensors}, {self.reshape_dim}, {self.transpose_dim}, '
+            f'{self.permute_dim}, {self.reduce_dim}, {self.reduce_keepdims}, '
+            f'{self.shape_dim}, {self.input_reused}, {self.actual_vars}, '
+            f'{self.subscript_indices}, {self.repeat_dim}, {self.interpolate_size}, '
+            f'{self.interpolate_scale}, {self.interpolate_mode}, {self.pad_amount}, '
+            f'{self.pad_mode}, {self.pad_value}, {self.dropout_rate}, '
+            f'{self.dropout_training_aware}, {self.split_dim}, {self.split_sizes}, '
+            f'{self.permute_in}, {self.permute_out})'
         )
 
 class Layer(NamedElement):

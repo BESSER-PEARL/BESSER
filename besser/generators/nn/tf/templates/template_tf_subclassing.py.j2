@@ -9,25 +9,39 @@ class NeuralNetwork(tf.keras.Model):
 
     def call(self, x):
     {{- nn_components.print_forward(modules_details, model, inputs_outputs, strip_layer_counter_suffix) }}
-    
+
 
 {% if model.train_data is not none %}
-# Dataset preparation
-{{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) }}
 
+def prepare_datasets():
+    """Prepare training and testing datasets."""
+{{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) | indent(4, first=True) }}
+    return train_loader, test_loader
 
-# Define the network, loss function, and optimizer
-{{ model.name }} = NeuralNetwork()
-{% set from_logits = nn_components.from_logits(modules_details) -%}
-criterion = {{ nn_components.get_loss_function(model.configuration, from_logits) }}
-optimizer = {{ nn_components.get_optimizer(model) }}
+def train(model, train_loader, criterion, optimizer, epochs, num_classes):
+    """Train the neural network."""
+{{ nn_components.train_model_body(model, model.train_data.task_type) | indent(4, first=True) }}
 
-# Train the neural network
-{{ nn_components.train_model(model, model.train_data.task_type) }}
+def evaluate(model, test_loader, criterion, num_classes):
+    """Evaluate the neural network."""
+{{ nn_components.evaluate_model_body(model, model.train_data.task_type) | indent(4, first=True) }}
 
-# Evaluate the neural network
-{{ nn_components.evaluate_model(model, model.train_data.task_type) }}
+if __name__ == "__main__":
+    # Prepare datasets
+    train_loader, test_loader = prepare_datasets()
 
-# Save the neural network
-{{ nn_components.save_model(model) }}
+    # Define the network, loss function, and optimizer
+    {{ model.name }} = NeuralNetwork()
+    {% set from_logits = nn_components.from_logits(modules_details) -%}
+    criterion = {{ nn_components.get_loss_function(model.configuration, from_logits) }}
+    optimizer = {{ nn_components.get_optimizer(model) }}
+
+    # Train the neural network
+    train({{ model.name }}, train_loader, criterion, optimizer, {{ model.configuration.epochs }}, {{ nn_components.get_output_layer_neurons(model) | trim }})
+
+    # Evaluate the neural network
+    evaluate({{ model.name }}, test_loader, criterion, {{ nn_components.get_output_layer_neurons(model) | trim }})
+
+    # Save the neural network
+{{ nn_components.save_model(model) | indent(4, first=True) }}
 {%- endif -%}

@@ -614,6 +614,8 @@ class CNN(Layer):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -638,6 +640,8 @@ class CNN(Layer):
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input
             to this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __init__(self, name: str, kernel_dim: List[int],
@@ -741,7 +745,7 @@ class CNN(Layer):
             f'CNN({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
             f'{self.permute_in}, {self.permute_out}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class ConvolutionalLayer(CNN):
@@ -775,6 +779,8 @@ class ConvolutionalLayer(CNN):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -807,6 +813,8 @@ class ConvolutionalLayer(CNN):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input
             to this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
@@ -887,7 +895,7 @@ class ConvolutionalLayer(CNN):
             f'{self.padding_amount}, {self.padding_type}, {self.dilation}, '
             f'{self.groups}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out})'
+            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call})'
         )
 
 class Conv1D(ConvolutionalLayer):
@@ -909,6 +917,9 @@ class Conv1D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
+        dilation (List[int]): Spacing between kernel elements. Default is [1].
+        groups (int): Number of blocked connections from input to output channels. Default is 1.
+        bias (bool): If True, adds a learnable bias to the output. Default is True.
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
             PyTorch model equivalent to TensorFlow model.
@@ -919,6 +930,8 @@ class Conv1D(ConvolutionalLayer):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -940,6 +953,9 @@ class Conv1D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type
             of padding applied to the input.
+        dilation (List[int]): Inherited from ConvolutionalLayer. Spacing between kernel elements.
+        groups (int): Inherited from ConvolutionalLayer. Number of blocked connections from input to output channels.
+        bias (bool): Inherited from ConvolutionalLayer. If True, adds a learnable bias to the output.
         permute_in (bool): Inherited from CNN. Whether the dimensions of
             the input need to be permuted. Relevant for PyTorch. It is
             used to make PyTorch model equivalent to TensorFlow model.
@@ -950,6 +966,8 @@ class Conv1D(ConvolutionalLayer):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
@@ -1005,9 +1023,10 @@ class Conv1D(ConvolutionalLayer):
         return (
             f'Conv1D({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, '
-            f'{self.padding_amount}, {self.padding_type}, '
-            f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out})'
+            f'{self.padding_amount}, {self.padding_type}, {self.dilation}, '
+            f'{self.groups}, {self.bias}, {self.name_module_input}, '
+            f'{self.input_reused}, {self.permute_in}, {self.permute_out}, '
+            f'{self.is_layer_call})'
         )
 
 class Conv2D(ConvolutionalLayer):
@@ -1029,6 +1048,9 @@ class Conv2D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
+        dilation (List[int]): Spacing between kernel elements. Default is [1].
+        groups (int): Number of blocked connections from input to output channels. Default is 1.
+        bias (bool): If True, adds a learnable bias to the output. Default is True.
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
             PyTorch model equivalent to TensorFlow model.
@@ -1039,6 +1061,8 @@ class Conv2D(ConvolutionalLayer):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused
             as input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the
@@ -1060,6 +1084,9 @@ class Conv2D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the
             type of padding applied to the input.
+        dilation (List[int]): Inherited from ConvolutionalLayer. Spacing between kernel elements.
+        groups (int): Inherited from ConvolutionalLayer. Number of blocked connections from input to output channels.
+        bias (bool): Inherited from ConvolutionalLayer. If True, adds a learnable bias to the output.
         permute_in (bool): Inherited from CNN. Whether the dimensions of
             the input need to be permuted. Relevant for PyTorch. It is
             used to make PyTorch model equivalent to TensorFlow model.
@@ -1070,6 +1097,8 @@ class Conv2D(ConvolutionalLayer):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
@@ -1125,9 +1154,9 @@ class Conv2D(ConvolutionalLayer):
         return (
             f'Conv2D({self.name}, {self.kernel_dim}, {self.out_channels}, '
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
-            f'{self.padding_type}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out})'
+            f'{self.padding_type}, {self.dilation}, {self.groups}, {self.bias}, '
+            f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
+            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call})'
         )
 
 class Conv3D(ConvolutionalLayer):
@@ -1149,6 +1178,9 @@ class Conv3D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
+        dilation (List[int]): Spacing between kernel elements. Default is [1].
+        groups (int): Number of blocked connections from input to output channels. Default is 1.
+        bias (bool): If True, adds a learnable bias to the output. Default is True.
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
             PyTorch model equivalent to TensorFlow model.
@@ -1159,6 +1191,8 @@ class Conv3D(ConvolutionalLayer):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1180,6 +1214,9 @@ class Conv3D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type
             of padding applied to the input.
+        dilation (List[int]): Inherited from ConvolutionalLayer. Spacing between kernel elements.
+        groups (int): Inherited from ConvolutionalLayer. Number of blocked connections from input to output channels.
+        bias (bool): Inherited from ConvolutionalLayer. If True, adds a learnable bias to the output.
         permute_in (bool): Inherited from CNN. Whether the dimensions of
             the input need to be permuted. Relevant for PyTorch. It is
             used to make PyTorch model equivalent to TensorFlow model.
@@ -1190,6 +1227,8 @@ class Conv3D(ConvolutionalLayer):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
@@ -1244,9 +1283,9 @@ class Conv3D(ConvolutionalLayer):
         return (
             f'Conv3D({self.name}, {self.kernel_dim}, {self.out_channels}, '
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
-            f'{self.padding_type}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out})'
+            f'{self.padding_type}, {self.dilation}, {self.groups}, {self.bias}, '
+            f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
+            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call})'
         )
 
 
@@ -1282,6 +1321,8 @@ class PoolingLayer(CNN):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the
@@ -1315,6 +1356,8 @@ class PoolingLayer(CNN):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, pooling_type: str, dimension: str,
                  kernel_dim: List[int] = None, stride_dim: List[int] = None,
@@ -1451,7 +1494,8 @@ class PoolingLayer(CNN):
             f'{self.pooling_type}, {self.dimension}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
             f'{self.output_dim}, {self.name_module_input}, '
-            f'{self.input_reused}, {self.permute_in}, {self.permute_out})'
+            f'{self.input_reused}, {self.permute_in}, {self.permute_out}, '
+            f'{self.is_layer_call})'
         )
 
 class LayerModifier(Layer):
@@ -1467,6 +1511,8 @@ class LayerModifier(Layer):
             the inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the
@@ -1477,6 +1523,8 @@ class LayerModifier(Layer):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __repr__(self):
@@ -1498,6 +1546,8 @@ class NormalizationLayer(LayerModifier):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1510,6 +1560,8 @@ class NormalizationLayer(LayerModifier):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
                  actv_func: str = None, name_module_input: str = None,
@@ -1541,7 +1593,8 @@ class NormalizationLayer(LayerModifier):
     def __repr__(self):
         return (
             f'NormalizationLayer({self.name}, {self.eps}, {self.affine}, '
-            f'{self.actv_func}, {self.name_module_input}, {self.input_reused})'
+            f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
+            f'{self.is_layer_call})'
         )
 
 class BatchNormLayer(NormalizationLayer):
@@ -1557,6 +1610,10 @@ class BatchNormLayer(NormalizationLayer):
             input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input
             data to be normalized using batch normalization.
+        eps (float): Epsilon for numerical stability (default: 1e-5).
+        momentum (float): Momentum for running mean/variance (default: 0.1).
+        affine (bool): Whether to learn affine parameters gamma/beta (default: True).
+        track_running_stats (bool): Whether to track running mean/variance (default: True).
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
             PyTorch model equivalent to TensorFlow model.
@@ -1567,6 +1624,8 @@ class BatchNormLayer(NormalizationLayer):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1577,6 +1636,10 @@ class BatchNormLayer(NormalizationLayer):
             input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input
             data to be normalized using batch normalization.
+        eps (float): Inherited from NormalizationLayer. Epsilon value for numerical stability.
+        momentum (float): Momentum for running mean/variance.
+        affine (bool): Inherited from NormalizationLayer. Whether to learn affine parameters (gamma/beta).
+        track_running_stats (bool): Whether to track running mean/variance.
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
             PyTorch model equivalent to TensorFlow model.
@@ -1587,6 +1650,8 @@ class BatchNormLayer(NormalizationLayer):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, num_features: int, dimension: str,
                  eps: float = 1e-5, momentum: float = 0.1, affine: bool = True,
@@ -1678,7 +1743,7 @@ class BatchNormLayer(NormalizationLayer):
             f'BatchNormLayer({self.name}, {self.num_features}, {self.dimension}, '
             f'{self.eps}, {self.momentum}, {self.affine}, {self.track_running_stats}, '
             f'{self.actv_func}, {self.permute_in}, {self.permute_out}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class LayerNormLayer(NormalizationLayer):
@@ -1694,10 +1759,14 @@ class LayerNormLayer(NormalizationLayer):
         normalized_shape (List[int]): A list refering to the dimensions
             or axis indices over which layer normalization is applied,
             specifying which parts of the tensor are normalized.
+        eps (float): Epsilon for numerical stability (default: 1e-5).
+        affine (bool): Whether to learn affine parameters gamma/beta (default: True).
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused
             as input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1707,10 +1776,14 @@ class LayerNormLayer(NormalizationLayer):
         normalized_shape (List[int]): A list refering to the dimensions
             or axis indices over which layer normalization is applied,
             specifying which parts of the tensor are normalized.
+        eps (float): Inherited from NormalizationLayer. Epsilon value for numerical stability.
+        affine (bool): Inherited from NormalizationLayer. Whether to learn affine parameters (gamma/beta).
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, normalized_shape: List[int],
                  eps: float = 1e-5, affine: bool = True,
@@ -1739,7 +1812,7 @@ class LayerNormLayer(NormalizationLayer):
         return (
             f'LayerNormLayer({self.name}, {self.normalized_shape}, {self.eps}, '
             f'{self.affine}, {self.actv_func}, {self.name_module_input}, '
-            f'{self.input_reused})'
+            f'{self.input_reused}, {self.is_layer_call})'
         )
 
 class DropoutLayer(LayerModifier):
@@ -1758,6 +1831,8 @@ class DropoutLayer(LayerModifier):
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1769,6 +1844,8 @@ class DropoutLayer(LayerModifier):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, rate: float, dimension: str | None = None,
                  name_module_input: str = None, input_reused: bool = False,
@@ -1787,10 +1864,20 @@ class DropoutLayer(LayerModifier):
         """float: Set the fraction of the input units to drop."""
         self.__rate = rate
 
+    @property
+    def dimension(self) -> str | None:
+        """str | None: Get the dimensionality for spatial dropout."""
+        return self.__dimension
+
+    @dimension.setter
+    def dimension(self, dimension: str | None):
+        """str | None: Set the dimensionality for spatial dropout."""
+        self.__dimension = dimension
+
     def __repr__(self):
         return (
-            f'DropoutLayer({self.name}, {self.rate}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'DropoutLayer({self.name}, {self.rate}, {self.dimension}, '
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class RNN(Layer):
@@ -1820,6 +1907,10 @@ class RNN(Layer):
             input to another layer.
         return_type (str): Whether to return the hidden states, the last
             output in the output sequence or the full sequence.
+        hx_source (str): The name of the source layer for initial hidden state
+            (used in encoder-decoder architectures).
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1844,6 +1935,9 @@ class RNN(Layer):
             this layer is reused as input to another layer.
         return_type (str): Whether to return the hidden states, the last
             output in the output sequence or the full sequence.
+        hx_source (str): The name of the source layer for initial hidden state.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, hidden_size: int, return_type: str = "full",
                  input_size: int = None, bidirectional: bool = False,
@@ -1968,7 +2062,8 @@ class RNN(Layer):
             f'RNN({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.bias}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
+            f'{self.is_layer_call})'
         )
 
 class SimpleRNNLayer(RNN):
@@ -1990,12 +2085,17 @@ class SimpleRNNLayer(RNN):
         batch_first (bool): If True, the input and output tensors are
             provided as (batch, seq, feature) instead of (seq, batch,
             feature). Only relevant to PyTorch.
+        bias (bool): If True, the layer uses bias weights. Default is True.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
         return_type (str): Whether to return the hidden states, the last
             output in the output sequence or the full sequence.
+        hx_source (str): The name of the source layer for initial hidden state
+            (used in encoder-decoder architectures).
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2015,6 +2115,7 @@ class SimpleRNNLayer(RNN):
         batch_first (bool): Inherited from RNN. If True, the input and
             output tensors are provided as (batch, seq, feature) instead
             of (seq, batch, feature). Only relevant to PyTorch.
+        bias (bool): Inherited from RNN. If True, the layer uses bias weights.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -2022,14 +2123,18 @@ class SimpleRNNLayer(RNN):
         return_type (str): Inherited from RNN. Whether to return the
             hidden states, the last output in the output sequence or
             the full sequence.
+        hx_source (str): Inherited from RNN. The name of the source layer for initial hidden state.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __repr__(self):
         return (
             f'SimpleRNNLayer({self.name}, {self.hidden_size}, '
             f'{self.return_type}, {self.input_size}, {self.bidirectional}, '
-            f'{self.dropout}, {self.batch_first}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
+            f'{self.dropout}, {self.batch_first}, {self.bias}, {self.actv_func}, '
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
+            f'{self.is_layer_call})'
         )
 
 class LSTMLayer(RNN):
@@ -2050,12 +2155,17 @@ class LSTMLayer(RNN):
         batch_first (bool): If True, the input and output tensors are
             provided as (batch, seq, feature) instead of (seq, batch,
             feature). Only relevant to PyTorch.
+        bias (bool): If True, the layer uses bias weights. Default is True.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
         return_type (str): Whether to return the hidden states, the last
             output in the output sequence or the full sequence.
+        hx_source (str): The name of the source layer for initial hidden state
+            (used in encoder-decoder architectures).
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2075,6 +2185,7 @@ class LSTMLayer(RNN):
         batch_first (bool): Inherited from RNN. If True, the input and
             output tensors are provided as (batch, seq, feature) instead
             of (seq, batch, feature). Only relevant to PyTorch.
+        bias (bool): Inherited from RNN. If True, the layer uses bias weights.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -2082,14 +2193,18 @@ class LSTMLayer(RNN):
         return_type (str): Inherited from RNN. Whether to return the
             hidden states, the last output in the output sequence or
             the full sequence.
+        hx_source (str): Inherited from RNN. The name of the source layer for initial hidden state.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __repr__(self):
         return (
             f'LSTMLayer({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
+            f'{self.batch_first}, {self.bias}, {self.actv_func}, '
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
+            f'{self.is_layer_call})'
         )
 
 class GRULayer(RNN):
@@ -2110,12 +2225,17 @@ class GRULayer(RNN):
         batch_first (bool): If True, the input and output tensors are
             provided as (batch, seq, feature) instead of (seq, batch,
             feature). Only relevant to PyTorch.
+        bias (bool): If True, the layer uses bias weights. Default is True.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused
             as input to another layer.
         return_type (str): Whether to return the hidden states, the last
             output in the output sequence or the full sequence.
+        hx_source (str): The name of the source layer for initial hidden state
+            (used in encoder-decoder architectures).
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2135,6 +2255,7 @@ class GRULayer(RNN):
         batch_first (bool): Inherited from RNN. If True, the input and
             output tensors are provided as (batch, seq, feature) instead
             of (seq, batch, feature). Only relevant to PyTorch.
+        bias (bool): Inherited from RNN. If True, the layer uses bias weights.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -2142,14 +2263,18 @@ class GRULayer(RNN):
         return_type (str): Inherited from RNN. Whether to return
             the hidden states, the last output in the output sequence or
             the full sequence.
+        hx_source (str): Inherited from RNN. The name of the source layer for initial hidden state.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __repr__(self):
         return (
             f'GRULayer({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.hx_source})'
+            f'{self.batch_first}, {self.bias}, {self.actv_func}, '
+            f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
+            f'{self.is_layer_call})'
         )
 
 class GeneralLayer(Layer):
@@ -2164,6 +2289,8 @@ class GeneralLayer(Layer):
             the inputs originate.
         input_reused (bool): Whether the input to this layer is reused
             as input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2174,6 +2301,8 @@ class GeneralLayer(Layer):
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
 
     def __repr__(self):
@@ -2192,10 +2321,13 @@ class LinearLayer(GeneralLayer):
         actv_func (str): The type of the activation function.
         in_features (int): It represents the size of each input sample.
         out_features (int): It represents the size of each output sample.
+        bias (bool): If True, adds a learnable bias to the output. Default is True.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused
             as input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2204,10 +2336,13 @@ class LinearLayer(GeneralLayer):
             of the activation function.
         in_features (int): It represents the size of each input sample.
         out_features (int): It represents the size of each output sample.
+        bias (bool): If True, adds a learnable bias to the output.
         name_module_input (str): Inherited from Layer. The name of
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input
             to this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, out_features: int, in_features: int = None,
                  bias: bool = True, actv_func: str = None,
@@ -2252,7 +2387,7 @@ class LinearLayer(GeneralLayer):
         return (
             f'LinearLayer({self.name}, {self.actv_func}, '
             f'{self.out_features}, {self.in_features}, {self.bias}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class FlattenLayer(GeneralLayer):
@@ -2269,6 +2404,8 @@ class FlattenLayer(GeneralLayer):
             the inputs originate.
         input_reused (bool): Whether the input to this layer is
             reused as input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2281,6 +2418,8 @@ class FlattenLayer(GeneralLayer):
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input
             to this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
                  actv_func: str = None, name_module_input: str = None,
@@ -2312,7 +2451,8 @@ class FlattenLayer(GeneralLayer):
     def __repr__(self):
         return (
             f'FlattenLayer({self.name}, {self.actv_func}, {self.start_dim}, '
-            f'{self.end_dim}, {self.name_module_input}, {self.input_reused})'
+            f'{self.end_dim}, {self.name_module_input}, {self.input_reused}, '
+            f'{self.is_layer_call})'
         )
 
 class EmbeddingLayer(GeneralLayer):
@@ -2331,6 +2471,8 @@ class EmbeddingLayer(GeneralLayer):
             the inputs originate.
         input_reused (bool): Whether the input to this layer is reused
             as input to another layer.
+        is_layer_call (bool): True if this represents a call to an already-defined
+            layer (layer reuse).
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2344,6 +2486,8 @@ class EmbeddingLayer(GeneralLayer):
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
             this layer is reused as input to another layer.
+        is_layer_call (bool): Inherited from Layer. True if this is a call
+            to an already-defined layer.
     """
     def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
                  padding_idx: int = None, actv_func: str = None,
@@ -2388,7 +2532,7 @@ class EmbeddingLayer(GeneralLayer):
         return (
             f'EmbeddingLayer({self.name}, {self.actv_func}, '
             f'{self.num_embeddings}, {self.embedding_dim}, {self.padding_idx}, '
-            f'{self.name_module_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
 class Feature(NamedElement):

@@ -312,6 +312,33 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     methods appear in your output (under whatever name the target
     language uses). If anything is missing, add it. Do not silently
     drop attributes the LLM judges "not needed" — the model is the spec.
+12. **Implement every explicit request FULLY — no stubs, no token mentions.**
+    When the user asks for a feature, behaviour, or styling, build it
+    completely and wire it end-to-end. A requested feature that's only
+    half-built — a form with no submit handler, an endpoint with no UI, a
+    component that's never imported/rendered, a "TODO" — is a bug. Rule 1
+    keeps you to what the user asked for; it does NOT excuse implementing
+    it shallowly. Before finishing, re-check that every feature the user
+    named actually works in the generated code.
+13. **Styling/theme requests must actually RENDER.** When the user names
+    colours or a visual theme, define them as concrete CSS — real hex
+    values or CSS variables — and apply them consistently across the UI
+    (backgrounds, buttons, headers, links, accents), not just one element.
+    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,
+    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →
+    `#6366f1`, emerald → `#10b981`. CRITICAL: `rose`, `amber`, `teal`,
+    `indigo`, `emerald` are NOT valid CSS colour keywords — never write
+    `color: rose`; use the hex. A theme that's only mentioned in a comment
+    but not visibly applied is a failure. Aim for a clean, modern,
+    cohesive look (consistent spacing, a primary + accent colour, readable
+    contrast).
+14. **Authentication, when requested, is COMPLETE and wired.** Generate the
+    full flow: a registration / sign-up form AND a login form, secure
+    password hashing (bcrypt / passlib / argon2 — never plaintext), token
+    or session handling (e.g. JWT), protected routes/endpoints, and the
+    frontend forms wired to working backend auth endpoints. "Login" implies
+    the user can also CREATE AN ACCOUNT unless they say otherwise. No auth
+    stubs — a user must be able to register, then log in, end to end.
 
 ## Tools for deeper model inspection
 

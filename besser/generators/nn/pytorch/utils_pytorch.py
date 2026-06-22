@@ -209,7 +209,10 @@ class SetupLayerSyntax:
         if hasattr(self.layer, 'actv_func'):
             actv = self.layer.actv_func
             if actv in activs:
-                lyr = f"self.actv_func_{actv} = nn.{activs[actv]}()"
+                if actv == 'softmax':
+                    lyr = f"self.actv_func_{actv} = nn.{activs[actv]}(dim=-1)"
+                else:
+                    lyr = f"self.actv_func_{actv} = nn.{activs[actv]}()"
             elif actv is not None:
                 if actv.startswith("self"):
                     lyr = f"self.actv_func_{actv[5:]}"

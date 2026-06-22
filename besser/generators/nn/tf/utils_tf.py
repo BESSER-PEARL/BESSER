@@ -58,9 +58,10 @@ class SetupLayerSyntax:
         lyr = f"self.{lyr_name} = layers"
         if cls_name == "LinearLayer":
             use_bias = "True" if self.layer.bias else "False"
+            activation_param = f", activation={actv_func}" if actv_func is not None else ""
             lyr = (
                 f"{lyr}.Dense(units={self.layer.out_features}, "
-                f"use_bias={use_bias}, activation={actv_func})"
+                f"use_bias={use_bias}{activation_param})"
             )
         elif cls_name == "FlattenLayer":
             lyr = f"{lyr}.Flatten()"
@@ -228,9 +229,10 @@ class SetupLayerSyntax:
         lyr_name = self.layer.name
         layer_type = cls_name[:-5]
         use_bias_str = "True" if self.layer.bias else "False"
+        activation_param = f", activation={actv_func}" if actv_func is not None else ""
         lyr = (
-            f"layers.{layer_type}(units={self.layer.hidden_size}, "
-            f"activation={actv_func}, use_bias={use_bias_str}, dropout={self.layer.dropout}"
+            f"layers.{layer_type}(units={self.layer.hidden_size}{activation_param}, "
+            f"use_bias={use_bias_str}, dropout={self.layer.dropout}"
         )
 
         if self.layer.return_type == "full":
@@ -298,11 +300,12 @@ class SetupLayerSyntax:
                 f"self.{lyr_name}_pad = layers.ZeroPadding{dim}D("
                 f"padding={pad_amount})#"
             )
+        activation_param = f", activation={actv_func}" if actv_func is not None else ""
         lyr = (
             f"{lyr}self.{lyr_name} = layers.Conv{dim}D(filters={filters}, "
             f"kernel_size={kernel}, strides={stride}, "
             f"padding='{pad_type}', dilation_rate={dilation}, groups={groups}, "
-            f"use_bias={use_bias}, activation={actv_func})"
+            f"use_bias={use_bias}{activation_param})"
         )
         return lyr
 

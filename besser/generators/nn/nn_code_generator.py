@@ -116,7 +116,7 @@ class NNCodeGenerator(GeneratorInterface):
             # Use original module name + _nn (no counter needed with original names)
             name_sub_nn = f"{module.name}_nn"
             modules_details[name_sub_nn] = subnn_details
-            add_in_out_var_to_subnn(modules_details, self.model.inputs_outputs)
+            add_in_out_var_to_subnn(modules_details, getattr(self.model, 'inputs_outputs', None))
             return counter_subnn
 
         elif module_type != "TensorOp":
@@ -134,7 +134,7 @@ class NNCodeGenerator(GeneratorInterface):
             handle_tensorop(
                 module, modules_details, self.get_tensorop_syntax,
                 referenced_tensorops=referenced_tensorops,
-                inputs_outputs=self.model.inputs_outputs,
+                inputs_outputs=getattr(self.model, 'inputs_outputs', None),
                 channel_last=self.channel_last
             )
             return counter_subnn

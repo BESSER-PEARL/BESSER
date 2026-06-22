@@ -146,7 +146,7 @@ from datetime import datetime
         {%- if module_name.endswith("nn") %}
 {{ module_name.rsplit('_', 2)[0] }} = Sequential([
     {%- for subnn_key, subnn_value in module_details.items() %}
-        {%- if subnn_key != "in_out_variable" %}
+        {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
             {%- if "layers.ZeroPadding" in subnn_value[0] %}
     {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
     {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},

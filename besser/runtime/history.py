@@ -228,15 +228,14 @@ class HistoryStore:
         limit: int,
     ) -> list[dict]:
         bucket = self._influx_bucket
-        # Flux query: fetch both numeric and string field variants.
+        # Flux query without pivot - fetch all fields and group by timestamp
         flux = f"""
 from(bucket: "{bucket}")
   |> range(start: 0)
   |> filter(fn: (r) => r._measurement == "{class_name}")
   |> filter(fn: (r) => r.instance_id == "{instance_id}")
   |> filter(fn: (r) => r.attribute == "{attribute}")
-  |> filter(fn: (r) => r._field == "value" or r._field == "value_str" or r._field == "value_bool")
-  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> filter(fn: (r) => r._field == "tick_id" or r._field == "value" or r._field == "value_str" or r._field == "value_bool")
   |> sort(columns: ["_time"])
 """
         try:
@@ -245,31 +244,43 @@ from(bucket: "{bucket}")
             logger.warning("HistoryStore: InfluxDB query error: %s", exc)
             return []
 
-        results = []
+        # Group records by timestamp to pair tick_id with value fields
+        by_time: dict[float, dict] = {}
         for table in tables:
             for record in table.records:
-                tick_id = int(record.values.get("tick_id", 0))
-                if tick_id < since_tick:
-                    continue
-                # Pick whichever value field is present.
-                if "value" in record.values and record.values["value"] is not None:
-                    val = record.values["value"]
-                elif "value_bool" in record.values and record.values["value_bool"] is not None:
-                    val = bool(record.values["value_bool"])
-                elif "value_str" in record.values:
-                    raw = record.values["value_str"]
-                    val = None if raw == "null" else raw
-                else:
-                    continue
                 ts = record.get_time().timestamp() if record.get_time() else 0.0
-                results.append({"tick_id": tick_id, "ts": ts, "value": val})
+                if ts not in by_time:
+                    by_time[ts] = {"ts": ts, "tick_id": None, "value": None}
+                
+                field = record.get_field()
+                value = record.get_value()
+                
+                if field == "tick_id":
+                    by_time[ts]["tick_id"] = int(value) if value is not None else 0
+                elif field == "value" and value is not None:
+                    by_time[ts]["value"] = value
+                elif field == "value_bool" and value is not None:
+                    by_time[ts]["value"] = bool(value)
+                elif field == "value_str":
+                    by_time[ts]["value"] = None if value == "null" else value
 
-        # Sort, deduplicate by tick_id (keep last per tick), apply limit.
-        seen: dict[int, dict] = {}
-        for r in results:
-            seen[r["tick_id"]] = r
-        ordered = sorted(seen.values(), key=lambda x: x["tick_id"])
-        return ordered[-limit:]
+        # Filter, sort, and apply limit
+        results = []
+        for entry in by_time.values():
+            tick_id = entry.get("tick_id")
+            if tick_id is None or tick_id < since_tick:
+                continue
+            if entry.get("value") is None:
+                continue
+            results.append({
+                "tick_id": tick_id,
+                "ts": entry["ts"],
+                "value": entry["value"]
+            })
+
+        # Sort by tick_id and apply limit
+        results.sort(key=lambda x: x["tick_id"])
+        return results[-limit:] if len(results) > limit else results
 
     def _query_buffer(
         self,

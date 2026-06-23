@@ -205,27 +205,27 @@ const BINDING_KIND_LABELS: Record<BindingKind, string> = {
 };
 
 const BindingSection: React.FC<{
-  className: string;
+  domainClass: string;
   instanceId: string;
   attribute: string;
   attrType: string;
-}> = ({ className, instanceId, attribute, attrType }) => {
+}> = ({ domainClass, instanceId, attribute, attrType }) => {
   const [binding, setBinding] = useState<Binding | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Load existing binding on mount.
   useEffect(() => {
-    bindingsApi.listBindings(className, instanceId).then((list) => {
+    bindingsApi.listBindings(domainClass, instanceId).then((list) => {
       const found = list.find((b) => b.attribute === attribute) ?? null;
       setBinding(found);
     }).catch(() => {/* ignore */});
-  }, [className, instanceId, attribute]);
+  }, [domainClass, instanceId, attribute]);
 
   const handleKindChange = async (kind: string) => {
     if (kind === '') {
       // Clear binding.
       setSaving(true);
-      await bindingsApi.clearBinding(className, instanceId, attribute).catch(() => {});
+      await bindingsApi.clearBinding(domainClass, instanceId, attribute).catch(() => {});
       setBinding(null);
       setSaving(false);
       return;
@@ -237,7 +237,7 @@ const BindingSection: React.FC<{
       : kind === 'mqtt' ? { host: '', port: 1883, topic: '' }
       : { source_id: '' };
     setSaving(true);
-    await bindingsApi.setBinding(className, instanceId, attribute, kind as BindingKind, defaultParams).catch(() => {});
+    await bindingsApi.setBinding(domainClass, instanceId, attribute, kind as BindingKind, defaultParams).catch(() => {});
     setBinding({ attribute, kind: kind as BindingKind, params: defaultParams });
     setSaving(false);
   };
@@ -246,7 +246,7 @@ const BindingSection: React.FC<{
     if (!binding) return;
     const newParams = { ...binding.params, [key]: value };
     setSaving(true);
-    await bindingsApi.setBinding(className, instanceId, attribute, binding.kind, newParams).catch(() => {});
+    await bindingsApi.setBinding(domainClass, instanceId, attribute, binding.kind, newParams).catch(() => {});
     setBinding({ ...binding, params: newParams });
     setSaving(false);
   };
@@ -353,7 +353,7 @@ const BindingSection: React.FC<{
       )}
       {isNumeric && (
         <div className="mt-2">
-          <HistoryChart className={className} instanceId={instanceId} attribute={attribute} />
+          <HistoryChart domainClass={domainClass} instanceId={instanceId} attribute={attribute} />
         </div>
       )}
     </div>
@@ -584,7 +584,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                     {/* Simulator source picker — shown only for is_input-flagged attrs */}
                     {(INPUT_ATTRIBUTES_REGISTRY[instance.class_name] ?? []).includes(attrMeta.name) && (
                       <BindingSection
-                        className={instance.class_name}
+                        domainClass={instance.class_name}
                         instanceId={instance.id}
                         attribute={attrMeta.name}
                         attrType={attrMeta.type}

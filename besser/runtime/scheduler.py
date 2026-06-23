@@ -159,42 +159,53 @@ class Scheduler:
 
     async def _tick(self) -> list[dict]:
         """Execute one tick: bind → step → snapshot → notify. Returns deltas."""
-        # 1. Drive input attributes
+        # 1. Capture "before" state for ALL instances (before bindings)
+        all_instances = self._im.get_all_instances()
+        before_state = {}
+        for inst in all_instances:
+            cn = inst["class_name"]
+            iid = inst["id"]
+            before_state[(cn, iid)] = dict(inst.get("attributes", {}))
+
+        # 2. Drive input attributes
         self._bindings.apply_pre_tick(self.tick_count, self.dt)
 
-        # 2. Dispatch step() on every steppable instance
-        deltas: list[dict] = []
-        all_instances = self._im.get_all_instances()
+        # 3. Dispatch step() on every steppable instance
         for inst in all_instances:
             cn = inst["class_name"]
             if cn not in self._steppable:
                 continue
             method_name = self._steppable[cn]
-            before = dict(inst.get("attributes", {}))
             try:
                 self._engine.tick(cn, inst["id"], self.dt, method_name=method_name)
             except Exception as exc:
                 logger.warning("step() failed for %s/%s: %s", cn, inst["id"], exc)
                 continue
-            # Capture attribute mutations for delta notification
-            after_inst = self._im.get_instance(cn, inst["id"])
+
+        # 4. Compute deltas for ALL instances (not just steppable ones)
+        deltas: list[dict] = []
+        for inst in all_instances:
+            cn = inst["class_name"]
+            iid = inst["id"]
+            before = before_state.get((cn, iid), {})
+            after_inst = self._im.get_instance(cn, iid)
             after = after_inst.get("attributes", {})
             for attr, new_val in after.items():
                 if before.get(attr) != new_val:
                     deltas.append({
                         "class_name": cn,
-                        "instance_id": inst["id"],
+                        "instance_id": iid,
                         "attribute": attr,
                         "value": new_val,
                     })
 
-        # 3. Persist snapshot
+        # 5. Persist snapshot
         self._history.snapshot(self.tick_count)
 
-        # 4. Advance tick counter
+        # 6. Advance tick counter
         self.tick_count += 1
 
-        # 5. Notify WebSocket listeners
+        # 7. Notify WebSocket listeners
         if self._listeners and deltas:
             for listener in list(self._listeners):
                 try:

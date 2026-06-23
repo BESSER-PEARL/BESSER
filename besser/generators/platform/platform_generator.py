@@ -537,7 +537,7 @@ class PlatformGenerator(GeneratorInterface):
             '\n'
             f'_steppable_classes = {steppable_classes_repr}\n'
             '\n'
-            'history = HistoryStore(instance_manager=instance_manager, steppable_classes=_steppable_classes)\n'
+            'history = HistoryStore(instance_manager=instance_manager, steppable_classes=None)\n'
             'bindings = InputBindings(instance_manager=instance_manager)\n'
             'scheduler = Scheduler(\n'
             '    engine=engine,\n'

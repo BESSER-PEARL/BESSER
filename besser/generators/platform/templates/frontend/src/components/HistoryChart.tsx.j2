@@ -22,7 +22,7 @@ interface ChartPoint {
 }
 
 interface HistoryChartProps {
-  className: string;
+  domainClass: string;
   instanceId: string;
   attribute: string;
   /** Max points to show in the rolling window (default 120). */
@@ -30,7 +30,7 @@ interface HistoryChartProps {
 }
 
 export const HistoryChart: React.FC<HistoryChartProps> = ({
-  className,
+  domainClass,
   instanceId,
   attribute,
   maxPoints = 120,
@@ -42,7 +42,7 @@ export const HistoryChart: React.FC<HistoryChartProps> = ({
   // Initial load.
   useEffect(() => {
     setLoading(true);
-    getHistory(className, instanceId, attribute, 0, maxPoints)
+    getHistory(domainClass, instanceId, attribute, 0, maxPoints)
       .then((res) => {
         const points: ChartPoint[] = res.rows
           .filter((r) => typeof r.value === 'number')
@@ -54,14 +54,14 @@ export const HistoryChart: React.FC<HistoryChartProps> = ({
       })
       .catch(() => {/* ignore */})
       .finally(() => setLoading(false));
-  }, [className, instanceId, attribute]);
+  }, [domainClass, instanceId, attribute]);
 
   // Live updates via WebSocket deltas.
   useEffect(() => {
     const unsub = subscribeWs((msg) => {
       if (msg.heartbeat || !Array.isArray(msg.deltas)) return;
       const myDelta = msg.deltas.find(
-        (d) => d.class_name === className && d.instance_id === instanceId && d.attribute === attribute,
+        (d) => d.class_name === domainClass && d.instance_id === instanceId && d.attribute === attribute,
       );
       if (!myDelta || typeof myDelta.value !== 'number') return;
       const point: ChartPoint = { tick: msg.tick ?? 0, value: myDelta.value as number };
@@ -71,7 +71,7 @@ export const HistoryChart: React.FC<HistoryChartProps> = ({
       });
     });
     return unsub;
-  }, [className, instanceId, attribute, maxPoints]);
+  }, [domainClass, instanceId, attribute, maxPoints]);
 
   if (loading) {
     return <p className="text-[10px] text-muted-foreground">Loading chart…</p>;

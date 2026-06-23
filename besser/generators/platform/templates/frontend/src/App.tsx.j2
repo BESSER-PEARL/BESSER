@@ -56,7 +56,6 @@ function AppContent() {
   const [running, setRunning] = useState(false);
   const [tickCount, setTickCount] = useState(0);
   const [dt, setDt] = useState(1.0);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const loadInstances = async () => {
     setLoading(true);

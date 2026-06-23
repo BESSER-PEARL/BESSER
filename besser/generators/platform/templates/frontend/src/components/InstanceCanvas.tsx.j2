@@ -9,7 +9,6 @@ import {
   ReactFlowProvider,
   Node,
   Edge,
-  Controls,
   Background,
   BackgroundVariant,
   ConnectionLineType,
@@ -848,7 +847,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   // so no debounce is needed. The PATCH is fire-and-forget — a failure logs
   // but doesn't disrupt the canvas, since the ref already has the new value.
   const onNodeDragStop = useCallback(
-    (_event: React.MouseEvent, node: Node) => {
+    (_event: MouseEvent | TouchEvent, node: Node) => {
       const instanceData = (node.data as { instance?: BaseInstance } | undefined)?.instance;
       if (!instanceData) return;
       api

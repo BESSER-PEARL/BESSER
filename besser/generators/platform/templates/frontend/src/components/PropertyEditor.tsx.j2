@@ -201,6 +201,7 @@ const BINDING_KIND_LABELS: Record<BindingKind, string> = {
   sine: 'Sine',
   ramp: 'Ramp',
   replay_csv: 'Replay CSV',
+  mqtt: 'MQTT (live)',
 };
 
 const BindingSection: React.FC<{
@@ -233,6 +234,7 @@ const BindingSection: React.FC<{
       kind === 'constant' ? { value: 0 }
       : kind === 'sine' ? { amplitude: 1, frequency: 0.1, offset: 0 }
       : kind === 'ramp' ? { start: 0, rate: 1, max_value: null }
+      : kind === 'mqtt' ? { host: '', port: 1883, topic: '' }
       : { source_id: '' };
     setSaving(true);
     await bindingsApi.setBinding(className, instanceId, attribute, kind as BindingKind, defaultParams).catch(() => {});
@@ -274,7 +276,7 @@ const BindingSection: React.FC<{
           <Input
             type="number"
             className="h-6 text-xs"
-            value={String(binding.params.value ?? 0)}
+            value={String((binding.params as Record<string, unknown>).value ?? 0)}
             onChange={(e) => void handleParamChange('value', parseFloat(e.target.value))}
           />
         </div>
@@ -313,6 +315,40 @@ const BindingSection: React.FC<{
       {binding?.kind === 'replay_csv' && (
         <div className="mt-1.5 text-[10px] text-muted-foreground">
           source_id: {(binding.params as { source_id?: string }).source_id || '(none — upload via /api/bindings/replay-csv)'}
+        </div>
+      )}
+      {binding?.kind === 'mqtt' && (
+        <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+          <div className="col-span-2">
+            <Label className="text-[10px]">Broker host</Label>
+            <Input
+              type="text"
+              className="h-6 text-xs"
+              placeholder="localhost"
+              value={String((binding.params as Record<string, unknown>).host ?? '')}
+              onChange={(e) => void handleParamChange('host', e.target.value)}
+            />
+          </div>
+          <div>
+            <Label className="text-[10px]">Port</Label>
+            <Input
+              type="number"
+              className="h-6 text-xs"
+              placeholder="1883"
+              value={String((binding.params as Record<string, unknown>).port ?? 1883)}
+              onChange={(e) => void handleParamChange('port', parseInt(e.target.value, 10) || 1883)}
+            />
+          </div>
+          <div className="col-span-3">
+            <Label className="text-[10px]">Topic</Label>
+            <Input
+              type="text"
+              className="h-6 text-xs"
+              placeholder="plant/sensor/value"
+              value={String((binding.params as Record<string, unknown>).topic ?? '')}
+              onChange={(e) => void handleParamChange('topic', e.target.value)}
+            />
+          </div>
         </div>
       )}
       {isNumeric && (

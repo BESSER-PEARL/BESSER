@@ -10,8 +10,15 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      # InfluxDB connection — matches the influxdb service below.
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=besser-token
+      - INFLUXDB_ORG=besser
+      - INFLUXDB_BUCKET=dt_history
     volumes:
       - ./backend:/app
+    depends_on:
+      - influxdb
     networks:
       - app-network
 
@@ -26,6 +33,50 @@ services:
       - backend
     networks:
       - app-network
+
+  # ── Time-series database ─────────────────────────────────────────────────────
+  influxdb:
+    image: influxdb:2.7
+    container_name: {{ project_name }}_influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=besser-pass
+      - DOCKER_INFLUXDB_INIT_ORG=besser
+      - DOCKER_INFLUXDB_INIT_BUCKET=dt_history
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=besser-token
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - app-network
+
+  # ── MQTT broker (test/local use) ─────────────────────────────────────────────
+  # Optional: provides a local MQTT broker for testing live input bindings.
+  # In production, point mqtt bindings at your plant's external broker instead.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: {{ project_name }}_mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    command:
+      - /bin/sh
+      - -c
+      - |
+        printf 'listener 1883\nallow_anonymous true\nlistener 9001\nprotocol websockets\n' > /mosquitto/config/mosquitto.conf
+        mosquitto -c /mosquitto/config/mosquitto.conf
+    networks:
+      - app-network
+
+volumes:
+  influxdb_data:
+  mosquitto_data:
+  mosquitto_logs:
 
 networks:
   app-network:

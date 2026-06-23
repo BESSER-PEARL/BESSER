@@ -20,9 +20,10 @@ async def lifespan(app: FastAPI):
     # when the module is first imported (triggered by the router imports above).
     # We don't auto-start the scheduler — the operator presses Run explicitly.
     yield
-    # Shutdown: pause the scheduler and flush the SQLite WAL.
-    from runtime import scheduler, history
+    # Shutdown: pause the scheduler, disconnect MQTT clients, flush history.
+    from runtime import scheduler, history, bindings
     await scheduler.pause()
+    bindings.shutdown()
     history.flush()
 
 

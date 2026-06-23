@@ -537,7 +537,7 @@ class PlatformGenerator(GeneratorInterface):
             '\n'
             f'_steppable_classes = {steppable_classes_repr}\n'
             '\n'
-            'history = HistoryStore(instance_manager=instance_manager)\n'
+            'history = HistoryStore(instance_manager=instance_manager, steppable_classes=_steppable_classes)\n'
             'bindings = InputBindings(instance_manager=instance_manager)\n'
             'scheduler = Scheduler(\n'
             '    engine=engine,\n'
@@ -553,7 +553,8 @@ class PlatformGenerator(GeneratorInterface):
             '\n'
             '__all__ = ["Engine", "engine", "materialize_classes",\n'
             '           "Scheduler", "scheduler", "InputBindings", "bindings",\n'
-            '           "HistoryStore", "history"]\n'
+            '           "HistoryStore", "history",\n'
+            '           "AssociationsIndex", "AssociationEndMeta"]\n'
         )
         with open(os.path.join(dst, '__init__.py'), 'w', encoding='utf-8') as f:
             f.write(platform_init)

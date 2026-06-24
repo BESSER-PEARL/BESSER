@@ -165,6 +165,19 @@ action types and reasoning capabilities directly in the visual editor:
   the canonical nested shape and normalized at the storage boundary, so models
   that bypass the editor round-trip through the backend cleanly.
 
+Auto-layout and headless SVG export
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **ELK-based auto-layout**: a one-click auto-layout (powered by the Eclipse
+  Layout Kernel) re-arranges any diagram, exposed both as
+  ``ApollonEditor.autoLayout()`` and as an auto-layout button in the editor's
+  zoom control box.
+* **Headless SVG export pipeline**: a new ``POST /besser_api/get-svg`` backend
+  endpoint converts a B-UML model to the editor JSON model and renders it to
+  SVG by delegating to the editor server's new ``POST /api/svg`` route, which
+  draws the diagram headlessly (jsdom + Apollon) with ELK auto-layout enabled
+  by default — a browser-free B-UML → SVG rendering path.
+
 Follow-up correctness fixes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

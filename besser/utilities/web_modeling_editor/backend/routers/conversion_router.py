@@ -12,6 +12,8 @@ import tempfile
 import uuid
 import importlib.util
 import json
+
+import requests
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -580,6 +582,49 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION
     }
+
+@router.post("/get-svg")
+@handle_endpoint_errors("get_svg")
+async def get_svg(buml_file: UploadFile = File(...)):
+    """
+    Convert a B-UML class-diagram file to an auto-laid-out SVG image.
+
+    Pipeline: parse the B-UML to a DomainModel, convert it to the editor JSON
+    model, then delegate rendering to the WME Node server (Apollon, headless),
+    which runs ELK auto-layout and exports SVG. The Node server base URL is read
+    from the WME_NODE_SERVER_URL env var (default http://localhost:8080).
+    """
+    content = await buml_file.read()
+    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    _validate_file_content(content, buml_file.filename or "")
+    buml_content = content.decode("utf-8")
+
+    domain_model = parse_buml_content(buml_content)
+    if not domain_model or len(domain_model.types) == 0:
+        raise HTTPException(status_code=400, detail="No class/enumeration types found in the B-UML model")
+
+    diagram_json = class_buml_to_json(domain_model)
+
+    node_server_url = os.environ.get("WME_NODE_SERVER_URL", "http://localhost:8080").rstrip("/")
+    try:
+        render_response = requests.post(
+            f"{node_server_url}/api/svg",
+            json={"model": diagram_json, "autoLayout": True},
+            timeout=30,
+        )
+        render_response.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"SVG render service unavailable: {exc}") from exc
+
+    svg = render_response.json().get("svg")
+    if not svg:
+        raise HTTPException(status_code=502, detail="SVG render service returned no SVG content")
+
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Content-Disposition": 'inline; filename="diagram.svg"'},
+    )
 
 @router.post("/csv-to-domain-model", response_model=DiagramExportResponse)
 @handle_endpoint_errors("csv_to_domain_model_endpoint")

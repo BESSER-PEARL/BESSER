@@ -938,11 +938,59 @@ class SmartGenerationRunner:
                     ),
                 ))
 
+            # ---- 9b. Honest "incomplete" signal -----------------------
+            # The orchestrator returns its output dir even when Phase 2
+            # was cut short (a provider rate-limit, the turn cap, a late
+            # cancellation). Without this the run would be reported as an
+            # unqualified success even though requested changes never ran.
+            exited_cleanly = bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
+            stop_reason = getattr(orchestrator, "_phase2_stop_reason", "completed")
+            incomplete = not exited_cleanly
+            incomplete_reason_msg: Optional[str] = None
+            if incomplete:
+                api_err = (getattr(orchestrator, "_phase2_api_error", "") or "")[:160]
+                _REASON_TEXT = {
+                    "api_error": (
+                        "The customization loop was cut short by a provider error"
+                        + (f" ({api_err})" if api_err else "")
+                        + " before all requested changes were applied."
+                    ),
+                    "max_turns": (
+                        "The customization loop reached its step limit before "
+                        "finishing every requested change."
+                    ),
+                    "cancelled": (
+                        "The run was cancelled before the customization loop finished."
+                    ),
+                    "cost_cap": (
+                        "The run hit its cost cap before finishing every requested change."
+                    ),
+                    "timeout": (
+                        "The run hit its runtime cap before finishing every requested change."
+                    ),
+                }
+                incomplete_reason_msg = _REASON_TEXT.get(
+                    stop_reason, "The customization loop did not finish cleanly."
+                )
+                # cost_cap / timeout already emit their own dedicated warning
+                # above — avoid a duplicate. Warn here for the other reasons.
+                if stop_reason not in ("cost_cap", "timeout"):
+                    yield format_sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            incomplete_reason_msg
+                            + " The downloaded output may be incomplete; you can "
+                            "resume the run to continue from where it stopped."
+                        ),
+                    ))
+
             # ---- 10. Package the result and emit `done` ---------------
             try:
                 done_event, entry = await asyncio.to_thread(
                     self._package_result, result_path
                 )
+                done_event.incomplete = incomplete
+                done_event.incompleteReason = incomplete_reason_msg
                 await SMART_RUN_REGISTRY.put(self.run_id, entry)
                 yield format_sse(done_event)
             except _EmptyGenerationError as exc:

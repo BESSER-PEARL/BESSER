@@ -6,7 +6,8 @@ Features:
 - Anthropic Claude API with tool-use support and prompt caching
 - OpenAI-compatible API (GPT, Mistral, etc.) with automatic tool format translation
 - **Cost tracking** — tracks input/output/cache tokens and estimates USD cost
-- **Retry with backoff** — retries on 429/5xx/timeouts (3 attempts, exponential backoff)
+- **Retry with backoff** — retries on 429/5xx/timeouts (up to 5 attempts; honors
+  the server ``Retry-After`` header; a longer backoff ceiling for rate limits)
 - Custom base URL support for enterprise gateways
 - Streaming support for real-time text output
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
@@ -327,22 +328,83 @@ class LLMProvider(ABC):
 # ======================================================================
 
 _RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
-_MAX_RETRIES = 2  # total 3 attempts
-_INITIAL_BACKOFF = 0.3  # seconds
-_MAX_BACKOFF = 3.0  # seconds
+_MAX_RETRIES = 4  # total 5 attempts (bumped from 3 so a brief provider
+                  # rate-limit doesn't kill a multi-turn customization run)
+_INITIAL_BACKOFF = 0.5  # seconds
+_MAX_BACKOFF = 5.0  # seconds — cap for ordinary (5xx/timeout) retries
+# Rate limits (429) need a longer ceiling: some providers (notably
+# Mistral) throttle hard and only recover after several seconds. A
+# sub-second backoff just burns the retry budget and aborts the run.
+_RATELIMIT_MAX_BACKOFF = 30.0  # seconds
 
 
 def _is_retryable(error: Exception) -> bool:
     """Check if an API error is worth retrying."""
-    error_str = str(error)
-    # Rate limit or server errors
-    for code in ("429", "500", "502", "503", "504", "timeout", "connection"):
-        if code in error_str.lower():
-            return True
-    # Auth errors are NOT retryable
+    error_str = str(error).lower()
+    # Auth errors are NEVER retryable (a longer wait won't fix a bad key).
     if "401" in error_str or "403" in error_str:
         return False
+    # Rate limit or transient server/network errors
+    for marker in ("429", "rate limit", "rate_limit", "rate-limited",
+                   "ratelimited", "500", "502", "503", "504",
+                   "timeout", "connection"):
+        if marker in error_str:
+            return True
     return False
+
+
+def _is_rate_limit(error: Exception) -> bool:
+    """True if the error is a provider rate-limit (HTTP 429)."""
+    s = str(error).lower()
+    return (
+        "429" in s
+        or "rate limit" in s
+        or "rate_limit" in s
+        or "rate-limited" in s
+        or "ratelimited" in s
+    )
+
+
+def _retry_after_seconds(error: Exception) -> float | None:
+    """Extract a server-provided ``Retry-After`` hint (seconds), if any.
+
+    The OpenAI/Mistral and Anthropic SDK error objects carry the HTTP
+    response, whose headers may include ``retry-after`` (delta-seconds).
+    Returns ``None`` when no usable hint is present.
+    """
+    resp = getattr(error, "response", None)
+    headers = getattr(resp, "headers", None)
+    if not headers:
+        return None
+    for key in ("retry-after", "Retry-After", "x-ratelimit-reset-after"):
+        try:
+            val = headers.get(key)
+        except Exception:
+            val = None
+        if not val:
+            continue
+        try:
+            secs = float(val)
+        except (TypeError, ValueError):
+            continue
+        if secs >= 0:
+            return secs
+    return None
+
+
+def _backoff_seconds(error: Exception, attempt: int) -> float:
+    """Seconds to wait before the next retry.
+
+    Honors a server-provided ``Retry-After`` (capped), otherwise uses
+    exponential backoff. Rate-limit (429) responses get a higher ceiling
+    so a throttled provider isn't abandoned after a sub-second wait.
+    """
+    retry_after = _retry_after_seconds(error)
+    rate_limited = _is_rate_limit(error)
+    if retry_after is not None:
+        return min(retry_after, _RATELIMIT_MAX_BACKOFF)
+    cap = _RATELIMIT_MAX_BACKOFF if rate_limited else _MAX_BACKOFF
+    return min(_INITIAL_BACKOFF * (2 ** attempt), cap)
 
 
 def _is_auth_error(error: Exception) -> bool:
@@ -453,7 +515,7 @@ class ClaudeLLMClient(LLMProvider):
             except Exception as e:
                 last_error = e
                 if attempt < _MAX_RETRIES and _is_retryable(e):
-                    backoff = min(_INITIAL_BACKOFF * (2 ** attempt), _MAX_BACKOFF)
+                    backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
                         attempt + 1, _MAX_RETRIES + 1, backoff, e,
@@ -499,7 +561,7 @@ class ClaudeLLMClient(LLMProvider):
             except Exception as e:
                 last_error = e
                 if attempt < _MAX_RETRIES and _is_retryable(e):
-                    backoff = min(_INITIAL_BACKOFF * (2 ** attempt), _MAX_BACKOFF)
+                    backoff = _backoff_seconds(e, attempt)
                     logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)
                     continue
@@ -884,7 +946,7 @@ class OpenAIProvider(LLMProvider):
             except Exception as e:
                 last_error = e
                 if attempt < _MAX_RETRIES and _is_retryable(e):
-                    backoff = min(_INITIAL_BACKOFF * (2 ** attempt), _MAX_BACKOFF)
+                    backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
                         attempt + 1, _MAX_RETRIES + 1, backoff, e,
@@ -1019,7 +1081,7 @@ class OpenAIProvider(LLMProvider):
             except Exception as e:
                 last_error = e
                 if attempt < _MAX_RETRIES and _is_retryable(e):
-                    backoff = min(_INITIAL_BACKOFF * (2 ** attempt), _MAX_BACKOFF)
+                    backoff = _backoff_seconds(e, attempt)
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)
                     continue

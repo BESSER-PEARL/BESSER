@@ -126,6 +126,12 @@ class DoneEvent(BaseSseEvent):
     fileName: str
     isZip: bool
     recipe: dict[str, Any] = Field(default_factory=dict)
+    # True when the run produced downloadable output but the customization
+    # loop did NOT finish cleanly (e.g. a provider rate-limit, cost/runtime
+    # cap, or turn cap cut it short). Clients should warn that the output
+    # may be incomplete rather than report an unqualified success.
+    incomplete: bool = False
+    incompleteReason: Optional[str] = None
 
 
 ErrorCode = Literal[
@@ -133,6 +139,7 @@ ErrorCode = Literal[
     "UPSTREAM_LLM",
     "COST_CAP",
     "TIMEOUT",
+    "INCOMPLETE",
     "INTERNAL",
     "BAD_REQUEST",
     "CANCELLED",
@@ -144,10 +151,11 @@ class ErrorEvent(BaseSseEvent):
 
     * ``INVALID_KEY``, ``UPSTREAM_LLM``, ``INTERNAL``, ``BAD_REQUEST``,
       ``CANCELLED`` — terminal.
-    * ``COST_CAP``, ``TIMEOUT`` — warnings emitted *before* the ``done`` event
-      when the run exceeded its budget but still produced usable output.
-      The client should treat them as non-terminal warnings and wait for
-      ``done`` to get the download URL.
+    * ``COST_CAP``, ``TIMEOUT``, ``INCOMPLETE`` — warnings emitted *before* the
+      ``done`` event when the run still produced usable output but did not
+      finish cleanly (budget exceeded, or the customization loop was cut short
+      by a provider rate-limit / turn cap). The client should treat them as
+      non-terminal warnings and wait for ``done`` to get the download URL.
 
     ``INTERNAL`` errors are always sent with the literal string
     ``"Internal server error"``; tracebacks go to ``logger.exception``

@@ -378,6 +378,14 @@ class LLMOrchestrator:
         # possible resume. Kept separate from ``self._validation_issues``
         # because those are about Phase 3 quality, not run completion.
         self._phase2_exited_cleanly: bool = False
+        # Why Phase 2 stopped. "completed" only when the LLM signalled
+        # end_turn; otherwise one of: "api_error", "cost_cap", "timeout",
+        # "cancelled", "max_turns". The runner reads this to decide whether
+        # to warn the user that the downloaded output may be incomplete.
+        self._phase2_stop_reason: str = "max_turns"
+        # Short provider error string captured when stop_reason == "api_error",
+        # surfaced to the user so a rate-limit reads as such (not a mystery).
+        self._phase2_api_error: str = ""
 
     _LOOP_THRESHOLD = 4
     # Tighter, per-file threshold for the modify_file streak guard.
@@ -1210,6 +1218,7 @@ class LLMOrchestrator:
             # boundary rather than killing the worker thread.
             if self._should_continue is not None and not self._should_continue():
                 logger.warning("Cancellation requested — stopping Phase 2 loop")
+                self._phase2_stop_reason = "cancelled"
                 break
 
             # -- Runtime timeout check ------------------------------------
@@ -1219,6 +1228,7 @@ class LLMOrchestrator:
                     logger.warning(
                         "Runtime timeout: %.1fs > %ds", elapsed, self.max_runtime_seconds,
                     )
+                    self._phase2_stop_reason = "timeout"
                     break
 
             # -- Pre-call cost check ---------------------------------------
@@ -1230,6 +1240,7 @@ class LLMOrchestrator:
                     "Cost cap already reached before turn %d: $%.4f > $%.4f",
                     turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
                 )
+                self._phase2_stop_reason = "cost_cap"
                 break
 
             logger.info("LLM generation turn %d/%d", turn + 1, self.max_turns)
@@ -1245,6 +1256,8 @@ class LLMOrchestrator:
                     )
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = str(e)
                 break
 
             # -- Cost cap check (after each API call) ---------------------
@@ -1260,11 +1273,13 @@ class LLMOrchestrator:
                     "Cost cap reached: $%.4f > $%.4f",
                     current_cost, self.max_cost_usd,
                 )
+                self._phase2_stop_reason = "cost_cap"
                 break
 
             if response["stop_reason"] == "end_turn":
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
+                self._phase2_stop_reason = "completed"
                 break
 
             if response["stop_reason"] == "tool_use":
@@ -1328,6 +1343,8 @@ class LLMOrchestrator:
                 )
             else:
                 logger.warning("Unexpected stop_reason: %s", response["stop_reason"])
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
 
     def _execute_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:

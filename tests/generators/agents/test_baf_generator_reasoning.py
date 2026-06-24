@@ -2,15 +2,18 @@
 
 These tests build a fixture agent that uses every reasoning primitive
 (``Tool``, ``Skill``, ``Workspace``, ``ReasoningState``), run the
-generator, and assert that the produced ``<agent_name>.py`` file:
+generator, and assert that the produced output:
 
-    * exists and is non-empty;
-    * imports the BAF reasoning runtime symbols;
-    * registers each primitive via the canonical BAF builder calls;
-    * is syntactically valid Python (``ast.parse``).
+    * ``<agent_name>.py`` exists and is non-empty;
+    * ``<agent_name>.py`` imports the BAF reasoning runtime symbols;
+    * ``tools.py`` exists and contains each tool's function code;
+    * ``skills/<name>.md`` exists for each skill;
+    * ``<agent_name>.py`` calls ``load_tools``/``load_skills`` instead of
+      registering primitives inline;
+    * ``<agent_name>.py`` is syntactically valid Python (``ast.parse``).
 
 The tests deliberately avoid importing the BAF runtime — only the text
-of the generated file is inspected.
+of the generated files is inspected.
 """
 
 import ast
@@ -95,23 +98,32 @@ class TestBAFGeneratorReasoning:
         assert "from baf.library.state import new_reasoning_state" in code
 
     def test_emits_tool_registration(self, reasoning_agent_model, tmp_path):
-        path = _generate(reasoning_agent_model, str(tmp_path))
-        with open(path, "r", encoding="utf-8") as f:
-            code = f.read()
-        # The tool's source must be inlined and then registered.
-        assert "def ping" in code
-        assert "agent.new_tool(" in code
+        agent_path = _generate(reasoning_agent_model, str(tmp_path))
+        with open(agent_path, "r", encoding="utf-8") as f:
+            agent_code = f.read()
+        # Agent script delegates to load_tools, not inline new_tool calls.
+        assert "agent.load_tools(" in agent_code
+        assert "tools.py" in agent_code
+        # Tool source code lives in the separate tools.py module.
+        tools_path = os.path.join(str(tmp_path), "tools.py")
+        assert os.path.isfile(tools_path)
+        with open(tools_path, "r", encoding="utf-8") as f:
+            tools_code = f.read()
+        assert "def ping" in tools_code
 
     def test_emits_skill_registration(self, reasoning_agent_model, tmp_path):
-        path = _generate(reasoning_agent_model, str(tmp_path))
-        with open(path, "r", encoding="utf-8") as f:
-            code = f.read()
-        assert "agent.new_skill(" in code
-        assert "GreetByName" in code
-        # BAF's new_skill takes the skill text as the positional ``source``
-        # argument, not a ``content=`` kwarg (which would raise TypeError).
-        assert "content=" not in code
-        assert "Always greet the user by name when introduced." in code
+        agent_path = _generate(reasoning_agent_model, str(tmp_path))
+        with open(agent_path, "r", encoding="utf-8") as f:
+            agent_code = f.read()
+        # Agent script delegates to load_skills, not inline new_skill calls.
+        assert "agent.load_skills(" in agent_code
+        assert "skills" in agent_code
+        # Each skill is written to skills/<name>.md.
+        skill_file = os.path.join(str(tmp_path), "skills", "GreetByName.md")
+        assert os.path.isfile(skill_file)
+        with open(skill_file, "r", encoding="utf-8") as f:
+            skill_content = f.read()
+        assert "Always greet the user by name when introduced." in skill_content
 
     def test_emits_workspace_registration(self, reasoning_agent_model, tmp_path):
         path = _generate(reasoning_agent_model, str(tmp_path))
@@ -153,6 +165,6 @@ class TestBAFGeneratorReasoning:
             code = f.read()
 
         assert "from baf.library.state import new_reasoning_state" not in code
-        assert "agent.new_tool(" not in code
-        assert "agent.new_skill(" not in code
+        assert "agent.load_tools(" not in code
+        assert "agent.load_skills(" not in code
         assert "agent.new_workspace(" not in code

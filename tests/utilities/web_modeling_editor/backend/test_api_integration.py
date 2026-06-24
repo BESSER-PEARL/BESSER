@@ -1589,7 +1589,8 @@ class TestStandaloneChatbotDeploy:
         # writer has somewhere to live.
         class _FakeBAFGenerator:
             def __init__(self, agent_model, output_dir, config=None,
-                         openai_api_key=None, generation_mode=None):
+                         config_yaml=None, openai_api_key=None,
+                         generation_mode=None):
                 self.output_dir = output_dir
 
             def generate(self):

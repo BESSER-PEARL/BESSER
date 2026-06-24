@@ -73,6 +73,29 @@ class LLMReply(Action):
         return f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
 
 
+class LLMChatReply(Action):
+    """Primitive action that represents sending a chat-style reply using an LLM.
+
+    Args:
+        prompt (str, optional): Additional system prompt injected in the chat call.
+        llm_name (str, optional): Name of the LLM (registered on the agent via
+            :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
+            the generator fall back to the agent's default LLM.
+
+    Attributes:
+        prompt (str | None): Optional system prompt used by ``llm.chat(...)``.
+        llm_name (str | None): Name of the LLM used for this reply.
+    """
+
+    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+        super().__init__()
+        self.prompt: Optional[str] = prompt
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
+
+
 class RAGReply(Action):
     """Primitive action that represents sending a reply using a configured RAG pipeline.
 
@@ -92,6 +115,161 @@ class RAGReply(Action):
 
     def __repr__(self):
         return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
+
+
+class WebCrawlLLMReply(Action):
+    """Crawls a website (or reuses a cached result) and queries an LLM with the content.
+
+    Args:
+        initial_url (str): Target URL. Used as BFS start point when run_crawl=True,
+            or as the session-key suffix when run_crawl=False.
+        max_depth (int): Maximum link depth to follow. Used only when run_crawl=True.
+        max_pages (int): Maximum number of pages to fetch. Used only when run_crawl=True.
+        crawl_format (str): Output format for crawled content ("markdown" or "html").
+        base_url_prefix (str, optional): Only URLs starting with this prefix are included.
+            Used only when run_crawl=True.
+        run_crawl (bool): When True, the crawl runs and its result is stored in the session
+            under the key ``f"web_crawl_{initial_url}"``. When False, reads from that key.
+        no_crawl_error_message (str): Reply sent when run_crawl=False and no cached result
+            is found in the session.
+        system_message_prefix (str, optional): Prepended to the crawl result when building
+            the LLM system message. Defaults to a generic instruction when None.
+        llm_name (str, optional): Name of the LLM to use. Falls back to the agent default.
+
+    Attributes:
+        initial_url (str): Target URL.
+        max_depth (int): Maximum link depth.
+        max_pages (int): Maximum number of pages.
+        crawl_format (str): Output format ("markdown" or "html").
+        base_url_prefix (str | None): Optional URL prefix filter.
+        run_crawl (bool): Whether to execute the crawl.
+        no_crawl_error_message (str): Error reply when no cached data exists.
+        system_message_prefix (str | None): Prefix for the LLM system message.
+        llm_name (str | None): Name of the LLM to use.
+    """
+
+    def __init__(
+        self,
+        initial_url: str = "",
+        max_depth: int = 2,
+        max_pages: int = 20,
+        crawl_format: str = "markdown",
+        base_url_prefix: Optional[str] = None,
+        run_crawl: bool = True,
+        no_crawl_error_message: str = "No web crawl data is available yet.",
+        system_message_prefix: Optional[str] = None,
+        llm_name: Optional[str] = None,
+    ):
+        super().__init__()
+        self.initial_url: str = initial_url
+        self.max_depth: int = max_depth
+        self.max_pages: int = max_pages
+        self.crawl_format: str = crawl_format
+        self.base_url_prefix: Optional[str] = base_url_prefix
+        self.run_crawl: bool = run_crawl
+        self.no_crawl_error_message: str = no_crawl_error_message
+        self.system_message_prefix: Optional[str] = system_message_prefix
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return (
+            "WebCrawlLLMReply("
+            f"initial_url={self.initial_url!r}, "
+            f"max_depth={self.max_depth!r}, "
+            f"max_pages={self.max_pages!r}, "
+            f"crawl_format={self.crawl_format!r}, "
+            f"base_url_prefix={self.base_url_prefix!r}, "
+            f"run_crawl={self.run_crawl!r}, "
+            f"no_crawl_error_message={self.no_crawl_error_message!r}, "
+            f"system_message_prefix={self.system_message_prefix!r}, "
+            f"llm_name={self.llm_name!r}"
+            ")"
+        )
+
+
+class WebSocketReplyMarkdown(Action):
+    """Send a Markdown-formatted text reply via WebSocketPlatform.reply_markdown()."""
+
+    def __init__(self, message: str = ""):
+        super().__init__()
+        self.message: str = message
+
+    def __repr__(self):
+        return f"WebSocketReplyMarkdown(message={self.message!r})"
+
+
+class WebSocketReplyHTML(Action):
+    """Send an HTML-formatted text reply via WebSocketPlatform.reply_html()."""
+
+    def __init__(self, message: str = ""):
+        super().__init__()
+        self.message: str = message
+
+    def __repr__(self):
+        return f"WebSocketReplyHTML(message={self.message!r})"
+
+
+class WebSocketReplySpeech(Action):
+    """Convert text to speech and send the audio via WebSocketPlatform.reply_speech()."""
+
+    def __init__(self, message: str = "", audio_speed: Optional[float] = None):
+        super().__init__()
+        self.message: str = message
+        self.audio_speed: Optional[float] = audio_speed
+
+    def __repr__(self):
+        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r})"
+
+
+class WebSocketReplyOptions(Action):
+    """Send a list of selectable options via WebSocketPlatform.reply_options()."""
+
+    def __init__(self, options: Optional[list] = None):
+        super().__init__()
+        self.options: list = options if options is not None else []
+
+    def __repr__(self):
+        return f"WebSocketReplyOptions(options={self.options!r})"
+
+
+class WebSocketReplyLocation(Action):
+    """Send a geographic location reply via WebSocketPlatform.reply_location()."""
+
+    def __init__(self, latitude: float = 0.0, longitude: float = 0.0):
+        super().__init__()
+        self.latitude: float = latitude
+        self.longitude: float = longitude
+
+    def __repr__(self):
+        return f"WebSocketReplyLocation(latitude={self.latitude!r}, longitude={self.longitude!r})"
+
+
+class WebSocketReplyFile(Action):
+    """Send a file reply via WebSocketPlatform.reply_file(). Requires a runtime File object."""
+
+    def __repr__(self):
+        return "WebSocketReplyFile()"
+
+
+class WebSocketReplyImage(Action):
+    """Send an image reply via WebSocketPlatform.reply_image(). Requires a runtime numpy ndarray."""
+
+    def __repr__(self):
+        return "WebSocketReplyImage()"
+
+
+class WebSocketReplyDataframe(Action):
+    """Send a DataFrame reply via WebSocketPlatform.reply_dataframe(). Requires a runtime pandas DataFrame."""
+
+    def __repr__(self):
+        return "WebSocketReplyDataframe()"
+
+
+class WebSocketReplyPlotly(Action):
+    """Send a Plotly figure reply via WebSocketPlatform.reply_plotly(). Requires a runtime plotly Figure."""
+
+    def __repr__(self):
+        return "WebSocketReplyPlotly()"
 
 
 class DBReply(Action):
@@ -597,7 +775,15 @@ class RAG(NamedElement):
 
         vector_store = Chroma(...)
         splitter = RecursiveCharacterTextSplitter(...)
-        rag = RAG(agent=agent, vector_store=vector_store, splitter=splitter, llm_name='gpt-4o-mini', k=4, num_previous_messages=0)
+        rag = RAG(
+            agent=agent,
+            vector_store=vector_store,
+            splitter=splitter,
+            llm_name='gpt-4o-mini',
+            llm_prompt='Use only trusted corpus facts.',
+            k=4,
+            num_previous_messages=0,
+        )
 
     Args:
         name (str): Logical name of the RAG resource.
@@ -605,6 +791,7 @@ class RAG(NamedElement):
         vector_store (RAGVectorStore): Vector store definition.
         splitter (RAGTextSplitter): Chunking strategy definition.
         llm_name (str): Identifier of the LLM used to synthesize answers.
+        llm_prompt (str | None): Optional prefix instructions injected before each RAG prompt.
         k (int): Number of chunks retrieved per question.
         num_previous_messages (int): Conversation context depth forwarded to the LLM.
     """
@@ -616,6 +803,7 @@ class RAG(NamedElement):
             vector_store: RAGVectorStore,
             splitter: RAGTextSplitter,
             llm_name: str,
+            llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
     ):
@@ -624,6 +812,7 @@ class RAG(NamedElement):
         self.vector_store: RAGVectorStore = vector_store
         self.splitter: RAGTextSplitter = splitter
         self.llm_name: str = llm_name
+        self.llm_prompt: Optional[str] = llm_prompt
         self.k: int = k
         self.num_previous_messages: int = num_previous_messages
 
@@ -1768,6 +1957,7 @@ class Agent(StateMachine):
             vector_store: RAGVectorStore,
             splitter: RAGTextSplitter,
             llm_name: str,
+            llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
     ) -> RAG:
@@ -1781,6 +1971,7 @@ class Agent(StateMachine):
             vector_store=vector_store,
             splitter=splitter,
             llm_name=llm_name,
+            llm_prompt=llm_prompt,
             k=k,
             num_previous_messages=num_previous_messages,
         )
@@ -1959,9 +2150,9 @@ class Agent(StateMachine):
                 if body is None or not getattr(body, "actions", None):
                     continue
                 for action in body.actions:
-                    if isinstance(action, LLMReply):
+                    if isinstance(action, (LLMReply, LLMChatReply)):
                         _check(
-                            f"State '{state.name}' {label} LLMReply",
+                            f"State '{state.name}' {label} {action.__class__.__name__}",
                             action.llm_name,
                         )
                     elif isinstance(action, DBReply) and action.db_query_mode == "llm_query":

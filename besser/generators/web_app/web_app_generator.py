@@ -47,7 +47,8 @@ class WebAppGenerator(GeneratorInterface):
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
-                 agent_model=None, agent_config=None):
+                 agent_model=None, agent_config=None,
+                 agent_config_yamls=None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
         if agent_model is not None and not agent_models:
@@ -57,6 +58,7 @@ class WebAppGenerator(GeneratorInterface):
             agent_configs = {name: agent_config}
         self.agent_models = list(agent_models or [])
         self.agent_configs = dict(agent_configs or {})
+        self.agent_config_yamls = dict(agent_config_yamls or {})
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
@@ -126,7 +128,8 @@ class WebAppGenerator(GeneratorInterface):
             agent_dir = os.path.join(agents_root, slug)
             os.makedirs(agent_dir, exist_ok=True)
             cfg = self.agent_configs.get(getattr(agent, "name", None))
-            BAFGenerator(agent, output_dir=agent_dir, config=cfg).generate()
+            cfg_yaml = self.agent_config_yamls.get(getattr(agent, "name", None))
+            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml).generate()
 
     def _generate_docker_files(self, env):
         """

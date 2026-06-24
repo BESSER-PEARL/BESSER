@@ -138,6 +138,47 @@ skills/ directory generation
   (``<skill_name>.md``) containing the skill's ``content`` field.  Reasoning
   states load skill instructions from these files at runtime.
 
+Web Modeling Editor
+-------------------
+
+The agent diagram editor gains a major UX expansion that surfaces the new
+action types and reasoning capabilities directly in the visual editor:
+
+* **New state and action types**: reasoning states (modelled as an
+  ``AgentState`` with ``stateType: "reasoning"``), plus ``LLM Chat``,
+  ``Web Crawl + LLM`` and the nine WebSocket reply actions, each with a
+  dedicated configuration panel. A state can now hold multiple ordered action
+  bodies, reorderable by drag-and-drop, with a configurable fallback-body
+  toggle.
+* **RAG configuration**: the RAG element exposes the new ``llm_prompt``, ``k``
+  and ``num_previous_messages`` fields, and RAG reply actions accept an
+  optional per-action prompt.
+* **config.yaml editor**: a CodeMirror-based editor authors the agent
+  ``config.yaml`` directly in the tool — a structured form view plus a
+  free-text custom-YAML block — and ships it to the ``BAFGenerator`` through
+  the new ``config_yaml`` parameter. Tool bodies and custom-code actions are
+  edited with syntax-highlighted CodeMirror editors.
+* **Validation and polish**: warnings for WebSocket/LLM/reasoning primitives
+  when a required platform, LLM, or reasoning state is missing, and palette
+  label truncation to prevent layout overflow.
+* **Transition normalization** (#139): agent transitions are always stored in
+  the canonical nested shape and normalized at the storage boundary, so models
+  that bypass the editor round-trip through the backend cleanly.
+
+Follow-up correctness fixes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The ``buml_to_json`` converter now emits reasoning states as an
+  ``AgentState`` carrying ``stateType: "reasoning"`` instead of the legacy
+  ``AgentReasoningState`` element type (which the editor no longer registers),
+  so exported reasoning states round-trip without failing to deserialize on
+  import.
+* Fixed a crash when dragging an action card between the body and fallback
+  lists, hardened ``config.yaml`` scalar quoting so secrets containing
+  YAML-significant characters cannot corrupt the generated config, and
+  normalized personalization variant models to the canonical transition shape
+  before generation.
+
 Internal updates
 ----------------
 

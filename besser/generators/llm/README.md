@@ -29,7 +29,7 @@ select → generate → gap → customize → validate
 |---|---|
 | `orchestrator.py` | Drives the phases; owns the customize loop, checkpoints, recipe. |
 | `llm_generator.py` | `GeneratorInterface` entry point. |
-| `llm_client.py` | Provider clients (Anthropic / OpenAI), pricing, `DEFAULT_MODELS`, usage tracking. |
+| `llm_client.py` | Provider clients (Anthropic / OpenAI / Mistral), pricing, `DEFAULT_MODELS`, usage tracking. |
 | `prompt_builder.py` | Builds the system prompt; serialises the models; frames the GUI model as a hint vs. spec. |
 | `gap_analyzer.py` | The planning pass. Contract: `None` = failure, `[]` = scaffold sufficient, `[...]` = task list. |
 | `tools.py` / `tool_executor.py` | The LLM's tool specs and their sandboxed execution. |
@@ -43,7 +43,7 @@ The web runner, SSE event schema, and request model live under
 
 ## Models
 
-- Provider defaults: `claude-sonnet-4-6` (anthropic), `gpt-4o` (openai); override per run via `llm_model`.
+- Provider defaults: `claude-sonnet-4-6` (anthropic), `gpt-4o` (openai), `mistral-large-latest` (mistral); override per run via `llm_model`.
 - Planning (gap phase) always uses `gpt-4o-mini`.
 - BYOK — the user's key is held as a `SecretStr`, read once, never logged or persisted.
 

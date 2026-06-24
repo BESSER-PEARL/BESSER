@@ -48,8 +48,8 @@ class SmartGenerateRequest(BaseModel):
         Natural-language description of what to build. Typically refined
         by the modeling agent before being sent.
     api_key
-        The user's Anthropic or OpenAI API key. BYOK — sent only in the
-        POST body, never in the URL, never logged, never persisted.
+        The user's Anthropic, OpenAI, or Mistral API key. BYOK — sent only
+        in the POST body, never in the URL, never logged, never persisted.
     provider
         Which provider the key is for.
     llm_model
@@ -63,7 +63,7 @@ class SmartGenerateRequest(BaseModel):
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=8000)
     api_key: SecretStr
-    provider: Literal["anthropic", "openai"] = "anthropic"
+    provider: Literal["anthropic", "openai", "mistral"] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
     max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
     max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)

@@ -2,9 +2,9 @@
 LLM client adapter for the BESSER augmented generator.
 
 Features:
-- **Provider abstraction** — ``LLMProvider`` interface with Anthropic and OpenAI backends
+- **Provider abstraction** — ``LLMProvider`` interface with Anthropic, OpenAI, and Mistral backends
 - Anthropic Claude API with tool-use support and prompt caching
-- OpenAI-compatible API (GPT, etc.) with automatic tool format translation
+- OpenAI-compatible API (GPT, Mistral, etc.) with automatic tool format translation
 - **Cost tracking** — tracks input/output/cache tokens and estimates USD cost
 - **Retry with backoff** — retries on 429/5xx/timeouts (3 attempts, exponential backoff)
 - Custom base URL support for enterprise gateways
@@ -54,6 +54,15 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-5":       {"input": 1.25, "output": 10.0, "cache_write": 0, "cache_read": 0.125},
     "o3-mini":     {"input": 1.1,  "output": 4.4,  "cache_write": 0, "cache_read": 0},
     "o3":          {"input": 10.0, "output": 40.0, "cache_write": 0, "cache_read": 0},
+    # Mistral — public rates as of mid-2026. ``mistral-large-latest``
+    # currently bills at $2 / $6 per 1M (input / output). Mistral has no
+    # separate cache-write premium; prompt-caching reads, when used, are
+    # billed at the input rate (no published discount), so cache_read is
+    # set equal to input rather than a fictional cheaper tier.
+    # VERIFY: the ``-latest`` alias may route to Mistral Large 3
+    # ($0.50 / $1.50). Re-check https://mistral.ai/pricing/ if exactness
+    # matters; $2 / $6 is the conservative (higher) of the two.
+    "mistral-large": {"input": 2.0, "output": 6.0, "cache_write": 0, "cache_read": 2.0},
 }
 
 
@@ -71,6 +80,11 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     for tier in ("haiku", "sonnet", "opus"):
         if tier in model_lower:
             return _MODEL_PRICING[tier]
+    # Mistral tiers — match before the OpenAI fallback so a Mistral
+    # model never silently bills at the ``gpt-4o`` default rate.
+    for key in ("mistral-large",):
+        if key in model_lower:
+            return _MODEL_PRICING[key]
     # OpenAI: ``gpt-5.5`` must precede ``gpt-5`` (substring conflict).
     for key in ("gpt-4o-mini", "gpt-4o", "gpt-5.5", "gpt-5", "o3-mini", "o3"):
         if key in model_lower:
@@ -1017,6 +1031,80 @@ class OpenAIProvider(LLMProvider):
 
 
 # ======================================================================
+# Mistral provider
+# ======================================================================
+
+class MistralProvider(OpenAIProvider):
+    """
+    Mistral provider via Mistral's OpenAI-compatible API.
+
+    Mistral exposes an OpenAI-compatible Chat Completions endpoint at
+    ``https://api.mistral.ai/v1`` that speaks the same ``tools`` /
+    ``tool_calls`` / ``tool_choice`` function-calling protocol the
+    orchestrator's ReAct loop relies on. We therefore reuse the entire
+    ``OpenAIProvider`` request/response machinery (tool translation,
+    streaming accumulation, usage tracking) and only override the
+    defaults and the base-URL resolution — no separate ``mistralai``
+    dependency is required.
+
+    Mistral uses standard ``temperature`` + ``max_tokens`` parameters,
+    so it goes through the normal (non-gpt-5) parameter branch:
+    ``_openai_max_tokens_key`` returns ``max_tokens`` for Mistral model
+    names because none of them contain ``gpt-5`` / ``o1`` / ``o3`` /
+    ``o4``.
+
+    Args:
+        api_key: Mistral API key (or set ``MISTRAL_API_KEY`` env var).
+        model: Model identifier (default: ``mistral-large-latest``).
+        max_tokens: Maximum output tokens per response.
+        base_url: Custom API base URL (defaults to the Mistral endpoint;
+            falls back to ``MISTRAL_BASE_URL`` if set).
+    """
+
+    DEFAULT_MODEL = "mistral-large-latest"
+    DEFAULT_MAX_TOKENS = 16384
+    # Mistral's small model is a cheap sibling suitable for one-shot
+    # planning calls. Like the other providers this is overridable via
+    # ``BESSER_LLM_PLANNING_MODEL`` (set to ``primary`` to disable).
+    PLANNING_MODEL = "mistral-small-latest"
+    DEFAULT_BASE_URL = "https://api.mistral.ai/v1"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ):
+        # Resolve the base URL here so the inherited OpenAI client is
+        # pointed at Mistral. Precedence: explicit arg → MISTRAL_BASE_URL
+        # env → the Mistral default endpoint. We never fall back to
+        # OPENAI_BASE_URL for a Mistral client.
+        resolved_base = (
+            base_url
+            or os.environ.get("MISTRAL_BASE_URL")
+            or self.DEFAULT_BASE_URL
+        )
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            max_tokens=max_tokens,
+            base_url=resolved_base,
+            timeout=timeout,
+        )
+
+    @property
+    def planning_model(self) -> str | None:
+        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        if env:
+            return None if env.lower() == "primary" else env
+        if "small" in self._model.lower():
+            return None  # already on a cheap tier
+        return self.PLANNING_MODEL
+
+
+# ======================================================================
 # Provider defaults (single source — the web runner and the config
 # endpoint import this instead of keeping their own copies in sync)
 # ======================================================================
@@ -1024,6 +1112,7 @@ class OpenAIProvider(LLMProvider):
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": ClaudeLLMClient.DEFAULT_MODEL,
     "openai": OpenAIProvider.DEFAULT_MODEL,
+    "mistral": MistralProvider.DEFAULT_MODEL,
 }
 
 
@@ -1050,6 +1139,25 @@ def _resolve_openai_api_key(
     )
 
 
+def _resolve_mistral_api_key(
+    api_key: str | None = None,
+    config: dict | None = None,
+) -> str:
+    if api_key:
+        return api_key
+    if config:
+        for key in ("api_key", "mistral_api_key", "MISTRAL_API_KEY"):
+            if config.get(key):
+                return config[key]
+    for env_var in ("MISTRAL_API_KEY",):
+        value = os.environ.get(env_var)
+        if value:
+            return value
+    raise InvalidApiKeyError(
+        "No Mistral API key found. Set MISTRAL_API_KEY or pass api_key explicitly."
+    )
+
+
 # ======================================================================
 # Factory
 # ======================================================================
@@ -1065,7 +1173,7 @@ def create_llm_client(
     Create an LLM client for the specified provider.
 
     Args:
-        provider: ``"anthropic"`` (default) or ``"openai"``.
+        provider: ``"anthropic"`` (default), ``"openai"``, or ``"mistral"``.
         api_key: API key. If not provided, resolved from environment variables.
         model: Model identifier. Defaults to provider-specific default.
         base_url: Custom API base URL.
@@ -1092,7 +1200,13 @@ def create_llm_client(
             api_key=resolved_key, model=model,
             base_url=base_url, **kwargs,
         )
+    elif provider == "mistral":
+        resolved_key = _resolve_mistral_api_key(api_key=api_key)
+        return MistralProvider(
+            api_key=resolved_key, model=model,
+            base_url=base_url, **kwargs,
+        )
     else:
         raise ValueError(
-            f"Unknown provider: {provider!r}. Supported providers: 'anthropic', 'openai'."
+            f"Unknown provider: {provider!r}. Supported providers: 'anthropic', 'openai', 'mistral'."
         )

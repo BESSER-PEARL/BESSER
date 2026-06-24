@@ -60,6 +60,8 @@ class LLMGenerator(GeneratorInterface):
     Supports multiple LLM providers via the ``provider`` parameter:
     - ``"anthropic"`` (default) — Anthropic Claude models
     - ``"openai"`` — OpenAI GPT / o3 models (requires ``pip install openai``)
+    - ``"mistral"`` — Mistral models via the OpenAI-compatible API
+      (reuses the ``openai`` SDK; no extra dependency)
 
     For components where BESSER has a generator (FastAPI, Django, React, etc.),
     the LLM calls it to get reliable base code, then modifies the output.
@@ -71,7 +73,7 @@ class LLMGenerator(GeneratorInterface):
         instructions: Natural language description of what to build.
         api_key: API key for the selected provider (or set via environment variable).
         llm_model: Model ID (default depends on provider).
-        provider: LLM provider to use: ``"anthropic"`` or ``"openai"``.
+        provider: LLM provider to use: ``"anthropic"``, ``"openai"``, or ``"mistral"``.
         gui_model: Optional GUI model (for React/Flutter/WebApp generators).
         agent_model: Optional agent model (for BAF generator).
         agent_config: Optional agent config dict.

@@ -194,7 +194,7 @@ async def smart_gen_config():
             "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
         },
-        "supported_providers": ["anthropic", "openai"],
+        "supported_providers": ["anthropic", "openai", "mistral"],
         # Per-provider default model names, sourced from the LLM client
         # layer (single source of truth — the BYOK dialog should read
         # these instead of hardcoding its own copies).

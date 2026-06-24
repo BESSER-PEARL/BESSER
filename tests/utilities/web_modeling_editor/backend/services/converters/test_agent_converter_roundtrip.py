@@ -60,6 +60,17 @@ def test_agent_roundtrip_preserves_multi_llm_and_reasoning(tmp_path):
         content = handle.read()
 
     json_model = agent_buml_to_json(content)
+
+    # The reasoning state must be emitted in the canonical shape the editor can
+    # deserialize: an AgentState carrying stateType "reasoning". The legacy
+    # AgentReasoningState element type was removed from the editor registry, so
+    # emitting it would crash on import.
+    json_elements = list(json_model.get("elements", {}).values())
+    reasoning_elements = [el for el in json_elements if el.get("stateType") == "reasoning"]
+    assert len(reasoning_elements) == 1
+    assert reasoning_elements[0]["type"] == "AgentState"
+    assert all(el.get("type") != "AgentReasoningState" for el in json_elements)
+
     # process_agent_diagram consumes the frontend envelope: the apollon model
     # under "model" and the diagram config surfaced at the top level.
     restored = process_agent_diagram({"model": json_model, "config": json_model.get("config", {})})

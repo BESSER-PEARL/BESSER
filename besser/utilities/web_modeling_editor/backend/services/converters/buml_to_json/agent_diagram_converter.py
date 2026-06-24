@@ -1033,7 +1033,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     elements[state_id] = {
                         "id": state_id,
                         "name": state_name,
-                        "type": "AgentReasoningState",
+                        # Reasoning states are modelled as an AgentState with
+                        # stateType "reasoning" (the editor no longer registers a
+                        # separate AgentReasoningState element type, so emitting the
+                        # legacy type would fail to deserialize on import).
+                        "type": "AgentState",
                         "stateType": "reasoning",
                         "owner": None,
                         "bounds": {

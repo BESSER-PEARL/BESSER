@@ -1182,18 +1182,43 @@ class LLMOrchestrator:
                 and self._generator_used
                 and not scoped_issues
             ):
-                logger.info(
-                    "Phase 2: skipped — gap analysis found the %s scaffold "
-                    "already covers the request",
-                    self._generator_used,
+                # Backstop: the deterministic scaffold never includes auth,
+                # security, payments, email, integrations, or custom styling.
+                # A weak planner sometimes returns [] even when the request
+                # clearly asks for one of these — don't trust an empty list
+                # in that case; run Phase 2 from the instructions instead.
+                _markers = (
+                    "auth", "login", "log in", "sign in", "signin",
+                    "sign up", "signup", "register", "jwt", "oauth",
+                    "session", "password", "secur", "authoriz", "authentic",
+                    "permission", "payment", "stripe", "checkout", "email",
+                    "webhook", "integrat", "upload", "theme", "styling",
+                    " colour", " color",
                 )
-                self._phase2_exited_cleanly = True
-                if self.on_progress:
-                    self.on_progress(
-                        1, "__customize_skipped__",
-                        "scaffold already covers the request",
+                _needs_custom = any(
+                    m in (instructions or "").lower() for m in _markers
+                )
+                if _needs_custom:
+                    logger.warning(
+                        "Phase 2: gap analysis returned empty, but the request "
+                        "asks for something the deterministic scaffold never "
+                        "produces (auth/security/custom) — running Phase 2 "
+                        "anyway instead of trusting the empty checklist."
                     )
-                return
+                    gap_tasks = None  # don't tell Phase 2 "no gaps were found"
+                else:
+                    logger.info(
+                        "Phase 2: skipped — gap analysis found the %s scaffold "
+                        "already covers the request",
+                        self._generator_used,
+                    )
+                    self._phase2_exited_cleanly = True
+                    if self.on_progress:
+                        self.on_progress(
+                            1, "__customize_skipped__",
+                            "scaffold already covers the request",
+                        )
+                    return
 
         system = self._build_system_prompt(
             instructions=instructions,

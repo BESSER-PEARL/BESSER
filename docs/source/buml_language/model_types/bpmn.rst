@@ -20,6 +20,16 @@ The top-level container is ``BPMNModel``. A diagram without pools has a single
 ``Process``; a diagram with pools has a ``Collaboration`` whose ``Participant``\s each
 reference one ``Process``.
 
+.. image:: ../../img/bpmn_mm.png
+  :width: 700
+  :alt: BPMN metamodel
+  :align: center
+
+.. note::
+
+  The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
+  For the sake of clarity, associations of ``BPMNModel`` and ``Process`` are represented as attributes.
+
 Key concepts
 ^^^^^^^^^^^^
 
@@ -65,9 +75,9 @@ Event model
 Events split along **two orthogonal axes**:
 
 - ``direction`` (``EventDirection.CATCH`` / ``THROW``):  ``CATCH`` means the event waits to 
-receive a trigger (message arrives, timer fires, signal broadcast from elsewhere); ``THROW`` 
-means the event sends a trigger as the flow passes through it. Fixed to ``CATCH`` on 
-``StartEvent`` and ``THROW`` on ``EndEvent``; free on ``IntermediateEvent``.
+  receive a trigger (message arrives, timer fires, signal broadcast from elsewhere); ``THROW`` 
+  means the event sends a trigger as the flow passes through it. Fixed to ``CATCH`` on 
+  ``StartEvent`` and ``THROW`` on ``EndEvent``; free on ``IntermediateEvent``. 
 - ``event_definition`` (``EventDefinitionType``): ``NONE``, ``MESSAGE``,
   ``TIMER``, ``SIGNAL``, ``ESCALATION``, ``ERROR``, ``COMPENSATION``, ``LINK``,
   ``CONDITIONAL``, ``TERMINATE``.

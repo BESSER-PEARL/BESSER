@@ -223,8 +223,18 @@ def class_buml_to_json(domain_model):
             attribute_ids = []
             method_ids = []
 
+            # Header height must mirror the editor's UMLClassifier renderer
+            # (stereotypeHeaderHeight=50, nonStereotypeHeaderHeight=40) so ELK
+            # auto-layout and the headless SVG renderer agree on box geometry.
+            # Enumerations and abstract classes carry a «stereotype» line, so
+            # their header is one row taller and members start lower.
+            is_stereotyped = isinstance(type_obj, Enumeration) or (
+                isinstance(type_obj, Class) and getattr(type_obj, "is_abstract", False)
+            )
+            header_height = 50 if is_stereotyped else 40
+
             # Process attributes/literals
-            y_offset = y + 40  # Starting position for attributes
+            y_offset = y + header_height  # Members start below the header
             if isinstance(type_obj, Class):
                 for attr in sorted(type_obj.attributes, key=lambda a: a.name):
                     attr_id = str(uuid.uuid4())
@@ -382,8 +392,14 @@ def class_buml_to_json(domain_model):
                     attribute_ids.append(literal_id)
                     y_offset += 30
 
-            # Create the element
-            computed_height = max(100, 30 * (len(attribute_ids) + len(method_ids) + 1))
+            # Create the element. Box height mirrors the renderer: header plus
+            # one 30px row per attribute/method (see UMLClassifier.render). OCL
+            # constraint boxes are not classifiers, so keep their legacy sizing.
+            member_count = len(attribute_ids) + len(method_ids)
+            if isinstance(type_obj, Constraint):
+                computed_height = max(100, 30 * (member_count + 1))
+            else:
+                computed_height = header_height + 30 * member_count
             element_data = {
                 "id": element_id,
                 "name": type_obj.name,

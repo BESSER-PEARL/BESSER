@@ -95,6 +95,11 @@ def parse_buml_content(content: str) -> DomainModel:
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
+        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
+        # "invalid non-printable character U+FEFF" for files saved with a BOM.
+        if content.startswith("﻿"):
+            content = content[1:]
+
         # Pre-process the content to remove import and generator-related lines.
         # All required types are already provided in safe_globals, so import
         # statements are unnecessary and would fail in the sandboxed environment.
@@ -261,7 +266,14 @@ def class_buml_to_json(domain_model):
                         "isDerived": attr.is_derived,
                     }
                     if attr.default_value is not None:
-                        attr_element["defaultValue"] = attr.default_value
+                        # default_value may be an EnumerationLiteral (or other
+                        # metamodel object); coerce it to a JSON-serialisable
+                        # value — its name, else its string form — so the diagram
+                        # JSON can be serialised when sent to the render service.
+                        default_value = attr.default_value
+                        if not isinstance(default_value, (str, int, float, bool)):
+                            default_value = getattr(default_value, "name", None) or str(default_value)
+                        attr_element["defaultValue"] = default_value
                     elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30

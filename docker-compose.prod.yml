@@ -44,6 +44,40 @@ services:
     networks:
       - besser_network
 
+  # ── Optional: BESSER website chat-agent ─────────────────────────────────────
+  # Backend for the "BESSER assistant" widget on besser-pearl.org. DISABLED by
+  # default (commented out) — the recommended way to run it is the SEPARATE
+  # compose project documented in the website repo:
+  #   besser-website/chat-agent/DEPLOY.md  (chat-agent/docker-compose.prod.yml)
+  #
+  # Uncomment this block only if you'd rather run it INTEGRATED in this stack.
+  # Either way it must be fronted by the reverse proxy at
+  #   wss://editor.besser-pearl.org/chat → 127.0.0.1:8766
+  # (see besser-website/chat-agent/deploy/nginx-chat.conf). Port 8766 is chosen
+  # to coexist with the modeling agent on 8765.
+  #
+  # The image is built from the WEBSITE repo (it indexes the site's content),
+  # NOT this one — build & push it from a website checkout first:
+  #   cd besser-website
+  #   docker build -t artefacts.list.lu/besser/website_chat_agent:latest -f chat-agent/Dockerfile .
+  #   docker push artefacts.list.lu/besser/website_chat_agent:latest
+  #
+  # This runs DB-less (no conversation monitoring). For monitoring, add a
+  # Postgres service and set POSTGRES_HOST/PORT/DB/USER/PASSWORD below.
+  #
+  # besser-wme-chat-agent:
+  #   image: artefacts.list.lu/besser/website_chat_agent:latest
+  #   container_name: besser-wme-chat-agent
+  #   env_file:
+  #     - ./.env                   # provides OPENAI_API_KEY (already used by the WME)
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #   ports:
+  #     - "127.0.0.1:8766:8766"    # loopback only — exposed publicly via the reverse proxy
+  #   restart: unless-stopped
+  #   networks:
+  #     - besser_network
+
 volumes:
   feedback_data:
     driver: local

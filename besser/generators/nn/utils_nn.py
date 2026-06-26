@@ -48,7 +48,7 @@ def get_previous_out_var(modules_details: dict, prev_module: str, inputs_outputs
             if (inputs_outputs and hasattr(layer_obj, 'return_type') and
                 layer_obj.return_type == "hidden"):
                 # Remove the '_layer' suffix properly
-                layer_name = prev_module[:-6] if prev_module.endswith('_layer') else prev_module
+                layer_name = prev_module.replace('_layer', '') if prev_module.endswith('_layer') else prev_module
                 hidden_key = layer_name + "__hidden"
                 if hidden_key in inputs_outputs and inputs_outputs[hidden_key][1]:
                     # Use the variable from the subscript operation (e.g., 'x' from 'x = h[-1]')
@@ -279,7 +279,7 @@ def _handle_rnn_hidden_suffix(layer_name, modules_details):
 
 def _handle_rnn_cell_suffix(layer_name, modules_details):
     """Handle RNN __cell suffix."""
-    base_layer = layer_name[:-6]
+    base_layer = layer_name.replace('__cell', '')
     my_keys = list(modules_details.keys())
     if base_layer + "_layer" in my_keys:
         layer_details = modules_details[base_layer + "_layer"]
@@ -846,7 +846,7 @@ def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq,
 def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
                  modules_details: dict, channel_last: bool | None,
                  actv_func_syntax: str | bool = False, is_seq: bool = False,
-                 is_subnn: bool = False, model=None):
+                 is_subnn: bool = False, model=None, strip_counter_suffix: bool = False):
     """
     It populates the `modules_details` dictionary with layer's
     information: Its syntax, input and output variables, and the
@@ -876,11 +876,12 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         layer, modules_details, inputs_outputs
     )
 
-    # Temporarily strip counter suffix from layer.name for syntax generation
+    # Temporarily strip counter suffix from layer.name for syntax generation if requested
     # Save original name to restore after syntax is created
     original_name = layer.name
-    import re
-    layer.name = re.sub(r'_c\d+$', '', layer.name)
+    if strip_counter_suffix:
+        import re
+        layer.name = re.sub(r'_c\d+$', '', layer.name)
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
         setup_layer, layer, modules_details, actv_func_syntax, out_layer, in_layer,
@@ -888,7 +889,8 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
     )
 
     # Restore original name (with suffix) for modules_details key
-    layer.name = original_name
+    if strip_counter_suffix:
+        layer.name = original_name
 
     _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn)
 
@@ -954,7 +956,7 @@ def _get_rnn_hidden_output(source_layer, modules_details):
 
 def _get_lstm_cell_output(source_layer, modules_details):
     """Get LSTM cell state output variable."""
-    base_module = source_layer[:-6]
+    base_module = source_layer.replace('__cell', '')
     modules_names = list(modules_details.keys())
     if f"{base_module}_layer" in modules_names:
         layer_details = modules_details[f"{base_module}_layer"]

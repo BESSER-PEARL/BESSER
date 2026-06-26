@@ -505,6 +505,10 @@ class Layer(NamedElement):
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse). When True, the generator should NOT define this
             layer in __init__, only call it in forward/call.
+        permute_in (bool): Whether to permute input dimensions before processing.
+            Used for format conversions (e.g., NHWC to NCHW).
+        permute_out (bool): Whether to permute output dimensions after processing.
+            Used for format conversions (e.g., NCHW back to NHWC).
 
     Attributes:
         name (str): The name of the layer.
@@ -514,15 +518,20 @@ class Layer(NamedElement):
         input_reused (bool): Whether the input to this layer is reused as
             input to another layer.
         is_layer_call (bool): True if this is a call to an already-defined layer.
+        permute_in (bool): Whether to permute input dimensions before processing.
+        permute_out (bool): Whether to permute output dimensions after processing.
     """
     def __init__(self, name: str, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False):
+                 is_layer_call: bool = False, permute_in: bool = False,
+                 permute_out: bool = False):
         super().__init__(name)
         self.actv_func: str = actv_func
         self.name_module_input: str = name_module_input
         self.input_reused: bool = input_reused
         self.is_layer_call: bool = is_layer_call
+        self.permute_in: bool = permute_in
+        self.permute_out: bool = permute_out
 
     @property
     def actv_func(self) -> str:
@@ -582,10 +591,31 @@ class Layer(NamedElement):
         """
         self.__is_layer_call = is_layer_call
 
+    @property
+    def permute_in(self) -> bool:
+        """bool: Get whether to permute input dimensions before processing."""
+        return self.__permute_in
+
+    @permute_in.setter
+    def permute_in(self, permute_in: bool):
+        """bool: Set whether to permute input dimensions before processing."""
+        self.__permute_in = permute_in
+
+    @property
+    def permute_out(self) -> bool:
+        """bool: Get whether to permute output dimensions after processing."""
+        return self.__permute_out
+
+    @permute_out.setter
+    def permute_out(self, permute_out: bool):
+        """bool: Set whether to permute output dimensions after processing."""
+        self.__permute_out = permute_out
+
     def __repr__(self):
         return (
             f'Layer({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.permute_in}, {self.permute_out})'
         )
 
 class CNN(Layer):
@@ -650,13 +680,12 @@ class CNN(Layer):
                  name_module_input: str = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
                  is_layer_call: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
+                         permute_in, permute_out)
         self.kernel_dim: List[int] = kernel_dim
         self.stride_dim: List[int] = stride_dim
         self.padding_amount: int = padding_amount
         self.padding_type: str = padding_type
-        self.permute_in: bool = permute_in
-        self.permute_out: bool = permute_out
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1541,6 +1570,8 @@ class NormalizationLayer(LayerModifier):
         name (str): The name of the layer.
         eps (float): Epsilon for numerical stability (default: 1e-5).
         affine (bool): Whether to learn affine parameters gamma/beta (default: True).
+        permute_in (bool): Whether to permute input dimensions before processing.
+        permute_out (bool): Whether to permute output dimensions after processing.
         actv_func (str): The type of the activation function.
         name_module_input (str): The name of the layer from which the
             inputs originate.
@@ -1554,6 +1585,8 @@ class NormalizationLayer(LayerModifier):
             the layer.
         eps (float): Epsilon value for numerical stability.
         affine (bool): Whether to learn affine parameters (gamma/beta).
+        permute_in (bool): Inherited from Layer. Whether to permute input dimensions.
+        permute_out (bool): Inherited from Layer. Whether to permute output dimensions.
         actv_func (str): Inherited from Layer. It represents the type of
             the activation function.
         name_module_input (str): Inherited from Layer. The name of the
@@ -1564,9 +1597,11 @@ class NormalizationLayer(LayerModifier):
             to an already-defined layer.
     """
     def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
+                 permute_in: bool = False, permute_out: bool = False,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, is_layer_call: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
+                         permute_in, permute_out)
         self.eps: float = eps
         self.affine: bool = affine
 
@@ -1593,6 +1628,7 @@ class NormalizationLayer(LayerModifier):
     def __repr__(self):
         return (
             f'NormalizationLayer({self.name}, {self.eps}, {self.affine}, '
+            f'{self.permute_in}, {self.permute_out}, '
             f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
             f'{self.is_layer_call})'
         )
@@ -1655,17 +1691,16 @@ class BatchNormLayer(NormalizationLayer):
     """
     def __init__(self, name: str, num_features: int, dimension: str,
                  eps: float = 1e-5, momentum: float = 0.1, affine: bool = True,
-                 track_running_stats: bool = True, actv_func: str = None,
-                 permute_in: bool = None, permute_out: bool = None,
+                 track_running_stats: bool = True, permute_in: bool = False,
+                 permute_out: bool = False, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
                  is_layer_call: bool = False):
-        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused, is_layer_call)
+        super().__init__(name, eps, affine, permute_in, permute_out, actv_func,
+                         name_module_input, input_reused, is_layer_call)
         self.num_features: int = num_features
         self.dimension: str = dimension
         self.momentum: float = momentum
         self.track_running_stats: bool = track_running_stats
-        self.permute_in: bool = permute_in
-        self.permute_out: bool = permute_out
 
     @property
     def num_features(self) -> int:
@@ -1717,26 +1752,6 @@ class BatchNormLayer(NormalizationLayer):
     def track_running_stats(self, track_running_stats: bool):
         """bool: Set whether to track running mean/variance."""
         self.__track_running_stats = track_running_stats
-
-    @property
-    def permute_in(self) -> bool:
-        """bool: Get whether to permute the input dimensions."""
-        return self.__permute_in
-
-    @permute_in.setter
-    def permute_in(self, permute_in: bool):
-        """bool: Set whether to permute the input dimensions."""
-        self.__permute_in = permute_in
-
-    @property
-    def permute_out(self) -> bool:
-        """bool: Get whether to permute the output dimensions."""
-        return self.__permute_out
-
-    @permute_out.setter
-    def permute_out(self, permute_out: bool):
-        """bool: Set whether to permute the output dimensions."""
-        self.__permute_out = permute_out
 
     def __repr__(self):
         return (
@@ -1827,6 +1842,8 @@ class DropoutLayer(LayerModifier):
             the input units to drop.
         dimension (str | None): The dimensionality for spatial dropout
             ('1', '2', '3'). None for regular element-wise dropout.
+        permute_in (bool): Whether to permute input dimensions before processing.
+        permute_out (bool): Whether to permute output dimensions after processing.
         name_module_input (str): The name of the layer from which the
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as
@@ -1840,6 +1857,8 @@ class DropoutLayer(LayerModifier):
         rate (float): It represents a float between 0 and 1. Fraction of
             the input units to drop.
         dimension (str | None): The dimensionality for spatial dropout.
+        permute_in (bool): Inherited from Layer. Whether to permute input dimensions.
+        permute_out (bool): Inherited from Layer. Whether to permute output dimensions.
         name_module_input (str): Inherited from Layer. The name of the
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -1848,9 +1867,11 @@ class DropoutLayer(LayerModifier):
             to an already-defined layer.
     """
     def __init__(self, name: str, rate: float, dimension: str | None = None,
+                 permute_in: bool = False, permute_out: bool = False,
                  name_module_input: str = None, input_reused: bool = False,
                  is_layer_call: bool = False):
-        super().__init__(name, None, name_module_input, input_reused, is_layer_call)
+        super().__init__(name, None, name_module_input, input_reused, is_layer_call,
+                         permute_in, permute_out)
         self.rate: float = rate
         self.dimension: str | None = dimension
 
@@ -1877,6 +1898,7 @@ class DropoutLayer(LayerModifier):
     def __repr__(self):
         return (
             f'DropoutLayer({self.name}, {self.rate}, {self.dimension}, '
+            f'{self.permute_in}, {self.permute_out}, '
             f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
         )
 
@@ -2467,6 +2489,8 @@ class EmbeddingLayer(GeneralLayer):
         embedding_dim (int): The size of each embedding vector.
         padding_idx (int): If specified, the entries at padding_idx are masked
             and do not contribute to the gradient. Default is None.
+        permute_in (bool): Whether to permute input dimensions before processing.
+        permute_out (bool): Whether to permute output dimensions after processing.
         name_module_input (str): The name of the layer from which
             the inputs originate.
         input_reused (bool): Whether the input to this layer is reused
@@ -2482,6 +2506,8 @@ class EmbeddingLayer(GeneralLayer):
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
         padding_idx (int): If specified, the entries at padding_idx are masked.
+        permute_in (bool): Whether to permute input dimensions before processing.
+        permute_out (bool): Whether to permute output dimensions after processing.
         name_module_input (str): Inherited from Layer. The name of
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to
@@ -2490,13 +2516,16 @@ class EmbeddingLayer(GeneralLayer):
             to an already-defined layer.
     """
     def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
-                 padding_idx: int = None, actv_func: str = None,
+                 padding_idx: int = None, permute_in: bool = False,
+                 permute_out: bool = False, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
                  is_layer_call: bool = False):
         super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
         self.padding_idx: int = padding_idx
+        self.permute_in: bool = permute_in
+        self.permute_out: bool = permute_out
 
     @property
     def num_embeddings(self) -> int:

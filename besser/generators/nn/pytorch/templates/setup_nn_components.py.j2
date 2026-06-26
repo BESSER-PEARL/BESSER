@@ -117,9 +117,9 @@ import torch.nn.functional as F
 {%- macro print_forward(modules_details, inputs_outputs={}, strip_layer_counter_suffix=False) %}
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
-    {%- if module_name.endswith("op") -%}
+    {%- if module_name.endswith("op") %}
         {{ module_details[1] }} = {{ module_details[0] }}
-    {%- elif module_name.endswith("nn") -%}
+    {% elif module_name.endswith("nn") -%}
         {%- if "subnn_input" in module_details and "subnn_output" in module_details -%}
         {{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }})
         {%- else -%}

@@ -6,9 +6,34 @@ to PyTorch or TensorFlow code.
 import os
 import random
 from typing import TYPE_CHECKING
-from PIL import Image
-import numpy as np
-from torch import nn
+
+# ``PIL.Image`` and ``torch.nn`` are only used by helpers (``compute_mean_std``,
+# ``Permute``) that live in this module for re-export into *generated training
+# scripts* — they are not invoked by the BESSER backend itself. We therefore
+# guard the imports so the module loads on a backend host that does not have
+# Pillow/torch installed (e.g. the production code-generation server). When
+# the generated training script imports ``Permute``/``compute_mean_std`` on the
+# user's machine, that environment will have the real deps and the try-blocks
+# pick them up correctly.
+try:
+    from PIL import Image  # type: ignore
+except ImportError:
+    Image = None  # type: ignore
+
+try:
+    import numpy as np  # type: ignore
+except ImportError:
+    np = None  # type: ignore
+
+try:
+    from torch import nn  # type: ignore
+except ImportError:
+    class _NNNamespace:
+        """Minimal stand-in for ``torch.nn`` so class definitions below
+        (``class Permute(nn.Module)``) evaluate without torch installed."""
+        class Module:  # noqa: D401 — intentionally empty stub
+            pass
+    nn = _NNNamespace()  # type: ignore
 
 
 from besser.BUML.metamodel.nn import TensorOp, Layer

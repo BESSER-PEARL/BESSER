@@ -35,6 +35,52 @@ diagrams by ID through the ``references`` field, and the active diagram per type
 is tracked via ``currentDiagramIndices``. Old single-diagram projects are
 auto-converted by a Pydantic model validator for backward compatibility.
 
+Supported diagram types: ``ClassDiagram``, ``ObjectDiagram``,
+``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
+``QuantumCircuitDiagram``, ``NNDiagram``.
+
+
+Neural Network Diagrams
+^^^^^^^^^^^^^^^^^^^^^^^
+
+The backend treats ``NNDiagram`` as a self-contained diagram type (no
+cross-diagram references are required for code generation). The editor emits
+an NN diagram JSON whose top-level ``type`` is ``"NNDiagram"`` and whose
+``elements``/``relationships`` describe layers, containers, sub-network
+references, tensor operations, configuration, and training/test datasets.
+
+**Generators.** The registered NN generators are ``pytorch`` and
+``tensorflow`` (see :doc:`generators/pytorch` and :doc:`generators/tensorflow`).
+Both accept an optional ``config`` payload with:
+
+- ``generation_type``: ``"subclassing"`` or ``"sequential"`` (default:
+  ``"subclassing"``) — selects the target architectural style.
+- ``channel_last`` (PyTorch only): ``true`` or ``false`` (default: ``false``) —
+  when ``true``, input tensors are interpreted as NHWC instead of NCHW.
+
+The response filename embeds the generation type, e.g.
+``pytorch_nn_subclassing.py`` or ``tf_nn_sequential.py``.
+
+**JSON ↔ BUML.** The ``/export-buml`` endpoint converts an NN diagram JSON
+into a BUML Python file (``nn_model.py``) that reproduces the model when
+executed. The converse path through ``/get-json-model`` auto-detects NN BUML
+content by the presence of ``.add_layer(``, ``.add_tensor_op(``,
+``.add_sub_nn(``, ``.add_configuration(``, ``.add_train_data(``, or
+``.add_test_data(``.
+
+**Validation.** ``/validate-diagram`` for ``NNDiagram`` runs the full
+processor and surfaces ``ValueError`` (plus ``KeyError``/``TypeError``/
+``AttributeError`` on malformed payloads) as per-line validation errors
+rather than 500 responses. The processor verifies whitelists for
+``pooling_type``, ``return_type``, ``task_type``, ``input_format``,
+``optimizer``, ``loss_function``, and ``metrics``, as well as conv layer
+``kernel_dim`` / ``stride_dim`` lengths, and detects transitive
+``NNReference`` cycles among sub-networks.
+
+**Determinism.** ``nn_model_to_json`` produces byte-identical output for
+identical BUML NN models across runs — element IDs are derived from a
+thread-local counter via ``uuid.uuid5`` under a fixed namespace.
+
 
 API Endpoints
 -------------

@@ -53,3 +53,5 @@ New folder/*
 node_modules/
 **/node_modules/
 
+reviews/
+.vscode/

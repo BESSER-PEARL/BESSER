@@ -56,7 +56,7 @@ def pretty_print(node) -> str:
     For a raw expression, emits the expression alone.
     """
     if isinstance(node, OCLConstraint):
-        return f"context {node.context.name} inv: {_render(node.expression, _PREC_TOP)}"
+        return f"context {node.context.name} inv: {_render(node.ast, _PREC_TOP)}"
     return _render(node, _PREC_TOP)
 
 

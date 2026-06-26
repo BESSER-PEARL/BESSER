@@ -27,7 +27,7 @@ def test_round_trip_identity(source, model):
 def test_pretty_print_handles_raw_expression(model):
     constraint = parse_ocl("context Employee inv: self.age > 16", model)
     # Pass just the expression, not the whole OCLConstraint.
-    rendered = pretty_print(constraint.expression)
+    rendered = pretty_print(constraint.ast)
     assert rendered == "self.age > 16"
 
 

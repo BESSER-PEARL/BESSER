@@ -177,17 +177,62 @@ class OperationCallExpression(OCLExpression):
         # return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
 
 class OCLConstraint(Constraint):
-    """A class to represents OCL constriants, i.e. constraints written with the OCL language
+    """An OCL constraint — a :class:`Constraint` whose expression has been
+    parsed into an :class:`OCLExpression` AST.
+
+    The ``expression`` attribute (inherited from :class:`Constraint`) holds the
+    pretty-printed OCL source text. The ``ast`` attribute holds the parsed
+    AST. Use ``parse_ocl(...)`` to obtain an AST from raw OCL source.
 
     Args:
-        name: name of constraint
-        context: class of constraint
-        expression: expression of constraint
-        language: Language of constraint
+        name: name of the constraint.
+        context: the class on which the constraint is defined.
+        expression: the parsed OCL AST (an :class:`OCLExpression`). The
+            constructor pretty-prints this to populate the source text on
+            the base :class:`Constraint`.
+        language: language tag (default ``"OCL"``).
     """
 
     def __init__(self, name: str, context: Class, expression: OCLExpression, language: str = "OCL"):
-        super().__init__(name, context, expression, language)
+        if not isinstance(expression, OCLExpression):
+            raise TypeError(
+                f"OCLConstraint expects an OCLExpression AST as its expression; got {type(expression).__name__}. "
+                f"Use parse_ocl(text, model, context_class) to obtain an AST from OCL source text."
+            )
+        # Pretty-print the AST to populate the base's source-text expression.
+        # Deferred import to avoid circular dependency on package load.
+        try:
+            from besser.BUML.notations.ocl.pretty_printer import pretty_print
+        except ImportError:
+            source_text = repr(expression)
+        else:
+            source_text = pretty_print(expression)
+        super().__init__(name, context, source_text, language)
+        self.__ast = expression
+
+    @property
+    def ast(self) -> OCLExpression:
+        """OCLExpression: Get the parsed AST of the OCL constraint."""
+        return self.__ast
+
+    @ast.setter
+    def ast(self, ast: OCLExpression):
+        """Set the parsed AST and refresh the source-text expression.
+
+        Raises:
+            TypeError: if ``ast`` is not an :class:`OCLExpression`.
+        """
+        if not isinstance(ast, OCLExpression):
+            raise TypeError(
+                f"OCLConstraint.ast must be an OCLExpression; got {type(ast).__name__}."
+            )
+        self.__ast = ast
+        try:
+            from besser.BUML.notations.ocl.pretty_printer import pretty_print
+        except ImportError:
+            self.expression = repr(ast)
+        else:
+            self.expression = pretty_print(ast)
 
 
 class IfExp(OCLExpression):

@@ -12,6 +12,7 @@ services:
       - PYTHONPATH=/app
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
+      - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
     volumes:
       - feedback_data:/app/besser/feedback_data
     command: python -m besser.utilities.web_modeling_editor.backend.backend

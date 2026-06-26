@@ -136,7 +136,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
     def _add_action_elements_to_state(state_id: str, action_data: Any, fallback: bool = False) -> None:
         element_type = "AgentStateFallbackBody" if fallback else "AgentStateBody"
-        state_key = "fallbackBodies" if fallback else "bodies"
+        state_key = "fallbackActions" if fallback else "actions"
 
         if not isinstance(action_data, list):
             return
@@ -160,14 +160,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "text",
+                    "actionType": "TextReplyAction",
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "llm":
                 body_id = str(uuid.uuid4())
                 elements[body_id] = {
                     "id": body_id,
-                    "name": "AI response 🪄",
+                    "name": "LLM Reply",
                     "type": element_type,
                     "owner": state_id,
                     "bounds": {
@@ -176,11 +176,34 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
+                    "actionType": "LLMReplyAction",
                     "replyType": "llm",
+                    "system_message": action.get("prompt") or "",
+                    "llm_name": action.get("llm_name", "") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "llm_chat":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": "LLM Chat",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "LLMChatAction",
+                    "replyType": "llm_chat",
+                    "system_message": action.get("prompt") or "",
+                    "llm_name": action.get("llm_name", "") or "",
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "rag":
                 rag_db_name = action.get("ragDatabaseName") or ""
+                rag_prompt = action.get("prompt") or ""
                 display_name = (
                     f"RAG reply using {rag_db_name} database"
                     if rag_db_name
@@ -198,8 +221,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "rag",
+                    "actionType": "RAGReplyAction",
                     "ragDatabaseName": rag_db_name,
+                    "prompt": rag_prompt,
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "db_reply":
@@ -223,12 +247,123 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "width": 159,
                         "height": 30,
                     },
-                    "replyType": "db_reply",
+                    "actionType": "DBAction",
                     "dbSelectionType": db_selection_type,
                     "dbCustomName": db_custom_name,
                     "dbQueryMode": db_query_mode,
                     "dbOperation": db_operation,
                     "dbSqlQuery": db_sql_query,
+                    "llm_name": action.get("llm_name", "") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "web_crawl_llm":
+                initial_url = action.get("initial_url") or ""
+                display_name = f"Web Crawl + LLM: {initial_url}" if initial_url else "Web Crawl + LLM Reply"
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": display_name,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "WebCrawlLLMAction",
+                    "replyType": "web_crawl_llm",
+                    "initial_url": initial_url,
+                    "max_depth": action.get("max_depth", 2),
+                    "max_pages": action.get("max_pages", 20),
+                    "crawl_format": action.get("crawl_format", "markdown"),
+                    "base_url_prefix": action.get("base_url_prefix", ""),
+                    "run_crawl": action.get("run_crawl", True),
+                    "no_crawl_error_message": action.get("no_crawl_error_message", "No web crawl data is available yet."),
+                    "system_message_prefix": action.get("system_message_prefix", ""),
+                    "llm_name": action.get("llm_name", "") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_markdown":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Markdown", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyMarkdownAction", "replyType": "ws_markdown",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_html":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply HTML", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyHTMLAction", "replyType": "ws_html",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_speech":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Speech", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplySpeechAction", "replyType": "ws_speech",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "ws_audio_speed": action.get("ws_audio_speed"),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_options":
+                body_id = str(uuid.uuid4())
+                opts = action.get("ws_options") or action.get("options") or ""
+                if isinstance(opts, list):
+                    opts = "\n".join(opts)
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Options", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyOptionsAction", "replyType": "ws_options",
+                    "ws_options": opts,
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_location":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Location", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyLocationAction", "replyType": "ws_location",
+                    "ws_latitude": float(action.get("ws_latitude") or action.get("latitude") or 0.0),
+                    "ws_longitude": float(action.get("ws_longitude") or action.get("longitude") or 0.0),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_file":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply File", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyFileAction", "replyType": "ws_file",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_image":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Image", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyImageAction", "replyType": "ws_image",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_dataframe":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Dataframe", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyDataframeAction", "replyType": "ws_dataframe",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_plotly":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Plotly", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyPlotlyAction", "replyType": "ws_plotly",
                 }
                 elements[state_id][state_key].append(body_id)
 
@@ -317,6 +452,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         and node.value.func.attr == "new_rag"
                     ):
                         rag_name = None
+                        rag_llm_name = ""
+                        rag_llm_prompt = ""
+                        rag_k = 4
+                        rag_num_previous_messages = 0
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
@@ -331,6 +470,21 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value.value, str)
                             ):
                                 rag_name = kw.value.value
+                            elif (
+                                kw.arg == "llm_name"
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                rag_llm_name = kw.value.value
+                            elif kw.arg == "llm_prompt":
+                                if isinstance(kw.value, ast.Constant):
+                                    rag_llm_prompt = kw.value.value or ""
+                            elif kw.arg == "k":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                                    rag_k = kw.value.value
+                            elif kw.arg == "num_previous_messages":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                                    rag_num_previous_messages = kw.value.value
 
                         if isinstance(rag_name, str) and rag_name.strip():
                             rag_id = str(uuid.uuid4())
@@ -345,12 +499,99 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     "width": 120,
                                     "height": 110,
                                 },
+                                "llm_name": rag_llm_name,
+                                        "llm": rag_llm_name,
+                                "llm_prompt": rag_llm_prompt,
+                                "k": rag_k,
+                                "num_previous_messages": rag_num_previous_messages,
+                                        "numPreviousMessages": rag_num_previous_messages,
                             }
                             if states_x < 200:
                                 states_x += 300
                             else:
                                 states_x = -280
                                 states_y += 220
+
+        # Collect Tool/Skill/Workspace primitives. The model_builder emits
+        # them as bare expression statements (``agent.new_tool(...)``), not
+        # assignments, so this scan is separate from the Assign-based loop
+        # above and walks every Call node.
+        primitive_factories = {"new_tool", "new_skill", "new_workspace"}
+        seen_primitive_calls: set = set()
+        for call_node in ast.walk(tree):
+            if not (
+                isinstance(call_node, ast.Call)
+                and isinstance(call_node.func, ast.Attribute)
+                and call_node.func.attr in primitive_factories
+            ):
+                continue
+            if id(call_node) in seen_primitive_calls:
+                continue
+            seen_primitive_calls.add(id(call_node))
+
+            builder_attr = call_node.func.attr
+            primitive_kwargs: Dict[str, Any] = {}
+            for kw in call_node.keywords:
+                try:
+                    primitive_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    continue
+            positional = call_node.args or []
+            if positional and "name" not in primitive_kwargs:
+                try:
+                    primitive_kwargs["name"] = ast.literal_eval(positional[0])
+                except (ValueError, SyntaxError):
+                    pass
+
+            primitive_name = primitive_kwargs.get("name")
+            if not isinstance(primitive_name, str) or not primitive_name.strip():
+                continue
+
+            primitive_id = str(uuid.uuid4())
+            base_bounds = {
+                "x": states_x,
+                "y": states_y,
+                "width": 160,
+                "height": 80,
+            }
+            if builder_attr == "new_tool":
+                primitive_element = {
+                    "id": primitive_id,
+                    "name": primitive_name,
+                    "type": "AgentTool",
+                    "owner": None,
+                    "bounds": base_bounds,
+                    "description": primitive_kwargs.get("description", "") or "",
+                    "code": primitive_kwargs.get("code", "") or "",
+                }
+            elif builder_attr == "new_skill":
+                primitive_element = {
+                    "id": primitive_id,
+                    "name": primitive_name,
+                    "type": "AgentSkill",
+                    "owner": None,
+                    "bounds": base_bounds,
+                    "content": primitive_kwargs.get("content", "") or "",
+                    "description": primitive_kwargs.get("description"),
+                }
+            else:  # new_workspace
+                primitive_element = {
+                    "id": primitive_id,
+                    "name": primitive_name,
+                    "type": "AgentWorkspace",
+                    "owner": None,
+                    "bounds": base_bounds,
+                    "path": primitive_kwargs.get("path", "") or "",
+                    "description": primitive_kwargs.get("description"),
+                    "writable": bool(primitive_kwargs.get("writable", True)),
+                    "max_read_bytes": int(primitive_kwargs.get("max_read_bytes", 200_000)),
+                }
+            elements[primitive_id] = primitive_element
+            if states_x < 200:
+                states_x += 300
+            else:
+                states_x = -280
+                states_y += 220
 
         # Second pass: collect all functions
         states_x = -280
@@ -428,12 +669,30 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         else:
                             actions[body_var].append({"type": "text", "message": node.value.args[0].args[0].value})
                     elif node.value.args[0].func.id == 'LLMReply':
+                        llm_action: Dict[str, Any] = {"type": "llm"}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_action["llm_name"] = kw.value.value
+                            elif kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_action["prompt"] = kw.value.value
                         if body_var not in actions:
-                            actions[body_var] = [{"type": "llm"}]
+                            actions[body_var] = [llm_action]
                         else:
-                            actions[body_var].append({"type": "llm"})
+                            actions[body_var].append(llm_action)
+                    elif node.value.args[0].func.id == 'LLMChatReply':
+                        llm_chat_action: Dict[str, Any] = {"type": "llm_chat"}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_chat_action["llm_name"] = kw.value.value
+                            elif kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_chat_action["prompt"] = kw.value.value
+                        if body_var not in actions:
+                            actions[body_var] = [llm_chat_action]
+                        else:
+                            actions[body_var].append(llm_chat_action)
                     elif node.value.args[0].func.id == 'RAGReply':
                         rag_db_name = ""
+                        rag_prompt = ""
                         if (
                             len(node.value.args[0].args) >= 1
                             and isinstance(node.value.args[0].args[0], ast.Constant)
@@ -447,11 +706,25 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value.value, str)
                             ):
                                 rag_db_name = kw.value.value
+                            elif (
+                                kw.arg == 'prompt'
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                rag_prompt = kw.value.value
 
                         if body_var not in actions:
-                            actions[body_var] = [{"type": "rag", "ragDatabaseName": rag_db_name}]
+                            actions[body_var] = [{
+                                "type": "rag",
+                                "ragDatabaseName": rag_db_name,
+                                "prompt": rag_prompt,
+                            }]
                         else:
-                            actions[body_var].append({"type": "rag", "ragDatabaseName": rag_db_name})
+                            actions[body_var].append({
+                                "type": "rag",
+                                "ragDatabaseName": rag_db_name,
+                                "prompt": rag_prompt,
+                            })
                     elif node.value.args[0].func.id == 'DBReply':
                         db_action = {
                             "type": "db_reply",
@@ -460,6 +733,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "dbQueryMode": "llm_query",
                             "dbOperation": "any",
                             "dbSqlQuery": "",
+                            "llm_name": "",
                         }
                         for kw in node.value.args[0].keywords:
                             if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
@@ -473,11 +747,91 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     db_action["dbOperation"] = kw.value.value
                                 elif kw.arg == 'db_sql_query':
                                     db_action["dbSqlQuery"] = kw.value.value
+                                elif kw.arg == 'llm_name':
+                                    db_action["llm_name"] = kw.value.value
 
                         if body_var not in actions:
                             actions[body_var] = [db_action]
                         else:
                             actions[body_var].append(db_action)
+                    elif node.value.args[0].func.id == 'WebCrawlLLMReply':
+                        web_crawl_action: Dict[str, Any] = {
+                            "type": "web_crawl_llm",
+                            "initial_url": "",
+                            "max_depth": 2,
+                            "max_pages": 20,
+                            "crawl_format": "markdown",
+                            "base_url_prefix": "",
+                            "run_crawl": True,
+                            "no_crawl_error_message": "No web crawl data is available yet.",
+                            "system_message_prefix": "",
+                            "llm_name": "",
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'initial_url' and isinstance(val, str):
+                                web_crawl_action["initial_url"] = val
+                            elif kw.arg == 'max_depth' and isinstance(val, int) and not isinstance(val, bool):
+                                web_crawl_action["max_depth"] = val
+                            elif kw.arg == 'max_pages' and isinstance(val, int) and not isinstance(val, bool):
+                                web_crawl_action["max_pages"] = val
+                            elif kw.arg == 'crawl_format' and isinstance(val, str):
+                                web_crawl_action["crawl_format"] = val
+                            elif kw.arg == 'base_url_prefix':
+                                web_crawl_action["base_url_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'run_crawl' and isinstance(val, bool):
+                                web_crawl_action["run_crawl"] = val
+                            elif kw.arg == 'no_crawl_error_message' and isinstance(val, str):
+                                web_crawl_action["no_crawl_error_message"] = val
+                            elif kw.arg == 'system_message_prefix':
+                                web_crawl_action["system_message_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'llm_name' and isinstance(val, str):
+                                web_crawl_action["llm_name"] = val
+                        if body_var not in actions:
+                            actions[body_var] = [web_crawl_action]
+                        else:
+                            actions[body_var].append(web_crawl_action)
+                    elif node.value.args[0].func.id in (
+                        'WebSocketReplyMarkdown', 'WebSocketReplyHTML', 'WebSocketReplySpeech',
+                        'WebSocketReplyOptions', 'WebSocketReplyLocation',
+                        'WebSocketReplyFile', 'WebSocketReplyImage',
+                        'WebSocketReplyDataframe', 'WebSocketReplyPlotly',
+                    ):
+                        cls_name = node.value.args[0].func.id
+                        type_map = {
+                            'WebSocketReplyMarkdown': 'ws_markdown',
+                            'WebSocketReplyHTML': 'ws_html',
+                            'WebSocketReplySpeech': 'ws_speech',
+                            'WebSocketReplyOptions': 'ws_options',
+                            'WebSocketReplyLocation': 'ws_location',
+                            'WebSocketReplyFile': 'ws_file',
+                            'WebSocketReplyImage': 'ws_image',
+                            'WebSocketReplyDataframe': 'ws_dataframe',
+                            'WebSocketReplyPlotly': 'ws_plotly',
+                        }
+                        ws_action: Dict[str, Any] = {"type": type_map[cls_name]}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'options' and isinstance(kw.value, ast.List):
+                                opts = [elt.value for elt in kw.value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)]
+                                ws_action["ws_options"] = "\n".join(opts)
+                                continue
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'message' and isinstance(val, str):
+                                ws_action["ws_message"] = val
+                            elif kw.arg == 'audio_speed' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_audio_speed"] = float(val)
+                            elif kw.arg == 'latitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_latitude"] = float(val)
+                            elif kw.arg == 'longitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_longitude"] = float(val)
+                        if body_var not in actions:
+                            actions[body_var] = [ws_action]
+                        else:
+                            actions[body_var].append(ws_action)
                 elif isinstance(node.value.args[0], ast.Name):
                     # Handle references to CustomCodeAction variables
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'
@@ -503,10 +857,210 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         # Store the initial node ID for later use with transitions
 
 
+        # Build a var-name -> LLM name map so reasoning states can resolve
+        # their ``llm=...`` kwarg back to the registered LLM name.
+        # Also collects full LLM definitions so we can emit AgentLLM elements
+        # for each registered LLM.
+        llm_var_to_name: Dict[str, str] = {}
+        # name -> {provider, parameters, num_previous_messages, global_context}
+        llm_definitions: Dict[str, Dict[str, Any]] = {}
+
+        _direct_llm_class_to_provider = {
+            "LLMOpenAI": "openai",
+            "LLMHuggingFace": "huggingface",
+            "LLMHuggingFaceAPI": "huggingface_api",
+            "LLMReplicate": "replicate",
+        }
+
+        def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:
+            collected: Dict[str, Any] = {}
+            for kw in call.keywords:
+                if kw.arg is None:
+                    continue
+                try:
+                    collected[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    continue
+            return collected
+
+        for node in ast.walk(tree):
+            # Legacy direct constructor: ``LLMOpenAI(agent=..., name=..., parameters=...)``
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id in _direct_llm_class_to_provider
+            ):
+                llm_kwargs = _collect_llm_kwargs(node.value)
+                resolved_name = llm_kwargs.get("name")
+                if isinstance(resolved_name, str) and resolved_name:
+                    var_id = node.targets[0].id
+                    llm_var_to_name[var_id] = resolved_name
+                    llm_definitions.setdefault(resolved_name, {
+                        "provider": _direct_llm_class_to_provider[node.value.func.id],
+                        "parameters": llm_kwargs.get("parameters") or {},
+                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
+                        "global_context": llm_kwargs.get("global_context"),
+                    })
+            # New canonical form: ``agent.new_llm(name='...', provider='...', parameters=..., ...)``
+            elif (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "new_llm"
+            ):
+                llm_kwargs = _collect_llm_kwargs(node.value)
+                resolved_name = llm_kwargs.get("name")
+                if isinstance(resolved_name, str) and resolved_name:
+                    var_id = node.targets[0].id
+                    llm_var_to_name[var_id] = resolved_name
+                    llm_definitions.setdefault(resolved_name, {
+                        "provider": (llm_kwargs.get("provider") or "openai"),
+                        "parameters": llm_kwargs.get("parameters") or {},
+                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
+                        "global_context": llm_kwargs.get("global_context"),
+                    })
+
+        # Detect ``agent.set_default_llm('...')`` so we can round-trip the
+        # default-LLM choice through a ``config.default_llm_name`` payload
+        # (the LLM list itself is not rendered on the canvas).
+        default_llm_name_value: str | None = None
+        for call_node in ast.walk(tree):
+            if (
+                isinstance(call_node, ast.Call)
+                and isinstance(call_node.func, ast.Attribute)
+                and call_node.func.attr == "set_default_llm"
+                and call_node.args
+                and isinstance(call_node.args[0], ast.Constant)
+                and isinstance(call_node.args[0].value, str)
+            ):
+                default_llm_name_value = call_node.args[0].value
+                break
+        # Fallback: when no explicit set_default_llm is present, the agent's
+        # default is the first registered LLM (mirroring the metamodel).
+        if default_llm_name_value is None and llm_definitions:
+            default_llm_name_value = next(iter(llm_definitions))
+
+        # Emit AgentLLM elements (one per registered LLM) so the WME
+        # round-trips the LLM list defined in the agent customization tab.
+        for llm_name, llm_def in llm_definitions.items():
+            llm_id = str(uuid.uuid4())
+            elements[llm_id] = {
+                "id": llm_id,
+                "name": llm_name,
+                "type": "AgentLLM",
+                "owner": None,
+                "bounds": {
+                    "x": states_x,
+                    "y": states_y,
+                    "width": 200,
+                    "height": 90,
+                },
+                "provider": llm_def.get("provider", "openai"),
+                "parameters": llm_def.get("parameters") or {},
+                "num_previous_messages": llm_def.get("num_previous_messages", 1),
+                "global_context": llm_def.get("global_context"),
+            }
+            if states_x < 200:
+                states_x += 240
+            else:
+                states_x = -280
+                states_y += 130
+
         # Second pass: collect states and their configurations
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
+                if (
+                    isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "new_reasoning_state"
+                ):
+                    state_id = str(uuid.uuid4())
+                    state_name = var_name
+                    is_initial = False
+                    rs_kwargs: Dict[str, Any] = {}
+                    llm_var_ref = None
+                    llm_literal_name: str | None = None
+
+                    if (
+                        node.value.args
+                        and isinstance(node.value.args[0], ast.Constant)
+                        and isinstance(node.value.args[0].value, str)
+                    ):
+                        state_name = node.value.args[0].value
+
+                    for kw in node.value.keywords:
+                        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                            state_name = kw.value.value
+                        elif kw.arg == "initial" and isinstance(kw.value, ast.Constant):
+                            is_initial = bool(kw.value.value)
+                        elif kw.arg == "llm":
+                            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_literal_name = kw.value.value
+                            elif isinstance(kw.value, ast.Name):
+                                llm_var_ref = kw.value.id
+                        else:
+                            try:
+                                rs_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                            except (ValueError, SyntaxError):
+                                continue
+
+                    state_var_to_name[var_name] = state_name
+
+                    state_obj = {
+                        "id": state_id,
+                        "name": state_name,
+                        "is_initial": is_initial,
+                        "bodies": [],
+                        "fallback_bodies": [],
+                    }
+                    states[var_name] = state_obj
+                    if state_name != var_name:
+                        states[state_name] = state_obj
+
+                    if llm_literal_name is not None:
+                        llm_name_resolved = llm_literal_name
+                    elif llm_var_ref:
+                        llm_name_resolved = llm_var_to_name.get(llm_var_ref)
+                    else:
+                        llm_name_resolved = None
+
+                    elements[state_id] = {
+                        "id": state_id,
+                        "name": state_name,
+                        # Reasoning states are modelled as an AgentState with
+                        # stateType "reasoning" (the editor no longer registers a
+                        # separate AgentReasoningState element type, so emitting the
+                        # legacy type would fail to deserialize on import).
+                        "type": "AgentState",
+                        "stateType": "reasoning",
+                        "owner": None,
+                        "bounds": {
+                            "x": states_x,
+                            "y": states_y,
+                            "width": 200,
+                            "height": 110,
+                        },
+                        "llm_name": llm_name_resolved,
+                        "max_steps": int(rs_kwargs.get("max_steps", 8)),
+                        "enable_task_planning": bool(rs_kwargs.get("enable_task_planning", True)),
+                        "stream_steps": bool(rs_kwargs.get("stream_steps", True)),
+                        "system_prompt": rs_kwargs.get("system_prompt"),
+                        "fallback_message": rs_kwargs.get("fallback_message"),
+                    }
+
+                    if states_x < 200:
+                        states_x += 490
+                    else:
+                        states_x = -280
+                        states_y += 220
+                    continue
+
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
                     state_id = str(uuid.uuid4())
                     state_name = var_name  # Default to variable name
@@ -549,6 +1103,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "id": state_id,
                         "name": state_name,
                         "type": "AgentState",
+                        "stateType": "standard",
                         "owner": None,
                         "bounds": {
                             "x": states_x,
@@ -556,8 +1111,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "width": 160,
                             "height": 100,
                         },
-                        "bodies": [],
-                        "fallbackBodies": [],
+                        "actions": [],
+                        "fallbackActions": [],
                     }
 
                     # Update position for next element
@@ -586,6 +1141,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "id": state_id,
                         "name": state_name,
                         "type": "AgentState",
+                        "stateType": "standard",
                         "owner": None,
                         "bounds": {
                             "x": states_x,
@@ -593,8 +1149,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "width": 160,
                             "height": 100,
                         },
-                        "bodies": [],
-                        "fallbackBodies": [],
+                        "actions": [],
+                        "fallbackActions": [],
                     }
 
                     # Update position for next element
@@ -878,14 +1434,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                                 "width": 159,
                                                 "height": 30,
                                             },
-                                            "replyType": "text"
+                                            "actionType": "TextReplyAction",
                                         }
-                                        elements[state["id"]]["bodies"].append(body_id)
+                                        elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "llm":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "LLM Reply",
                                         "type": "AgentStateBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -894,9 +1450,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
                                     }
-                                    elements[state["id"]]["bodies"].append(body_id)
+                                    elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "code":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
@@ -910,15 +1468,15 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "code"
+                                        "actionType": "CustomCodeAction",
                                     }
-                                    elements[state["id"]]["bodies"].append(body_id)
+                                    elements[state["id"]]["actions"].append(body_id)
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "LLM Reply",
                                         "type": "AgentStateBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -927,9 +1485,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
                                     }
-                                    elements[state["id"]]["bodies"].append(body_id)
+                                    elements[state["id"]]["actions"].append(body_id)
                                 elif isinstance(actions[function_name], list):
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=False)
                                 else:
@@ -947,9 +1507,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                                 "width": 159,
                                                 "height": 30,
                                             },
-                                            "replyType": "text"
+                                            "actionType": "TextReplyAction",
                                         }
-                                        elements[state["id"]]["bodies"].append(body_id)
+                                        elements[state["id"]]["actions"].append(body_id)
 
 
                             else:
@@ -1019,14 +1579,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                                 "width": 159,
                                                 "height": 30,
                                             },
-                                            "replyType": "text"
+                                            "actionType": "TextReplyAction",
                                         }
-                                        elements[state["id"]]["fallbackBodies"].append(body_id)
+                                        elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "llm":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "LLM Reply",
                                         "type": "AgentStateFallbackBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -1035,9 +1595,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "code":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
@@ -1051,16 +1613,16 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "code"
+                                        "actionType": "CustomCodeAction",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
 
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": "AI response 🪄",
+                                        "name": "LLM Reply",
                                         "type": "AgentStateFallbackBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -1069,9 +1631,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "llm"
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif isinstance(actions[function_name], list):
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=True)
                                 else:
@@ -1087,9 +1651,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "text"
+                                        "actionType": "TextReplyAction",
                                     }
-                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
 
                             else:
                                 # Fallback if function not found
@@ -1267,7 +1831,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                 comment_y += 130
 
-        return {
+        result = {
             "version": "3.0.0",
             "type": "AgentDiagram",
             "size": default_size,
@@ -1276,6 +1840,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "relationships": relationships,
             "assessments": {},
         }
+        if default_llm_name_value:
+            result["config"] = {"default_llm_name": default_llm_name_value}
+        return result
 
     except Exception:
         logger.exception("Error converting agent BUML to JSON; returning partial diagram")

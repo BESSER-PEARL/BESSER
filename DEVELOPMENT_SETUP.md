@@ -36,7 +36,7 @@ Complete guide to set up the BESSER development environment from scratch.
 
 ### 4. Docker Desktop (optional)
 
-Only needed if you want to run the full stack with `docker-compose up`.
+Only needed if you want to run the full stack with `docker compose up`.
 
 - Download from [docker.com](https://www.docker.com/products/docker-desktop/)
 
@@ -86,7 +86,7 @@ Open your browser and go to **http://localhost:8080**.
 Instead of running backend and frontend separately:
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 This starts both services. Open `http://localhost:8080`.

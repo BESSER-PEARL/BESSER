@@ -129,7 +129,7 @@ def test_operator_surface_invariant(ocl_input, model):
     """Normal form contains no implies / xor / exists / reject / isEmpty / IfExp."""
     parsed = parse_ocl(ocl_input, model)
     normalized = normalize(parsed, model)
-    for node in walk(normalized.expression):
+    for node in walk(normalized.ast):
         assert not is_implies(node), pretty_print(normalized)
         assert not is_xor(node), pretty_print(normalized)
         assert not is_isempty(node), pretty_print(normalized)
@@ -163,7 +163,7 @@ def test_if_with_non_boolean_branches_is_left_alone(model):
     )
     normalized = normalize(parsed, model)
 
-    if_nodes = [n for n in walk(normalized.expression) if isinstance(n, IfExp)]
+    if_nodes = [n for n in walk(normalized.ast) if isinstance(n, IfExp)]
     assert len(if_nodes) == 1, (
         f"IfExp with non-boolean branches should survive; got: "
         f"{pretty_print(normalized)}"
@@ -178,7 +178,7 @@ def test_if_with_boolean_branches_is_eliminated(model):
         model,
     )
     normalized = normalize(parsed, model)
-    for node in walk(normalized.expression):
+    for node in walk(normalized.ast):
         assert not isinstance(node, IfExp), (
             f"boolean-branched IfExp must be eliminated; got: "
             f"{pretty_print(normalized)}"

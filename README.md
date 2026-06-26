@@ -18,7 +18,7 @@ With B-UML you can specify your software application and then use any of the [co
 Beyond the deterministic generators, BESSER also offers a [Vibe-Driven (LLM-augmented) generator](https://besser.readthedocs.io/en/latest/generators/vibe_driven.html) (experimental): it produces a model-faithful scaffold deterministically and then lets an LLM customise it from a natural-language request — adding features the templates don't cover (auth, Docker, tests) or targeting stacks with no built-in generator. It runs bring-your-own-key, so your API key is never stored.
 
 This repository contains the backend foundation for the ecosystem: the
-metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER-WEB-MODELING-EDITOR](https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR) repository and is included here only as a submodule (at `besser/utilities/web_modeling_editor/frontend`) for local deployments.
+metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER-Web-Modeling-Editor](https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor) repository and is included here only as a submodule (at `besser/utilities/web_modeling_editor/frontend`) for local deployments.
 
 **Check out the [BESSER Web Modeling Editor online](https://editor.besser-pearl.org/)**
 ![BESSER Web Modeling Editor Demo](./docs/source/img/besser_new.gif)

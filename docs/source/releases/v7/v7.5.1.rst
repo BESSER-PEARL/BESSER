@@ -1,0 +1,18 @@
+Version 7.5.1
+=============
+
+Hotfix patch for v7.5.0. The initial v7.5.0 deploy surfaced three issues
+in production that did not show up in CI: the Docker image still pinned
+Python 3.10 (the NN metamodel uses ``typing.Self``, PEP 673, which is
+3.11+); the NN code generators failed to register because their
+transitive ``utils_nn`` imports ``PIL`` and ``torch`` at module level
+even though the generator never calls them; and the modeling assistant
+widget was visible on NN diagrams it cannot reason about. All three are
+addressed here.
+
+Fixes
+-----
+
+* Bumped the runtime Docker base image from ``python:3.10-slim`` to ``python:3.12-slim`` so the production image matches the CI matrix and ``setup.cfg``'s declared ``python_requires = >=3.11``. The NN ``Self`` import works as-is on 3.12.
+* Lazy-imported ``PIL.Image`` and ``torch.nn`` in ``besser/generators/nn/utils_nn.py``. The two helpers that need them (``compute_mean_std`` for image-dataset preprocessing and the ``Permute`` ``nn.Module`` subclass) are referenced only by Jinja templates that emit *user-runtime* training scripts — the BESSER backend never calls them itself. With ``try/except ImportError`` guards (and a ``nn.Module`` stub for the class definition), the file now loads on a backend host that does not have Pillow or torch installed, which lets ``PytorchGenerator`` and ``TFGenerator`` register correctly. When the user runs the *generated* training script on their own machine, the same module re-imports the real ``PIL`` and ``torch`` since they have those installed.
+* Hide the floating Modeling Assistant widget on the Neural Network diagram. The assistant is UML-oriented and has no reasoning over layers / hyperparameters / training, so the FAB and popup card are now suppressed whenever the active diagram type is ``NNDiagram`` (frontend submodule change).

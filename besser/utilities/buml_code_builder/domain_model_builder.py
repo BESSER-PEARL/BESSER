@@ -7,13 +7,33 @@ This module generates Python code for BUML domain models and object models.
 import os
 from typing import Optional
 from besser.BUML.metamodel.structural.structural import (
+    Class,
     DomainModel,
     AssociationClass,
     MethodImplementationType,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
-from besser.utilities.buml_code_builder.common import PRIMITIVE_TYPE_MAPPING, safe_class_name, _escape_python_string
+from besser.utilities.buml_code_builder.common import (
+    PRIMITIVE_TYPE_MAPPING,
+    _escape_python_string,
+    safe_class_name,
+    safe_var_name,
+)
+
+
+def _method_var_name(method) -> str:
+    """Sanitize a method's name for use as a Python identifier.
+
+    Method variables are emitted as ``<class_var>_m_<method_var>`` and
+    later referenced bare in the generated source (e.g. for
+    ``method.add_pre(...)`` calls). ``method.name`` is user-controlled,
+    so it MUST go through ``safe_var_name`` — using the raw name (or a
+    half-sanitized ``.replace('-', '_')``) is a code-injection vector
+    via the intentional ``exec()`` of builder output.
+    """
+    base = method.name.split('(')[0] if '(' in method.name else method.name
+    return safe_var_name(base, lowercase=False)
 
 
 _IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
@@ -215,8 +235,8 @@ def domain_model_to_code(
 
             # Write methods
             for method in sort(cls.methods):
-                # Extract just the method name (before any parenthesis) for the variable name
-                method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
+                # Sanitize the method name for safe use as a Python identifier.
+                method_var_name = _method_var_name(method)
 
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
@@ -264,8 +284,10 @@ def domain_model_to_code(
                 attrs_str = ", ".join(sorted([f"{cls_var_name}_{attr.name}" for attr in cls.attributes]))
                 f.write(f"{cls_var_name}.attributes={{{attrs_str}}}\n")
             if sort(cls.methods):
-                # Extract just method names for variable references
-                methods_str = ", ".join(sorted([f"{cls_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in cls.methods]))
+                methods_str = ", ".join(sorted(
+                    f"{cls_var_name}_m_{_method_var_name(method)}"
+                    for method in cls.methods
+                ))
                 f.write(f"{cls_var_name}.methods={{{methods_str}}}\n")
             f.write("\n")
 
@@ -353,8 +375,8 @@ def domain_model_to_code(
 
                 # Write methods for the association class
                 for method in sort(ac.methods):
-                    # Extract just the method name (before any parenthesis) for the variable name
-                    method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
+                    # Sanitize the method name for safe use as a Python identifier.
+                    method_var_name = _method_var_name(method)
 
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
@@ -406,8 +428,10 @@ def domain_model_to_code(
                 # Create methods set string if methods exist
                 methods_str = ""
                 if sort(ac.methods):
-                    # Extract just method names for variable references
-                    methods_list = ", ".join(sorted([f"{ac_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in ac.methods]))
+                    methods_list = ", ".join(sorted(
+                        f"{ac_var_name}_m_{_method_var_name(method)}"
+                        for method in ac.methods
+                    ))
                     methods_str = f", methods={{{methods_list}}}"
 
                 # Now create the association class
@@ -427,18 +451,63 @@ def domain_model_to_code(
                         f"(general={general_var_name}, specific={specific_var_name})\n")
             f.write("\n")
 
-        # Write OCL constraints if they exist
-        if hasattr(model, 'constraints') and model.constraints:
+        # Helper: emit a single ``Constraint(...)`` declaration. Reused for
+        # invariants (top-level) and for method ``pre`` / ``post`` contracts
+        # (which are then attached via ``Method.add_pre`` / ``add_post``).
+        def _emit_constraint_decl(constraint, var_name: str) -> None:
+            context_var_name = safe_class_name(constraint.context.name)
+            f.write(f"{var_name}: Constraint = Constraint(\n")
+            f.write(f"    name=\"{_escape_python_string(constraint.name)}\",\n")
+            f.write(f"    context={context_var_name},\n")
+            f.write(f"    expression=\"{_escape_python_string(constraint.expression)}\",\n")
+            f.write(f"    language=\"{_escape_python_string(constraint.language)}\"")
+            description = getattr(constraint, 'description', None)
+            if description:
+                f.write(",\n")
+                f.write(f"    description=\"{_escape_python_string(description)}\"\n")
+            else:
+                f.write("\n")
+            f.write(")\n")
+
+        # Collect every method's pre / post contracts. Emit them alongside
+        # invariants so the generated file round-trips back to the editor
+        # with the same routing — without this loop, BUML export would
+        # silently drop method contracts (a regression we hit in
+        # https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/124).
+        # Tuple shape: (constraint, method, kind, cls).
+        method_contracts: list[tuple] = []
+        for cls in sorted(
+            (t for t in model.types if isinstance(t, Class)),
+            key=lambda t: t.name,
+        ):
+            for method in cls.methods:
+                for c in method.pre:
+                    method_contracts.append((c, method, 'pre', cls))
+                for c in method.post:
+                    method_contracts.append((c, method, 'post', cls))
+        # Emit deterministically: same model → same byte-stable output.
+        method_contracts.sort(
+            key=lambda t: (t[3].name, t[1].name, t[2], t[0].name)
+        )
+
+        invariants = list(model.constraints) if hasattr(model, 'constraints') else []
+        if invariants or method_contracts:
             f.write("\n# OCL Constraints\n")
-            for constraint in sort(model.constraints):
-                constraint_name = constraint.name.replace("-", "_")
-                context_var_name = safe_class_name(constraint.context.name)
-                f.write(f"{constraint_name}: Constraint = Constraint(\n")
-                f.write(f"    name=\"{_escape_python_string(constraint.name)}\",\n")
-                f.write(f"    context={context_var_name},\n")
-                f.write(f"    expression=\"{_escape_python_string(constraint.expression)}\",\n")
-                f.write(f"    language=\"{_escape_python_string(constraint.language)}\"\n")
-                f.write(")\n")
+            for constraint in sort(invariants):
+                # ``constraint.name`` is user-typed and lands as the Python
+                # identifier on the LHS — must go through ``safe_var_name``
+                # to neutralize any character that would let the value
+                # escape into executable code at ``exec()`` time.
+                _emit_constraint_decl(
+                    constraint,
+                    safe_var_name(constraint.name, lowercase=False),
+                )
+            for constraint, method, kind, cls in method_contracts:
+                cls_var = safe_class_name(cls.name)
+                method_var = f"{cls_var}_m_{_method_var_name(method)}"
+                contract_var = safe_var_name(constraint.name, lowercase=False)
+                _emit_constraint_decl(constraint, contract_var)
+                f.write(f"{method_var}.add_{kind}({contract_var})\n")
             f.write("\n")
 
         # Write domain model

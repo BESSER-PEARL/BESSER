@@ -54,7 +54,7 @@ make html  # Windows: make.bat html
 ### Local Stack Deployment
 ```bash
 # Run full stack with Docker Compose
-docker-compose up --build
+docker compose up --build
 ```
 
 ## Architecture Overview

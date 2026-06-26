@@ -5,6 +5,7 @@
 import json
 import logging
 import operator
+import os
 
 from baf.core.agent import Agent
 from baf.library.transition.events.base_events import *
@@ -23,9 +24,34 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from baf import nlp
 from baf.nlp.rag.rag import RAG
 {% endif %}
+{% set reasoning_states_ns = namespace(items=[]) %}
+{% for state in agent.states %}
+{% if is_class(state, 'ReasoningState') %}
+{% set reasoning_states_ns.items = reasoning_states_ns.items + [state] %}
+{% endif %}
+{% endfor %}
+{% set has_reasoning_primitives = (agent.tools and agent.tools|length > 0) or (agent.skills and agent.skills|length > 0) or (agent.workspaces and agent.workspaces|length > 0) %}
+{% set has_reasoning_states = reasoning_states_ns.items|length > 0 %}
+{% if has_reasoning_states %}
+from baf.library.state import new_reasoning_state
+{% endif %}
+{% set has_web_crawl_import_ns = namespace(value=false) %}
+{% for state in agent.states %}
+{% for action in (state.body.actions if state.body and state.body.actions else []) %}
+{% if is_class(action, 'WebCrawlLLMReply') and action.run_crawl %}{% set has_web_crawl_import_ns.value = true %}{% endif %}
+{% endfor %}
+{% for action in (state.fallback_body.actions if state.fallback_body and state.fallback_body.actions else []) %}
+{% if is_class(action, 'WebCrawlLLMReply') and action.run_crawl %}{% set has_web_crawl_import_ns.value = true %}{% endif %}
+{% endfor %}
+{% endfor %}
+{% if has_web_crawl_import_ns.value %}
+from baf.utils.web_crawl import crawl_website
+{% endif %}
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 {% if personalization_mapping is defined and personalization_mapping %}
 def build_agent_configuration_prompt(agent_configuration: dict) -> str:
@@ -136,7 +162,7 @@ rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''
 
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
-platform = agent.use_websocket_platform()
+platform = agent.use_websocket_platform(use_ui=False)
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
@@ -160,62 +186,30 @@ platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping
 {% else %}
 platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
-# LLM instantiation based on config['llm']
-{% set has_reply_llm_state = namespace(value=false) %}
+{% set has_default_llm_state = namespace(value=false) %}
 {% set has_db_reply_state = namespace(value=false) %}
 {% for state in agent.states %}
-{% if state.body and state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
-{% set has_db_reply_state.value = true %}
-{% endif %}
-{% if state.fallback_body and state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
-{% set has_db_reply_state.value = true %}
-{% endif %}
+{% for action in (state.body.actions if state.body and state.body.actions else []) %}
+{% if is_class(action, 'DBReply') %}{% set has_db_reply_state.value = true %}{% endif %}
+{% endfor %}
+{% for action in (state.fallback_body.actions if state.fallback_body and state.fallback_body.actions else []) %}
+{% if is_class(action, 'DBReply') %}{% set has_db_reply_state.value = true %}{% endif %}
+{% endfor %}
 {% endfor %}
 {% if personalization_mapping is defined and personalization_mapping %}
 {% for mapping in personalization_mapping %}
 {% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
 {% if profile_agent and profile_agent.states %}
 {% for state in profile_agent.states %}
-{% if state.body and state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
-{% set has_db_reply_state.value = true %}
-{% endif %}
-{% if state.fallback_body and state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
-{% set has_db_reply_state.value = true %}
-{% endif %}
+{% for action in (state.body.actions if state.body and state.body.actions else []) %}
+{% if is_class(action, 'DBReply') %}{% set has_db_reply_state.value = true %}{% endif %}
+{% endfor %}
+{% for action in (state.fallback_body.actions if state.fallback_body and state.fallback_body.actions else []) %}
+{% if is_class(action, 'DBReply') %}{% set has_db_reply_state.value = true %}{% endif %}
+{% endfor %}
 {% endfor %}
 {% endif %}
 {% endfor %}
-{% endif %}
-{% if config and 'llm' in config and config['llm'] %}
-{% set has_reply_llm_state.value = true %}
-    {% if config['llm']['provider'] == 'openai' %}
-reply_llm = LLMOpenAI(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-
-    {% elif config['llm']['provider'] == 'huggingface' %}
-reply_llm = LLMHuggingFace(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-
-    {% elif config['llm']['provider'] == 'huggingfaceapi' %}
-reply_llm_api = LLMHuggingFaceAPI(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-    {% elif config['llm']['provider'] == 'replicate' %}
-reply_llm = LLMReplicate(
-    agent=agent,
-    name='{{ config['llm']['model'] }}',
-    parameters={}
-)
-
-    {% endif %}
 {% endif %}
 {% if has_speech_input %}
 stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
@@ -224,15 +218,8 @@ stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
 tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endif %}
 
-{% if agent.rags and agent.rags|length > 0 %}
-rag_llm = LLMOpenAI(
-    agent=agent,
-    name='gpt-4o-mini',
-    parameters={},
-    num_previous_messages=10
-)
-{% endif %}
-
+{# RAG configurations resolve their LLM via ``llm_name`` against
+   agent.llms at runtime — no separate ``rag_llm`` variable needed. #}
 {% if agent.rags and agent.rags|length > 0 %}
 ##############################
 # RAG CONFIGURATIONS
@@ -245,7 +232,7 @@ rag_llm = LLMOpenAI(
     {% endif %}
     {% set vector_var = rag_slug ~ '_vector_store' %}
     {% set splitter_var = rag_slug ~ '_splitter' %}
-    {% set rag_var = rag_slug ~ '_rag' %}
+    {% set rag_var = safe_var_name(rag.name) %}
     {% if rag.vector_store and rag.vector_store.persist_directory %}
         {% set persist_dir = rag.vector_store.persist_directory %}
     {% else %}
@@ -270,7 +257,8 @@ rag_llm = LLMOpenAI(
     agent=agent,
     vector_store={{ vector_var }},
     splitter={{ splitter_var }},
-    llm_name='{{ rag.llm_name | replace('\\', '\\\\') | replace("'", "\\'") if rag.llm_name else 'gpt-4o-mini' }}',
+    llm_name='{{ ((rag.llm_name if rag.llm_name else (agent.default_llm_name if agent.default_llm_name else '')) | string) | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    llm_prompt={% if rag.llm_prompt %}'{{ rag.llm_prompt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% else %}None{% endif %},
     k={{ rag.k if rag.k is not none else 4 }},
     num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
 )
@@ -291,8 +279,9 @@ rag_llm = LLMOpenAI(
         activation_hidden_layers='{{ ic_config.activation_hidden_layers }}',
         lr={{ ic_config.lr }}
 ){% elif is_class(ic_config, 'LLMIntentClassifierConfiguration') %}LLMIntentClassifierConfiguration(
-        llm_suite='{{ ic_config.llm_suite }}',
-        parameters={{ ic_config.parameters }},
+        {% if ic_config.llm_name %}llm_name='{{ ic_config.llm_name }}',
+        {% elif ic_config.llm_suite %}llm_suite='{{ ic_config.llm_suite }}',
+        {% endif %}parameters={{ ic_config.parameters }},
         use_intent_descriptions={{ ic_config.use_intent_descriptions }},
         use_training_sentences={{ ic_config.use_training_sentences }},
         use_entity_descriptions={{ ic_config.use_entity_descriptions }},
@@ -300,27 +289,28 @@ rag_llm = LLMOpenAI(
 ){% endif %}
 {% endmacro %}
 
+{% set ic_llm_ns = namespace(name='') %}
+{% if config and 'llm' in config and config['llm'] is mapping and config['llm'].get('name') %}
+{% set ic_llm_ns.name = config['llm']['name'] %}
+{% elif agent.default_llm_name %}
+{% set ic_llm_ns.name = agent.default_llm_name %}
+{% elif agent.llms and agent.llms|length > 0 %}
+{% set ic_llm_ns.name = agent.llms[0].name %}
+{% elif config and 'llm' in config and config['llm'] is mapping and config['llm'].get('model') %}
+{% set ic_llm_ns.name = config['llm']['model'] %}
+{% else %}
+{% set ic_llm_ns.name = '' %}
+{% endif %}
 {% set ic_config_set = namespace(value=false) %}
 {% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
-{% if 'llm' in config  and 'model' in config['llm'] %}
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='{{ config['llm']['model'] }}',
+    llm_name={{ ic_llm_ns.name | string | tojson }},
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
     use_entity_descriptions=False,
     use_entity_synonyms=False
 )
-{% else %}
-ic_config = LLMIntentClassifierConfiguration(
-    llm_name='gpt-5-nano',
-    parameters={},
-    use_intent_descriptions=True,
-    use_training_sentences=True,
-    use_entity_descriptions=False,
-    use_entity_synonyms=False
-)
-{% endif %}
 
 agent.set_default_ic_config(ic_config)
 {% set ic_config_set.value = true %}
@@ -341,11 +331,17 @@ agent.set_default_ic_config(ic_config)
 {% set ic_config_set.value = true %}
 {% endif %}
 
-{% if agent.llms != [] and (not config or 'llm' not in config or not config['llm']) %}
+{# Define one Python variable per agent.llms entry. ``default_llm`` is then
+   aliased to the LLM the user marked as default in the customization tab
+   (agent.default_llm_name); if no explicit default is set we fall back
+   to the first registered LLM. #}
+{% if agent.llms and agent.llms|length > 0 %}
+# LLMs
+{% set default_llm_ns = namespace(name=None) %}
 {% for llm in agent.llms %}
-reply_llm = {{ llm.__class__.__name__}}(
-    name='{{ llm.name }}',
+{{ safe_var_name(llm.name) }} = {{ llm.__class__.__name__ }}(
     agent=agent,
+    name={{ llm.name | string | tojson }},
     {% if llm.parameters %}
     parameters={{ llm.parameters }},
     {% else %}
@@ -355,19 +351,22 @@ reply_llm = {{ llm.__class__.__name__}}(
     num_previous_messages={{ llm.num_previous_messages }},
     {% endif %}
 )
-{% set has_reply_llm_state.value = true %}
+{% if default_llm_ns.name is none %}
+{% set default_llm_ns.name = llm.name %}
+{% endif %}
+{% if agent.default_llm_name and llm.name == agent.default_llm_name %}
+{% set default_llm_ns.name = llm.name %}
+{% endif %}
 {% endfor %}
+default_llm = {{ safe_var_name(default_llm_ns.name) }}
+{% set has_default_llm_state.value = true %}
 {% endif %}
-{% if not has_reply_llm_state.value %}
-# Default LLM when no config or model provides one
-reply_llm = LLMOpenAI(
-    agent=agent,
-    name='gpt-5-nano',
-    parameters={}
-)
-{% set has_reply_llm_state.value = true %}
+{% if not has_default_llm_state.value %}
+# No LLM configured; consumers referencing default_llm will fail loudly at runtime
+default_llm = None
+{% set has_default_llm_state.value = true %}
 {% endif %}
-{% set has_reply_llm = has_reply_llm_state.value %}
+{% set has_default_llm = has_default_llm_state.value %}
 {% set has_db_reply = has_db_reply_state.value %}
 
 {% if has_db_reply %}
@@ -382,7 +381,7 @@ agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
 {% if not ic_config_set.value %}
 # Default to LLM-based intent classification (avoids PyTorch dependency)
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='gpt-5-nano',
+    llm_name={{ ic_llm_ns.name | string | tojson }},
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
@@ -391,6 +390,36 @@ ic_config = LLMIntentClassifierConfiguration(
 )
 agent.set_default_ic_config(ic_config)
 {% endif %}
+
+{% if agent.tools and agent.tools|length > 0 %}
+##############################
+# TOOLS
+##############################
+agent.load_tools(os.path.join(_HERE, "tools.py"))
+{% endif %}
+
+{% if agent.skills and agent.skills|length > 0 %}
+##############################
+# SKILLS
+##############################
+agent.load_skills(os.path.join(_HERE, "skills"))
+{% endif %}
+
+{% if agent.workspaces and agent.workspaces|length > 0 %}
+##############################
+# WORKSPACES
+##############################
+{% for ws in agent.workspaces %}
+agent.new_workspace(
+    name={{ ws.name | string | tojson }},
+    path={{ ws.path | string | tojson }}{% if ws.description %},
+    description={{ ws.description | string | tojson }}{% endif %},
+    writable={{ ws.writable }},
+    max_read_bytes={{ ws.max_read_bytes }}
+)
+{% endfor %}
+{% endif %}
+
 {% if agent.entities %}
 ##############################
 # ENTITIES
@@ -507,7 +536,25 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
 {% endif %}
 
 {% for state in agent.states %}
+{% if is_class(state, 'ReasoningState') %}
+{{ state.name }} = new_reasoning_state(
+    agent=agent,
+    {% if state.llm %}
+    llm={{ safe_var_name(state.llm) }},
+    {% else %}
+    llm=default_llm,
+    {% endif %}
+    name={{ state.name | string | tojson }},
+    {% if state.initial and not has_personalization %}initial=True,{% endif %}
+    max_steps={{ state.max_steps }},
+    enable_task_planning={{ state.enable_task_planning }},
+    stream_steps={{ state.stream_steps }}{% if state.system_prompt %},
+    system_prompt={{ state.system_prompt | string | tojson }}{% endif %}{% if state.fallback_message %},
+    fallback_message={{ state.fallback_message | string | tojson }}{% endif %}
+)
+{% else %}
 {{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial and not has_personalization %}, initial=True{% endif %}{% if state.ic_config != None %}, ic_config={{ write_ic_config(state.ic_config) }}{% endif %})
+{% endif %}
 {% endfor %}
 
 {% if has_personalization %}
@@ -569,11 +616,12 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     else:
         reply_text = str(db_result)
     {% else %}
-    {% if has_reply_llm %}
+    {% if has_default_llm %}
+    {% if action.llm_name %}{% set chosen_db_llm = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_db_llm = 'default_llm' %}{% endif %}
     db_result = session.db_handler.{{ db_method }}(
         db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
         query=session.event.message,
-        llm=reply_llm
+        llm={{ chosen_db_llm }}
     )
     if isinstance(db_result, (dict, list)):
         retrieved_answer = json.dumps(db_result, default=str)
@@ -583,7 +631,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
         f"Original user query:\n{session.event.message}\n\n"
         f"Retrieved database answer:\n{retrieved_answer}"
     )
-    reply_text = reply_llm.predict(
+    reply_text = {{ chosen_db_llm }}.predict(
         message=llm_input,
         session=session,
         system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
@@ -620,19 +668,23 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {% if state.body != None %}
 {% set body_name = state.body.name ~ suffix_part %}
 {% if body_name not in ns.bodies %}
-{% if state.body.actions and is_class(state.body.actions[0], 'AgentReply') %}
+{% set body_has_custom_ns = namespace(value=false, func_name='') %}
+{% for action in state.body.actions %}{% if is_class(action, 'CustomCodeAction') %}{% set body_has_custom_ns.value = true %}{% set body_has_custom_ns.func_name = extract_function_name(action.code) %}{% endif %}{% endfor %}
+{% if state.body.actions and body_has_custom_ns.value %}
+{{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
+{% elif state.body.actions %}
 def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
+    {% if inject_profile_context and has_default_llm %}
+    default_llm.add_user_context(
         session=session,
         context=context_prompts.get('{{ suffix }}'),
-        context_name='agent_configuration_{{ suffix }}'
+        context_name='agent_configuration'
     )
     {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
+    default_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
-        context_name='user_profile_{{ suffix }}'
+        context_name='user_profile'
     )
     {% endif %}
     {% endif %}
@@ -640,6 +692,8 @@ def {{ body_name }}(session: Session):
     speech_messages = []
     {% endif %}
     {% for action in state.body.actions %}
+    # Action {{ loop.index }}
+    {% if is_class(action, 'AgentReply') %}
     {% if personalized_messages is defined and personalized_messages and not suffix %}
     reply_text = choose_variant_for_message('{{ action.message }}', session)
     {% else %}
@@ -649,135 +703,235 @@ def {{ body_name }}(session: Session):
     {% if speech_enabled %}
     speech_messages.append(reply_text)
     {% endif %}
-    {% endfor %}
-    {% if speech_enabled %}
-    if speech_messages:
-        platform.reply_speech(session, ' '.join(speech_messages))
-    {% endif %}
-{% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
-def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
-        session=session,
-        context=context_prompts.get('{{ suffix }}'),
-        context_name='agent_configuration'
-    )
-    {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
-        session=session,
-        context=profile_prompts.get('{{ suffix }}'),
-        context_name='user_profile'
-    )
-    {% endif %}
-    {% endif %}
-    {% set llm_action = state.body.actions[0] %}
-    {% if llm_action.prompt %}
-    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'LLMReply') %}
+    {% set llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.prompt %}
+    message = {{ llm_ns.name }}.predict(message=session.event.message, session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
-    message = reply_llm.predict(message=session.event.message, session=session)
+    message = {{ llm_ns.name }}.predict(message=session.event.message, session=session)
     {% endif %}
     session.reply(message)
     {% if speech_enabled %}
     platform.reply_speech(session, message)
     {% endif %}
-{% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
-def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
-        session=session,
-        context=context_prompts.get('{{ suffix }}'),
-        context_name='agent_configuration'
-    )
-    {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
-        session=session,
-        context=profile_prompts.get('{{ suffix }}'),
-        context_name='user_profile'
-    )
+    {% elif is_class(action, 'LLMChatReply') %}
+    {% set llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.prompt %}
+    message = {{ llm_ns.name }}.chat(session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ llm_ns.name }}.chat(session=session)
     {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
     {% endif %}
-    {% for action in state.body.actions %}
+    {% elif is_class(action, 'RAGReply') %}
+    {% set rag_var_name = resolve_rag_var_name(agent, action.rag_db_name) %}
+    {% if rag_var_name %}
+    {% if action.prompt %}
+    rag_message = {{ rag_var_name }}.run(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = {{ rag_var_name }}.run(session.event.message)
+    {% endif %}
+    {% else %}
     {% if action.prompt %}
     rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
     rag_message = session.run_rag(session.event.message)
     {% endif %}
+    {% endif %}
     platform.reply_rag(session, rag_message)
+    {% elif is_class(action, 'DBReply') %}
+{{ render_db_reply_actions([action], speech_enabled) }}
+    {% elif is_class(action, 'WebCrawlLLMReply') %}
+    {% set web_crawl_llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set web_crawl_llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.run_crawl %}
+    webpages = crawl_website(
+        initial_url='{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        max_depth={{ action.max_depth }},
+        max_pages={{ action.max_pages }},
+        format='{{ action.crawl_format }}'{% if action.base_url_prefix %},
+        base_url_prefix='{{ action.base_url_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}'{% endif %}
+
+    )
+    session.set('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}', webpages)
+    {% else %}
+    webpages = session.get('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    if webpages is None:
+        session.reply('{{ action.no_crawl_error_message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+        return
+    {% endif %}
+    {% if action.system_message_prefix %}
+    system_message = '{{ action.system_message_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}' + str(webpages)
+    {% else %}
+    system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
+    {% endif %}
+    message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyMarkdown') %}
+    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplyHTML') %}
+    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplySpeech') %}
+    {% if action.audio_speed is not none %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    {% else %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyOptions') %}
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    {% elif is_class(action, 'WebSocketReplyLocation') %}
+    platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
+    {% elif is_class(action, 'WebSocketReplyFile') %}
+    # TODO: Assign a baf.types.File object to `reply_file_obj` before this state is reached
+    platform.reply_file(session, reply_file_obj)
+    {% elif is_class(action, 'WebSocketReplyImage') %}
+    # TODO: Assign a numpy.ndarray image to `reply_image_arr` before this state is reached
+    platform.reply_image(session, reply_image_arr)
+    {% elif is_class(action, 'WebSocketReplyDataframe') %}
+    # TODO: Assign a pandas.DataFrame to `reply_df` before this state is reached
+    platform.reply_dataframe(session, reply_df)
+    {% elif is_class(action, 'WebSocketReplyPlotly') %}
+    # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
+    platform.reply_plotly(session, reply_plot)
+    {% endif %}
     {% endfor %}
-{% elif state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
-def {{ body_name }}(session: Session):
-    {% if inject_profile_context and has_reply_llm %}
-    reply_llm.add_user_context(
-        session=session,
-        context=context_prompts.get('{{ suffix }}'),
-        context_name='agent_configuration'
-    )
-    {% if configuration.adaptContentToUserProfile %}
-    reply_llm.add_user_context(
-        session=session,
-        context=profile_prompts.get('{{ suffix }}'),
-        context_name='user_profile'
-    )
+    {% if speech_enabled %}
+    if speech_messages:
+        platform.reply_speech(session, ' '.join(speech_messages))
     {% endif %}
-    {% endif %}
-{{ render_db_reply_actions(state.body.actions, speech_enabled) }}
-{% else %}
-{{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
 {% endif %}
 {% set ns.bodies = ns.bodies + [body_name] %}
 {% endif %}
-{{ state_name }}.set_body({{ body_name }})
+{{ state_name }}.set_body({{ body_has_custom_ns.func_name if body_has_custom_ns.value and body_has_custom_ns.func_name else body_name }})
 {% endif %}
 {% if state.fallback_body != None %}
 {% set fallback_name = state.fallback_body.name ~ suffix_part %}
 {% if fallback_name not in ns.bodies %}
-{% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'AgentReply') %}
+{% set fallback_has_custom_ns = namespace(value=false, func_name='') %}
+{% for action in state.fallback_body.actions %}{% if is_class(action, 'CustomCodeAction') %}{% set fallback_has_custom_ns.value = true %}{% set fallback_has_custom_ns.func_name = extract_function_name(action.code) %}{% endif %}{% endfor %}
+{% if state.fallback_body.actions and fallback_has_custom_ns.value %}
+{{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}
+{% elif state.fallback_body.actions %}
 def {{ fallback_name }}(session: Session):
     {% if speech_enabled %}
     speech_messages = []
     {% endif %}
     {% for action in state.fallback_body.actions %}
+    # Action {{ loop.index }}
+    {% if is_class(action, 'AgentReply') %}
     reply_text = '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}'
     session.reply(reply_text)
     {% if speech_enabled %}
     speech_messages.append(reply_text)
+    {% endif %}
+    {% elif is_class(action, 'LLMReply') %}
+    {% set llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.prompt %}
+    message = {{ llm_ns.name }}.predict(message=session.event.message, session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ llm_ns.name }}.predict(message=session.event.message, session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% elif is_class(action, 'LLMChatReply') %}
+    {% set llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.prompt %}
+    message = {{ llm_ns.name }}.chat(session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ llm_ns.name }}.chat(session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% elif is_class(action, 'RAGReply') %}
+    {% set rag_var_name = resolve_rag_var_name(agent, action.rag_db_name) %}
+    {% if rag_var_name %}
+    {% if action.prompt %}
+    rag_message = {{ rag_var_name }}.run(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = {{ rag_var_name }}.run(session.event.message)
+    {% endif %}
+    {% else %}
+    {% if action.prompt %}
+    rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = session.run_rag(session.event.message)
+    {% endif %}
+    {% endif %}
+    platform.reply_rag(session, rag_message)
+    {% elif is_class(action, 'DBReply') %}
+{{ render_db_reply_actions([action], speech_enabled) }}
+    {% elif is_class(action, 'WebCrawlLLMReply') %}
+    {% set web_crawl_llm_ns = namespace(name='default_llm') %}{% if action.llm_name %}{% set web_crawl_llm_ns.name = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% endif %}
+    {% if action.run_crawl %}
+    webpages = crawl_website(
+        initial_url='{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        max_depth={{ action.max_depth }},
+        max_pages={{ action.max_pages }},
+        format='{{ action.crawl_format }}'{% if action.base_url_prefix %},
+        base_url_prefix='{{ action.base_url_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}'{% endif %}
+
+    )
+    session.set('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}', webpages)
+    {% else %}
+    webpages = session.get('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    if webpages is None:
+        session.reply('{{ action.no_crawl_error_message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+        return
+    {% endif %}
+    {% if action.system_message_prefix %}
+    system_message = '{{ action.system_message_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}' + str(webpages)
+    {% else %}
+    system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
+    {% endif %}
+    message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyMarkdown') %}
+    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplyHTML') %}
+    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplySpeech') %}
+    {% if action.audio_speed is not none %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    {% else %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyOptions') %}
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    {% elif is_class(action, 'WebSocketReplyLocation') %}
+    platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
+    {% elif is_class(action, 'WebSocketReplyFile') %}
+    # TODO: Assign a baf.types.File object to `reply_file_obj` before this state is reached
+    platform.reply_file(session, reply_file_obj)
+    {% elif is_class(action, 'WebSocketReplyImage') %}
+    # TODO: Assign a numpy.ndarray image to `reply_image_arr` before this state is reached
+    platform.reply_image(session, reply_image_arr)
+    {% elif is_class(action, 'WebSocketReplyDataframe') %}
+    # TODO: Assign a pandas.DataFrame to `reply_df` before this state is reached
+    platform.reply_dataframe(session, reply_df)
+    {% elif is_class(action, 'WebSocketReplyPlotly') %}
+    # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
+    platform.reply_plotly(session, reply_plot)
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}
     if speech_messages:
         platform.reply_speech(session, ' '.join(speech_messages))
     {% endif %}
-{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
-def {{ fallback_name }}(session: Session):
-    {% set llm_action = state.fallback_body.actions[0] %}
-    {% if llm_action.prompt %}
-    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
-    {% else %}
-    message = reply_llm.predict(message=session.event.message, session=session)
-    {% endif %}
-    session.reply(message)
-    {% if speech_enabled %}
-    platform.reply_speech(session, message)
-    {% endif %}
-{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
-def {{ fallback_name }}(session: Session):
-    {% for action in state.fallback_body.actions %}
-    {% if action.prompt %}
-    rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
-    {% else %}
-    rag_message = session.run_rag(session.event.message)
-    {% endif %}
-    platform.reply_rag(session, rag_message)
-    {% endfor %}
-{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
-def {{ fallback_name }}(session: Session):
-{{ render_db_reply_actions(state.fallback_body.actions, speech_enabled) }}
-{% else %}
-{{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}
 {% endif %}
 {% set ns.bodies = ns.bodies + [fallback_name] %}
 {% endif %}
-{{ state_name }}.set_fallback_body({{ fallback_name }})
+{{ state_name }}.set_fallback_body({{ fallback_has_custom_ns.func_name if fallback_has_custom_ns.value and fallback_has_custom_ns.func_name else fallback_name }})
 {% endif %}
 {% set auto_ns = namespace(found=False) %}
 {% for transition in state.transitions %}

@@ -2,7 +2,7 @@ Grammar for OCL specification
 =============================
 
 We have designed grammar for parsing OCL constraints. The lexer and parser generated using this grammar can parse all the constraints defined in `Royal and Loyal Example project <https://github.com/jcabot/ocl-repository/blob/master/academic/RoyalAndLoyal/RoyalAndLoyal.ocl/>`_.
-All the test cases corresponding to these example are in the tests/ocl/test_ocl_parser.py.
+The corresponding test cases live in ``tests/BUML/notations/ocl/test_parse_ocl.py``.
 
 The grammar for OCL is shown below:
 
@@ -210,6 +210,12 @@ The grammar for OCL is shown below:
 
 To Evaluate the OCL Constraints you can create the test case using the following code:
 
+.. note::
+
+  ``constraint.expression`` holds the constraint as a source-text string (always a ``str``),
+  while ``constraint.ast`` (on :class:`OCLConstraint`) exposes the parsed AST as an
+  :class:`OCLExpression` for downstream tooling that needs to walk the tree.
+
 .. code-block:: python
 
     from models.library_object import library_model,object_model
@@ -219,7 +225,7 @@ To Evaluate the OCL Constraints you can create the test case using the following
     def test_1():
         wrapper = OCLWrapper(library_model, object_model)
         constraint=list(library_model.constraints)[0]
-        print("Query: " + str(constraint.expression), end=": ")
+        print("Query: " + constraint.expression, end=": ")
         res = None
         try:
             res = wrapper.evaluate(constraint)

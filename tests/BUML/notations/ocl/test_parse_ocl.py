@@ -60,3 +60,42 @@ def test_parse_iterator_constraint(model):
     )
     assert isinstance(result, OCLConstraint)
     assert result.context.name == "Department"
+
+
+# Tests for OCLConstraint.ast / .expression separation (Pre-work B)
+
+def test_ocl_constraint_ast_is_the_parsed_tree(model):
+    """``OCLConstraint.ast`` exposes the parsed AST."""
+    from besser.BUML.metamodel.ocl.ocl import OCLExpression
+    constraint = parse_ocl("context Employee inv: self.age > 16", model)
+    assert isinstance(constraint.ast, OCLExpression)
+
+
+def test_ocl_constraint_expression_is_source_text(model):
+    """``OCLConstraint.expression`` returns pretty-printed OCL source text."""
+    constraint = parse_ocl("context Employee inv: self.age > 16", model)
+    assert isinstance(constraint.expression, str)
+    assert "self.age" in constraint.expression
+
+
+def test_ocl_constraint_rejects_non_ast_expression(model):
+    """Constructing OCLConstraint with a string raises TypeError."""
+    employee = next(t for t in model.types if getattr(t, "name", None) == "Employee")
+    with pytest.raises(TypeError, match="OCLExpression"):
+        OCLConstraint(name="bad", context=employee, expression="self.age > 16")
+
+
+def test_ocl_constraint_ast_setter_refreshes_expression(model):
+    """Reassigning .ast updates .expression to a fresh pretty-print."""
+    c1 = parse_ocl("context Employee inv: self.age > 16", model)
+    c2 = parse_ocl("context Employee inv: self.age > 99", model)
+    c1.ast = c2.ast
+    assert "99" in c1.expression
+
+
+def test_ocl_constraint_ast_setter_rejects_non_ast(model):
+    constraint = parse_ocl("context Employee inv: self.age > 16", model)
+    with pytest.raises(TypeError, match="OCLExpression"):
+        constraint.ast = "not an ast"
+
+

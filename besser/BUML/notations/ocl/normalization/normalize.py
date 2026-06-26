@@ -58,7 +58,7 @@ def normalize(constraint: OCLConstraint, model: DomainModel,
     from besser.BUML.notations.ocl.normalization.rules import build_default_rules
 
     rules = build_default_rules()
-    expr = clone(constraint.expression)
+    expr = clone(constraint.ast)
     ctx = Context(model=model, constraint=constraint)
 
     for _ in range(max_iterations):

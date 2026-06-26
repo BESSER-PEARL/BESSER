@@ -134,9 +134,9 @@ import torch.nn.functional as F
         {%- elif module_details[3].__class__.mro()[1].__name__ == "RNN" %}
             {%- if module_details[3].return_type == "both" %}
                 {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
-        {{ module_details[1] }}, ({{ module_details[4] }}, {{ module_details[4] }}_cell) = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].params and 'hx_source' in module_details[3].params %}, hx=({{ modules_details[module_details[3].params['hx_source'] + '_layer'][4] }}, {{ modules_details[module_details[3].params['hx_source'] + '_layer'][4] }}_cell){% endif %})
+        {{ module_details[1] }}, ({{ module_details[4] }}, {{ module_details[4] }}_cell) = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% endif %})
                 {%- else %}
-        {{ module_details[1] }}, {{ module_details[4] }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].params and 'hx_source' in module_details[3].params %}, hx={{ modules_details[module_details[3].params['hx_source'] + '_layer'][4] }}{% endif %})
+        {{ module_details[1] }}, {{ module_details[4] }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %})
                 {%- endif -%}
                 {%- if module_details[3].bidirectional %}
                     {%- if not module_details[3].skip_hidden_concat %}

@@ -228,6 +228,118 @@ async def recommend_agent_config_llm(
         raise GenerationError("Failed to generate LLM recommendation") from exc
 
 
+@router.post("/personalize-gui-page")
+@handle_endpoint_errors("personalize_gui_page")
+async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
+    """Personalize a GUI page (GrapesJS) for a user profile using an LLM.
+
+    Open endpoint (no GitHub session required). The OpenAI API key is resolved
+    from the payload or the server's ``OPENAI_API_KEY`` environment variable.
+
+    Request body:
+        guiPage: {"components": [...], "css": [...]}  -- a GrapesJS page snapshot
+        userProfileModel: <UserDiagram UML model JSON>
+        pageName: str (optional)
+        model: str (optional OpenAI model id)
+
+    Returns the same ``{components, css}`` shape adapted in style and content,
+    ready to be imported back into the editor as a page variant.
+    """
+    gui_page = payload.get("guiPage")
+    if not isinstance(gui_page, dict):
+        raise ValidationError(
+            "guiPage is required and must be a JSON object with 'components' and 'css'"
+        )
+
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise ValidationError("userProfileModel is required and must be a JSON object")
+
+    components = gui_page.get("components")
+    if not isinstance(components, list):
+        raise ValidationError("guiPage.components must be a list")
+    css = gui_page.get("css")
+    if not isinstance(css, list):
+        css = []
+
+    page_name = payload.get("pageName") if isinstance(payload.get("pageName"), str) else "page"
+    requested_model = payload.get("model")
+    llm_model = (
+        requested_model
+        if isinstance(requested_model, str) and requested_model.strip()
+        else "gpt-5"
+    )
+
+    # Transform the user profile (UserDiagram) into its JSON object representation.
+    profile_document = _generate_user_profile_document(user_profile_model)
+
+    system_prompt = (
+        "You are a UI personalization assistant for a GrapesJS-based no-code GUI editor. "
+        "You receive a single GUI page as GrapesJS data: a 'components' array (the component "
+        "tree, each node carrying fields such as type, tagName, attributes, classes, components, "
+        "and text content) and a 'css' array (GrapesJS style-rule objects with 'selectors', "
+        "'style', and 'pageId'). You also receive a user profile. "
+        "Adapt the page to this specific user in terms of CONTENT (wording, tone, labels, "
+        "headings, copy) and STYLE (colors, spacing, font sizes, emphasis via the 'style' maps). "
+        "STRICT RULES: "
+        "1) Return ONLY a single JSON object with EXACTLY this shape: "
+        '{"components": [...], "css": [...]}. No markdown, no comments, no prose. '
+        "2) Preserve the overall structure: keep each component's 'type', 'tagName', and "
+        "'attributes.id' unchanged, and do not add, remove, or reorder components. "
+        "3) You MAY change visible text content, attribute label values (placeholder, title, "
+        "alt, link text), class lists, and the 'style' objects in both components and css rules. "
+        "4) Keep every css rule's 'selectors' and 'pageId' values exactly as given. "
+        "5) The result must be valid JSON, parseable as-is, and remain a working GrapesJS page."
+    )
+    user_prompt = (
+        f'Personalize the GUI page named "{page_name}" for the following user.\n\n'
+        f"User profile document:\n{json.dumps(profile_document, ensure_ascii=False, indent=2)}\n\n"
+        "GUI page to adapt (GrapesJS):\n"
+        f"{json.dumps({'components': components, 'css': css}, ensure_ascii=False)}\n\n"
+        'Return only the personalized JSON object {"components": [...], "css": [...]}.'
+    )
+
+    try:
+        response_text = await asyncio.to_thread(
+            call_openai_chat,
+            system_prompt,
+            user_prompt,
+            model=llm_model,
+            openai_api_key=extract_openai_api_key(payload if isinstance(payload, dict) else {}),
+            config=payload,
+        )
+        parsed = extract_json_object(response_text)
+        personalized_components = parsed.get("components")
+        personalized_css = parsed.get("css", [])
+        if not isinstance(personalized_components, list):
+            raise GenerationError("LLM response did not include a valid 'components' list")
+        if not isinstance(personalized_css, list):
+            personalized_css = []
+
+        return {
+            "guiPage": {
+                "components": personalized_components,
+                "css": personalized_css,
+            },
+            "source": "openai",
+            "model": llm_model,
+            "generatedAt": _utc_now_iso(),
+        }
+    except RuntimeError as runtime_error:
+        # Raised by call_openai_chat when no OpenAI API key is configured.
+        raise ValidationError(str(runtime_error)) from runtime_error
+    except ValueError as parse_error:
+        logger.exception("Failed to parse LLM personalization response")
+        raise GenerationError("Failed to parse LLM personalization response") from parse_error
+    except (ValidationError, GenerationError):
+        raise
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to personalize GUI page")
+        raise GenerationError("Failed to personalize GUI page") from exc
+
+
 @router.get("/agent-config-manual-mapping")
 @handle_endpoint_errors("get_agent_config_manual_mapping")
 async def get_agent_config_manual_mapping(

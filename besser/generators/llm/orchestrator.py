@@ -1373,6 +1373,18 @@ class LLMOrchestrator:
                     messages=messages,
                     instructions=instructions,
                 )
+            elif response["stop_reason"] in ("max_tokens", "length"):
+                # The model hit its OUTPUT token limit mid-turn (typically a
+                # large write_file). That is not a provider failure — report it
+                # honestly as truncation instead of the misleading
+                # "unexpected stop_reason: length" provider error. (#29)
+                logger.warning("Output token limit reached on turn %d", turn + 1)
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = (
+                    "The model hit its output token limit, so the generated code "
+                    "may be truncated. Try a smaller scope or fewer files per run."
+                )
+                break
             else:
                 logger.warning("Unexpected stop_reason: %s", response["stop_reason"])
                 self._phase2_stop_reason = "api_error"

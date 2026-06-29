@@ -26,6 +26,8 @@ as flow-element containers -- ``FlowNode.outgoing()`` / ``incoming()`` and ``BPM
 accessors stay free of attribute-name branching. Containment semantics are unchanged.
 """
 
+import keyword
+import logging
 from enum import Enum
 
 from besser.BUML.metamodel.structural import Model, NamedElement
@@ -194,6 +196,8 @@ class BPMNElement(NamedElement):
             raise TypeError(
                 f"BPMN element name must be a str or None, got {type(name).__name__}"
             )
+        if keyword.iskeyword(name):
+            logging.warning(f"'{name}' is a Python keyword. This may cause issues in generated code.")
         # Bypass NamedElement's strict identifier validation by writing its private slot.
         self._NamedElement__name = name
 
@@ -1435,6 +1439,8 @@ class BPMNModel(Model):
             raise TypeError(
                 f"BPMN model name must be a str or None, got {type(name).__name__}"
             )
+        if keyword.iskeyword(name):
+            logging.warning(f"'{name}' is a Python keyword. This may cause issues in generated code.")
         self._NamedElement__name = name
 
     @property

@@ -152,9 +152,9 @@ JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close th
 round-trip through executable BUML ``.py`` files.
 
 .. note::
-   The frontend BPMN editor currently lives on the ``dev/bpmn`` branch of the
+   The frontend BPMN editor is being integrated into the
    `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
-   repository and is being merged into ``main``.
+   repository; check there for the latest availability.
 
 Backend API Reference
 ---------------------

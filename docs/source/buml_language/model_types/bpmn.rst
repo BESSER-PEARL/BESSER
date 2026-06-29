@@ -74,10 +74,10 @@ Event model
 
 Events split along **two orthogonal axes**:
 
-- ``direction`` (``EventDirection.CATCH`` / ``THROW``):  ``CATCH`` means the event waits to 
-  receive a trigger (message arrives, timer fires, signal broadcast from elsewhere); ``THROW`` 
-  means the event sends a trigger as the flow passes through it. Fixed to ``CATCH`` on 
-  ``StartEvent`` and ``THROW`` on ``EndEvent``; free on ``IntermediateEvent``. 
+- ``direction`` (``EventDirection.CATCH`` / ``THROW``):  ``CATCH`` means the event waits to
+  receive a trigger (message arrives, timer fires, signal broadcast from elsewhere); ``THROW``
+  means the event sends a trigger as the flow passes through it. Fixed to ``CATCH`` on
+  ``StartEvent`` and ``THROW`` on ``EndEvent``; free on ``IntermediateEvent``.
 - ``event_definition`` (``EventDefinitionType``): ``NONE``, ``MESSAGE``,
   ``TIMER``, ``SIGNAL``, ``ESCALATION``, ``ERROR``, ``COMPENSATION``, ``LINK``,
   ``CONDITIONAL``, ``TERMINATE``.

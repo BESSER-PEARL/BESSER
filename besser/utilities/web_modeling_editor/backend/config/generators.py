@@ -21,6 +21,7 @@ from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
 from besser.generators.bpmn import BPMNGenerator
+from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -207,7 +208,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         file_extension=".bpmn",
         category="business_process",
         requires_class_diagram=False,
-        required_diagram_type="BPMNDiagram",
+        required_diagram_type=BPMN_DIAGRAM_TYPE,
     ),
 }
 

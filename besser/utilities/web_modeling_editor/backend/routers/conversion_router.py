@@ -87,6 +87,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     CSV_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
+    BPMN_DIAGRAM_TYPE,
 )
 
 # Centralized error handling
@@ -357,7 +358,7 @@ async def export_buml(input_data: DiagramInput):
                 },
             )
 
-        elif elements_data.get("type") == "BPMNDiagram":
+        elif elements_data.get("type") == BPMN_DIAGRAM_TYPE:
             try:
                 bpmn_model = process_bpmn_diagram(json_data)
             except (KeyError, TypeError, AttributeError) as exc:
@@ -501,7 +502,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "QuantumCircuitDiagram", "BPMNDiagram",
+                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -591,7 +592,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "title": diagram_title,
                 "model": bpmn_json
             }
-            diagram_type = "BPMNDiagram"
+            diagram_type = BPMN_DIAGRAM_TYPE
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 

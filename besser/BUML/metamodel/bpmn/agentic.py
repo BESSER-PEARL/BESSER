@@ -89,8 +89,8 @@ def _validate_trust_score(value) -> int:
     return value
 
 
-def _validate_multiplicity(value) -> int:
-    """Validate a swarm-size multiplicity: ``int`` ``>= 1``.
+def _validate_swarm_size(value) -> int:
+    """Validate a swarm size: ``int`` ``>= 1``.
 
     The swarm size of an «AgenticLane» — how many identical copies of the
     lane's agent participate. No upper cap.
@@ -103,10 +103,10 @@ def _validate_multiplicity(value) -> int:
     """
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(
-            f"multiplicity must be an int, got {type(value).__name__}"
+            f"swarm_size must be an int, got {type(value).__name__}"
         )
     if value < 1:
-        raise ValueError(f"multiplicity must be >= 1, got {value}")
+        raise ValueError(f"swarm_size must be >= 1, got {value}")
     return value
 
 
@@ -367,7 +367,7 @@ class AgenticLane(Lane):
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
             lane's agent is defined by (SEAA'25 cross-diagram link, WME 08).
             Default None. Pass-through -- no UUID validation, no resolution.
-        multiplicity (int): Swarm size — how many identical copies of this
+        swarm_size (int): Swarm size — how many identical copies of this
             lane's agent participate (>= 1, default 1). Flows to the Deployment
             artifact ``[N]``. WME meeting 2026-06-08 point #3.
         flow_nodes (set[FlowNode]): Inherited from Lane.
@@ -382,7 +382,7 @@ class AgenticLane(Lane):
 
     def __init__(self, name: str = "", role: "AgentRole" = None,
                  trust_score: int = 0, agent_diagram_ref: str = None,
-                 multiplicity: int = 1,
+                 swarm_size: int = 1,
                  flow_nodes: set = None,
                  layout: dict = None, metadata=None, timestamp=None):
         super().__init__(name=name, flow_nodes=flow_nodes, layout=layout,
@@ -390,7 +390,7 @@ class AgenticLane(Lane):
         self.role = role if role is not None else AgentRole.WORKER
         self.trust_score = trust_score
         self.agent_diagram_ref = agent_diagram_ref
-        self.multiplicity = multiplicity
+        self.swarm_size = swarm_size
 
     @property
     def role(self) -> "AgentRole":
@@ -426,19 +426,19 @@ class AgenticLane(Lane):
         self.__trust_score = _validate_trust_score(value)
 
     @property
-    def multiplicity(self) -> int:
+    def swarm_size(self) -> int:
         """int: Get the swarm size (>= 1, default 1)."""
-        return self.__multiplicity
+        return self.__swarm_size
 
-    @multiplicity.setter
-    def multiplicity(self, value: int):
+    @swarm_size.setter
+    def swarm_size(self, value: int):
         """int: Set the swarm size.
 
         Raises:
             TypeError: if not an int.
             ValueError: if < 1.
         """
-        self.__multiplicity = _validate_multiplicity(value)
+        self.__swarm_size = _validate_swarm_size(value)
 
     @property
     def agent_diagram_ref(self):
@@ -469,7 +469,7 @@ class AgenticLane(Lane):
     def __repr__(self):
         return (f"AgenticLane(name='{self.name}', role={self.role}, "
                 f"trust_score={self.trust_score}, "
-                f"multiplicity={self.multiplicity}, "
+                f"swarm_size={self.swarm_size}, "
                 f"agent_diagram_ref={self.agent_diagram_ref!r})")
 
 

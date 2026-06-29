@@ -17,6 +17,7 @@ The full mapping table lives in Appendix A of
 
 from besser.BUML.metamodel.bpmn import (
     EndEvent,
+    Event,
     EventDefinitionType,
     EventDirection,
     IntermediateEvent,
@@ -29,7 +30,7 @@ from besser.BUML.metamodel.bpmn import (
 _WME_DEFAULT = "default"
 
 
-def parse_event_type(event_class: type, event_type: str):
+def parse_event_type(event_class: type, event_type: str) -> tuple[EventDirection, EventDefinitionType]:
     """WME ``eventType`` → ``(EventDirection, EventDefinitionType)``.
 
     Args:
@@ -72,7 +73,7 @@ def parse_event_type(event_class: type, event_type: str):
     )
 
 
-def serialise_event_type(event) -> str:
+def serialise_event_type(event: Event) -> str:
     """``Event`` (StartEvent / IntermediateEvent / EndEvent) → WME ``eventType`` string.
 
     The inverse of :func:`parse_event_type`, by construction (round-trip is identity for

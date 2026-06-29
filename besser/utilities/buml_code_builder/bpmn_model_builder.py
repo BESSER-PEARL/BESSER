@@ -9,6 +9,8 @@ containers first, then ``add_*`` calls. Mirrors ``state_machine_builder.py`` so 
 emitted modules read the same way as the existing diagram-type builders.
 """
 
+from typing import Optional
+
 from besser.BUML.metamodel.bpmn import (
     Association,
     BPMNModel,
@@ -296,7 +298,7 @@ def _emit_container(container, container_var: str, dispenser: _NameDispenser,
 _BANNER = "####################\n#    BPMN MODEL    #\n####################"
 
 
-def bpmn_model_to_code(model: BPMNModel, file_path: str = None,
+def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
                        model_var_name: str = "bpmn_model") -> str:
     """Generate Python code that reconstructs ``model`` when ``exec()``'d.
 

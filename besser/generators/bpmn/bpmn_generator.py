@@ -16,6 +16,7 @@ limitations (multi-process ``dataStoreReference``, sub-process artifact hoisting
 import os
 import re
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 from besser.BUML.metamodel.bpmn import (
     Activity,
@@ -122,7 +123,7 @@ class BPMNGenerator(GeneratorInterface):
         file_name (str, optional): Output filename (default ``"bpmn_diagram.bpmn"``).
     """
 
-    def __init__(self, model: BPMNModel, output_dir: str = None,
+    def __init__(self, model: BPMNModel, output_dir: Optional[str] = None,
                  file_name: str = "bpmn_diagram.bpmn"):
         super().__init__(model, output_dir)
         self._file_name = file_name

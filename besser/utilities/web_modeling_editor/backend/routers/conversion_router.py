@@ -600,7 +600,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
+            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend

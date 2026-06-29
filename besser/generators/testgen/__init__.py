@@ -1,1 +1,1 @@
-from .test_generator import TestGenerator as TestGenerator
+from .test_generator import TestCaseGenerator as TestCaseGenerator

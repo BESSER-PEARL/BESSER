@@ -7,6 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
+from besser.utilities.buml_code_builder.common import _escape_python_string
 
 
 def _regex_findall(value, pattern):
@@ -17,9 +18,9 @@ def _regex_replace(value, find, replace):
     return re.sub(find, replace, value)
 
 
-class TestGenerator(GeneratorInterface):
+class TestCaseGenerator(GeneratorInterface):
     """
-    HypothesisTestGenerator implements GeneratorInterface and generates a
+    TestCaseGenerator implements GeneratorInterface and generates a
     pytest + Hypothesis test suite from a B-UML DomainModel.
 
     Produces:
@@ -29,14 +30,25 @@ class TestGenerator(GeneratorInterface):
       - Section 2: Hypothesis property-based tests (st.builds strategies,
         instantiation invariants, type contracts, method @given tests,
         association set tests).
+      - Section 3: OCL post-condition tests translated from each method's
+        post-conditions.
 
     Args:
         model (DomainModel): The B-UML domain model to generate tests from.
         output_dir (str, optional): Output directory. Defaults to None.
+        module_name (str, optional): Module the generated tests import the
+            domain classes from (``from <module_name> import ...``). Matches
+            the ``PythonGenerator`` default output module. Defaults to
+            ``"classes"``.
     """
 
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    # Stop pytest from trying to collect this class as a test suite (its name
+    # starts with "Test"); it is a generator, not a test case.
+    __test__ = False
+
+    def __init__(self, model: DomainModel, output_dir: str = None, module_name: str = "classes"):
         super().__init__(model, output_dir)
+        self.module_name = module_name
 
     def generate(self) -> None:
         """Generate ``test_hypothesis.py`` in the configured output directory."""
@@ -47,14 +59,17 @@ class TestGenerator(GeneratorInterface):
         env = Environment(loader=FileSystemLoader(templates_path))
         # Custom filters used by hypothesis_tests_template.py.j2:
         # - to_strategy: maps B-UML primitive type names -> Hypothesis strategies
+        # - escape_py: escapes model-controlled text embedded in string literals
         # - regex_findall / regex_replace: used by the OCL constraint section
         env.filters["to_strategy"] = buml_type_to_hypothesis_strategy
+        env.filters["escape_py"] = _escape_python_string
         env.filters["regex_findall"] = _regex_findall
         env.filters["regex_replace"] = _regex_replace
         template = env.get_template("hypothesis_tests_template.py.j2")
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
                 domain=self.model,
+                module_name=self.module_name,
                 sort_by_timestamp=sort_by_timestamp,
             )
             f.write(generated_code)

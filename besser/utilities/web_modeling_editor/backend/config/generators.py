@@ -20,7 +20,7 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
-from besser.generators.testgen import TestGenerator
+from besser.generators.testgen import TestCaseGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -73,7 +73,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
 
     "test_case": GeneratorInfo(
-        generator_class=TestGenerator,
+        generator_class=TestCaseGenerator,
         output_type="file",
         file_extension=".py",
         category="object_oriented",

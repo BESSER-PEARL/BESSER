@@ -44,6 +44,10 @@ Choosing a Generator
      - Structural
      - .py
      - You need Pydantic validation models with OCL constraints
+   * - **Test Cases**
+     - Structural
+     - .py (pytest + Hypothesis)
+     - You want an auto-generated pytest + Hypothesis test suite for your model
    * - **Java**
      - Structural
      - .java files
@@ -122,6 +126,7 @@ Generate code for various frameworks and programming languages:
    generators/rest_api
    generators/python
    generators/pydantic
+   generators/test_case
    generators/java
    generators/flutter
    generators/react

@@ -5,7 +5,7 @@ import hypothesis.strategies as st
 import copy
 from datetime import date
 
-from classes import (
+from {{ module_name }} import (
 {%- for class in domain.classes_sorted_by_inheritance() %}
     {{ class.name }},
 {%- endfor %}
@@ -36,18 +36,18 @@ def test_{{ class.name | lower }}_constructor_args():
     sig = inspect.signature({{ class.name }}.__init__)
     params = list(sig.parameters.keys())
     {%- for attr in class.all_attributes() %}
-    assert "{{ attr.name }}" in params, "Missing parameter '{{ attr.name }}'"
+    assert "{{ attr.name | escape_py }}" in params, "Missing parameter '{{ attr.name | escape_py }}'"
     {%- endfor %}
 
 
 {%- for attr in class.all_attributes() %}
 
 def test_{{ class.name | lower }}_has_{{ attr.name }}():
-    assert hasattr({{ class.name }}, "{{ attr.name }}")
+    assert hasattr({{ class.name }}, "{{ attr.name | escape_py }}")
     descriptor = None
     for klass in {{ class.name }}.__mro__:
-        if "{{ attr.name }}" in klass.__dict__:
-            descriptor = klass.__dict__["{{ attr.name }}"]
+        if "{{ attr.name | escape_py }}" in klass.__dict__:
+            descriptor = klass.__dict__["{{ attr.name | escape_py }}"]
             break
     assert isinstance(descriptor, property)
 
@@ -65,12 +65,12 @@ def test_{{ enumeration.name | lower }}_has_all_literals():
     enum_literals = [lit.name for lit in {{ enumeration.name }}]
     expected_literals = [
         {%- for lit in enumeration.literals %}
-        "{{ lit.name }}",
+        "{{ lit.name | escape_py }}",
         {%- endfor %}
     ]
     # Check that all expected literals exist
     for lit_name in expected_literals:
-        assert lit_name in enum_literals, f"Literal '{{lit_name}}' missing in {{ enumeration.name }}"
+        assert lit_name in enum_literals, f"Literal '{lit_name}' missing in {{ enumeration.name | escape_py }}"
 
 {%- endfor %}
 
@@ -134,21 +134,19 @@ def test_{{ class.name | lower }}_{{ attr.name }}_setter(instance):
 
 
 {%- for assoc in class.association_ends() %}
-{%- if assoc.multiplicity in ["0..*", "*", "0..1", "1"] %}
 
 @given(instance={{ class.name }}_strategy)
 def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
     value = instance.{{ assoc.name }}
 
-    {%- if assoc.multiplicity in ["0..*", "*"] %}
+    {%- if assoc.multiplicity.max > 1 %}
     assert isinstance(value, set)
-    {%- elif assoc.multiplicity == "0..1" %}
-    assert value is None or isinstance(value, {{ assoc.target_class.name }})
-    {%- elif assoc.multiplicity == "1" %}
-    assert isinstance(value, {{ assoc.target_class.name }})
+    {%- elif assoc.multiplicity.min == 0 %}
+    assert value is None or isinstance(value, {{ assoc.type.name }})
+    {%- else %}
+    assert isinstance(value, {{ assoc.type.name }})
     {%- endif %}
 
-{%- endif %}
 {%- endfor %}
 {%- for operation in class.methods %}
 {%- if 'get' not in operation.name.lower() %}
@@ -192,14 +190,14 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
         tree = ast.parse(source)
         body = tree.body[0].body  # function body
         has_statements = len(body) > 0 and not all(isinstance(stmt, ast.Pass) for stmt in body)
-        assert has_statements, f"Function '{{operation.name}}' in {{ class.name }} is empty"
+        assert has_statements, f"Function '{{ operation.name | escape_py }}' in {{ class.name | escape_py }} is empty"
 
         # Check for state change (WARN if no change)
         if instance.__dict__ == before.__dict__:
-            warnings.warn(f"Operation '{{operation.name}}' in {{ class.name }} did not change state; check implementation")
+            warnings.warn(f"Operation '{{ operation.name | escape_py }}' in {{ class.name | escape_py }} did not change state; check implementation")
 
     except (AttributeError, NotImplementedError, TypeError):
-        warnings.warn(f"Operation '{{operation.name}}' in {{ class.name }} is not implemented or raised an error")
+        warnings.warn(f"Operation '{{ operation.name | escape_py }}' in {{ class.name | escape_py }} is not implemented or raised an error")
 
 {%- endif %}
 {%- endfor %}

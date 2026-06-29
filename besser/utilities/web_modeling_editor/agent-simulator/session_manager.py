@@ -20,12 +20,13 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-MAX_SESSIONS = 5
-SESSION_LIFETIME_SECONDS = 900  # 15 minutes
-PORT_POOL = list(range(7700, 7700 + MAX_SESSIONS))
+MAX_SESSIONS = int(os.environ.get("AGENT_SIMULATOR_MAX_SESSIONS") or "5")
+SESSION_LIFETIME_SECONDS = int(os.environ.get("AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS") or "900")
+_PORT_POOL_START = int(os.environ.get("AGENT_SIMULATOR_PORT_POOL_START") or "7700")
+PORT_POOL = list(range(_PORT_POOL_START, _PORT_POOL_START + MAX_SESSIONS))
 SESSION_UID_BASE = int(
-    os.environ.get("AGENT_SIMULATION_SESSION_UID_BASE")
-    or os.environ.get("AGENT_SANDBOX_SESSION_UID_BASE")
+    os.environ.get("AGENT_SIMULATOR_SESSION_UID_BASE")
+    or os.environ.get("AGENT_SIMULATION_SESSION_UID_BASE")
     or "20000"
 )
 UID_POOL = list(range(SESSION_UID_BASE, SESSION_UID_BASE + MAX_SESSIONS))
@@ -35,11 +36,11 @@ SESSIONS_ROOT = "/tmp/sessions"
 # RLIMIT_AS (virtual memory) must be generous: Python + ML libs (openai,
 # numpy, pandas…) map several GB of address space via shared libraries even
 # when resident memory is small. 4 GB is a safe floor.
-_RLIMIT_AS = 4 * 1024 * 1024 * 1024  # 4 GB virtual memory
-_RLIMIT_CPU = 120                      # 120 s CPU time
-_RLIMIT_FSIZE = 100 * 1024 * 1024     # 100 MB max single file
-_RLIMIT_NPROC = 64
-_RLIMIT_NOFILE = 1024                  # Python import machinery needs ~200+
+_RLIMIT_AS    = int(os.environ.get("AGENT_SIMULATOR_RLIMIT_AS_GB")    or "4") * 1024 * 1024 * 1024
+_RLIMIT_CPU   = int(os.environ.get("AGENT_SIMULATOR_RLIMIT_CPU_SEC")  or "120")
+_RLIMIT_FSIZE = int(os.environ.get("AGENT_SIMULATOR_RLIMIT_FSIZE_MB") or "100") * 1024 * 1024
+_RLIMIT_NPROC  = int(os.environ.get("AGENT_SIMULATOR_RLIMIT_NPROC")   or "64")
+_RLIMIT_NOFILE = int(os.environ.get("AGENT_SIMULATOR_RLIMIT_NOFILE")  or "1024")
 
 
 @dataclass

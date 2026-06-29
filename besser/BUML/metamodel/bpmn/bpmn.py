@@ -109,6 +109,20 @@ _LEGAL_EVENT_DEFINITIONS = {
 }
 
 
+def _legal_event_definitions(event):
+    """Resolve the legal ``EventDefinitionType`` set for ``event`` by its base event
+    class (via ``isinstance``) and direction, or ``None`` when no rule applies.
+
+    Keying on the class hierarchy rather than ``type(event).__name__`` means a subclass
+    of ``StartEvent`` / ``EndEvent`` / ``IntermediateEvent`` is still validated against
+    its parent's table instead of being silently skipped.
+    """
+    for base in (StartEvent, EndEvent, IntermediateEvent):
+        if isinstance(event, base):
+            return _LEGAL_EVENT_DEFINITIONS.get((base.__name__, event.direction))
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Module-private helpers
 # ---------------------------------------------------------------------------
@@ -546,7 +560,7 @@ class Event(FlowNode):
         does not fire mid-``__init__`` before both axes are set."""
         if self.__direction is None or self.__event_definition is None:
             return
-        legal = _LEGAL_EVENT_DEFINITIONS.get((type(self).__name__, self.__direction))
+        legal = _legal_event_definitions(self)
         if legal is not None and self.__event_definition not in legal:
             raise ValueError(
                 f"{type(self).__name__} with direction {self.__direction.name} cannot have "
@@ -1690,7 +1704,7 @@ class BPMNModel(Model):
         """E9: re-check the (event class, direction) -> legal event_definition table."""
         for node in self.all_flow_nodes():
             if isinstance(node, Event):
-                legal = _LEGAL_EVENT_DEFINITIONS.get((type(node).__name__, node.direction))
+                legal = _legal_event_definitions(node)
                 if legal is not None and node.event_definition not in legal:
                     errors.append(
                         f"{type(node).__name__} '{node.name}' has illegal event_definition "

@@ -17,11 +17,7 @@ from . import (
 )
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
-
-try:
-    from besser.BUML.metamodel.bpmn import BPMNModel
-except ImportError:  # BPMN metamodel optional in some envs
-    BPMNModel = None
+from besser.BUML.metamodel.bpmn import BPMNModel
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -299,10 +295,7 @@ def json_to_buml_project(project):
     # promote a dangling ref to a project-level error. Stashed on the project
     # so a future /validate-project endpoint can aggregate it with per-diagram
     # validate() output.
-    cross_bpmn_models = [
-        m for m in model_list
-        if BPMNModel is not None and isinstance(m, BPMNModel)
-    ]
+    cross_bpmn_models = [m for m in model_list if isinstance(m, BPMNModel)]
     project_instance._cross_diagram_errors = _validate_cross_diagram_references(
         bpmn_models=cross_bpmn_models,
         diagram_index=diagram_index,

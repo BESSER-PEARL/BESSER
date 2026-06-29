@@ -487,12 +487,12 @@ def test_layout_fallback_envelope_size_min_800x600():
 
 
 # ---------------------------------------------------------------------------
-# 7. bpmn_to_json wrapper (exec-based, added in 04-)
+# 7. bpmn_buml_to_json wrapper (exec-based, added in 04-)
 # ---------------------------------------------------------------------------
 
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.bpmn_diagram_converter import (  # noqa: E402
-    bpmn_to_json,
+    bpmn_buml_to_json,
 )
 
 
@@ -509,7 +509,7 @@ class TestBpmnToJsonWrapper:
         json_in = request.getfixturevalue(fixture_name)
         model = process_bpmn_diagram(json_in)
         source = bpmn_model_to_code(model)
-        json_out = bpmn_to_json(source)
+        json_out = bpmn_buml_to_json(source)
 
         direct = bpmn_object_to_json(model)
         # Compare structural signatures (ids change because the layout passthrough
@@ -526,11 +526,11 @@ class TestBpmnToJsonWrapper:
         # (the wrapper deliberately does NOT catch arbitrary RuntimeError so genuinely
         # unexpected errors stay visible — see 04- guide §5).
         with pytest.raises(ConversionError, match="failed to execute"):
-            bpmn_to_json("undefined_symbol\n")
+            bpmn_buml_to_json("undefined_symbol\n")
 
     def test_no_bpmn_model_raises_conversion_error(self):
         with pytest.raises(ConversionError, match="produced no BPMNModel"):
-            bpmn_to_json("x = 1\n")
+            bpmn_buml_to_json("x = 1\n")
 
     def test_finds_model_under_any_variable_name(self):
         # The wrapper should find the model even if it's not the conventional name.
@@ -540,10 +540,10 @@ class TestBpmnToJsonWrapper:
             "p = Process(name='P', flow_nodes={task_x})\n"
             "weird_var_name = BPMNModel(name='X', processes={p})\n"
         )
-        out = bpmn_to_json(source)
+        out = bpmn_buml_to_json(source)
         assert out["type"] == "BPMNDiagram"
         assert len(out["elements"]) == 1
 
     def test_syntax_error_raises_conversion_error(self):
         with pytest.raises(ConversionError, match="failed to execute"):
-            bpmn_to_json("def broken(:\n    pass\n")
+            bpmn_buml_to_json("def broken(:\n    pass\n")

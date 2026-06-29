@@ -150,7 +150,7 @@ The BPMN converters live alongside the others under
 ``bpmn_object_to_json(model)``
     ``BPMNModel`` → WME BPMN JSON.
 
-``bpmn_to_json(content)``
+``bpmn_buml_to_json(content)``
     B-UML ``.py`` source string → WME BPMN JSON (executes the source and
     delegates to ``bpmn_object_to_json``).
 

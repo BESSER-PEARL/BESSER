@@ -2,7 +2,7 @@
 
 Covers the builder unit behaviour (parses, exec'd code reconstructs the model,
 collisions resolved, layout passthrough, deterministic output). Round-trip via the
-``bpmn_to_json`` wrapper is covered separately in
+``bpmn_buml_to_json`` wrapper is covered separately in
 ``tests/utilities/web_modeling_editor/backend/services/converters/test_bpmn_converters.py``.
 """
 

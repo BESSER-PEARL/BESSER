@@ -4,7 +4,7 @@ Two entry points:
 
 * ``bpmn_object_to_json(model: BPMNModel) -> dict`` — converts a metamodel object
   directly. Mirror of ``json_to_buml.bpmn_diagram_processor.process_bpmn_diagram``.
-* ``bpmn_to_json(content: str) -> dict`` — execs a BPMN BUML ``.py`` source string
+* ``bpmn_buml_to_json(content: str) -> dict`` — execs a BPMN BUML ``.py`` source string
   in a fresh namespace, finds the resulting ``BPMNModel``, and delegates to
   ``bpmn_object_to_json``. The ``.py`` files emitted by
   ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
@@ -471,10 +471,10 @@ class _GridLayout:
 
 
 # ---------------------------------------------------------------------------
-# bpmn_to_json — BUML .py source string → WME JSON
+# bpmn_buml_to_json — BUML .py source string → WME JSON
 # ---------------------------------------------------------------------------
 
-def bpmn_to_json(content: str) -> dict:
+def bpmn_buml_to_json(content: str) -> dict:
     """Convert a BPMN BUML ``.py`` source string into a WME BPMN diagram JSON dict.
 
     Execs ``content`` in a fresh namespace, locates the resulting ``BPMNModel``, and

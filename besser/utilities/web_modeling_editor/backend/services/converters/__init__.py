@@ -28,7 +28,7 @@ from .buml_to_json import (
     nn_model_to_json,
     nn_buml_to_json,
     bpmn_object_to_json,
-    bpmn_to_json,
+    bpmn_buml_to_json,
 )
 
 __all__ = [
@@ -55,5 +55,5 @@ __all__ = [
     "nn_model_to_json",
     "nn_buml_to_json",
     "bpmn_object_to_json",
-    "bpmn_to_json",
+    "bpmn_buml_to_json",
 ]

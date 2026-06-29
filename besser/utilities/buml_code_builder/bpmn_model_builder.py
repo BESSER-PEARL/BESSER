@@ -2,7 +2,7 @@
 
 Generates Python code from a ``BPMNModel`` metamodel instance. The emitted code can be
 ``exec()``'d to reconstruct an identical model — that is the contract
-``services/converters/buml_to_json/bpmn_diagram_converter.bpmn_to_json`` relies on.
+``services/converters/buml_to_json/bpmn_diagram_converter.bpmn_buml_to_json`` relies on.
 
 Build style — option (b) per ``.claude/bpmn/04-bpmn-code-builder-guide.md``: empty
 containers first, then ``add_*`` calls. Mirrors ``state_machine_builder.py`` so the

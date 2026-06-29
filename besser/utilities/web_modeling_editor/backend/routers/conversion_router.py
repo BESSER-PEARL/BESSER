@@ -60,7 +60,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     gui_buml_to_json,
     project_to_json,
     nn_buml_to_json,
-    bpmn_to_json,
+    bpmn_buml_to_json,
 )
 
 # Backend services - Other services
@@ -587,7 +587,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     elif is_bpmn:
         try:
             logger.info("Detected BPMN diagram, parsing...")
-            bpmn_json = bpmn_to_json(buml_content)
+            bpmn_json = bpmn_buml_to_json(buml_content)
             diagram_data = {
                 "title": diagram_title,
                 "model": bpmn_json

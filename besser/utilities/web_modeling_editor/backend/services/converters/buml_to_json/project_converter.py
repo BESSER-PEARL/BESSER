@@ -17,7 +17,7 @@ from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
-from .bpmn_diagram_converter import bpmn_to_json
+from .bpmn_diagram_converter import bpmn_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def _convert_section(
             model = nn_buml_to_json(section_code)
 
         elif model_name == "bpmn_model":
-            model = bpmn_to_json(section_code)
+            model = bpmn_buml_to_json(section_code)
 
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
@@ -306,7 +306,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         elif diagram_type == 'NNDiagram':
             model = nn_buml_to_json(content)
         elif diagram_type == 'BPMNDiagram':
-            model = bpmn_to_json(content)
+            model = bpmn_buml_to_json(content)
         else:
             raise ValueError(f"Unsupported single-diagram type: {diagram_type}")
     except (SyntaxError, ValueError, TypeError) as e:

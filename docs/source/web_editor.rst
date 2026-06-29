@@ -148,7 +148,7 @@ syntax.
 The editor round-trips ``.bpmn`` files entirely in the browser (BPMN 2.0
 XML import / export). The backend converters
 (``process_bpmn_diagram`` / ``bpmn_object_to_json``) handle the
-JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_to_json`` close the
+JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close the
 round-trip through executable BUML ``.py`` files.
 
 .. note::

@@ -14,6 +14,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
+      - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network

@@ -95,6 +95,11 @@ def parse_buml_content(content: str) -> DomainModel:
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
+        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
+        # "invalid non-printable character U+FEFF" for files saved with a BOM.
+        if content.startswith("﻿"):
+            content = content[1:]
+
         # Pre-process the content to remove import and generator-related lines.
         # All required types are already provided in safe_globals, so import
         # statements are unnecessary and would fail in the sandboxed environment.
@@ -223,8 +228,18 @@ def class_buml_to_json(domain_model):
             attribute_ids = []
             method_ids = []
 
+            # Header height must mirror the editor's UMLClassifier renderer
+            # (stereotypeHeaderHeight=50, nonStereotypeHeaderHeight=40) so ELK
+            # auto-layout and the headless SVG renderer agree on box geometry.
+            # Enumerations and abstract classes carry a «stereotype» line, so
+            # their header is one row taller and members start lower.
+            is_stereotyped = isinstance(type_obj, Enumeration) or (
+                isinstance(type_obj, Class) and getattr(type_obj, "is_abstract", False)
+            )
+            header_height = 50 if is_stereotyped else 40
+
             # Process attributes/literals
-            y_offset = y + 40  # Starting position for attributes
+            y_offset = y + header_height  # Members start below the header
             if isinstance(type_obj, Class):
                 for attr in sorted(type_obj.attributes, key=lambda a: a.name):
                     attr_id = str(uuid.uuid4())
@@ -251,7 +266,14 @@ def class_buml_to_json(domain_model):
                         "isDerived": attr.is_derived,
                     }
                     if attr.default_value is not None:
-                        attr_element["defaultValue"] = attr.default_value
+                        # default_value may be an EnumerationLiteral (or other
+                        # metamodel object); coerce it to a JSON-serialisable
+                        # value — its name, else its string form — so the diagram
+                        # JSON can be serialised when sent to the render service.
+                        default_value = attr.default_value
+                        if not isinstance(default_value, (str, int, float, bool)):
+                            default_value = getattr(default_value, "name", None) or str(default_value)
+                        attr_element["defaultValue"] = default_value
                     elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30
@@ -382,8 +404,14 @@ def class_buml_to_json(domain_model):
                     attribute_ids.append(literal_id)
                     y_offset += 30
 
-            # Create the element
-            computed_height = max(100, 30 * (len(attribute_ids) + len(method_ids) + 1))
+            # Create the element. Box height mirrors the renderer: header plus
+            # one 30px row per attribute/method (see UMLClassifier.render). OCL
+            # constraint boxes are not classifiers, so keep their legacy sizing.
+            member_count = len(attribute_ids) + len(method_ids)
+            if isinstance(type_obj, Constraint):
+                computed_height = max(100, 30 * (member_count + 1))
+            else:
+                computed_height = header_height + 30 * member_count
             element_data = {
                 "id": element_id,
                 "name": type_obj.name,

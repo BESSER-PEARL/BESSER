@@ -9,7 +9,7 @@ Round-trip safe when the input model was built via
 ``process_bpmn_diagram`` — original WME ids ride in ``BPMNElement.layout`` and
 are reused via :meth:`BPMNGenerator._id_for_obj` when they're NCName-valid.
 
-See ``.claude/bpmn/05-bpmn-generator-guide.md`` for the design and the §11 known
+See ``docs/source/generators/bpmn.rst`` for the design and the known
 limitations (multi-process ``dataStoreReference``, sub-process artifact hoisting).
 """
 

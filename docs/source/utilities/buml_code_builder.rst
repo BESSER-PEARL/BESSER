@@ -17,6 +17,7 @@ Available entry points
 * ``component_model_to_code`` - UML Component models (base ``ComponentModel``
   and agentic ``AgenticComponentModel``)
 * ``deployment_model_to_code`` - UML Deployment models
+* ``bpmn_model_to_code`` - BPMN process models
 * ``project_to_code`` - full projects that bundle multiple diagrams
 
 Domain model generation

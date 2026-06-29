@@ -49,6 +49,7 @@ from besser.generators.llm.checkpoint import (
 from besser.generators.llm.errors import (
     CheckpointMismatchError,
     EmptyInstructionsError,
+    InvalidApiKeyError,
 )
 from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
 from besser.generators.llm.llm_client import ClaudeLLMClient
@@ -1279,6 +1280,12 @@ class LLMOrchestrator:
                     response = self.client.chat(
                         system=system, messages=messages, tools=self.tools,
                     )
+            except InvalidApiKeyError:
+                # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
+                # not a misleading INTERNAL/api_error or a fake "incomplete
+                # success" (#27 — the runner's INVALID_KEY branch was dead because
+                # this blanket except swallowed it into api_error).
+                raise
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
                 self._phase2_stop_reason = "api_error"

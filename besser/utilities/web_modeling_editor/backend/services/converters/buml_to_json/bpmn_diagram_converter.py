@@ -81,12 +81,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Reverse of the processor's dispatch — every concrete metamodel type that maps to a
-# distinct WME ``elements[id]["type"]`` string.
+# distinct WME ``elements[id]["type"]`` string. Lookup is by exact ``type(obj)`` (see
+# ``_wme_type_for``), so entry order is irrelevant even for subclasses like Transaction
+# (a SubProcess subclass); ``CallActivity`` is resolved separately in ``_wme_type_for``.
 _TYPE_FOR_CLASS = {
     Task: "BPMNTask",
-    Transaction: "BPMNTransaction",   # checked before SubProcess (subclass)
+    Transaction: "BPMNTransaction",
     SubProcess: "BPMNSubprocess",
-    "CallActivity": "BPMNCallActivity",  # resolved below
     StartEvent: "BPMNStartEvent",
     IntermediateEvent: "BPMNIntermediateEvent",
     EndEvent: "BPMNEndEvent",

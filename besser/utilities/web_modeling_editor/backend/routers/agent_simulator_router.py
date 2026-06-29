@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 SIMULATOR_URL = (
     os.environ.get("AGENT_SIMULATOR_URL")
     or os.environ.get("AGENT_SIMULATOR_URL")
-    or os.environ.get("AGENT_SANDBOX_URL")
     or "http://besser-agent-simulator:8001"
 )
 
@@ -131,8 +130,6 @@ def _enforce_agent_simulator_auth(github_session: Optional[str]) -> None:
 
 
 router = APIRouter(prefix="/besser_api/simulation", tags=["agent-simulator"])
-legacy_router = APIRouter(prefix="/besser_api/test", tags=["agent-simulator-legacy"])
-
 
 class StartSimulationSessionRequest(BaseModel):
     title: str
@@ -272,7 +269,6 @@ async def _cleanup_simulator_session(session_id: str) -> None:
 
 
 @router.post("/sessions", response_model=StartSimulationSessionResponse)
-@legacy_router.post("/sessions", response_model=StartSimulationSessionResponse)
 async def start_simulation_session(
     request: StartSimulationSessionRequest,
     http_request: Request,
@@ -334,7 +330,6 @@ async def start_simulation_session(
 
 
 @router.post("/validate", response_model=ValidateResponse)
-@legacy_router.post("/validate", response_model=ValidateResponse)
 async def validate_agent(
     request: StartSimulationSessionRequest,
     http_request: Request,
@@ -359,7 +354,6 @@ async def validate_agent(
 
 
 @router.get("/sessions/{session_id}/files", response_model=SessionFilesResponse)
-@legacy_router.get("/sessions/{session_id}/files", response_model=SessionFilesResponse)
 async def get_session_files(
     session_id: str,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
@@ -384,7 +378,6 @@ async def get_session_files(
 
 
 @router.delete("/sessions/{session_id}")
-@legacy_router.delete("/sessions/{session_id}")
 async def stop_simulation_session(
     session_id: str,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
@@ -398,7 +391,6 @@ async def stop_simulation_session(
 
 
 @router.websocket("/{session_id}/ws")
-@legacy_router.websocket("/{session_id}/ws")
 async def simulator_session_ws(websocket: WebSocket, session_id: str):
     """
     Relay WebSocket messages between the frontend and the agent simulator service.

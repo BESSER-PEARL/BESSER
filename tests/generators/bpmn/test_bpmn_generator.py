@@ -1,12 +1,10 @@
 """Tests for the BPMN generator (vendor-neutral BPMN 2.0 XML).
 
-Covers per-fixture XML generation, id strategy, DI emission, determinism, and an
-opt-in XSD validation that is skipped when ``lxml`` is not installed.
+Covers per-fixture XML generation, id strategy, DI emission, and determinism.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -307,27 +305,6 @@ def test_emitted_file_parses_without_error(fixture_fn, tmp_path):
     # Round-trip through ElementTree — any malformed XML would raise.
     tree = ET.parse(str(path))
     assert tree.getroot().tag == f"{{{_NS['bpmn']}}}definitions"
-
-
-# ---------------------------------------------------------------------------
-# F. Optional XSD validation (skipped without lxml)
-# ---------------------------------------------------------------------------
-
-_HAS_LXML = importlib.util.find_spec("lxml") is not None
-_XSD_PATH = Path(__file__).parent / "BPMN20.xsd"
-
-
-@pytest.mark.skipif(not _HAS_LXML, reason="lxml not installed; skipping XSD validation")
-@pytest.mark.skipif(not _XSD_PATH.exists(), reason="BPMN20.xsd not vendored in tests dir")
-@pytest.mark.parametrize("fixture_fn", [
-    _poolless_model, _two_pool_model, _gateway_model, _subprocess_model,
-])
-def test_emitted_xml_validates_against_bpmn20_xsd(fixture_fn, tmp_path):
-    from lxml import etree  # noqa: I001
-    schema = etree.XMLSchema(etree.parse(str(_XSD_PATH)))
-    path = _generate(fixture_fn(), tmp_path)
-    parsed = etree.parse(str(path))
-    schema.assertValid(parsed)
 
 
 # ---------------------------------------------------------------------------

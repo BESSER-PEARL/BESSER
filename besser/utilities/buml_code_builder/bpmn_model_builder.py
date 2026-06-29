@@ -217,8 +217,8 @@ def _emit_sequence_flow(flow: SequenceFlow, container_var: str,
         parts.append(f"name={_quoted(flow.name)}")
     if flow.is_default:
         parts.append("is_default=True")
-    body.append(f"{container_var}.add_sequence_flow(SequenceFlow({', '.join(parts)}))")
-    _emit_flow_layout_if_present(flow, body)
+    ctor = f"SequenceFlow({', '.join(parts)})"
+    _emit_connecting_object(flow, ctor, container_var, "add_sequence_flow", dispenser, body)
 
 
 def _emit_association(flow: Association, process_var: str,
@@ -229,8 +229,8 @@ def _emit_association(flow: Association, process_var: str,
     parts = [f"source={src}", f"target={tgt}"]
     if flow.name:
         parts.append(f"name={_quoted(flow.name)}")
-    body.append(f"{process_var}.add_association(Association({', '.join(parts)}))")
-    _emit_flow_layout_if_present(flow, body)
+    ctor = f"Association({', '.join(parts)})"
+    _emit_connecting_object(flow, ctor, process_var, "add_association", dispenser, body)
 
 
 def _emit_data_association(flow: DataAssociation, process_var: str,
@@ -241,10 +241,8 @@ def _emit_data_association(flow: DataAssociation, process_var: str,
     parts = [f"source={src}", f"target={tgt}"]
     if flow.name:
         parts.append(f"name={_quoted(flow.name)}")
-    body.append(
-        f"{process_var}.add_data_association(DataAssociation({', '.join(parts)}))"
-    )
-    _emit_flow_layout_if_present(flow, body)
+    ctor = f"DataAssociation({', '.join(parts)})"
+    _emit_connecting_object(flow, ctor, process_var, "add_data_association", dispenser, body)
 
 
 def _emit_message_flow(flow: MessageFlow, dispenser: _NameDispenser,
@@ -255,17 +253,27 @@ def _emit_message_flow(flow: MessageFlow, dispenser: _NameDispenser,
     if flow.name:
         parts.append(f"name={_quoted(flow.name)}")
     needed.add("MessageFlow")
-    body.append(f"collaboration.add_message_flow(MessageFlow({', '.join(parts)}))")
-    _emit_flow_layout_if_present(flow, body)
+    ctor = f"MessageFlow({', '.join(parts)})"
+    _emit_connecting_object(flow, ctor, "collaboration", "add_message_flow", dispenser, body)
 
 
-def _emit_flow_layout_if_present(flow, body: list) -> None:
-    """Connecting objects can't carry a follow-up ``.layout =`` line directly because
-    they're constructed inline inside the ``add_*`` call. The layout is intentionally
-    not preserved on flows in the .py round-trip (the converter recomputes it from
-    bounds). Hook present in case we ever need to emit it under a temporary variable.
+def _emit_connecting_object(flow, ctor_expr: str, target_var: str, add_method: str,
+                            dispenser: _NameDispenser, body: list) -> None:
+    """Emit a connecting object's construction and its ``add_*`` call.
+
+    When the flow carries a non-empty ``layout`` it is materialised under a temporary
+    variable so the layout can be attached before the ``add_*`` call — mirroring
+    ``_emit_layout_if_present`` for nodes, which keeps the flow's WME ids/waypoints on
+    the ``.py`` round-trip. Otherwise the object is constructed inline inside the
+    ``add_*`` call to keep the emitted code compact.
     """
-    return  # no-op by design — see docstring
+    if getattr(flow, "layout", None):
+        var = dispenser.name_for(flow)
+        body.append(f"{var} = {ctor_expr}")
+        body.append(f"{var}.layout = {repr(flow.layout)}")
+        body.append(f"{target_var}.{add_method}({var})")
+    else:
+        body.append(f"{target_var}.{add_method}({ctor_expr})")
 
 
 # ---------------------------------------------------------------------------

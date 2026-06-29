@@ -1,5 +1,5 @@
 """
-Agent sandbox session manager.
+Agent simulation session manager.
 
 Manages subprocess-based agent sessions with resource limits and port pooling.
 Each session gets an isolated /tmp/sessions/{id}/ directory and a dedicated
@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 MAX_SESSIONS = 5
 SESSION_LIFETIME_SECONDS = 900  # 15 minutes
 PORT_POOL = list(range(7700, 7700 + MAX_SESSIONS))
-SESSION_UID_BASE = int(os.environ.get("AGENT_SANDBOX_SESSION_UID_BASE", "20000"))
+SESSION_UID_BASE = int(
+    os.environ.get("AGENT_SIMULATION_SESSION_UID_BASE")
+    or os.environ.get("AGENT_SANDBOX_SESSION_UID_BASE")
+    or "20000"
+)
 UID_POOL = list(range(SESSION_UID_BASE, SESSION_UID_BASE + MAX_SESSIONS))
 SESSIONS_ROOT = "/tmp/sessions"
 
@@ -194,7 +198,7 @@ class SessionManager:
             uid = self._acquire_uid()
             if uid is None:
                 self._release_port(port)
-                raise RuntimeError("No available sandbox UID for agent session")
+                raise RuntimeError("No available simulation UID for agent session")
 
         work_dir = self._session_work_dir(normalized_session_id)
         os.makedirs(work_dir, exist_ok=True)
@@ -270,7 +274,7 @@ class SessionManager:
                 os.umask(0o077)
             except Exception as exc:
                 # Fail fast: running untrusted code without UID isolation is unsafe.
-                raise RuntimeError(f"Cannot switch sandbox subprocess to uid {uid}") from exc
+                raise RuntimeError(f"Cannot switch simulation subprocess to uid {uid}") from exc
 
             try:
                 resource.setrlimit(resource.RLIMIT_AS, (_RLIMIT_AS, _RLIMIT_AS))
@@ -314,7 +318,7 @@ class SessionManager:
         if session:
             session.terminate()
         # Always remove the work directory even when the session is no longer in the
-        # registry (e.g. double-delete calls or sandbox restart with stale dirs).
+        # registry (e.g. double-delete calls or simulation service restart with stale dirs).
         work_dir = self._session_work_dir(normalized_session_id)
         shutil.rmtree(work_dir, ignore_errors=True)
         if session:

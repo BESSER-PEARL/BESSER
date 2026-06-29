@@ -1,5 +1,5 @@
 """
-BESSER Agent Sandbox API
+BESSER Agent Simulator API
 
 Isolated execution environment for user-designed BAF agents.
 Runs as a separate container reachable only from the backend on an internal
@@ -37,7 +37,7 @@ def _is_valid_session_id(session_id: str) -> bool:
     except (ValueError, TypeError):
         return False
 
-app = FastAPI(title="BESSER Agent Sandbox API", docs_url=None, redoc_url=None)
+app = FastAPI(title="BESSER Agent Simulator API", docs_url=None, redoc_url=None)
 
 # ---------------------------------------------------------------------------
 # Models
@@ -74,7 +74,7 @@ class SessionFilesResponse(BaseModel):
 
 @app.post("/sessions", response_model=CreateSessionResponse)
 async def create_session(request: CreateSessionRequest):
-    """Start a new agent sandbox session."""
+    """Start a new agent simulator session."""
     if not _is_valid_session_id(request.session_id):
         raise HTTPException(status_code=400, detail="Invalid session_id format")
 
@@ -116,7 +116,7 @@ async def list_session_files(session_id: str):
 
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
-    """Terminate a sandbox session and clean up its resources."""
+    """Terminate an simulator session and clean up its resources."""
     if not _is_valid_session_id(session_id):
         raise HTTPException(status_code=400, detail="Invalid session_id format")
     await asyncio.to_thread(session_manager.terminate_session, session_id)

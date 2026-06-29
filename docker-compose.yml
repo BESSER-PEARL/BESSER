@@ -14,14 +14,14 @@ services:
     environment:
       - PYTHONPATH=/app
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
-      - AGENT_SANDBOX_URL=http://besser-agent-sandbox:8001
-      - AGENT_TEST_REQUIRE_AUTH=${AGENT_TEST_REQUIRE_AUTH:-true}
+      - AGENT_SIMULATION_URL=http://besser-agent-simulation:8001
+      - AGENT_SIMULATION_REQUIRE_AUTH=${AGENT_SIMULATION_REQUIRE_AUTH:-true}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network
       - besser_internal
     depends_on:
-      - besser-agent-sandbox
+      - besser-agent-simulation
 
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
@@ -37,11 +37,11 @@ services:
     ports:
       - "8080:8080"
 
-  besser-agent-sandbox:
+  besser-agent-simulation:
     build:
-      context: ./besser/utilities/web_modeling_editor/agent-sandbox
+      context: ./besser/utilities/web_modeling_editor/agent-simulation
       dockerfile: Dockerfile
-    container_name: besser-agent-sandbox
+    container_name: besser-agent-simulation
     read_only: true
     cap_drop:
       - ALL

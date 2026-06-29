@@ -5,4 +5,4 @@ mkdir -p /tmp/sessions
 chown root:root /tmp/sessions
 chmod 0711 /tmp/sessions
 
-exec python agent_sandbox_api.py
+exec python agent_simulator_api.py

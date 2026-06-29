@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Preload NLTK tokenizer data used by BAF so sandboxed subprocesses do not
+# Preload NLTK tokenizer data used by BAF so simulation subprocesses do not
 # download corpora at runtime (which can leave partial/corrupted zip files).
 ENV NLTK_DATA=/opt/nltk_data
 RUN mkdir -p ${NLTK_DATA} && python - <<'PY'

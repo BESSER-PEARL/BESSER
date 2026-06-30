@@ -143,15 +143,20 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
     Returns:
         The input variable.
     """
-    # Check if inputs_outputs has explicit input for this layer that differs from prev_out_var
+    lyr_input = layer.name_module_input
+
+    # If layer has explicit name_module_input, resolve it first (don't use inputs_outputs override)
+    if lyr_input and lyr_input is not False and isinstance(lyr_input, str):
+        # Fall through to name_module_input resolution below
+        pass
+    # Only check inputs_outputs override if layer does NOT have name_module_input
     # This handles cases like: z = tf.zeros_like(x); x = self.dense(x)
     # where prev_out_var is 'z' but the layer actually takes 'x' as input
-    if inputs_outputs and layer.name in inputs_outputs:
+    elif inputs_outputs and layer.name in inputs_outputs:
         actual_input = inputs_outputs[layer.name][0]
         if actual_input and actual_input != prev_out_var:
             return actual_input
 
-    lyr_input = layer.name_module_input
     if lyr_input is None or lyr_input is False:
         return prev_out_var
 
@@ -263,12 +268,24 @@ def _handle_inline_call(layer_name):
     return f"self.{inline_layer_name}({inline_input_var})"
 
 
-def _handle_rnn_hidden_suffix(layer_name, modules_details):
-    """Handle RNN __hidden suffix."""
+def _handle_rnn_hidden_suffix(layer_name, modules_details, inputs_outputs=None):
+    """Handle RNN __hidden suffix.
+
+    Returns the appropriate hidden state variable:
+    - If inputs_outputs dict has a specific output variable for this hidden state,
+      return that (e.g., h1_last instead of h1 when subscript was extracted)
+    - Otherwise return the base hidden state variable from layer_details[4]
+    """
     base_layer = layer_name[:-8]  # Remove '__hidden' suffix
     my_keys = list(modules_details.keys())
     if base_layer + "_layer" in my_keys:
         layer_details = modules_details[base_layer + "_layer"]
+        # Check if inputs_outputs has a specific output variable for this hidden state
+        if inputs_outputs and layer_name in inputs_outputs:
+            output_var = inputs_outputs[layer_name][1]
+            if output_var is not None:
+                return output_var
+        # Fall back to base hidden variable
         if len(layer_details) > 4:
             return layer_details[4]
         else:
@@ -439,7 +456,7 @@ def _handle_tensorop(layer_name, modules_details):
 
 
 def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
-                                     actual_vars: list = None):
+                                     actual_vars: list = None, inputs_outputs: dict = None):
     """
     It retrieves the output variables of the layers in `layers_name`
     list to use them as input of the tensorop.
@@ -449,6 +466,7 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         actual_vars (list): Component types ("output" or "hidden") for RNN layers.
+        inputs_outputs (dict): Optional dict mapping names to [input_var, output_var].
 
     Returns:
         The output variables of the layers in 'layers_names'.
@@ -477,7 +495,7 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         elif isinstance(layer_name, str) and layer_name.endswith("__cell_backward"):
             out_vars.append(_handle_rnn_cell_backward_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__hidden"):
-            out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details))
+            out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details, inputs_outputs))
         elif isinstance(layer_name, str) and layer_name.endswith("__cell"):
             out_vars.append(_handle_rnn_cell_suffix(layer_name, modules_details))
         # Handle split tensorop output suffixes
@@ -1180,11 +1198,11 @@ def _handle_reshape_params(tensorop, modules_details):
     return prev_out_var, params
 
 
-def _handle_concatenate_params(tensorop, modules_details):
+def _handle_concatenate_params(tensorop, modules_details, inputs_outputs=None):
     """Handle concatenate tensorop parameters."""
     actual_vars = getattr(tensorop, 'actual_vars', None)
     tensors = get_layers_output_for_tensorops(
-        tensorop.layers_of_tensors, modules_details, actual_vars
+        tensorop.layers_of_tensors, modules_details, actual_vars, inputs_outputs
     )
     # Filter out None values to prevent join errors (should not happen with proper layer handling)
     tensors = [t for t in tensors if t is not None]
@@ -1290,7 +1308,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidde
     tns_type = tensorop.tns_type
     handler = _TENSOROP_HANDLERS.get(tns_type, _handle_generic_params)
 
-    if tns_type in ["mean", "max", "squeeze", "unsqueeze", "subscript", "shape_dim", "normalize", "split", "repeat"]:
+    if tns_type in ["mean", "max", "squeeze", "unsqueeze", "subscript", "shape_dim", "normalize", "split", "repeat", "concatenate"]:
         override_prev_out_var, params = handler(tensorop, modules_details, inputs_outputs)
     else:
         override_prev_out_var, params = handler(tensorop, modules_details)

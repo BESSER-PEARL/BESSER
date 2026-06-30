@@ -6,7 +6,6 @@ not just the active one.
 """
 
 import logging
-from typing import Optional
 
 from . import (
     process_class_diagram,
@@ -17,59 +16,11 @@ from . import (
 )
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
-from besser.BUML.metamodel.bpmn import BPMNModel
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _validate_cross_diagram_references(
-    *,
-    bpmn_models: Optional[list] = None,
-    diagram_index: Optional[dict] = None,
-) -> dict:
-    """Validate cross-diagram references at the project level.
-
-    Resolves each BPMN diagram's task ``agent_diagram_ref`` against the
-    project ``diagram_index`` and promotes a dangling ref to a project-level
-    error. The per-diagram ``validate()`` itself is unchanged.
-
-    Args:
-        bpmn_models: BPMN diagrams in this project. Any task carrying an
-            ``agent_diagram_ref`` resolves against ``diagram_index``.
-        diagram_index: ``{WME ProjectDiagram UUID -> built model}`` for the
-            whole project (BPMN + Agent diagrams).
-
-    Returns:
-        ``{"errors": list[str], "warnings": list[str]}``.
-    """
-    errors: list = []
-    warnings: list = []
-    bpmn_models = bpmn_models or []
-    diagram_index = diagram_index or {}
-
-    # A BPMN task's agent_diagram_ref -> AgentDiagram UUID.
-    # Walk every BPMN process's flow nodes for agentic tasks carrying the ref
-    # and resolve it via diagram_index to the Agent built from that diagram.
-    if bpmn_models and diagram_index:
-        try:
-            from besser.BUML.metamodel.state_machine.agent import Agent
-        except ImportError:
-            Agent = None
-        if Agent is not None:
-            for bm in bpmn_models:
-                for proc in bm.processes:
-                    for node in proc.flow_nodes:
-                        ref = getattr(node, "agent_diagram_ref", None)
-                        if ref and not isinstance(diagram_index.get(ref), Agent):
-                            errors.append(
-                                f"Agentic task '{node.name}' agentDiagramRef "
-                                f"unknown Agent diagram id '{ref}'."
-                            )
-
-    return {"errors": errors, "warnings": warnings}
 
 
 def _is_valid_diagram(diag, diagram_type):
@@ -139,11 +90,6 @@ def json_to_buml_project(project):
 
     model_list = []
 
-    # Diagram-grained reference index (04-... D2): WME ProjectDiagram UUID ->
-    # built model. Populated for BPMN + Agent diagrams as they are processed;
-    # consumed by the cross-diagram resolver for process_model_refs / agent_diagram_ref.
-    diagram_index: dict = {}
-
     # ── ClassDiagram caching ──────────────────────────────────────────
     # Cache processed ClassDiagrams by ID so we never process the same one twice
     # (e.g. when an ObjectDiagram and a GUINoCodeDiagram both reference it).
@@ -194,9 +140,6 @@ def json_to_buml_project(project):
     for agent_diag in diagrams.get("AgentDiagram", []):
         agent_model = process_agent_diagram(agent_diag.model_dump())
         model_list.append(agent_model)
-        # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.
-        if getattr(agent_diag, "id", None):
-            diagram_index[agent_diag.id] = agent_model
 
     # ── Process ALL GUINoCodeDiagrams ─────────────────────────────────
     # Each GUINoCodeDiagram can reference its own ClassDiagram.
@@ -265,9 +208,6 @@ def json_to_buml_project(project):
     for bpmn_diag in diagrams.get("BPMN", []):
         bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
         model_list.append(bpmn_model)
-        # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.
-        if getattr(bpmn_diag, "id", None):
-            diagram_index[bpmn_diag.id] = bpmn_model
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the
@@ -289,19 +229,5 @@ def json_to_buml_project(project):
     # can read them without changing this function's return type (the
     # public API stays a single Project instance).
     project_instance._nn_diagram_titles = nn_titles
-
-    # Project-level cross-diagram-reference promotion: resolve each BPMN
-    # diagram's task agent_diagram_ref against the project diagram index and
-    # promote a dangling ref to a project-level error. Stashed on the project
-    # so a future /validate-project endpoint can aggregate it with per-diagram
-    # validate() output.
-    cross_bpmn_models = [m for m in model_list if isinstance(m, BPMNModel)]
-    project_instance._cross_diagram_errors = _validate_cross_diagram_references(
-        bpmn_models=cross_bpmn_models,
-        diagram_index=diagram_index,
-    )
-    # Expose the diagram index so a future generator / validate-project consumer
-    # can dereference agent_diagram_ref.
-    project_instance._diagram_index = diagram_index
 
     return project_instance

@@ -61,6 +61,11 @@ class SetupLayerSyntax:
             nm = self.layer.num_embeddings
             dm = self.layer.embedding_dim
             padding_idx = self.layer.padding_idx
+
+            # Set permute flags for channel order conversion
+            self.permute_out = self.layer.permute_out
+            self.dim = "1"
+
             if padding_idx is not None:
                 lyr = f"{lyr}.Embedding(num_embeddings={nm}, embedding_dim={dm}, padding_idx={padding_idx})"
             else:
@@ -118,6 +123,13 @@ class SetupLayerSyntax:
                     f"elementwise_affine={elementwise_affine})"
                 )
         else: # cls_name == "DropoutLayer"
+            # Set permute flags for channel order conversion
+            self.permute_out = self.layer.permute_out
+            if hasattr(self.layer, 'dimension') and self.layer.dimension:
+                self.dim = self.layer.dimension
+            else:
+                self.dim = "1"  # Default dimension for regular Dropout
+
             # Use Dropout1d/2d/3d for spatial variants, regular Dropout otherwise
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
                 lyr = f"{lyr}.Dropout{self.layer.dimension}d(p={self.layer.rate})"
@@ -193,11 +205,25 @@ class SetupLayerSyntax:
         drp = self.layer.dropout
         btch = self.layer.batch_first
         bs = self.layer.bias
-        lyr = (
-            f"self.{lyr_name} = nn.{layer_type}(input_size={in_sz}, "
-            f"hidden_size={h_sz}, bidirectional={bd}, dropout={drp}, "
-            f"batch_first={btch}, bias={bs})"
-        )
+
+        # For SimpleRNN, add nonlinearity parameter (internal activation)
+        # actv_func in BUML maps to nonlinearity in PyTorch nn.RNN
+        if layer_type == "RNN" and hasattr(self.layer, 'actv_func') and self.layer.actv_func:
+            nonlin = self.layer.actv_func
+            lyr = (
+                f"self.{lyr_name} = nn.{layer_type}(input_size={in_sz}, "
+                f"hidden_size={h_sz}, nonlinearity='{nonlin}', bidirectional={bd}, dropout={drp}, "
+                f"batch_first={btch}, bias={bs})"
+            )
+            # Clear actv_func so setup_actv_func() won't create a separate activation layer
+            # (activation is already handled internally by the nonlinearity parameter)
+            self.layer.actv_func = None
+        else:
+            lyr = (
+                f"self.{lyr_name} = nn.{layer_type}(input_size={in_sz}, "
+                f"hidden_size={h_sz}, bidirectional={bd}, dropout={drp}, "
+                f"batch_first={btch}, bias={bs})"
+            )
         return lyr
 
 
@@ -213,7 +239,7 @@ class SetupLayerSyntax:
                     lyr = f"self.actv_func_{actv} = nn.{activs[actv]}(dim=-1)"
                 else:
                     lyr = f"self.actv_func_{actv} = nn.{activs[actv]}()"
-            elif actv is not None:
+            elif actv is not None and actv is not False:
                 if actv.startswith("self"):
                     lyr = f"self.actv_func_{actv[5:]}"
                 else:

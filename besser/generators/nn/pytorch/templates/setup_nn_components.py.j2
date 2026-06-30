@@ -119,13 +119,13 @@ import torch.nn.functional as F
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
         {{ module_details[1] }} = {{ module_details[0] }}
-    {% elif module_name.endswith("nn") -%}
-        {%- if "subnn_input" in module_details and "subnn_output" in module_details -%}
+    {% elif module_name.endswith("nn") %}
+        {% if "subnn_input" in module_details and "subnn_output" in module_details -%}
         {{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }})
-        {%- else -%}
+        {% else -%}
         {{ module_details["in_out_variable"] }} = self.{{ module_name[:-3] }}({{ module_details["in_out_variable"] }})
-        {%- endif -%}
-    {%- else -%}
+        {% endif %}
+    {% else -%}
         {%- if 'INLINE_ONLY' not in module_details %}
         {# Strip counter suffix from layer name for forward calls if flag is set #}
         {%- set layer_name = module_details[3].name|strip_counter_suffix if (strip_layer_counter_suffix and module_details|length > 3) else (module_details[3].name if module_details|length > 3 else '') -%}
@@ -143,7 +143,12 @@ import torch.nn.functional as F
         {{ module_details[4] }} = torch.cat(({{ module_details[4] }}[-2], {{ module_details[4] }}[-1]), dim=1)
                     {%- endif %}
                 {%- else %}
+                    {%- set hidden_output_var = inputs_outputs.get(layer_name + "__hidden", [None, None])[1] if inputs_outputs else None -%}
+                    {%- if hidden_output_var and hidden_output_var != module_details[4] %}
+        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                    {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                    {%- endif %}
                 {%- endif -%}
             {%- elif module_details[3].return_type == "hidden" %}
                 {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
@@ -159,15 +164,20 @@ import torch.nn.functional as F
                         {%- endif %}
                     {%- endif %}
                 {%- else %}
+                    {%- set hidden_output_var = inputs_outputs.get(layer_name + "__hidden", [None, None])[1] if inputs_outputs else None -%}
+                    {%- if hidden_output_var and hidden_output_var != module_details[4] %}
+        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                    {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                    {%- endif %}
                     {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
         {{ module_details[5] }} = {{ module_details[5] }}[-1]
                     {%- endif %}
                 {%- endif -%}
             {%- elif module_details[3].return_type == "full" %}
-        {{ module_details[1] }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %})
+        {{ module_details[1] }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if module_details[3].hx_source + '_op' in modules_details %}, hx={{ modules_details[module_details[3].hx_source + '_op'][1] }}{% elif module_details[3].hx_source + '_layer' in modules_details %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %}{% endif %})
             {%- else %}
-        {{ module_details[1] }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %})
+        {{ module_details[1] }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if module_details[3].hx_source + '_op' in modules_details %}, hx={{ modules_details[module_details[3].hx_source + '_op'][1] }}{% elif module_details[3].hx_source + '_layer' in modules_details %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %}{% endif %})
         {{ module_details[1] }} = {{ module_details[1] }}[:, -1, :]
             {%- endif -%}
 

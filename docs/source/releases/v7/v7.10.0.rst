@@ -43,6 +43,22 @@ Web Modeling Editor
   auto-detection paths, and BPMN participation in project-level cross-diagram
   validation.
 
+Fixes
+-----
+
+* **Agent container crash on classical intent recognition (local Docker
+  builds)**: ``WebAppGenerator``'s per-agent ``agents/<slug>/Dockerfile``
+  never installed PyTorch, so any agent configured with
+  ``intentRecognitionTechnology: classical`` crashed on startup
+  (``NameError: name 'nn' is not defined`` from ``besser-agentic-framework``'s
+  NLP engine) when run via ``docker compose up``. The Render/GitHub deploy
+  pipeline already handled this correctly by installing
+  ``torch==2.6.0+cpu``/``scikit-learn==1.6.1`` for classical agents, but that
+  logic never reached the local Docker Compose/ZIP output. ``WebAppGenerator``
+  now resolves each agent's configured intent-recognition technology and
+  conditionally installs the same pinned PyTorch/scikit-learn versions in
+  ``agent.Dockerfile.j2`` when needed, matching the Render pipeline.
+
 Internal updates
 -----------------
 

@@ -20,6 +20,8 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
+from besser.generators.bpmn import BPMNGenerator
+from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -198,6 +200,16 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="deployment",
         requires_class_diagram=False
     ),
+
+    # BPMN generator (vendor-neutral BPMN 2.0 XML; reads BPMNDiagram)
+    "bpmn": GeneratorInfo(
+        generator_class=BPMNGenerator,
+        output_type="file",
+        file_extension=".bpmn",
+        category="business_process",
+        requires_class_diagram=False,
+        required_diagram_type=BPMN_DIAGRAM_TYPE,
+    ),
 }
 
 # Neural network generators are conditionally registered since they
@@ -281,6 +293,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "pytorch_nn.py"
     elif generator_type == "tensorflow":
         return "tf_nn.py"
+    elif generator_type == "bpmn":
+        return "bpmn_diagram.bpmn"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

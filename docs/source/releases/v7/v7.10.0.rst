@@ -58,6 +58,19 @@ Django Generator
   but not on a bare ``.save()`` unless the caller calls ``full_clean()``
   first.
 
+Modeling Agent
+---------------
+
+* **BPMN support** (`BESSER-PEARL/modeling-agent#7 <https://github.com/BESSER-PEARL/modeling-agent/pull/7>`_):
+  the AI modeling assistant gains BPMN diagram support — creating,
+  editing, and removing BPMN elements through the same conversational
+  actions already available for other diagram types, with guardrails
+  against LLM hallucination (e.g. refusing to delete elements that don't
+  exist). This lives in the separate ``modeling-agent`` repository, which
+  is not part of BESSER's release/versioning; merge and deploy it
+  alongside this release (``./scripts/deploy.sh agent``) to get
+  AI-assisted BPMN editing in the web editor.
+
 Fixes
 -----
 

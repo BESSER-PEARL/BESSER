@@ -37,7 +37,7 @@ auto-converted by a Pydantic model validator for backward compatibility.
 
 Supported diagram types: ``ClassDiagram``, ``ObjectDiagram``,
 ``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
-``QuantumCircuitDiagram``, ``NNDiagram``.
+``QuantumCircuitDiagram``, ``NNDiagram``, ``BPMN``.
 
 
 Neural Network Diagrams
@@ -81,6 +81,15 @@ rather than 500 responses. The processor verifies whitelists for
 identical BUML NN models across runs — element IDs are derived from a
 thread-local counter via ``uuid.uuid5`` under a fixed namespace.
 
+
+BPMN Diagrams
+^^^^^^^^^^^^^
+
+The backend handles ``BPMN`` as a self-contained diagram type backed by the
+:doc:`BPMN metamodel <buml_language/model_types/bpmn>`. ``/export-buml``
+converts a BPMN diagram JSON to an executable Python BUML file;
+``/get-json-model`` reads it back; ``/validate-diagram`` runs the metamodel
+``validate()``.
 
 API Endpoints
 -------------

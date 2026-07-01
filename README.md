@@ -60,6 +60,12 @@ To verify the setup, you can run a basic example.
 ## Examples
 If you want to try examples, check out the [BESSER-examples](https://github.com/BESSER-PEARL/BESSER-examples) repository!
 
+## AI Agent Skills
+
+Working with BESSER through an AI coding agent (Claude Code, Cursor, Cline, Copilot, …)? The [BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) repository packages BESSER's metamodel, generators, and troubleshooting knowledge as [Agent Skills](https://agentskills.io) so your agent builds *correct, validated* B-UML models — and viewable diagrams — without loading the whole codebase into context.
+
+    npx skills add BESSER-PEARL/besser-skills --all
+
 ## Contributing
 
 We encourage contributions from the community and any comment is welcome!

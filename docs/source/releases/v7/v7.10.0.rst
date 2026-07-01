@@ -4,7 +4,9 @@ Version 7.10.0
 Minor release: **BPMN 2.0 support**. Adds a full BPMN metamodel, a
 vendor-neutral BPMN 2.0 XML generator, and a matching BPMN diagram type in the
 web modeling editor — process modeling, alongside class/object/state-machine/
-agent modeling, is now a first-class BESSER diagram type.
+agent modeling, is now a first-class BESSER diagram type. Also adds OCL
+constraint validation to the Django generator and a handful of follow-up
+fixes to the BPMN editor integration and the Web App generator.
 
 BPMN metamodel
 ---------------
@@ -43,6 +45,19 @@ Web Modeling Editor
   auto-detection paths, and BPMN participation in project-level cross-diagram
   validation.
 
+Django Generator
+-----------------
+
+* **OCL constraint validation**: the :doc:`Django generator <../../generators/django/django_admin_panel>`
+  now reuses the same OCL parser as the :doc:`Pydantic generator <../../generators/pydantic>`
+  and emits a ``clean()`` method on each constrained class, so OCL invariants
+  defined on the domain model are enforced when creating or editing entities
+  through Django's admin panel or a ``ModelForm``. Unlike Pydantic's
+  per-field validators (which run at construction time), Django's ``clean()``
+  runs via ``full_clean()`` — automatic through the admin panel/``ModelForm``,
+  but not on a bare ``.save()`` unless the caller calls ``full_clean()``
+  first.
+
 Fixes
 -----
 
@@ -58,6 +73,22 @@ Fixes
   now resolves each agent's configured intent-recognition technology and
   conditionally installs the same pinned PyTorch/scikit-learn versions in
   ``agent.Dockerfile.j2`` when needed, matching the Render pipeline.
+* **BPMN diagrams rejected by validation**: ``/validate-diagram`` had no
+  branch for the BPMN diagram type, so it fell through to a generic
+  "Unsupported diagram type" error — which silently blocked BPMN code
+  generation, since the generic generation path validates before calling the
+  generator. Added a validation branch (mirroring the existing Neural Network
+  diagram pattern) that converts the diagram and runs ``BPMNModel.validate()``.
+* **BPMN export only reachable from the Export dialog**: BPMN 2.0 XML export
+  was wired as a client-side-only converter bolted onto the Export dialog,
+  bypassing the real backend ``BPMNGenerator`` entirely — unlike every other
+  generator, which goes through the "Generate" menu. The BPMN diagram type
+  was also never registered in the Generate menu at all, so opening
+  "Generate" on a BPMN diagram showed "Not yet available for this diagram".
+  BPMN 2.0 XML export now goes through the standard Generate flow (backend
+  ``BPMNGenerator`` via ``/generate-output``), and "Import BPMN Diagram" in
+  the File menu moved below "Import Class Diagram from" to sit with the
+  other cross-format imports.
 
 Internal updates
 -----------------

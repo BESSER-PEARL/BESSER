@@ -1,0 +1,51 @@
+Version 7.10.0
+===============
+
+Minor release: **BPMN 2.0 support**. Adds a full BPMN metamodel, a
+vendor-neutral BPMN 2.0 XML generator, and a matching BPMN diagram type in the
+web modeling editor — process modeling, alongside class/object/state-machine/
+agent modeling, is now a first-class BESSER diagram type.
+
+BPMN metamodel
+---------------
+
+* New :doc:`../../buml_language/model_types/bpmn` (``besser.BUML.metamodel.bpmn``):
+  ``BPMNModel``, ``Process``, flow nodes (``Task`` with ``TaskType`` — user,
+  service, script, manual, business rule, send, receive —, ``StartEvent``,
+  ``EndEvent``, intermediate catch/throw events with typed event definitions,
+  gateways — exclusive, parallel, inclusive, event-based —, ``SubProcess``,
+  ``CallActivity``), ``SequenceFlow``, pools/lanes via ``LaneSet``/``Lane``,
+  ``DataObject``/``DataStore`` references, and text ``Annotation``.
+
+BPMN generator
+--------------
+
+* New :doc:`../../generators/bpmn` (``BPMNGenerator``) emits plain BPMN 2.0
+  XML from a ``BPMNModel`` — openable in any BPMN-aware tool (Camunda 7/8,
+  Flowable, bpmn-js, …). No engine-specific execution semantics are emitted,
+  only the process structure (flow nodes, sequence flows, gateways, events,
+  pools/lanes, data objects/stores, sub-processes), and the output round-trips
+  through any conformant modeller.
+* New ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code``
+  emits a ``BPMNModel`` back to executable B-UML Python code.
+
+Web Modeling Editor
+--------------------
+
+* New **BPMN diagram type** in the editor: the full BPMN element palette
+  (events, tasks, gateways, sequence flows, pools/lanes, data objects/stores,
+  annotations, call activities), property popups, and a default-layout saga
+  that auto-arranges newly dropped BPMN flow nodes.
+* Backend wiring end-to-end: ``process_bpmn_diagram`` / ``bpmn_buml_to_json``
+  converters, a ``BPMNGenerator`` registration (category ``business_process``)
+  in the generator registry so ``/generate-output`` produces ``.bpmn`` files,
+  BPMN support in the ``/export-buml`` and B-UML-file-import (``/get-json-model``)
+  auto-detection paths, and BPMN participation in project-level cross-diagram
+  validation.
+
+Internal updates
+-----------------
+
+* Sandboxed ``exec()`` hardening, Python-keyword name warnings, and
+  ``isinstance``-based (rather than class-name-string) event-definition
+  legality checks were applied across the new BPMN converters during review.

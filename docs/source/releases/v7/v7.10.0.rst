@@ -1,12 +1,12 @@
 Version 7.10.0
 ===============
 
-Minor release: **BPMN 2.0 support**. Adds a full BPMN metamodel, a
+**BPMN 2.0 support**. Adds a full BPMN metamodel, a
 vendor-neutral BPMN 2.0 XML generator, and a matching BPMN diagram type in the
 web modeling editor — process modeling, alongside class/object/state-machine/
 agent modeling, is now a first-class BESSER diagram type. Also adds OCL
-constraint validation to the Django generator and a handful of follow-up
-fixes to the BPMN editor integration and the Web App generator.
+constraint validation to the Django generator and fixes a Web App generator
+bug affecting locally-built agent containers.
 
 BPMN metamodel
 ---------------
@@ -73,22 +73,6 @@ Fixes
   now resolves each agent's configured intent-recognition technology and
   conditionally installs the same pinned PyTorch/scikit-learn versions in
   ``agent.Dockerfile.j2`` when needed, matching the Render pipeline.
-* **BPMN diagrams rejected by validation**: ``/validate-diagram`` had no
-  branch for the BPMN diagram type, so it fell through to a generic
-  "Unsupported diagram type" error — which silently blocked BPMN code
-  generation, since the generic generation path validates before calling the
-  generator. Added a validation branch (mirroring the existing Neural Network
-  diagram pattern) that converts the diagram and runs ``BPMNModel.validate()``.
-* **BPMN export only reachable from the Export dialog**: BPMN 2.0 XML export
-  was wired as a client-side-only converter bolted onto the Export dialog,
-  bypassing the real backend ``BPMNGenerator`` entirely — unlike every other
-  generator, which goes through the "Generate" menu. The BPMN diagram type
-  was also never registered in the Generate menu at all, so opening
-  "Generate" on a BPMN diagram showed "Not yet available for this diagram".
-  BPMN 2.0 XML export now goes through the standard Generate flow (backend
-  ``BPMNGenerator`` via ``/generate-output``), and "Import BPMN Diagram" in
-  the File menu moved below "Import Class Diagram from" to sit with the
-  other cross-format imports.
 
 Internal updates
 -----------------

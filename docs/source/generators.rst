@@ -103,6 +103,15 @@ Choosing a Generator
      - You want a customised codebase — extra features (auth, JWT, Docker,
        tests) or a stack with no built-in generator (Rails, Rust, Kotlin,
        Next.js). Bring your own API key; see :doc:`generators/vibe_driven`
+   * - **BPMN**
+     - BPMN
+     - .bpmn (XML)
+     - You need vendor-neutral BPMN 2.0 XML readable by every BPMN-aware tool
+   * - **Docker Compose**
+     - Deployment
+     - .yml
+     - You need a docker-compose.yml to run a swarm (``deploy.replicas: N``
+       from the diagram multiplicity)
 
 
 Web Application
@@ -187,6 +196,16 @@ Generate and customise code with an LLM on top of a deterministic scaffold:
    :maxdepth: 1
 
    generators/vibe_driven
+
+Business Process
+----------------
+
+Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/bpmn
 
 Build Your Own
 --------------

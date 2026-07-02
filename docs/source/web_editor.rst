@@ -261,6 +261,44 @@ identifier safety, numerical bounds, dataset consistency) and the
 :doc:`generators/pytorch` / :doc:`generators/tensorflow` for the generator
 details.
 
+BPMN Diagram
+------------
+
+The editor supports BPMN 2.0 process modelling through the *BPMN* diagram
+type. The underlying B-UML model (see :doc:`buml_language/model_types/bpmn`)
+covers the WME palette one-to-one and follows the OMG BPMN 2.0.2 abstract
+syntax.
+
+- **Flow nodes** cover the standard catalog: ``BPMNTask`` (with
+  ``taskType`` user / service / send / receive / manual / business-rule /
+  script / default and an optional ``marker`` for loops or multi-instance),
+  ``BPMNSubprocess``, ``BPMNTransaction``, ``BPMNCallActivity``,
+  ``BPMNStartEvent`` / ``BPMNIntermediateEvent`` / ``BPMNEndEvent`` (with
+  a flat ``eventType`` enum the backend splits into the spec's orthogonal
+  direction × event-definition pair), and ``BPMNGateway``
+  (``exclusive`` / ``inclusive`` / ``parallel`` / ``complex`` /
+  ``event-based``).
+- **Data and artifacts** are ``BPMNDataObject``, ``BPMNDataStore``,
+  ``BPMNAnnotation``, ``BPMNGroup``.
+- **Containment** is expressed via ``BPMNPool`` (a participant) holding
+  ``BPMNSwimlane``\ s and flow nodes; sub-processes can nest flow nodes.
+  Pool-less diagrams (one bare process) are valid.
+- **Flows** all use the single ``BPMNFlow`` relationship type; the
+  ``flowType`` field (``sequence`` / ``message`` / ``association`` /
+  ``data association``) and ``isDefault`` flag select the four metamodel
+  edge classes on the backend side.
+
+The editor round-trips ``.bpmn`` files entirely in the browser (BPMN 2.0
+XML import / export). The backend converters
+(``process_bpmn_diagram`` / ``bpmn_object_to_json``) handle the
+JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close the
+round-trip through executable BUML ``.py`` files.
+
+.. note::
+   The frontend BPMN editor is being integrated into the
+   `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
+   repository; check there for the latest availability.
+
 Backend API Reference
 ---------------------
 

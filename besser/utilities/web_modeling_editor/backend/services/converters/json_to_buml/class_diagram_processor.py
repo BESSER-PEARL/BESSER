@@ -1153,6 +1153,12 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
     domain_model.method_diagram_refs = method_diagram_refs
 
+    # Stash the WME element-id -> Class side-map so project-level cross-diagram
+    # resolution can match Component.realizes against stable WME ids (04-... D1;
+    # structural Class has no `layout`, so this side-channel replaces the
+    # Component.layout["id"] trick the manifests/realizes resolution uses).
+    domain_model._wme_class_index = dict(class_id_to_class)
+
     # Store layout positions for buml_to_json round-trip fidelity.
     # Keyed by element name (classes/enums) or composite key (relationships).
     domain_model._layout_positions = layout_positions

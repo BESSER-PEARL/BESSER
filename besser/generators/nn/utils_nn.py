@@ -813,7 +813,7 @@ def _get_rnn_hidden_var_name(layer, out_layer, model):
         return concat_var_names[layer.name]
 
     # NEW: Prefer layer attribute
-    if layer.hidden_state_var is not None:
+    if hasattr(layer, 'hidden_state_var') and layer.hidden_state_var is not None:
         return layer.hidden_state_var
 
     return f"{out_layer}_h" if out_layer != "x" else "h"
@@ -821,7 +821,7 @@ def _get_rnn_hidden_var_name(layer, out_layer, model):
 
 def _get_lstm_cell_var_name(layer, hidden_var, model):
     """Get LSTM cell state variable name from model or generate default."""
-    if layer.cell_state_var is not None:
+    if hasattr(layer, 'cell_state_var') and layer.cell_state_var is not None:
         if layer.cell_state_var == "_":
             return f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
         return layer.cell_state_var

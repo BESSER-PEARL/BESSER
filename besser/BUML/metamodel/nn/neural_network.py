@@ -759,9 +759,10 @@ class CNN(Layer):
                  padding_type: str = "valid", actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False):
+                 is_layer_call: bool = False, input_var: str = None,
+                 output_var: str = None):
         super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
-                         permute_in, permute_out)
+                         permute_in, permute_out, input_var, output_var)
         self.kernel_dim: List[int] = kernel_dim
         self.stride_dim: List[int] = stride_dim
         self.padding_amount: int = padding_amount
@@ -935,10 +936,12 @@ class ConvolutionalLayer(CNN):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False, is_layer_call: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out, is_layer_call)
+                         input_reused, permute_in, permute_out, is_layer_call,
+                         input_var, output_var)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
         self.dilation: List[int] = dilation if dilation is not None else [1]
@@ -1090,13 +1093,14 @@ class Conv1D(ConvolutionalLayer):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False, is_layer_call: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
         if stride_dim is None:
             stride_dim = [1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, dilation,
                          groups, bias, actv_func, name_module_input, input_reused,
-                         permute_in, permute_out, is_layer_call)
+                         permute_in, permute_out, is_layer_call, input_var, output_var)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1223,13 +1227,14 @@ class Conv2D(ConvolutionalLayer):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False, is_layer_call: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
         if stride_dim is None:
             stride_dim = [1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, dilation,
                          groups, bias, actv_func, name_module_input, input_reused,
-                         permute_in, permute_out, is_layer_call)
+                         permute_in, permute_out, is_layer_call, input_var, output_var)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1356,13 +1361,14 @@ class Conv3D(ConvolutionalLayer):
                  dilation: List[int] = None, groups: int = 1, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_in: bool = False,
-                 permute_out: bool = False, is_layer_call: bool = False):
+                 permute_out: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
         if stride_dim is None:
             stride_dim = [1, 1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, dilation,
                          groups, bias, actv_func, name_module_input, input_reused,
-                         permute_in, permute_out, is_layer_call)
+                         permute_in, permute_out, is_layer_call, input_var, output_var)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1488,7 +1494,8 @@ class PoolingLayer(CNN):
                  output_dim: List[int] = None, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False):
+                 is_layer_call: bool = False, input_var: str = None,
+                 output_var: str = None):
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
         self.output_dim: List[int] = output_dim
@@ -1496,7 +1503,8 @@ class PoolingLayer(CNN):
             output_dim = []
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out, is_layer_call)
+                         input_reused, permute_in, permute_out, is_layer_call,
+                         input_var, output_var)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1698,9 +1706,10 @@ class NormalizationLayer(LayerModifier):
     def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
                  permute_in: bool = False, permute_out: bool = False,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, is_layer_call: bool = False):
+                 input_reused: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
         super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
-                         permute_in, permute_out)
+                         permute_in, permute_out, input_var, output_var)
         self.eps: float = eps
         self.affine: bool = affine
 
@@ -1795,9 +1804,11 @@ class BatchNormLayer(NormalizationLayer):
                  track_running_stats: bool = True, permute_in: bool = False,
                  permute_out: bool = False, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False):
+                 is_layer_call: bool = False, input_var: str = None,
+                 output_var: str = None):
         super().__init__(name, eps, affine, permute_in, permute_out, actv_func,
-                         name_module_input, input_reused, is_layer_call)
+                         name_module_input, input_reused, is_layer_call, input_var,
+                         output_var)
         self.num_features: int = num_features
         self.dimension: str = dimension
         self.momentum: float = momentum
@@ -1907,8 +1918,10 @@ class LayerNormLayer(NormalizationLayer):
     def __init__(self, name: str, normalized_shape: List[int],
                  eps: float = 1e-5, affine: bool = True,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, is_layer_call: bool = False):
-        super().__init__(name, eps, affine, actv_func, name_module_input, input_reused, is_layer_call)
+                 input_reused: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
+        super().__init__(name, eps, affine, False, False, actv_func, name_module_input,
+                         input_reused, is_layer_call, input_var, output_var)
         self.normalized_shape: List[int] = normalized_shape
 
     @property
@@ -1976,9 +1989,10 @@ class DropoutLayer(LayerModifier):
     def __init__(self, name: str, rate: float, dimension: str | None = None,
                  permute_in: bool = False, permute_out: bool = False,
                  name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False):
+                 is_layer_call: bool = False, input_var: str = None,
+                 output_var: str = None):
         super().__init__(name, None, name_module_input, input_reused, is_layer_call,
-                         permute_in, permute_out)
+                         permute_in, permute_out, input_var, output_var)
         self.rate: float = rate
         self.dimension: str | None = dimension
 
@@ -2091,8 +2105,10 @@ class RNN(Layer):
                  is_layer_call: bool = False, hidden_state_var: str = None,
                  cell_state_var: str = None, hidden_unused: bool = False,
                  cell_unused: bool = False, hidden_subscript_source: str = None,
-                 hidden_subscript_target: str = None):
-        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
+                 hidden_subscript_target: str = None, input_var: str = None,
+                 output_var: str = None):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
+                         False, False, input_var, output_var)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
         self.batch_first: bool = batch_first
@@ -2600,8 +2616,10 @@ class LinearLayer(GeneralLayer):
     def __init__(self, name: str, out_features: int, in_features: int = None,
                  bias: bool = True, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
+                 is_layer_call: bool = False, input_var: str = None,
+                 output_var: str = None):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
+                         False, False, input_var, output_var)
         self.in_features: int = in_features
         self.out_features: int = out_features
         self.bias: bool = bias
@@ -2679,8 +2697,10 @@ class FlattenLayer(GeneralLayer):
     """
     def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, is_layer_call: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
+                 input_reused: bool = False, is_layer_call: bool = False,
+                 input_var: str = None, output_var: str = None):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
+                         False, False, input_var, output_var)
         self.start_dim: int = start_dim
         self.end_dim: int = end_dim
 
@@ -2755,8 +2775,10 @@ class EmbeddingLayer(GeneralLayer):
                  padding_idx: int = None, permute_in: bool = False,
                  permute_out: bool = False, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False):
-        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
+                 is_layer_call: bool = False, input_var: str = None,
+                 output_var: str = None):
+        super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call,
+                         False, False, input_var, output_var)
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
         self.padding_idx: int = padding_idx

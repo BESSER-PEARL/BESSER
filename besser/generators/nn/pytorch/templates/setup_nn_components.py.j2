@@ -143,11 +143,17 @@ import torch.nn.functional as F
         {{ module_details[4] }} = torch.cat(({{ module_details[4] }}[-2], {{ module_details[4] }}[-1]), dim=1)
                     {%- endif %}
                 {%- else %}
-                    {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
-                    {%- if hidden_output_var and hidden_output_var != module_details[4] %}
-        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                    {%- set hidden_target_var = module_details[3].hidden_subscript_target if (module_details[3].hidden_subscript_target is defined and module_details[3].hidden_subscript_target) else None -%}
+                    {%- set hidden_source_var = module_details[3].hidden_subscript_source if (module_details[3].hidden_subscript_source is defined and module_details[3].hidden_subscript_source) else module_details[4] -%}
+                    {%- if hidden_target_var %}
+        {{ hidden_target_var }} = {{ hidden_source_var }}[-1]
                     {%- else %}
+                        {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
+                        {%- if hidden_output_var and hidden_output_var != module_details[4] %}
+        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                        {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                        {%- endif %}
                     {%- endif %}
                 {%- endif -%}
             {%- elif module_details[3].return_type == "hidden" %}
@@ -164,11 +170,17 @@ import torch.nn.functional as F
                         {%- endif %}
                     {%- endif %}
                 {%- else %}
-                    {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
-                    {%- if hidden_output_var and hidden_output_var != module_details[4] %}
-        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                    {%- set hidden_target_var = module_details[3].hidden_subscript_target if (module_details[3].hidden_subscript_target is defined and module_details[3].hidden_subscript_target) else None -%}
+                    {%- set hidden_source_var = module_details[3].hidden_subscript_source if (module_details[3].hidden_subscript_source is defined and module_details[3].hidden_subscript_source) else module_details[4] -%}
+                    {%- if hidden_target_var %}
+        {{ hidden_target_var }} = {{ hidden_source_var }}[-1]
                     {%- else %}
+                        {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
+                        {%- if hidden_output_var and hidden_output_var != module_details[4] %}
+        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                        {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                        {%- endif %}
                     {%- endif %}
                     {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
         {{ module_details[5] }} = {{ module_details[5] }}[-1]

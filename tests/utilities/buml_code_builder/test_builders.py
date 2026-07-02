@@ -1018,7 +1018,9 @@ class TestGUIModelBuilder:
 # project_builder.py
 # ---------------------------------------------------------------------------
 from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.bpmn import BPMNModel
 from besser.utilities.buml_code_builder.project_builder import project_to_code
+from tests.bpmn_models import _poolless_model
 
 
 class TestProjectBuilder:
@@ -1177,6 +1179,39 @@ class TestProjectBuilder:
         compile(code, file_path, "exec")
         assert "SimpleQC" in code
         assert "QuantumCircuit" in code
+
+    def test_project_with_bpmn(self, tmp_path):
+        """Project containing a BPMNModel generates a '# BPMN MODEL #' section
+        that round-trips through exec()."""
+        bpmn = _poolless_model()
+
+        cls = Class(name="Baz")
+        dm = DomainModel(name="BazModel", types={cls}, associations=set())
+
+        meta = Metadata(description="BPMN project")
+        project = Project(
+            name="BPMNProject",
+            models=[dm, bpmn],
+            owner="tester",
+            metadata=meta,
+        )
+
+        file_path = str(tmp_path / "bpmn_proj.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        compile(code, file_path, "exec")
+        assert "BPMN MODEL" in code
+        assert "Poolless" in code
+
+        namespace = {}
+        exec(code, namespace)
+
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        assert any(isinstance(m, BPMNModel) for m in recreated.models)
 
     def test_owner_in_code(self, tmp_path):
         """Owner field appears in generated project code."""

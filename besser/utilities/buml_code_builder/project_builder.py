@@ -13,6 +13,7 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
+from besser.BUML.metamodel.bpmn import BPMNModel
 from besser.utilities.buml_code_builder.common import _escape_python_string
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
@@ -23,6 +24,7 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -87,6 +89,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     quantum_models = []
     state_machine_models = []   # StateMachine models
     nn_models = []
+    bpmn_models = []
 
     # Import GUIModel locally to avoid circular imports
     try:
@@ -127,6 +130,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             quantum_models.append(model)
         elif NN and isinstance(model, NN):
             nn_models.append(model)
+        elif isinstance(model, BPMNModel):
+            bpmn_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -166,6 +171,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_quantum = len(quantum_models)
     n_sm = len(state_machine_models)
     n_nn = len(nn_models)
+    n_bpmn = len(bpmn_models)
 
     # Variable names collected for the final Project(...) definition
     model_vars = []
@@ -344,6 +350,31 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     model_var_name=var_name,
                 )
                 _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # BPMN MODELS                                                #
+            # ---------------------------------------------------------- #
+            # bpmn_model_to_code() writes its own "# BPMN MODEL #" banner
+            # (mirrors state_machine_builder.py / agent_model_builder.py).
+            # Unlike those, we don't also prepend a numbered project_builder
+            # header here: project_to_json's _extract_all_sections treats
+            # every "# BPMN MODEL ... #" occurrence as a new section
+            # boundary, so stacking our own numbered header directly above
+            # the builder's fixed one would split each model into a bogus
+            # empty section followed by the real one, breaking round-trip
+            # for projects with more than one BPMNModel. See the analogous
+            # NN MODELS handling below for the same reasoning.
+            for idx, bm in enumerate(bpmn_models, start=1):
+                var_name = _suffixed_name("bpmn_model", idx, n_bpmn)
+
+                tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
+                bpmn_model_to_code(
+                    model=bm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f)
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #

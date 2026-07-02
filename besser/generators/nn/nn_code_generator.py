@@ -117,7 +117,7 @@ class NNCodeGenerator(GeneratorInterface):
             # Use original module name + _nn (no counter needed with original names)
             name_sub_nn = f"{module.name}_nn"
             modules_details[name_sub_nn] = subnn_details
-            add_in_out_var_to_subnn(modules_details, getattr(self.model, 'inputs_outputs', None))
+            add_in_out_var_to_subnn(modules_details, subnn_obj=module)
             return counter_subnn
 
         elif module_type != "TensorOp":
@@ -136,7 +136,6 @@ class NNCodeGenerator(GeneratorInterface):
             handle_tensorop(
                 module, modules_details, self.get_tensorop_syntax,
                 referenced_tensorops=referenced_tensorops,
-                inputs_outputs=getattr(self.model, 'inputs_outputs', None),
                 channel_last=self.channel_last
             )
             return counter_subnn
@@ -207,12 +206,13 @@ class NNCodeGenerator(GeneratorInterface):
         template = env.get_template(self.template_name)
 
         with open(file_path, mode="w", encoding="utf-8") as f:
-            # Pass inputs_outputs if available (for multiple return values)
-            inputs_outputs = getattr(self.model, 'inputs_outputs', {})
+            # DEBUG: Check modules_details before rendering
+            for key in self.modules_details:
+                if "op_4" in key or "subscript" in key:
+                    print(f"DEBUG render: modules_details[{key}] = {self.modules_details[key][:2] if isinstance(self.modules_details[key], list) else self.modules_details[key]}")
             generated_code = template.render(
                 model=self.model, modules_details=self.modules_details,
                 generation_type=self.generation_type,
-                inputs_outputs=inputs_outputs,
                 strip_layer_counter_suffix=self.strip_layer_counter_suffix)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

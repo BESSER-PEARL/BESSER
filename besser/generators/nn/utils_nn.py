@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from besser.generators.nn.nn_code_generator import NNCodeGenerator
 
 
-def get_previous_out_var(modules_details: dict, prev_module: str, inputs_outputs: dict = None):
+def get_previous_out_var(modules_details: dict, prev_module: str):
     """
     It retrieves the output variable of the previous module in order to
     use it as the input variable of the current module.
@@ -26,7 +26,6 @@ def get_previous_out_var(modules_details: dict, prev_module: str, inputs_outputs
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         prev_module (str): The name of the previous module.
-        inputs_outputs (dict): Optional dictionary mapping module names to [input, output] variables.
 
     Returns:
         The previous output variable.
@@ -45,14 +44,11 @@ def get_previous_out_var(modules_details: dict, prev_module: str, inputs_outputs
                 return module_data[4]
             # Check if there's a __hidden subscript that created a different output variable
             # For example: x = h[-1] creates rnn__hidden entry with output var 'x'
-            if (inputs_outputs and hasattr(layer_obj, 'return_type') and
-                layer_obj.return_type == "hidden"):
-                # Remove the '_layer' suffix properly
-                layer_name = prev_module.replace('_layer', '') if prev_module.endswith('_layer') else prev_module
-                hidden_key = layer_name + "__hidden"
-                if hidden_key in inputs_outputs and inputs_outputs[hidden_key][1]:
-                    # Use the variable from the subscript operation (e.g., 'x' from 'x = h[-1]')
-                    return inputs_outputs[hidden_key][1]
+            if (hasattr(layer_obj, 'return_type') and
+                layer_obj.return_type == "hidden" and
+                hasattr(layer_obj, 'hidden_state_var') and layer_obj.hidden_state_var):
+                # Use the hidden_state_var from layer object
+                return layer_obj.hidden_state_var
         return module_data[1]
 
 def _get_bidirectional_concat_var(lyr_input, modules_details):
@@ -61,9 +57,9 @@ def _get_bidirectional_concat_var(lyr_input, modules_details):
     modules_names = list(modules_details.keys())
     if f"{base_module}_layer" in modules_names:
         layer_details = modules_details[f"{base_module}_layer"]
-        if len(layer_details) > 4 and layer_details[4]:
-            return layer_details[4]
-        return layer_details[1]
+        result = layer_details[4] if len(layer_details) > 4 and layer_details[4] else layer_details[1]
+        print(f"DEBUG _get_bidirectional_concat_var: lyr_input={lyr_input}, base_module={base_module}, returning={result}")
+        return result
     return None
 
 
@@ -96,7 +92,7 @@ def _get_rnn_state_component_var(lyr_input, suffix_len, index, modules_details, 
     return None
 
 
-def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inputs_outputs):
+def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var):
     """Get output variable from regular module reference (_layer, _nn, _activ, _op)."""
     modules_names = list(modules_details.keys())
 
@@ -104,8 +100,8 @@ def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inp
         layer_details = modules_details[f"{lyr_input}_layer"]
         if (len(layer_details) > 4 and hasattr(layer_details[3], 'return_type') and
             layer_details[3].return_type == "hidden"):
-            if (inputs_outputs and f"{lyr_input}__hidden" in inputs_outputs and
-                prev_out_var == inputs_outputs[f"{lyr_input}__hidden"][1]):
+            if (hasattr(layer_details[3], 'hidden_state_var') and
+                prev_out_var == layer_details[3].hidden_state_var):
                 return prev_out_var
         if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
             if len(layer_details) > 4:
@@ -126,7 +122,7 @@ def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inp
     return None
 
 
-def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs_outputs: dict = None):
+def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     """
     It determines the input variable of the current layer. It is either
     the output variable of the module in `name_module_input` attribute
@@ -138,24 +134,22 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         prev_out_var (str): The previous output variable.
-        inputs_outputs (dict): Optional dictionary mapping module names to [input, output] variables.
 
     Returns:
         The input variable.
     """
+    # NEW: Use layer.input_var if set (takes precedence over name_module_input resolution)
+    if layer.input_var is not None and layer.input_var != prev_out_var:
+        if layer.__class__.__name__ in ['Conv1D', 'Conv2D', 'Conv3D']:
+            print(f"DEBUG get_input_var: Conv layer={layer.name}, input_var={layer.input_var}, prev_out_var={prev_out_var}, id(layer)={id(layer)}, RETURNING input_var")
+        return layer.input_var
+
     lyr_input = layer.name_module_input
 
-    # If layer has explicit name_module_input, resolve it first (don't use inputs_outputs override)
+    # If layer has explicit name_module_input, resolve it first
     if lyr_input and lyr_input is not False and isinstance(lyr_input, str):
         # Fall through to name_module_input resolution below
         pass
-    # Only check inputs_outputs override if layer does NOT have name_module_input
-    # This handles cases like: z = tf.zeros_like(x); x = self.dense(x)
-    # where prev_out_var is 'z' but the layer actually takes 'x' as input
-    elif inputs_outputs and layer.name in inputs_outputs:
-        actual_input = inputs_outputs[layer.name][0]
-        if actual_input and actual_input != prev_out_var:
-            return actual_input
 
     if lyr_input is None or lyr_input is False:
         return prev_out_var
@@ -194,11 +188,11 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
             return result
     elif lyr_input.endswith("__hidden"):
         base_module = lyr_input[:-8]
-        if inputs_outputs and lyr_input in inputs_outputs and inputs_outputs[lyr_input][1]:
-            return inputs_outputs[lyr_input][1]
         modules_names = list(modules_details.keys())
         if f"{base_module}_layer" in modules_names:
             layer_details = modules_details[f"{base_module}_layer"]
+            if len(layer_details) > 3 and hasattr(layer_details[3], 'hidden_state_var') and layer_details[3].hidden_state_var:
+                return layer_details[3].hidden_state_var
             if len(layer_details) > 4:
                 return layer_details[4]
             return layer_details[1]
@@ -211,13 +205,13 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str, inputs
                 return layer_details[4]
             return layer_details[1]
 
-    result = _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var, inputs_outputs)
+    result = _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var)
     if result:
         return result
 
     return prev_out_var
 
-def add_in_out_var_to_subnn(modules_details: dict, inputs_outputs: dict | None = None):
+def add_in_out_var_to_subnn(modules_details: dict, subnn_obj=None):
     """
     It sets the in_out_variable of subnns, which refers to the input
     and output variable of the subnn.
@@ -225,7 +219,7 @@ def add_in_out_var_to_subnn(modules_details: dict, inputs_outputs: dict | None =
     Arguments:
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
-        inputs_outputs (dict | None): Optional dictionary mapping module names to [input, output] variables.
+        subnn_obj: Optional SubNN object with input_var and output_var attributes.
 
     Returns:
         None, but stores the in_out_var in modules_details dict.
@@ -237,16 +231,18 @@ def add_in_out_var_to_subnn(modules_details: dict, inputs_outputs: dict | None =
     # e.g., "encoder_nn" -> "encoder"
     if last_module.endswith("_nn"):
         base_module_name = last_module[:-3]  # Remove "_nn"
-        # Check inputs_outputs for the original input/output variables
-        if inputs_outputs and base_module_name in inputs_outputs:
-            input_var = inputs_outputs[base_module_name][0]
-            output_var = inputs_outputs[base_module_name][1]
-            # Store both input and output separately
-            modules_details[last_module]["subnn_input"] = input_var
-            modules_details[last_module]["subnn_output"] = output_var
-            # Keep in_out_variable for backward compatibility (sequential case where input==output)
-            modules_details[last_module]["in_out_variable"] = output_var
-            return
+
+        # NEW: First check subnn_obj attributes
+        if subnn_obj and hasattr(subnn_obj, 'input_var') and subnn_obj.input_var is not None:
+            input_var = subnn_obj.input_var
+            output_var = subnn_obj.output_var if hasattr(subnn_obj, 'output_var') else None
+            if output_var is not None:
+                # Store both input and output separately
+                modules_details[last_module]["subnn_input"] = input_var
+                modules_details[last_module]["subnn_output"] = output_var
+                # Keep in_out_variable for backward compatibility (sequential case where input==output)
+                modules_details[last_module]["in_out_variable"] = output_var
+                return
 
     if len(modules_details) == 1:
         in_out_var = "x"
@@ -268,23 +264,19 @@ def _handle_inline_call(layer_name):
     return f"self.{inline_layer_name}({inline_input_var})"
 
 
-def _handle_rnn_hidden_suffix(layer_name, modules_details, inputs_outputs=None):
+def _handle_rnn_hidden_suffix(layer_name, modules_details):
     """Handle RNN __hidden suffix.
 
     Returns the appropriate hidden state variable:
-    - If inputs_outputs dict has a specific output variable for this hidden state,
-      return that (e.g., h1_last instead of h1 when subscript was extracted)
+    - Use layer.hidden_state_var attribute from layer object
     - Otherwise return the base hidden state variable from layer_details[4]
     """
     base_layer = layer_name[:-8]  # Remove '__hidden' suffix
     my_keys = list(modules_details.keys())
     if base_layer + "_layer" in my_keys:
         layer_details = modules_details[base_layer + "_layer"]
-        # Check if inputs_outputs has a specific output variable for this hidden state
-        if inputs_outputs and layer_name in inputs_outputs:
-            output_var = inputs_outputs[layer_name][1]
-            if output_var is not None:
-                return output_var
+        if len(layer_details) > 3 and hasattr(layer_details[3], 'hidden_state_var') and layer_details[3].hidden_state_var:
+            return layer_details[3].hidden_state_var
         # Fall back to base hidden variable
         if len(layer_details) > 4:
             return layer_details[4]
@@ -370,15 +362,25 @@ def _handle_rnn_cell_backward_suffix(layer_name, modules_details):
         return "x"
 
 
-def _handle_bidirectional_forward(layer_name):
+def _handle_bidirectional_forward(layer_name, layer_details=None):
     """Handle bidirectional RNN __forward suffix."""
     base_name = layer_name.rsplit("__forward", 1)[0]
+    # CRITICAL FIX: Use layer's forward_output_var if set (user's variable name)
+    if layer_details and len(layer_details) > 2:
+        layer_obj = layer_details[2]
+        if hasattr(layer_obj, 'forward_output_var') and layer_obj.forward_output_var:
+            return layer_obj.forward_output_var
     return f"{base_name}_forward_h"
 
 
-def _handle_bidirectional_backward(layer_name):
+def _handle_bidirectional_backward(layer_name, layer_details=None):
     """Handle bidirectional RNN __backward suffix."""
     base_name = layer_name.rsplit("__backward", 1)[0]
+    # CRITICAL FIX: Use layer's backward_output_var if set (user's variable name)
+    if layer_details and len(layer_details) > 2:
+        layer_obj = layer_details[2]
+        if hasattr(layer_obj, 'backward_output_var') and layer_obj.backward_output_var:
+            return layer_obj.backward_output_var
     return f"{base_name}_backward_h"
 
 
@@ -452,11 +454,15 @@ def _handle_bidirectional_concat(layer_name, modules_details):
 
 def _handle_tensorop(layer_name, modules_details):
     """Handle tensorop output."""
-    return modules_details[layer_name + "_op"][1]
+    key = layer_name + "_op"
+    result = modules_details[key][1]
+    if "subscript" in layer_name:
+        print(f"DEBUG _handle_tensorop: layer_name={layer_name}, key={key}, result={result}")
+    return result
 
 
 def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
-                                     actual_vars: list = None, inputs_outputs: dict = None):
+                                     actual_vars: list = None):
     """
     It retrieves the output variables of the layers in `layers_name`
     list to use them as input of the tensorop.
@@ -466,7 +472,6 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         actual_vars (list): Component types ("output" or "hidden") for RNN layers.
-        inputs_outputs (dict): Optional dict mapping names to [input_var, output_var].
 
     Returns:
         The output variables of the layers in 'layers_names'.
@@ -495,7 +500,7 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
         elif isinstance(layer_name, str) and layer_name.endswith("__cell_backward"):
             out_vars.append(_handle_rnn_cell_backward_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__hidden"):
-            out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details, inputs_outputs))
+            out_vars.append(_handle_rnn_hidden_suffix(layer_name, modules_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__cell"):
             out_vars.append(_handle_rnn_cell_suffix(layer_name, modules_details))
         # Handle split tensorop output suffixes
@@ -503,9 +508,13 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             out_vars.append(_handle_split_output(layer_name, modules_details))
         # Handle bidirectional RNN forward/backward suffixes
         elif isinstance(layer_name, str) and layer_name.endswith("__forward"):
-            out_vars.append(_handle_bidirectional_forward(layer_name))
+            base_name = layer_name.rsplit("__forward", 1)[0]
+            layer_details = modules_details.get(base_name + "_layer")
+            out_vars.append(_handle_bidirectional_forward(layer_name, layer_details))
         elif isinstance(layer_name, str) and layer_name.endswith("__backward"):
-            out_vars.append(_handle_bidirectional_backward(layer_name))
+            base_name = layer_name.rsplit("__backward", 1)[0]
+            layer_details = modules_details.get(base_name + "_layer")
+            out_vars.append(_handle_bidirectional_backward(layer_name, layer_details))
         # Handle regular layer
         elif layer_name + "_layer" in my_keys:
             out_vars.append(_handle_regular_layer(layer_name, modules_details, i, actual_vars))
@@ -600,7 +609,7 @@ def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
         return "x_1"
 
 
-def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict, inputs_outputs: dict | None = None):
+def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
     """
     It sets the input and output variables of the layer.
 
@@ -609,7 +618,6 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict, input
         prev_out_var (str): The previous output variable.
         modules_details (dict): A dict storing the NN modules syntax and
             attributes.
-        inputs_outputs (dict | None): Dictionary mapping module names to [input_var, output_var].
 
     Returns:
         - The input variable and output variables of both the layer and
@@ -617,11 +625,10 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict, input
 
     """
     out_var_actv, in_var_actv = None, None
-    in_var_layer = get_input_var(layer, modules_details, prev_out_var, inputs_outputs)
+    in_var_layer = get_input_var(layer, modules_details, prev_out_var)
 
-    # Check if inputs_outputs has the original output variable from the code
-    if inputs_outputs and layer.name in inputs_outputs:
-        out_var_layer = inputs_outputs[layer.name][1]
+    if layer.output_var is not None:
+        out_var_layer = layer.output_var
     elif layer.input_reused:
         out_var_layer = get_out_var_input_reused(prev_out_var, modules_details)
     else:
@@ -635,7 +642,7 @@ def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict, input
         out_var_actv, in_var_actv = out_var_layer, out_var_layer
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
-def initialize_layer_vars(layer: Layer, inputs_outputs: dict | None = None):
+def initialize_layer_vars(layer: Layer):
     """
     It sets the input and output variables of layer (and activation
     function for PyTorch) in the case it is the first module in
@@ -643,7 +650,6 @@ def initialize_layer_vars(layer: Layer, inputs_outputs: dict | None = None):
 
     Arguments:
         layer (Layer): The BUML layer object.
-        inputs_outputs (dict | None): Dictionary mapping module names to [input_var, output_var].
 
     Returns:
         - The input variable and output variables of both the layer and
@@ -651,10 +657,10 @@ def initialize_layer_vars(layer: Layer, inputs_outputs: dict | None = None):
     """
     out_var_actv, in_var_actv = None, None
 
-    # Check if inputs_outputs has the original output variable from the code
-    if inputs_outputs and layer.name in inputs_outputs:
-        out_var_layer = inputs_outputs[layer.name][1]
-        in_var_layer = inputs_outputs[layer.name][0] if inputs_outputs[layer.name][0] else "x"
+    # NEW: Prefer layer attributes
+    if layer.output_var is not None:
+        out_var_layer = layer.output_var
+        in_var_layer = layer.input_var if layer.input_var else "x"
         # BUGFIX: Set activation variables when layer has activation function
         if layer.actv_func is not None:
             out_var_actv, in_var_actv = out_var_layer, out_var_layer
@@ -761,10 +767,10 @@ def _find_previous_non_shape_dim_module(modules_details: dict) -> str:
             return module_name
     return None
 
-def _initialize_layer_variables(layer, modules_details, inputs_outputs=None):
+def _initialize_layer_variables(layer, modules_details):
     """Initialize layer input/output variables based on modules_details."""
     if len(modules_details) == 0:
-        return initialize_layer_vars(layer, inputs_outputs), None
+        return initialize_layer_vars(layer), None
 
     prev_module = list(modules_details.keys())[-1]
 
@@ -777,10 +783,10 @@ def _initialize_layer_variables(layer, modules_details, inputs_outputs=None):
             return initialize_layer_vars(layer), None
 
     if prev_module is not None:
-        prev_out_var = get_previous_out_var(modules_details, prev_module, inputs_outputs)
-        return get_layer_vars(layer, prev_out_var, modules_details, inputs_outputs), prev_module
+        prev_out_var = get_previous_out_var(modules_details, prev_module)
+        return get_layer_vars(layer, prev_out_var, modules_details), prev_module
 
-    return initialize_layer_vars(layer, inputs_outputs), None
+    return initialize_layer_vars(layer), None
 
 
 def _add_input_permute_if_needed(setup, channel_last, layer, in_layer, is_seq, is_subnn):
@@ -807,29 +813,24 @@ def _get_unique_layer_key(layer_name, modules_details):
 def _get_rnn_hidden_var_name(layer, out_layer, model):
     """Get RNN hidden state variable name from model or generate default."""
     concat_var_names = getattr(model, 'bidirectional_concat_var_names', {}) if model else {}
-    inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
 
     if layer.name in concat_var_names:
         return concat_var_names[layer.name]
 
-    if inputs_outputs and (layer.name + "__hidden") in inputs_outputs:
-        hidden_var = inputs_outputs[layer.name + "__hidden"][0]
-        if hidden_var is None:
-            return f"{out_layer}_h" if out_layer != "x" else "h"
-        return hidden_var
+    # NEW: Prefer layer attribute
+    if layer.hidden_state_var is not None:
+        print(f"DEBUG _get_rnn_hidden_var_name: layer={layer.name}, out_layer={out_layer}, hidden_state_var={layer.hidden_state_var}")
+        return layer.hidden_state_var
 
     return f"{out_layer}_h" if out_layer != "x" else "h"
 
 
 def _get_lstm_cell_var_name(layer, hidden_var, model):
     """Get LSTM cell state variable name from model or generate default."""
-    inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
-
-    if inputs_outputs and (layer.name + "__cell") in inputs_outputs:
-        cell_var = inputs_outputs[layer.name + "__cell"][0]
-        if cell_var is None or cell_var == "_":
+    if layer.cell_state_var is not None:
+        if layer.cell_state_var == "_":
             return f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
-        return cell_var
+        return layer.cell_state_var
 
     return f"{hidden_var}_cell" if "_cell" not in hidden_var else hidden_var
 
@@ -847,10 +848,14 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
         if layer.__class__.__name__ == "LSTMLayer":
             cell_var = _get_lstm_cell_var_name(layer, hidden_var, model)
             modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer, hidden_var, cell_var]
+            print(f"DEBUG _store_layer: LSTM {unique_key} -> [syntax, out={out_layer}, in={in_layer}, layer, hidden={hidden_var}, cell={cell_var}]")
         else:
             modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer, hidden_var]
+            print(f"DEBUG _store_layer: RNN {unique_key} -> [syntax, out={out_layer}, in={in_layer}, layer, hidden={hidden_var}]")
     else:
         modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer]
+        if layer.__class__.__name__ in ['Conv1D', 'Conv2D', 'Conv3D']:
+            print(f"DEBUG _store_layer: Conv {unique_key} -> [syntax, out={out_layer}, in={in_layer}, layer.input_var={layer.input_var}]")
 
 
 def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq, is_subnn):
@@ -889,9 +894,8 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         None, but stores the layer details in the modules_details dict.
 
     """
-    inputs_outputs = getattr(model, 'inputs_outputs', {}) if model else {}
     (out_layer, in_layer, out_actv, in_actv), prev_module = _initialize_layer_variables(
-        layer, modules_details, inputs_outputs
+        layer, modules_details
     )
 
     # Temporarily strip counter suffix from layer.name for syntax generation if requested
@@ -1011,13 +1015,11 @@ def _get_bidirectional_concat_output(source_layer, modules_details):
     return None
 
 
-def _resolve_source_layer_var(source_layer, modules_details, inputs_outputs=None, tensorop=None):
+def _resolve_source_layer_var(source_layer, modules_details, tensorop=None):
     """Resolve a source layer name to its output variable."""
     if source_layer == 'INPUT':
-        if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
-            actual_input_var = inputs_outputs[tensorop.name][0]
-            if actual_input_var:
-                return actual_input_var
+        if tensorop and tensorop.input_var is not None:
+            return tensorop.input_var
         return 'inp'
 
     if not isinstance(source_layer, str):
@@ -1085,14 +1087,13 @@ def _get_rnn_state_var(base_module, modules_details, get_rnn_hidden_var_fn):
 
 
 def _resolve_prev_out_var_from_module_input(
-    module_input, modules_details, get_rnn_hidden_var_fn, inputs_outputs=None, tensorop=None
+    module_input, modules_details, get_rnn_hidden_var_fn, tensorop=None
 ):
     """Resolve prev_out_var from tensorop's layers_of_tensors."""
     if module_input == 'INPUT':
-        if inputs_outputs and tensorop and hasattr(tensorop, 'name') and tensorop.name in inputs_outputs:
-            actual_input_var = inputs_outputs[tensorop.name][0]
-            if actual_input_var:
-                return actual_input_var
+        # NEW: Prefer tensorop attribute
+        if tensorop and tensorop.input_var is not None:
+            return tensorop.input_var
         return 'inp'
 
     if module_input.endswith("__hidden_forward"):
@@ -1126,14 +1127,11 @@ def _resolve_prev_out_var_from_module_input(
     return _resolve_source_layer_var(module_input, modules_details)
 
 
-def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, inputs_outputs=None):
+def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
     """Get the initial prev_out_var before tensorop-specific handling."""
     if len(list(modules_details.keys())) == 0:
-        # Check if we have actual input variable in inputs_outputs even when modules_details is empty
-        if inputs_outputs and tensorop.name in inputs_outputs:
-            actual_input_var = inputs_outputs[tensorop.name][0]
-            if actual_input_var:
-                return actual_input_var
+        if tensorop.input_var is not None:
+            return tensorop.input_var
         return "x"
 
     prev_module = list(modules_details.keys())[-1]
@@ -1156,21 +1154,21 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, 
 
     if module_input is not None:
         prev_out_var = _resolve_prev_out_var_from_module_input(
-            module_input, modules_details, get_rnn_hidden_var_fn, inputs_outputs, tensorop
+            module_input, modules_details, get_rnn_hidden_var_fn, tensorop
         )
 
     return prev_out_var
 
 
 def _override_prev_out_var_if_needed(
-    tensorop, modules_details, current_prev_out_var, inputs_outputs=None
+    tensorop, modules_details, current_prev_out_var
 ):
     """Override prev_out_var from layers_of_tensors if present."""
     if (hasattr(tensorop, 'layers_of_tensors') and
         tensorop.layers_of_tensors and
         isinstance(tensorop.layers_of_tensors[0], str)):
         source_layer = tensorop.layers_of_tensors[0]
-        return _resolve_source_layer_var(source_layer, modules_details, inputs_outputs, tensorop)
+        return _resolve_source_layer_var(source_layer, modules_details, tensorop)
 
     return current_prev_out_var
 
@@ -1198,17 +1196,21 @@ def _handle_reshape_params(tensorop, modules_details):
     return prev_out_var, params
 
 
-def _handle_concatenate_params(tensorop, modules_details, inputs_outputs=None):
+def _handle_concatenate_params(tensorop, modules_details):
     """Handle concatenate tensorop parameters."""
-    actual_vars = getattr(tensorop, 'actual_vars', None)
-    tensors = get_layers_output_for_tensorops(
-        tensorop.layers_of_tensors, modules_details, actual_vars, inputs_outputs
-    )
-    # Filter out None values to prevent join errors (should not happen with proper layer handling)
-    tensors = [t for t in tensors if t is not None]
-    if not tensors:
-        raise ValueError(f"Concatenate operation '{tensorop.name}' has no valid input tensors")
-    params = ', '.join(tensors)
+    # Use original variable names from tensorop.input_var if available (comma-separated)
+    if tensorop.input_var and ',' in tensorop.input_var:
+        params = tensorop.input_var  # Already comma-separated: "last_output,last_hidden"
+    else:
+        actual_vars = getattr(tensorop, 'actual_vars', None)
+        tensors = get_layers_output_for_tensorops(
+            tensorop.layers_of_tensors, modules_details, actual_vars
+        )
+        # Filter out None values to prevent join errors (should not happen with proper layer handling)
+        tensors = [t for t in tensors if t is not None]
+        if not tensors:
+            raise ValueError(f"Concatenate operation '{tensorop.name}' has no valid input tensors")
+        params = ', '.join(tensors)
     return None, params
 
 
@@ -1227,18 +1229,18 @@ def _handle_permute_params(tensorop, modules_details):
     return None, params
 
 
-def _handle_simple_op_params(tensorop, modules_details, inputs_outputs=None):
+def _handle_simple_op_params(tensorop, modules_details):
     """Handle simple ops (mean, max, squeeze, unsqueeze, normalize, shape_dim, subscript)."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, inputs_outputs=inputs_outputs
+        tensorop, modules_details, None
     )
     return prev_out_var, ""
 
 
-def _handle_repeat_params(tensorop, modules_details, inputs_outputs=None):
+def _handle_repeat_params(tensorop, modules_details):
     """Handle repeat tensorop parameters."""
     prev_out_var = _override_prev_out_var_if_needed(
-        tensorop, modules_details, None, inputs_outputs=inputs_outputs
+        tensorop, modules_details, None
     )
 
     # Resolve operation names in repeat_dim (similar to reshape_dim)
@@ -1258,7 +1260,9 @@ def _handle_generic_params(tensorop, modules_details):
     tensors = tensorop.layers_of_tensors
     if any(isinstance(t, str) for t in tensors):
         actual_vars = getattr(tensorop, 'actual_vars', None)
+        print(f"DEBUG _handle_generic_params: tensorop.name={tensorop.name}, tensorop.tns_type={tensorop.tns_type}, layers_of_tensors={tensorop.layers_of_tensors}")
         tensors = get_layers_output_for_tensorops(tensors, modules_details, actual_vars)
+        print(f"DEBUG _handle_generic_params: After get_layers_output_for_tensorops, tensors={tensors}")
 
     params = ', '.join([str(i) for i in tensors])
     return None, params
@@ -1285,7 +1289,7 @@ _TENSOROP_HANDLERS = {
 }
 
 
-def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidden_var_fn=None, inputs_outputs=None):
+def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidden_var_fn=None):
     """
     It retrieves tensorops parameters that are used by
     `get_tensorop_syntax` function defined in PyTorch and
@@ -1297,19 +1301,18 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict, get_rnn_hidde
             attributes.
         get_rnn_hidden_var_fn (callable): Optional framework-specific function
             to get RNN hidden variable name. Should accept (layer_details, base_module).
-        inputs_outputs (dict): Optional dict mapping tensorop names to [input_var, output_var].
 
     Returns:
         - previous output variable and the parameters of the tensorop.
 
     """
-    prev_out_var = _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn, inputs_outputs)
+    prev_out_var = _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn)
 
     tns_type = tensorop.tns_type
     handler = _TENSOROP_HANDLERS.get(tns_type, _handle_generic_params)
 
     if tns_type in ["mean", "max", "squeeze", "unsqueeze", "subscript", "shape_dim", "normalize", "split", "repeat", "concatenate"]:
-        override_prev_out_var, params = handler(tensorop, modules_details, inputs_outputs)
+        override_prev_out_var, params = handler(tensorop, modules_details)
     else:
         override_prev_out_var, params = handler(tensorop, modules_details)
 
@@ -1344,10 +1347,14 @@ def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str, modules_details:
             out_var = prev_out_var
     return out_var
 
-def _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops, inputs_outputs):
+def _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops):
     """Determine the output variable name for a tensorop."""
-    if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
-        return inputs_outputs[tensorop.name][1]
+    # NEW: Prefer tensorop attributes - check output_vars for split ops
+    if tensorop.output_vars is not None and len(tensorop.output_vars) > 0:
+        # Split operation with multiple outputs - return comma-joined
+        return ", ".join(tensorop.output_vars)
+    if tensorop.output_var is not None:
+        return tensorop.output_var
 
     if out_var is not None:
         return out_var
@@ -1363,8 +1370,6 @@ def _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_t
 
     if referenced_tensorops and tensorop.name in referenced_tensorops:
         return tensorop.name
-    if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
-        return inputs_outputs[tensorop.name][1]
     if tensorop.tns_type in ("split", "identity"):
         return tensorop.name
     if hasattr(tensorop, 'input_reused') and tensorop.input_reused:
@@ -1373,23 +1378,21 @@ def _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_t
     return get_tensorop_out_var(tensorop, prev_out_var, modules_details)
 
 
-def _handle_skip_syntax(ts_op_synt, out_var, inputs_outputs, tensorop):
+def _handle_skip_syntax(ts_op_synt, out_var, tensorop):
     """Handle SKIP: syntax and extract actual variable name."""
     if not (isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:")):
         return out_var
 
     skip_var = ts_op_synt[5:]
-    if not (inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None):
-        return skip_var
-    return out_var
+    return skip_var
 
 
-def _handle_split_tuple(tensorop, out_var, inputs_outputs):
+def _handle_split_tuple(tensorop, out_var):
     """Generate tuple variable names for split operations."""
     if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
-        # Use actual variable names from inputs_outputs if available (preserves original names)
-        if inputs_outputs and tensorop.name in inputs_outputs and inputs_outputs[tensorop.name][1] is not None:
-            return inputs_outputs[tensorop.name][1]  # This is already a comma-joined string
+        # NEW: Prefer tensorop attribute (list of variables)
+        if tensorop.output_vars is not None and len(tensorop.output_vars) > 0:
+            return ", ".join(tensorop.output_vars)
         # Fallback to auto-generated names
         num_splits = tensorop.split_sizes
         split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
@@ -1409,13 +1412,12 @@ def _add_tensorop_input_permute(tensorop, modules_details, get_tensorop_syntax):
         handle_tensorop(in_permute, modules_details, get_tensorop_syntax, out_var=in_var, channel_last=False)
 
 
-def _update_skip_source_layer(ts_op_synt, out_var, inputs_outputs, tensorop, modules_details):
+def _update_skip_source_layer(ts_op_synt, out_var, tensorop, modules_details):
     """Update source layer output variable for SKIP operations with user variable names."""
     if not (isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:")):
         return
 
-    if (inputs_outputs and tensorop.name in inputs_outputs and
-        inputs_outputs[tensorop.name][1] is not None and out_var != ts_op_synt[5:]):
+    if (tensorop.output_var is not None and out_var != ts_op_synt[5:]):
         if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
             source_layer_name = tensorop.layers_of_tensors[0]
             layer_key = source_layer_name + "_layer"
@@ -1436,7 +1438,6 @@ def _add_tensorop_output_permute(tensorop, modules_details, get_tensorop_syntax,
 def handle_tensorop(tensorop: TensorOp, modules_details: dict,
                     get_tensorop_syntax: callable, out_var: str | None = None,
                     referenced_tensorops: set | None = None,
-                    inputs_outputs: dict | None = None,
                     channel_last: bool = False):
     """
     It populates the `modules_details` dictionary with tensorop's
@@ -1455,17 +1456,35 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
         None, but stores the tensorop details in the modules_details dict.
 
     """
-    ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var, inputs_outputs)
+    ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
 
-    out_var = _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops, inputs_outputs)
-    out_var = _handle_skip_syntax(ts_op_synt, out_var, inputs_outputs, tensorop)
-    out_var = _handle_split_tuple(tensorop, out_var, inputs_outputs)
+    out_var = _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops)
+    out_var = _handle_skip_syntax(ts_op_synt, out_var, tensorop)
+    out_var = _handle_split_tuple(tensorop, out_var)
 
     _add_tensorop_input_permute(tensorop, modules_details, get_tensorop_syntax)
 
+    if "binop" in tensorop.tns_type or "subscript" in tensorop.tns_type or tensorop.tns_type == "squeeze":
+        print(f"DEBUG store tensorop: tensorop.name={tensorop.name}, tns_type={tensorop.tns_type}, ts_op_synt={repr(ts_op_synt)} (type={type(ts_op_synt)}), out_var={repr(out_var)} (type={type(out_var)})")
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
+    if "binop" in tensorop.tns_type or "subscript" in tensorop.tns_type or tensorop.tns_type == "squeeze":
+        print(f"DEBUG stored in modules_details[{tensorop.name}_op]: syntax={repr(modules_details[tensorop.name + '_op'][0])} (type={type(modules_details[tensorop.name + '_op'][0])}), out_var={repr(modules_details[tensorop.name + '_op'][1])} (type={type(modules_details[tensorop.name + '_op'][1])})")
+        print(f"DEBUG are they equal? {modules_details[tensorop.name + '_op'][0] == modules_details[tensorop.name + '_op'][1]}")
+        print(f"DEBUG are they identical? {modules_details[tensorop.name + '_op'][0] is modules_details[tensorop.name + '_op'][1]}")
 
-    _update_skip_source_layer(ts_op_synt, out_var, inputs_outputs, tensorop, modules_details)
+    # DEBUG: Print ALL modules_details entries at the end
+    if tensorop.name == "op_1":
+        print(f"\nDEBUG: FINAL CHECK for op_1_op:")
+        entry = modules_details.get("op_1_op")
+        if entry:
+            print(f"  entry[0] = {repr(entry[0])} (id={id(entry[0])})")
+            print(f"  entry[1] = {repr(entry[1])} (id={id(entry[1])})")
+            print(f"  entry[0] == entry[1]: {entry[0] == entry[1]}")
+            print(f"  entry[0] is entry[1]: {entry[0] is entry[1]}")
+            print(f"  type(entry[0]): {type(entry[0])}")
+            print(f"  type(entry[1]): {type(entry[1])}")
+
+    _update_skip_source_layer(ts_op_synt, out_var, tensorop, modules_details)
     _add_tensorop_output_permute(tensorop, modules_details, get_tensorop_syntax, out_var)
 
 
@@ -1678,6 +1697,16 @@ def _apply_variable_renaming(modules_details, old_to_new):
                 else:
                     module_data[1] = old_to_new.get(out_var, out_var)
 
+            # CRITICAL: Also update the tensorop object's attributes (NEW migration stores vars here)
+            if len(module_data) > 2:
+                tensorop = module_data[2]
+                if hasattr(tensorop, 'output_var') and tensorop.output_var is not None:
+                    if isinstance(tensorop.output_var, str):
+                        tensorop.output_var = old_to_new.get(tensorop.output_var, tensorop.output_var)
+                if hasattr(tensorop, 'input_var') and tensorop.input_var is not None:
+                    if isinstance(tensorop.input_var, str):
+                        tensorop.input_var = old_to_new.get(tensorop.input_var, tensorop.input_var)
+
         elif module_name.endswith("_layer") or module_name.endswith("_activ"):
             syntax = module_data[0]
             if isinstance(syntax, str):
@@ -1693,6 +1722,16 @@ def _apply_variable_renaming(modules_details, old_to_new):
                 in_var = module_data[2]
                 if isinstance(in_var, str) and in_var in old_to_new:
                     module_data[2] = old_to_new[in_var]
+
+            # CRITICAL: Also update layer object's attributes
+            if len(module_data) > 3:
+                layer_obj = module_data[3]
+                if hasattr(layer_obj, 'output_var') and layer_obj.output_var is not None:
+                    if isinstance(layer_obj.output_var, str):
+                        layer_obj.output_var = old_to_new.get(layer_obj.output_var, layer_obj.output_var)
+                if hasattr(layer_obj, 'input_var') and layer_obj.input_var is not None:
+                    if isinstance(layer_obj.input_var, str):
+                        layer_obj.input_var = old_to_new.get(layer_obj.input_var, layer_obj.input_var)
 
 
 def renumber_tensorop_variables(modules_details):

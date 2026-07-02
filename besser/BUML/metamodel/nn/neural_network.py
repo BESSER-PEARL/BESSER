@@ -48,6 +48,9 @@ class TensorOp(NamedElement):
         split_sizes (int): Number of splits or list of split sizes.
         permute_in (bool): Whether to permute input dimensions for spatial ops.
         permute_out (bool): Whether to permute output dimensions for spatial ops.
+        input_var (str): Input variable name for this tensor operation.
+        output_var (str): Output variable name for this tensor operation.
+        output_vars (List[str]): Output variable names for multi-output operations (split/chunk).
 
     Attributes:
         name (str): The name of the tensor operation.
@@ -76,6 +79,9 @@ class TensorOp(NamedElement):
         split_sizes (int): Number or sizes of splits.
         permute_in (bool): Input permute flag.
         permute_out (bool): Output permute flag.
+        input_var (str): Input variable name for this tensor operation.
+        output_var (str): Output variable name for this tensor operation.
+        output_vars (List[str]): Output variable names for multi-output operations (split/chunk).
     """
     def __init__(self, name: str, tns_type: str, concatenate_dim: int = None,
                  layers_of_tensors: List[Union[str, float]] = None,
@@ -100,7 +106,10 @@ class TensorOp(NamedElement):
                  split_dim: int = None,
                  split_sizes: int = None,
                  permute_in: bool = False,
-                 permute_out: bool = False):
+                 permute_out: bool = False,
+                 input_var: str = None,
+                 output_var: str = None,
+                 output_vars: List[str] = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
@@ -127,6 +136,9 @@ class TensorOp(NamedElement):
         self.tns_type: str = tns_type
         self.permute_in: bool = permute_in
         self.permute_out: bool = permute_out
+        self.input_var: str = input_var
+        self.output_var: str = output_var
+        self.output_vars: List[str] = output_vars
 
     @property
     def tns_type(self) -> str:
@@ -477,6 +489,43 @@ class TensorOp(NamedElement):
         """bool: Set whether to permute output dimensions."""
         self.__permute_out = permute_out
 
+    @property
+    def input_var(self) -> str:
+        """str: Get the input variable name for this tensor operation."""
+        return self.__input_var
+
+    @input_var.setter
+    def input_var(self, input_var: str):
+        """str: Set the input variable name for this tensor operation."""
+        self.__input_var = input_var
+
+    @property
+    def output_var(self) -> str:
+        """str: Get the output variable name for this tensor operation."""
+        return self.__output_var
+
+    @output_var.setter
+    def output_var(self, output_var: str):
+        """str: Set the output variable name for this tensor operation."""
+        self.__output_var = output_var
+
+    @property
+    def output_vars(self) -> List[str]:
+        """List[str]: Get the output variable names for multi-output operations (split/chunk)."""
+        return self.__output_vars
+
+    @output_vars.setter
+    def output_vars(self, output_vars: List[str]):
+        """List[str]: Set the output variable names for multi-output operations (split/chunk)."""
+        self.__output_vars = output_vars
+
+    @property
+    def output_var_joined(self) -> str:
+        """str: Returns comma-joined string for multi-output ops (split/chunk)."""
+        if self.output_vars:
+            return ", ".join(self.output_vars)
+        return self.output_var or ""
+
     def __repr__(self):
         return (
             f'TensorOp({self.name}, {self.tns_type}, {self.concatenate_dim}, '
@@ -487,7 +536,8 @@ class TensorOp(NamedElement):
             f'{self.interpolate_scale}, {self.interpolate_mode}, {self.pad_amount}, '
             f'{self.pad_mode}, {self.pad_value}, {self.dropout_rate}, '
             f'{self.dropout_training_aware}, {self.split_dim}, {self.split_sizes}, '
-            f'{self.permute_in}, {self.permute_out})'
+            f'{self.permute_in}, {self.permute_out}, {self.input_var}, '
+            f'{self.output_var}, {self.output_vars})'
         )
 
 class Layer(NamedElement):
@@ -509,6 +559,8 @@ class Layer(NamedElement):
             Used for format conversions (e.g., NHWC to NCHW).
         permute_out (bool): Whether to permute output dimensions after processing.
             Used for format conversions (e.g., NCHW back to NHWC).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): The name of the layer.
@@ -520,11 +572,14 @@ class Layer(NamedElement):
         is_layer_call (bool): True if this is a call to an already-defined layer.
         permute_in (bool): Whether to permute input dimensions before processing.
         permute_out (bool): Whether to permute output dimensions after processing.
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
     """
     def __init__(self, name: str, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False,
                  is_layer_call: bool = False, permute_in: bool = False,
-                 permute_out: bool = False):
+                 permute_out: bool = False, input_var: str = None,
+                 output_var: str = None):
         super().__init__(name)
         self.actv_func: str = actv_func
         self.name_module_input: str = name_module_input
@@ -532,6 +587,8 @@ class Layer(NamedElement):
         self.is_layer_call: bool = is_layer_call
         self.permute_in: bool = permute_in
         self.permute_out: bool = permute_out
+        self.input_var: str = input_var
+        self.output_var: str = output_var
 
     @property
     def actv_func(self) -> str:
@@ -611,11 +668,32 @@ class Layer(NamedElement):
         """bool: Set whether to permute output dimensions after processing."""
         self.__permute_out = permute_out
 
+    @property
+    def input_var(self) -> str:
+        """str: Get the input variable name for this layer."""
+        return self.__input_var
+
+    @input_var.setter
+    def input_var(self, input_var: str):
+        """str: Set the input variable name for this layer."""
+        self.__input_var = input_var
+
+    @property
+    def output_var(self) -> str:
+        """str: Get the output variable name for this layer."""
+        return self.__output_var
+
+    @output_var.setter
+    def output_var(self, output_var: str):
+        """str: Set the output variable name for this layer."""
+        self.__output_var = output_var
+
     def __repr__(self):
         return (
             f'Layer({self.name}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
-            f'{self.permute_in}, {self.permute_out})'
+            f'{self.permute_in}, {self.permute_out}, {self.input_var}, '
+            f'{self.output_var})'
         )
 
 class CNN(Layer):
@@ -672,6 +750,8 @@ class CNN(Layer):
             to this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
 
     def __init__(self, name: str, kernel_dim: List[int],
@@ -774,7 +854,8 @@ class CNN(Layer):
             f'CNN({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
             f'{self.permute_in}, {self.permute_out}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class ConvolutionalLayer(CNN):
@@ -844,6 +925,8 @@ class ConvolutionalLayer(CNN):
             to this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
 
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
@@ -924,7 +1007,8 @@ class ConvolutionalLayer(CNN):
             f'{self.padding_amount}, {self.padding_type}, {self.dilation}, '
             f'{self.groups}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call})'
+            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class Conv1D(ConvolutionalLayer):
@@ -997,6 +1081,8 @@ class Conv1D(ConvolutionalLayer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
@@ -1055,7 +1141,7 @@ class Conv1D(ConvolutionalLayer):
             f'{self.padding_amount}, {self.padding_type}, {self.dilation}, '
             f'{self.groups}, {self.bias}, {self.name_module_input}, '
             f'{self.input_reused}, {self.permute_in}, {self.permute_out}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var})'
         )
 
 class Conv2D(ConvolutionalLayer):
@@ -1128,6 +1214,8 @@ class Conv2D(ConvolutionalLayer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
@@ -1185,7 +1273,8 @@ class Conv2D(ConvolutionalLayer):
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
             f'{self.padding_type}, {self.dilation}, {self.groups}, {self.bias}, '
             f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call})'
+            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class Conv3D(ConvolutionalLayer):
@@ -1258,6 +1347,8 @@ class Conv3D(ConvolutionalLayer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
                  stride_dim: List[int] = None, in_channels: int = None,
@@ -1314,7 +1405,8 @@ class Conv3D(ConvolutionalLayer):
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
             f'{self.padding_type}, {self.dilation}, {self.groups}, {self.bias}, '
             f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call})'
+            f'{self.permute_in}, {self.permute_out}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 
@@ -1387,6 +1479,8 @@ class PoolingLayer(CNN):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, pooling_type: str, dimension: str,
                  kernel_dim: List[int] = None, stride_dim: List[int] = None,
@@ -1524,7 +1618,7 @@ class PoolingLayer(CNN):
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
             f'{self.output_dim}, {self.name_module_input}, '
             f'{self.input_reused}, {self.permute_in}, {self.permute_out}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var})'
         )
 
 class LayerModifier(Layer):
@@ -1554,12 +1648,15 @@ class LayerModifier(Layer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
 
     def __repr__(self):
         return (
             f'LayerModifier({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class NormalizationLayer(LayerModifier):
@@ -1595,6 +1692,8 @@ class NormalizationLayer(LayerModifier):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
                  permute_in: bool = False, permute_out: bool = False,
@@ -1630,7 +1729,7 @@ class NormalizationLayer(LayerModifier):
             f'NormalizationLayer({self.name}, {self.eps}, {self.affine}, '
             f'{self.permute_in}, {self.permute_out}, '
             f'{self.actv_func}, {self.name_module_input}, {self.input_reused}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var})'
         )
 
 class BatchNormLayer(NormalizationLayer):
@@ -1688,6 +1787,8 @@ class BatchNormLayer(NormalizationLayer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, num_features: int, dimension: str,
                  eps: float = 1e-5, momentum: float = 0.1, affine: bool = True,
@@ -1758,7 +1859,8 @@ class BatchNormLayer(NormalizationLayer):
             f'BatchNormLayer({self.name}, {self.num_features}, {self.dimension}, '
             f'{self.eps}, {self.momentum}, {self.affine}, {self.track_running_stats}, '
             f'{self.actv_func}, {self.permute_in}, {self.permute_out}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class LayerNormLayer(NormalizationLayer):
@@ -1799,6 +1901,8 @@ class LayerNormLayer(NormalizationLayer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, normalized_shape: List[int],
                  eps: float = 1e-5, affine: bool = True,
@@ -1827,7 +1931,8 @@ class LayerNormLayer(NormalizationLayer):
         return (
             f'LayerNormLayer({self.name}, {self.normalized_shape}, {self.eps}, '
             f'{self.affine}, {self.actv_func}, {self.name_module_input}, '
-            f'{self.input_reused}, {self.is_layer_call})'
+            f'{self.input_reused}, {self.is_layer_call}, {self.input_var}, '
+            f'{self.output_var})'
         )
 
 class DropoutLayer(LayerModifier):
@@ -1865,6 +1970,8 @@ class DropoutLayer(LayerModifier):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, rate: float, dimension: str | None = None,
                  permute_in: bool = False, permute_out: bool = False,
@@ -1899,7 +2006,8 @@ class DropoutLayer(LayerModifier):
         return (
             f'DropoutLayer({self.name}, {self.rate}, {self.dimension}, '
             f'{self.permute_in}, {self.permute_out}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class RNN(Layer):
@@ -1933,6 +2041,12 @@ class RNN(Layer):
             (used in encoder-decoder architectures).
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        hidden_state_var (str): Variable name for hidden state output.
+        cell_state_var (str): Variable name for cell state output (LSTM only).
+        hidden_unused (bool): Whether hidden state output is unused by subsequent layers.
+        cell_unused (bool): Whether cell state output is unused by subsequent layers.
+        hidden_subscript_source (str): Source variable for hidden subscript assignment (e.g., 'h' in 'x = h').
+        hidden_subscript_target (str): Target variable for hidden subscript assignment (e.g., 'x' in 'x = h').
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1960,13 +2074,24 @@ class RNN(Layer):
         hx_source (str): The name of the source layer for initial hidden state.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
+        hidden_state_var (str): Variable name for hidden state output.
+        cell_state_var (str): Variable name for cell state output (LSTM only).
+        hidden_unused (bool): Whether hidden state output is unused by subsequent layers.
+        cell_unused (bool): Whether cell state output is unused by subsequent layers.
+        hidden_subscript_source (str): Source variable for hidden subscript assignment (e.g., 'h' in 'x = h').
+        hidden_subscript_target (str): Target variable for hidden subscript assignment (e.g., 'x' in 'x = h').
     """
     def __init__(self, name: str, hidden_size: int, return_type: str = "full",
                  input_size: int = None, bidirectional: bool = False,
                  dropout: float = 0.0, batch_first: bool = True, bias: bool = True,
                  actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, hx_source: str = None,
-                 is_layer_call: bool = False):
+                 is_layer_call: bool = False, hidden_state_var: str = None,
+                 cell_state_var: str = None, hidden_unused: bool = False,
+                 cell_unused: bool = False, hidden_subscript_source: str = None,
+                 hidden_subscript_target: str = None):
         super().__init__(name, actv_func, name_module_input, input_reused, is_layer_call)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
@@ -1976,6 +2101,12 @@ class RNN(Layer):
         self.hidden_size: int = hidden_size
         self.return_type: str = return_type
         self.hx_source: str = hx_source
+        self.hidden_state_var: str = hidden_state_var
+        self.cell_state_var: str = cell_state_var
+        self.hidden_unused: bool = hidden_unused
+        self.cell_unused: bool = cell_unused
+        self.hidden_subscript_source: str = hidden_subscript_source
+        self.hidden_subscript_target: str = hidden_subscript_target
 
     @property
     def input_size(self) -> int:
@@ -2079,13 +2210,75 @@ class RNN(Layer):
         """str: Set the name of the source layer for initial hidden state."""
         self.__hx_source = hx_source
 
+    @property
+    def hidden_state_var(self) -> str:
+        """str: Get the variable name for hidden state output."""
+        return self.__hidden_state_var
+
+    @hidden_state_var.setter
+    def hidden_state_var(self, hidden_state_var: str):
+        """str: Set the variable name for hidden state output."""
+        self.__hidden_state_var = hidden_state_var
+
+    @property
+    def cell_state_var(self) -> str:
+        """str: Get the variable name for cell state output (LSTM only)."""
+        return self.__cell_state_var
+
+    @cell_state_var.setter
+    def cell_state_var(self, cell_state_var: str):
+        """str: Set the variable name for cell state output (LSTM only)."""
+        self.__cell_state_var = cell_state_var
+
+    @property
+    def hidden_unused(self) -> bool:
+        """bool: Get whether hidden state output is unused by subsequent layers."""
+        return self.__hidden_unused
+
+    @hidden_unused.setter
+    def hidden_unused(self, hidden_unused: bool):
+        """bool: Set whether hidden state output is unused by subsequent layers."""
+        self.__hidden_unused = hidden_unused
+
+    @property
+    def cell_unused(self) -> bool:
+        """bool: Get whether cell state output is unused by subsequent layers."""
+        return self.__cell_unused
+
+    @cell_unused.setter
+    def cell_unused(self, cell_unused: bool):
+        """bool: Set whether cell state output is unused by subsequent layers."""
+        self.__cell_unused = cell_unused
+
+    @property
+    def hidden_subscript_source(self) -> str:
+        """str: Get the source variable for hidden subscript assignment."""
+        return self.__hidden_subscript_source
+
+    @hidden_subscript_source.setter
+    def hidden_subscript_source(self, hidden_subscript_source: str):
+        """str: Set the source variable for hidden subscript assignment."""
+        self.__hidden_subscript_source = hidden_subscript_source
+
+    @property
+    def hidden_subscript_target(self) -> str:
+        """str: Get the target variable for hidden subscript assignment."""
+        return self.__hidden_subscript_target
+
+    @hidden_subscript_target.setter
+    def hidden_subscript_target(self, hidden_subscript_target: str):
+        """str: Set the target variable for hidden subscript assignment."""
+        self.__hidden_subscript_target = hidden_subscript_target
+
     def __repr__(self):
         return (
             f'RNN({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
+            f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
+            f'{self.cell_unused})'
         )
 
 class SimpleRNNLayer(RNN):
@@ -2148,6 +2341,14 @@ class SimpleRNNLayer(RNN):
         hx_source (str): Inherited from RNN. The name of the source layer for initial hidden state.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
+        hidden_state_var (str): Inherited from RNN. Variable name for hidden state output.
+        cell_state_var (str): Inherited from RNN. Variable name for cell state output (LSTM only).
+        hidden_unused (bool): Inherited from RNN. Whether hidden state output is unused.
+        cell_unused (bool): Inherited from RNN. Whether cell state output is unused.
+        hidden_subscript_source (str): Inherited from RNN. Source variable for hidden subscript assignment.
+        hidden_subscript_target (str): Inherited from RNN. Target variable for hidden subscript assignment.
     """
 
     def __repr__(self):
@@ -2156,7 +2357,10 @@ class SimpleRNNLayer(RNN):
             f'{self.return_type}, {self.input_size}, {self.bidirectional}, '
             f'{self.dropout}, {self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
+            f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
+            f'{self.cell_unused}, {self.hidden_subscript_source}, '
+            f'{self.hidden_subscript_target})'
         )
 
 class LSTMLayer(RNN):
@@ -2218,6 +2422,14 @@ class LSTMLayer(RNN):
         hx_source (str): Inherited from RNN. The name of the source layer for initial hidden state.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
+        hidden_state_var (str): Inherited from RNN. Variable name for hidden state output.
+        cell_state_var (str): Inherited from RNN. Variable name for cell state output (LSTM only).
+        hidden_unused (bool): Inherited from RNN. Whether hidden state output is unused.
+        cell_unused (bool): Inherited from RNN. Whether cell state output is unused.
+        hidden_subscript_source (str): Inherited from RNN. Source variable for hidden subscript assignment.
+        hidden_subscript_target (str): Inherited from RNN. Target variable for hidden subscript assignment.
     """
 
     def __repr__(self):
@@ -2226,7 +2438,10 @@ class LSTMLayer(RNN):
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
+            f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
+            f'{self.cell_unused}, {self.hidden_subscript_source}, '
+            f'{self.hidden_subscript_target})'
         )
 
 class GRULayer(RNN):
@@ -2288,6 +2503,14 @@ class GRULayer(RNN):
         hx_source (str): Inherited from RNN. The name of the source layer for initial hidden state.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
+        hidden_state_var (str): Inherited from RNN. Variable name for hidden state output.
+        cell_state_var (str): Inherited from RNN. Variable name for cell state output (LSTM only).
+        hidden_unused (bool): Inherited from RNN. Whether hidden state output is unused.
+        cell_unused (bool): Inherited from RNN. Whether cell state output is unused.
+        hidden_subscript_source (str): Inherited from RNN. Source variable for hidden subscript assignment.
+        hidden_subscript_target (str): Inherited from RNN. Target variable for hidden subscript assignment.
     """
 
     def __repr__(self):
@@ -2296,7 +2519,10 @@ class GRULayer(RNN):
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
+            f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
+            f'{self.cell_unused}, {self.hidden_subscript_source}, '
+            f'{self.hidden_subscript_target})'
         )
 
 class GeneralLayer(Layer):
@@ -2325,12 +2551,15 @@ class GeneralLayer(Layer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
 
     def __repr__(self):
         return (
             f'GeneralLayer({self.name}, {self.actv_func}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class LinearLayer(GeneralLayer):
@@ -2365,6 +2594,8 @@ class LinearLayer(GeneralLayer):
             to this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, out_features: int, in_features: int = None,
                  bias: bool = True, actv_func: str = None,
@@ -2409,7 +2640,8 @@ class LinearLayer(GeneralLayer):
         return (
             f'LinearLayer({self.name}, {self.actv_func}, '
             f'{self.out_features}, {self.in_features}, {self.bias}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class FlattenLayer(GeneralLayer):
@@ -2442,6 +2674,8 @@ class FlattenLayer(GeneralLayer):
             to this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
                  actv_func: str = None, name_module_input: str = None,
@@ -2474,7 +2708,7 @@ class FlattenLayer(GeneralLayer):
         return (
             f'FlattenLayer({self.name}, {self.actv_func}, {self.start_dim}, '
             f'{self.end_dim}, {self.name_module_input}, {self.input_reused}, '
-            f'{self.is_layer_call})'
+            f'{self.is_layer_call}, {self.input_var}, {self.output_var})'
         )
 
 class EmbeddingLayer(GeneralLayer):
@@ -2514,6 +2748,8 @@ class EmbeddingLayer(GeneralLayer):
             this layer is reused as input to another layer.
         is_layer_call (bool): Inherited from Layer. True if this is a call
             to an already-defined layer.
+        input_var (str): Inherited from Layer. Input variable name for this layer.
+        output_var (str): Inherited from Layer. Output variable name for this layer.
     """
     def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
                  padding_idx: int = None, permute_in: bool = False,
@@ -2561,7 +2797,8 @@ class EmbeddingLayer(GeneralLayer):
         return (
             f'EmbeddingLayer({self.name}, {self.actv_func}, '
             f'{self.num_embeddings}, {self.embedding_dim}, {self.padding_idx}, '
-            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call})'
+            f'{self.name_module_input}, {self.input_reused}, {self.is_layer_call}, '
+            f'{self.input_var}, {self.output_var})'
         )
 
 class Feature(NamedElement):
@@ -3067,6 +3304,8 @@ class NN(BehaviorImplementation):
             NN training and evaluation.
         train_data (Dataset): The dataset used to train the NN model.
         test_data (Dataset): The dataset used to evaluate the NN model.
+        return_vars (str): Comma-separated string of variable names returned
+            by the forward/call method (e.g., "rep, recon").
 
     Attributes:
         name (str): The name of the neural network model.
@@ -3074,9 +3313,12 @@ class NN(BehaviorImplementation):
             NN training and evaluation.
         train_data (Dataset): The dataset used to train the NN model.
         test_data (Dataset): The dataset used to evaluate the NN model.
+        return_vars (str): Comma-separated string of variable names returned
+            by the forward/call method (e.g., "rep, recon").
     """
     def __init__(self, name: str, configuration: Configuration = None,
-                 train_data: Dataset = None, test_data: Dataset = None):
+                 train_data: Dataset = None, test_data: Dataset = None,
+                 return_vars: str = None):
         super().__init__(name)
         self.configuration: Configuration = configuration
         self.__sub_nns: List[NN] = []
@@ -3085,6 +3327,7 @@ class NN(BehaviorImplementation):
         self.__modules: List[Union[NN, Layer, TensorOp]] = []
         self.train_data: Dataset = train_data
         self.test_data: Dataset = test_data
+        self.return_vars: str = return_vars
 
     @property
     def sub_nns(self) -> List[NN]:
@@ -3194,6 +3437,16 @@ class NN(BehaviorImplementation):
     def test_data(self, test_data: Dataset):
         """Dataset: Set the dataset used to evaluate the NN model."""
         self.__test_data = test_data
+
+    @property
+    def return_vars(self) -> str:
+        """str: Get the comma-separated string of variable names returned by forward/call method."""
+        return self.__return_vars
+
+    @return_vars.setter
+    def return_vars(self, return_vars: str):
+        """str: Set the comma-separated string of variable names returned by forward/call method."""
+        self.__return_vars = return_vars
 
     def add_configuration(self, configuration: Configuration) -> Self:
         """Self: Add the configuration to the NN model."""

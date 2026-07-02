@@ -611,7 +611,7 @@ _PYTORCH_TENSOROP_HANDLERS = {
 
 
 def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
-                        in_var: str | None = None, inputs_outputs: dict | None = None):
+                        in_var: str | None = None):
     """
     It defines the syntax of tensorops.
 
@@ -621,7 +621,6 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
             attributes.
         in_var (str | None): the input variable notation of the tensorop
             (e.g., 'x', 'x_1', ...).
-        inputs_outputs (dict | None): Optional dict mapping tensorop names to [input_var, output_var].
 
     Returns:
         ts_op_synt (str): the syntax of the tensorop in PyTorch.
@@ -629,8 +628,7 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     """
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details,
-                                                     get_rnn_hidden_var,
-                                                     inputs_outputs)
+                                                     get_rnn_hidden_var)
 
     tns_type = tensorop.tns_type
     handler = _PYTORCH_TENSOROP_HANDLERS.get(tns_type, _handle_default_pytorch)

@@ -806,8 +806,11 @@ def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var, param
 
 def _handle_binop_add_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle binop_add tensorop syntax."""
-    return (f"{params[0]} + {params[1]}" if isinstance(params, list)
+    print(f"DEBUG _handle_binop_add_syntax: params={params}, type={type(params)}")
+    result = (f"{params[0]} + {params[1]}" if isinstance(params, list)
             else f"tf.add({params})")
+    print(f"DEBUG _handle_binop_add_syntax: result={result}")
+    return result
 
 
 def _handle_binop_subtract_syntax(tensorop, modules_details, in_var, prev_out_var, params):
@@ -867,11 +870,10 @@ def _remap_subscript_for_conv(tensorop, modules_details, subscript_pattern):
     return subscript_pattern
 
 
-def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs=None):
+def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle subscript tensorop syntax."""
-    # Check inputs_outputs to get the actual source variable from original code
-    if inputs_outputs and tensorop.name in inputs_outputs:
-        source_var = inputs_outputs[tensorop.name][0]
+    if tensorop.input_var is not None:
+        source_var = tensorop.input_var
     else:
         # Fallback: use prev_out_var or in_var
         source_var = in_var if in_var is not None else prev_out_var
@@ -881,11 +883,10 @@ def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     return f"{source_var}{subscript_pattern}"
 
 
-def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs=None):
+def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle shape_dim tensorop syntax."""
-    # Check inputs_outputs to get the actual source variable from original code
-    if inputs_outputs and tensorop.name in inputs_outputs:
-        source_var = inputs_outputs[tensorop.name][0]
+    if tensorop.input_var is not None:
+        source_var = tensorop.input_var
     else:
         # Fallback: check layers_of_tensors
         tensors = tensorop.layers_of_tensors
@@ -943,7 +944,7 @@ _TENSOROP_SYNTAX_HANDLERS = {
 
 
 def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
-                        in_var: str | None = None, inputs_outputs: dict | None = None):
+                        in_var: str | None = None):
     """
     It defines the syntax of tensorops.
 
@@ -953,12 +954,14 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
             attributes.
         in_var (str | None): the input variable notation of the tensorop
             (e.g., 'x', 'x_1', ...).
-        inputs_outputs (dict | None): Optional dict mapping tensorop names to [input_var, output_var].
 
     Returns:
         ts_op_synt (str): the syntax of the tensorop in TensorFlow.
 
     """
+    if hasattr(tensorop, 'input_var') and tensorop.input_var is not None:
+        in_var = tensorop.input_var
+
     tns_type = tensorop.tns_type
 
     # Handle operations that don't use layers_of_tensors
@@ -972,14 +975,12 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     # For other operations, get params
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details,
-                                                     get_rnn_hidden_var,
-                                                     inputs_outputs)
+                                                     get_rnn_hidden_var)
 
     # Dispatch to appropriate handler
     handler = _TENSOROP_SYNTAX_HANDLERS.get(tns_type, _handle_default_syntax)
-    # Pass inputs_outputs to shape_dim and subscript handlers so they can use the correct source variable
     if tns_type in ("shape_dim", "subscript"):
-        return handler(tensorop, modules_details, in_var, prev_out_var, params, inputs_outputs)
+        return handler(tensorop, modules_details, in_var, prev_out_var, params)
     return handler(tensorop, modules_details, in_var, prev_out_var, params)
 
 

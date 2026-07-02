@@ -8,7 +8,7 @@ class NeuralNetwork(tf.keras.Model):
     {{- nn_components.print_init(modules_details) }}
 
     def call(self, x):
-    {{- nn_components.print_forward(modules_details, model, inputs_outputs, strip_layer_counter_suffix) }}
+        {{ nn_components.print_forward(modules_details, model, strip_layer_counter_suffix) }}
 
 
 {% if model.train_data is not none %}

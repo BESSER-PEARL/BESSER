@@ -61,9 +61,10 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [
     {
         "name": "generate_fastapi_backend",
         "description": (
-            "Generate a complete FastAPI backend with CRUD endpoints, SQLAlchemy ORM, "
+            "Generate a complete, MODULAR FastAPI backend with CRUD endpoints, SQLAlchemy ORM, "
             "and Pydantic models. This is the most complete backend generator. "
-            "Output: main_api.py + sql_alchemy.py + pydantic_classes.py + requirements.txt"
+            "Output: main_api.py (slim app) + database.py + routers/<Class>.py (endpoints per "
+            "class) + sql_alchemy.py + pydantic_classes.py + bal_stdlib.py + requirements.txt"
         ),
         "input_schema": {
             "type": "object",

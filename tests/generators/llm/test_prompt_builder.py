@@ -136,3 +136,55 @@ def test_inventory_included_when_non_empty():
     )
     assert "## What was already generated" in prompt
     assert "Generated 12 files" in prompt
+
+
+def test_idiom_guidance_included_for_spring_boot():
+    """#4b: naming a recognised stack must inject its idiom block."""
+    prompt = build_system_prompt(
+        domain_model=_make_minimal_domain(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build a Spring Boot backend for order management",
+        max_turns=20,
+    )
+    assert "## Idiomatic conventions for Spring Boot" in prompt
+    assert "ResponseStatusException" in prompt
+    assert "Long" in prompt
+
+
+def test_idiom_guidance_included_for_flask_and_rust():
+    flask_prompt = build_system_prompt(
+        domain_model=_make_minimal_domain(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build a Flask API for orders",
+        max_turns=20,
+    )
+    assert "## Idiomatic conventions for Flask / FastAPI (Python)" in flask_prompt
+    assert "Decimal" in flask_prompt
+
+    rust_prompt = build_system_prompt(
+        domain_model=_make_minimal_domain(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build a Rust axum backend for orders",
+        max_turns=20,
+    )
+    assert "## Idiomatic conventions for Rust (axum)" in rust_prompt
+    assert "Option<T>" in rust_prompt
+
+
+def test_idiom_guidance_omitted_when_no_stack_named():
+    """No stack mentioned -- the block must not appear (avoid prompt bloat)."""
+    prompt = build_system_prompt(
+        domain_model=_make_minimal_domain(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build a simple CRUD app for orders",
+        max_turns=20,
+    )
+    assert "Idiomatic conventions" not in prompt

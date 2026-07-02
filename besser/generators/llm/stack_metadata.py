@@ -365,3 +365,167 @@ def pre_generate_metadata(stack_id: str, output_dir: str) -> list[str]:
 def supported_stacks() -> Iterable[str]:
     """Stacks Phase 0.5 has templates for. Used by tests."""
     return tuple(_STACK_FILES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Idiomatic-conventions prompt injection
+# ---------------------------------------------------------------------------
+#
+# A vibe-bench run found LLM-generated code LESS idiomatic than a naive-LLM
+# baseline in ~80% of scenarios: Spring Boot entities reaching for `Int`
+# instead of `Long` ids, Flask/FastAPI storing money as `float`, axum
+# handlers `unwrap()`-ing instead of returning `Result`, entities reused as
+# request bodies instead of dedicated DTOs, .... The customise-loop prompt
+# said nothing about stack-specific conventions, so the LLM defaulted to
+# whatever's most common in its training data rather than what an
+# experienced dev on that stack would write.
+#
+# This section adds a SHORT, targeted "idiomatic conventions" block to the
+# system prompt when the instructions name a recognisable stack. It's
+# guidance, not a spec: a handful of bullets, not a style guide -- long
+# enough to redirect the model's defaults, short enough not to drown out
+# the Rules above it for requests where it doesn't apply.
+#
+# Detection here is deliberately independent of ``detect_stack`` above:
+# that function's Python-family early-out exists to protect Phase 0.5
+# (don't pre-write a tsconfig.json for a FastAPI request) -- the opposite
+# of what we want here, since Flask/FastAPI are exactly two of the stacks
+# this guidance targets. It also isn't gated on "no deterministic
+# generator ran": the Phase 2 LLM writes substantial code on top of the
+# FastAPI/Django scaffold too (auth, business endpoints, ...), and that
+# code benefits from the same reminders the from-scratch stacks get.
+
+_IDIOM_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Spring Boot conventions apply whether the request says Java or Kotlin.
+    ("spring_boot", ("spring boot", "springboot", "spring-boot")),
+    # Rust web frameworks bundle together -- axum-specific bullets are a
+    # minority of the block; the Result/Option guidance applies just as
+    # well to actix/rocket handlers.
+    ("rust_axum", ("rust", "cargo", "axum", "actix", "rocket")),
+    ("python_web", ("flask", "fastapi", "fast api")),
+)
+
+# Stacks without a dedicated idiom block above, but common enough in
+# free-form requests to warrant the generic fallback rather than silence.
+# Limited to stacks the LLM writes largely from scratch (no BESSER
+# deterministic generator already imposing structure).
+_GENERIC_IDIOM_KEYWORDS: tuple[str, ...] = (
+    "next.js", "nextjs", "next js", "express", "nestjs", "django",
+    "laravel", "rails", "golang", "angular", "vue", "svelte", "nuxt",
+    "asp.net", "dotnet", ".net", "csharp", "c#", "php", "ruby",
+)
+
+
+_IDIOM_BLOCKS: dict[str, str] = {
+    "spring_boot": (
+        "- Entity IDs are `Long` (boxed), never `Int`/`int` — matches "
+        "JPA/Hibernate `@GeneratedValue` and avoids overflow on "
+        "auto-increment PKs.\n"
+        "- Signal errors with `ResponseStatusException` (or a "
+        "`@ControllerAdvice` handler for a custom exception) — never let "
+        "an unchecked exception fall through to a bare 500.\n"
+        "- Keep the layers separate: `@RestController` → `@Service` → "
+        "`@Repository`. No business logic in controllers, no `@Entity` "
+        "returned directly from an endpoint.\n"
+        "- Dedicated request/response DTOs (records or classes) at the "
+        "controller boundary — never the `@Entity` itself. Validate DTOs "
+        "with `jakarta.validation` annotations (`@NotNull`, `@Size`, …).\n"
+        "- RESTful resource naming: plural nouns, nested paths for owned "
+        "relationships (`/orders/{id}/items`), correct verb-to-status-code "
+        "mapping (`POST` → 201, `DELETE` → 204)."
+    ),
+    "python_web": (
+        "- Money/currency fields are `Decimal`, never `float` — floats "
+        "silently corrupt totals.\n"
+        "- Separate request schema, response schema, and ORM/DB model — "
+        "don't reuse the SQLAlchemy (or Django) model as the request "
+        "body.\n"
+        "- `snake_case` for functions, variables, and JSON field names; "
+        "`PascalCase` reserved for classes.\n"
+        "- Raise `HTTPException` (FastAPI) or a registered error handler "
+        "(Flask) with the correct status code — don't let a bare "
+        "exception 500 or return 200 with an error payload.\n"
+        "- RESTful resource naming: plural nouns (`/orders`, "
+        "`/orders/{id}`), and type-hint every function signature."
+    ),
+    "rust_axum": (
+        "- Update-DTO fields are `Option<T>` so \"not provided\" and "
+        "\"set to null/default\" stay distinguishable on a PATCH.\n"
+        "- Handlers return `Result<T, AppError>` with `AppError` "
+        "implementing `IntoResponse` — no `unwrap()`/`expect()` on "
+        "request-derived data.\n"
+        "- Separate `#[derive(Deserialize)]` request structs and "
+        "`#[derive(Serialize)]` response structs from the internal "
+        "domain struct.\n"
+        "- `snake_case` for fields/functions, `PascalCase` for "
+        "structs/enums (rustfmt defaults, not optional style).\n"
+        "- Map `AppError` variants to real HTTP status codes — avoid a "
+        "single catch-all 500."
+    ),
+    "generic": (
+        "- Separate request/response DTOs from the persistence/domain "
+        "model — never expose the ORM entity directly through the API.\n"
+        "- RESTful resource naming: plural nouns, nested paths for owned "
+        "relationships, correct HTTP verb-to-status-code mapping.\n"
+        "- Use the target language's idiomatic casing consistently "
+        "(`snake_case`, `camelCase`, or `PascalCase` — whichever that "
+        "language/framework expects) rather than mixing conventions.\n"
+        "- Centralised error handling with real status codes — no bare "
+        "500s or silently swallowed exceptions.\n"
+        "- Validate input at the DTO/schema boundary, not with scattered "
+        "manual `if` checks deeper in the code."
+    ),
+}
+
+_IDIOM_STACK_LABEL: dict[str, str] = {
+    "spring_boot": "Spring Boot",
+    "python_web": "Flask / FastAPI (Python)",
+    "rust_axum": "Rust (axum)",
+    "generic": "this stack",
+}
+
+
+def detect_idiom_stack(instructions: str) -> str | None:
+    """Identify which idiom block (if any) applies to ``instructions``.
+
+    Returns one of ``"spring_boot"``, ``"python_web"``, ``"rust_axum"``,
+    ``"generic"``, or ``None`` when no recognisable stack is named.
+
+    See the module comment above ``_IDIOM_KEYWORDS`` for why this is a
+    separate detector from ``detect_stack`` rather than a reuse of it.
+    """
+    if not instructions or not instructions.strip():
+        return None
+
+    for idiom_id, needles in _IDIOM_KEYWORDS:
+        for needle in needles:
+            if _contains_word(instructions, needle):
+                return idiom_id
+
+    for needle in _GENERIC_IDIOM_KEYWORDS:
+        if _contains_word(instructions, needle):
+            return "generic"
+
+    return None
+
+
+def idiom_guidance_section(instructions: str) -> str:
+    """Render the "idiomatic conventions" prompt block for ``instructions``.
+
+    Returns ``""`` when no target stack is recognised — callers should
+    not emit an empty heading in that case. Ends with a blank line (two
+    trailing newlines) when non-empty so it composes cleanly between two
+    ``##`` sections in the caller's prompt template; returns "" (no
+    newlines at all) when nothing was detected so it's a true no-op.
+    """
+    idiom_id = detect_idiom_stack(instructions)
+    if idiom_id is None:
+        return ""
+
+    label = _IDIOM_STACK_LABEL.get(idiom_id, idiom_id)
+    bullets = _IDIOM_BLOCKS[idiom_id]
+    return (
+        f"## Idiomatic conventions for {label}\n\n"
+        "An experienced developer on this stack would expect:\n\n"
+        f"{bullets}\n\n"
+    )

@@ -357,10 +357,18 @@ class ToolExecutor:
             "To add constraints: add __table_args__ to the class."
         ),
         "generate_fastapi_backend": (
-            "This generated 3 files: main_api.py (endpoints), sql_alchemy.py (ORM), pydantic_classes.py (schemas). "
-            "To add auth: create a NEW auth.py file, then use modify_file to add Depends(get_current_user) to endpoints in main_api.py. "
-            "To add pagination: use modify_file to add skip/limit parameters to GET list endpoints. "
-            "To add a new endpoint: find the last @app route in main_api.py and insert after it. "
+            "This generated a MODULAR FastAPI app: main_api.py (slim — CORS, middleware, "
+            "exception handlers, system endpoints, and include_router() calls), database.py "
+            "(engine/session/get_db), routers/<Class>.py (one APIRouter per class holding "
+            "that class's CRUD/relationship/method endpoints, decorated with @router — NOT "
+            "@app), sql_alchemy.py (ORM), pydantic_classes.py (schemas), and bal_stdlib.py "
+            "(helpers). "
+            "To add auth: create a NEW auth.py file, then use modify_file to add "
+            "Depends(get_current_user) to the endpoints in the relevant routers/<Class>.py. "
+            "To add pagination: use modify_file to add skip/limit parameters to the GET list "
+            "endpoints in routers/<Class>.py. "
+            "To add a new endpoint: add it to the appropriate routers/<Class>.py (use @router), "
+            "or create a new router file and register it with include_router() in main_api.py. "
             "NEVER rewrite these files — use modify_file for surgical edits."
         ),
         "generate_django": (

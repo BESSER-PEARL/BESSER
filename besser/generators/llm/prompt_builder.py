@@ -18,6 +18,7 @@ from besser.generators.llm.model_serializer import (
     serialize_quantum_circuit,
     serialize_state_machines,
 )
+from besser.generators.llm.stack_metadata import idiom_guidance_section
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,14 @@ def build_system_prompt(
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 
+    # Stack-specific idiom reminders (#4b). ``instructions`` is constant
+    # across every turn of a single Phase 2 run, so — like ``primary_banner``
+    # above — placing this in the cached stable_header doesn't cost any
+    # turn-to-turn cache hits; it only varies between runs, same as the
+    # rest of this header already does via primary_kind. See
+    # stack_metadata.idiom_guidance_section for the detection + content.
+    idiom_section = idiom_guidance_section(instructions)
+
     stable_header = f"""\
 You are an expert full-stack developer. You make targeted, scoped changes to code.
 
@@ -340,7 +349,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     the user can also CREATE AN ACCOUNT unless they say otherwise. No auth
     stubs — a user must be able to register, then log in, end to end.
 
-## Tools for deeper model inspection
+{idiom_section}## Tools for deeper model inspection
 
 When the JSON below is not enough — large model, need a single class in
 detail, or want to filter classes by a predicate — use these tools rather
@@ -588,7 +597,11 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
         if pages:
             lines.append(f"Frontend pages: {', '.join(sorted(pages))}")
     elif generator_name == "generate_fastapi_backend":
-        lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas")
-        lines.append("Files: main_api.py, sql_alchemy.py, pydantic_classes.py, requirements.txt")
+        lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas (modular)")
+        lines.append(
+            "Files: main_api.py (slim app + include_router calls), database.py "
+            "(engine/session), routers/<Class>.py (endpoints per class, @router), "
+            "sql_alchemy.py, pydantic_classes.py, bal_stdlib.py, requirements.txt"
+        )
 
     return "\n".join(lines)

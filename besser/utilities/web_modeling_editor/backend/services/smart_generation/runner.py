@@ -765,17 +765,36 @@ class SmartGenerationRunner:
         watchdog_fired = {"value": False}
 
         async def runtime_watchdog() -> None:
+            # Poll rather than a single sleep so we honour the orchestrator's
+            # ADAPTED runtime cap: _apply_adaptive_budget() raises
+            # ``orchestrator.max_runtime_seconds`` for from-scratch runs AFTER
+            # Phase 1, which is after this task starts. Reading the request cap
+            # up-front (the old behaviour) would kill a legitimately-longer
+            # from-scratch run at the original limit. Fall back to the request
+            # cap until/unless the orchestrator raises its own.
             try:
-                await asyncio.sleep(
-                    self.request.max_runtime_seconds + LLM_WATCHDOG_GRACE_SECONDS
-                )
+                while True:
+                    await asyncio.sleep(min(10.0, LLM_WATCHDOG_GRACE_SECONDS))
+                    if cancel_event.is_set():
+                        return
+                    effective_cap = getattr(
+                        orchestrator, "max_runtime_seconds",
+                        self.request.max_runtime_seconds,
+                    )
+                    elapsed = time.monotonic() - (self._started_at or time.monotonic())
+                    if elapsed > effective_cap + LLM_WATCHDOG_GRACE_SECONDS:
+                        break
             except asyncio.CancelledError:
                 raise
             if not cancel_event.is_set():
+                effective_cap = getattr(
+                    orchestrator, "max_runtime_seconds",
+                    self.request.max_runtime_seconds,
+                )
                 logger.warning(
                     "smart-gen watchdog fired for run %s (cap %ds + %ds grace)",
                     self.run_id,
-                    self.request.max_runtime_seconds,
+                    effective_cap,
                     LLM_WATCHDOG_GRACE_SECONDS,
                 )
                 watchdog_fired["value"] = True
@@ -919,21 +938,32 @@ class SmartGenerationRunner:
                 )
             )
 
-            if final_cost > self.request.max_cost_usd:
+            # Compare against the orchestrator's EFFECTIVE caps, which
+            # _apply_adaptive_budget() may have raised for from-scratch runs.
+            # Using the original request caps would emit a spurious
+            # COST_CAP/TIMEOUT warning on a run that completed cleanly within
+            # its (adapted) budget.
+            effective_cost_cap = getattr(
+                orchestrator, "max_cost_usd", self.request.max_cost_usd
+            )
+            effective_runtime_cap = getattr(
+                orchestrator, "max_runtime_seconds", self.request.max_runtime_seconds
+            )
+            if final_cost > effective_cost_cap:
                 yield format_sse(ErrorEvent(
                     code="COST_CAP",
                     message=(
                         f"Cost cap reached (${final_cost:.4f} > "
-                        f"${self.request.max_cost_usd}). "
+                        f"${effective_cost_cap}). "
                         "Output may be incomplete."
                     ),
                 ))
-            if elapsed > self.request.max_runtime_seconds:
+            if elapsed > effective_runtime_cap:
                 yield format_sse(ErrorEvent(
                     code="TIMEOUT",
                     message=(
                         f"Runtime cap reached ({elapsed:.1f}s > "
-                        f"{self.request.max_runtime_seconds}s). "
+                        f"{effective_runtime_cap}s). "
                         "Output may be incomplete."
                     ),
                 ))

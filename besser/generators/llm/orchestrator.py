@@ -52,7 +52,7 @@ from besser.generators.llm.errors import (
     InvalidApiKeyError,
 )
 from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
-from besser.generators.llm.llm_client import ClaudeLLMClient
+from besser.generators.llm.llm_client import ClaudeLLMClient, FROM_SCRATCH_MAX_TOKENS
 from besser.generators.llm.prompt_builder import (
     build_scaffold_snapshot,
     build_system_prompt,
@@ -195,6 +195,25 @@ _MAX_PARALLEL_WORKERS = 4
 # / kotlinc errors don't converge in 3 rounds, more rounds aren't
 # going to help.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 3
+
+# Adaptive budget ceiling for FROM-SCRATCH runs (Phase 1 found no
+# deterministic generator to run). These are deploy-tunable, so they live
+# in the web backend's constants module next to the default cap they
+# override -- see constants.py for the full rationale. The import is
+# best-effort and deliberately NOT at call time: ``besser.generators.llm``
+# is also used as a standalone library (``LLMGenerator``, no web backend
+# installed/importable), and this module must keep working there. When
+# the web backend isn't importable we fall back to the same defaults
+# constants.py itself ships, so behaviour is identical either way -- ops
+# just lose the env-var override unless the web backend is present.
+try:
+    from besser.utilities.web_modeling_editor.backend.constants.constants import (
+        LLM_FROM_SCRATCH_MAX_COST_USD_HARD_CAP as _FROM_SCRATCH_MAX_COST_USD,
+        LLM_FROM_SCRATCH_MAX_RUNTIME_SECONDS_HARD_CAP as _FROM_SCRATCH_MAX_RUNTIME_SECONDS,
+    )
+except Exception:  # pragma: no cover - defensive, web backend optional
+    _FROM_SCRATCH_MAX_COST_USD = 5.0
+    _FROM_SCRATCH_MAX_RUNTIME_SECONDS = 1800
 
 
 class LLMOrchestrator:
@@ -341,6 +360,11 @@ class LLMOrchestrator:
         self._phase0_5_stack: str | None = None
         self._phase0_5_files: list[str] = []
         self._inventory: str = ""
+        # Set by ``_apply_adaptive_budget`` when Phase 1 found no
+        # deterministic generator to run: the cost / runtime ceiling and
+        # the client's output-token limit were raised for this run. Kept
+        # for observability (surfaced in the saved recipe).
+        self._adaptive_budget_applied: bool = False
         self._start_time: float | None = None
         # Stored as ValidationIssue objects so the recipe captures severity.
         # Cast to strings via `[str(i) for i in self._validation_issues]`
@@ -468,6 +492,13 @@ class LLMOrchestrator:
         # stack BESSER doesn't generate (Next.js, Rust, Kotlin / Spring).
         # This keeps the Python paths byte-identical to today's output.
         self._run_phase0_5_metadata(instructions)
+
+        # -- Adaptive budget: raise the cap for from-scratch runs ---------
+        # Must run after Phase 1 (needs ``self._generator_used``) and
+        # after Phase 0.5 (needs ``self._phase0_5_stack`` for logging) but
+        # before Phase 2, since that's the loop the raised cost/runtime
+        # cap and the raised client max_tokens actually apply to.
+        self._apply_adaptive_budget()
 
         # -- Phase 1.5: Validate Phase 1 output ---------------------------
         phase1_issues = self._validate_phase1_output()
@@ -603,6 +634,12 @@ class LLMOrchestrator:
             resume_from_turn=checkpoint.turn,
             saved_at=checkpoint.saved_at,
         )
+
+        # -- Adaptive budget: same rule as a fresh run (``_generator_used``
+        # was just restored from the checkpoint above). Resuming is the
+        # common path for a run that previously broke out on a cost_cap /
+        # timeout / max_tokens truncation, so this matters here too.
+        self._apply_adaptive_budget()
 
         # -- Phase 2 (continued) ------------------------------------------
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
@@ -1072,6 +1109,77 @@ class LLMOrchestrator:
             )
 
     # ==================================================================
+    # Adaptive budget: raise the ceiling for from-scratch runs
+    # ==================================================================
+
+    def _apply_adaptive_budget(self) -> None:
+        """Raise the cost / runtime / output-token ceiling for from-scratch runs.
+
+        Called from ``run()`` / ``resume()`` after Phase 1 (and Phase 0.5)
+        have run, so ``self._generator_used`` is authoritative:
+
+        - ``None`` means Phase 1 found nothing to run -- either there was
+          no domain/quantum model at all (state-machine/agent-only
+          projects), or Phase 1 explicitly decided no registered BESSER
+          generator matches the request (e.g. the user asked for Next.js,
+          Rust, or Kotlin -- stacks BESSER doesn't scaffold). Either way,
+          Phase 2 has NOTHING to build on top of: it authors the entire
+          application from nothing, which legitimately needs more turns,
+          more spend, and bigger individual responses than the common
+          case (a Python scaffold Phase 2 only patches).
+        - Anything else means a deterministic generator actually ran --
+          the common, cheaper case -- so the caller-supplied cap (already
+          clamped upstream to the web deployment's tight default) is left
+          exactly as-is. This keeps the BYOK safety rail unchanged for
+          the case it was sized for.
+
+        Uses ``max()`` semantics throughout: this only ever RAISES the
+        ceiling, never lowers a caller-supplied value that's already
+        higher (e.g. a library caller that explicitly asked for more).
+        """
+        if self._generator_used is not None:
+            return  # scaffolded Python run — caller's cap is untouched
+
+        raised_cost = self.max_cost_usd < _FROM_SCRATCH_MAX_COST_USD
+        raised_runtime = self.max_runtime_seconds < _FROM_SCRATCH_MAX_RUNTIME_SECONDS
+        if raised_cost or raised_runtime:
+            logger.info(
+                "Adaptive budget: from-scratch run detected (generator_used=None, "
+                "stack=%s) — raising ceiling cost $%.2f -> $%.2f, runtime %ds -> %ds",
+                self._phase0_5_stack or "unrecognised",
+                self.max_cost_usd, max(self.max_cost_usd, _FROM_SCRATCH_MAX_COST_USD),
+                self.max_runtime_seconds,
+                max(self.max_runtime_seconds, _FROM_SCRATCH_MAX_RUNTIME_SECONDS),
+            )
+            self.max_cost_usd = max(self.max_cost_usd, _FROM_SCRATCH_MAX_COST_USD)
+            self.max_runtime_seconds = max(
+                self.max_runtime_seconds, _FROM_SCRATCH_MAX_RUNTIME_SECONDS,
+            )
+            self._adaptive_budget_applied = True
+
+        # Also widen the per-call output-token limit: a from-scratch run
+        # writes large files with no scaffold underneath them, which is
+        # far more likely to hit the provider's default max_tokens
+        # mid-``write_file`` than the scaffolded case. See
+        # llm_client.FROM_SCRATCH_MAX_TOKENS for why raising the limit
+        # (rather than chunking/continuing a truncated tool call) is the
+        # chosen, lower-risk fix.
+        try:
+            current_max_tokens = self.client.max_tokens
+        except (AttributeError, NotImplementedError):
+            # Defensive: a test double / older client without the
+            # max_tokens property. Don't fail the run over telemetry.
+            current_max_tokens = None
+        if current_max_tokens is not None and current_max_tokens < FROM_SCRATCH_MAX_TOKENS:
+            logger.info(
+                "Adaptive budget: raising output-token limit %d -> %d for "
+                "from-scratch run",
+                current_max_tokens, FROM_SCRATCH_MAX_TOKENS,
+            )
+            self.client.max_tokens = FROM_SCRATCH_MAX_TOKENS
+            self._adaptive_budget_applied = True
+
+    # ==================================================================
     # Phase 1.5: Validate Phase 1 output
     # ==================================================================
 
@@ -1378,11 +1486,25 @@ class LLMOrchestrator:
                 # large write_file). That is not a provider failure — report it
                 # honestly as truncation instead of the misleading
                 # "unexpected stop_reason: length" provider error. (#29)
-                logger.warning("Output token limit reached on turn %d", turn + 1)
+                # The truncated tool call is intentionally NOT appended to
+                # ``messages`` / executed — a partial write_file's JSON
+                # arguments are usually invalid, so nothing gets written to
+                # disk in a half-finished state. The checkpoint from the
+                # last COMPLETE turn stays on disk (Phase 2 didn't exit
+                # cleanly, see ``run()``), so the run is resumable.
+                current_max_tokens = getattr(self.client, "max_tokens", None)
+                logger.warning(
+                    "Output token limit reached on turn %d (max_tokens=%s, "
+                    "adaptive_budget_applied=%s)",
+                    turn + 1, current_max_tokens, self._adaptive_budget_applied,
+                )
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = (
-                    "The model hit its output token limit, so the generated code "
-                    "may be truncated. Try a smaller scope or fewer files per run."
+                    "The model hit its output token limit"
+                    + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")
+                    + ", so the generated code may be truncated. The run can be "
+                    "resumed to continue from the last completed step, or try a "
+                    "smaller scope / fewer files per run."
                 )
                 break
             else:
@@ -2822,6 +2944,11 @@ class LLMOrchestrator:
             "elapsed_seconds": round(elapsed, 1),
             "max_cost_usd": self.max_cost_usd,
             "max_runtime_seconds": self.max_runtime_seconds,
+            # True when this was a from-scratch run (no deterministic
+            # Phase 1 generator) and the cost/runtime/output-token ceiling
+            # above was therefore raised past the caller-supplied default.
+            # See LLMOrchestrator._apply_adaptive_budget.
+            "adaptive_budget_applied": self._adaptive_budget_applied,
             "usage": self.client.usage.summary(),
             "validation_issues": [
                 {"severity": i.severity, "message": i.message}

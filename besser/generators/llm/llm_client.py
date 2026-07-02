@@ -32,6 +32,28 @@ _DEFAULT_SDK_TIMEOUT_SECONDS = float(
     os.environ.get("BESSER_LLM_CALL_TIMEOUT_SECONDS", "300")
 )
 
+# Output-token ceiling used for from-scratch generation (no deterministic
+# Phase-1 scaffold to build on -- see LLMOrchestrator._apply_adaptive_budget).
+# Phase 2 has to author entire files from nothing in that case, which is
+# far more likely to hit the provider's normal ``DEFAULT_MAX_TOKENS`` (a
+# large ``write_file`` call) than the common scaffolded-Python case where
+# Phase 2 only patches an existing scaffold.
+#
+# Raising this -- rather than chunking/continuing a truncated write_file
+# call across turns -- is the lower-risk fix: tool-use arguments are
+# complete-JSON-or-nothing, so resuming a truncated tool call would mean
+# parsing/repairing invalid partial JSON on every provider (Anthropic,
+# OpenAI, Mistral each stream differently), a much larger surface for a
+# subtle content-corruption bug than simply giving the model more room to
+# finish the file in one shot. The orchestrator already discards (never
+# executes) a truncated tool call and reports it honestly instead of
+# silently writing partial content -- see the ``stop_reason in
+# ("max_tokens", "length")`` handling in ``orchestrator.py``.  Env-tunable
+# since the safe ceiling depends on the model/provider in use.
+FROM_SCRATCH_MAX_TOKENS = int(
+    os.environ.get("BESSER_LLM_FROM_SCRATCH_MAX_TOKENS", "32768")
+)
+
 
 # ======================================================================
 # Cost tracking (inspired by claw-code/usage.rs)
@@ -285,6 +307,26 @@ class LLMProvider(ABC):
         where the cheap sibling may not be available).
         """
         return None
+
+    @property
+    def max_tokens(self) -> int:
+        """Maximum output tokens requested per response.
+
+        Mutable post-construction (not just an ``__init__`` argument) so
+        the orchestrator can raise it mid-run -- e.g. once Phase 1 shows
+        there's no deterministic scaffold and Phase 2 is about to author
+        large files from scratch -- without rebuilding the client and
+        losing prompt-cache / usage-tracking state. Every concrete
+        provider sets ``self._max_tokens`` in ``__init__``, so the base
+        property works for all of them uniformly.
+        """
+        return self._max_tokens
+
+    @max_tokens.setter
+    def max_tokens(self, value: int) -> None:
+        if value <= 0:
+            raise ValueError("max_tokens must be positive")
+        self._max_tokens = value
 
     @abstractmethod
     def chat(

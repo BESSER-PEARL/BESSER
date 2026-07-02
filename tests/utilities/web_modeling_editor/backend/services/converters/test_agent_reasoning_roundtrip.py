@@ -4,10 +4,15 @@ Roundtrip tests for the agent reasoning primitives (Wave 2).
 v4 JSON (``{nodes, edges}``) -> ``process_agent_diagram`` -> Agent metamodel
 -> ``agent_model_to_code`` -> ``agent_buml_to_json`` -> v4 JSON.
 
-Covers ``AgentTool``, ``AgentSkill``, ``AgentWorkspace`` and
-``AgentReasoningState`` — the four reasoning primitives the React Flow
-frontend ships on the AgentDiagram palette (Capabilities / Reasoning
-sections). Shapes mirror the frontend's ``NodeProps`` definitions.
+Covers ``AgentTool``, ``AgentSkill``, ``AgentWorkspace`` and reasoning
+states — the four reasoning primitives the React Flow frontend ships on
+the AgentDiagram palette (Capabilities / Reasoning sections). Shapes
+mirror the frontend's ``NodeProps`` definitions.
+
+A reasoning state is the canonical v4 folded shape: ``type: "AgentState"``
+with ``data.stateType == "reasoning"``. The legacy ``type:
+"AgentReasoningState"`` node (pre-fold) is covered separately below as a
+back-compat read case.
 """
 
 import os
@@ -54,9 +59,10 @@ def _reasoning_payload():
         _node("init-1", "StateInitialNode", {"name": ""}, width=45, height=45),
         _node(
             "rs-1",
-            "AgentReasoningState",
+            "AgentState",
             {
                 "name": "reason",
+                "stateType": "reasoning",
                 "llm_name": "",
                 "max_steps": 15,
                 "enable_task_planning": True,
@@ -188,7 +194,7 @@ class TestProcessReasoningPrimitives:
         payload = _reasoning_payload()
         rs_node = next(
             n for n in payload["model"]["nodes"]
-            if n["type"] == "AgentReasoningState"
+            if n["type"] == "AgentState" and n["data"].get("stateType") == "reasoning"
         )
         rs_node["data"]["llm_name"] = "gpt-4o-mini"
         with pytest.raises(ValueError, match="not.*registered|new_llm"):
@@ -215,6 +221,65 @@ class TestProcessReasoningPrimitives:
         assert len(agent.workspaces) == 1
 
 
+class TestLegacyReasoningStateBackCompat:
+    """Pre-fold diagrams used a dedicated ``AgentReasoningState`` node
+    type. The processor must keep reading that shape for back-compat even
+    though the converter no longer emits it — canonical v4 output folds
+    reasoning states into ``type: "AgentState"`` + ``data.stateType ==
+    "reasoning"`` (see ``TestReasoningRoundTrip`` above)."""
+
+    def _legacy_payload(self):
+        nodes = [
+            _node("init-1", "StateInitialNode", {"name": ""}, width=45, height=45),
+            _node(
+                "rs-1",
+                "AgentReasoningState",
+                {
+                    "name": "reason",
+                    "llm_name": "",
+                    "max_steps": 15,
+                    "enable_task_planning": True,
+                    "stream_steps": False,
+                    "system_prompt": "Be concise.",
+                    "fallback_message": "Sorry, something broke.",
+                },
+                width=200,
+            ),
+        ]
+        edges = [
+            {
+                "id": "e-init",
+                "source": "init-1",
+                "target": "rs-1",
+                "type": "AgentStateTransitionInit",
+                "data": {"points": []},
+            },
+        ]
+        return {
+            "title": "legacy_reasoning_demo",
+            "model": {
+                "version": "4.0.0",
+                "type": "AgentDiagram",
+                "nodes": nodes,
+                "edges": edges,
+            },
+        }
+
+    def test_legacy_agent_reasoning_state_type_still_imports(self):
+        agent = process_agent_diagram(self._legacy_payload())
+        reasoning_states = [s for s in agent.states if isinstance(s, ReasoningState)]
+        assert len(reasoning_states) == 1
+        rs = reasoning_states[0]
+        assert rs.name == "reason"
+        assert rs.initial is True
+        assert rs.llm is None
+        assert rs.max_steps == 15
+        assert rs.enable_task_planning is True
+        assert rs.stream_steps is False
+        assert rs.system_prompt == "Be concise."
+        assert rs.fallback_message == "Sorry, something broke."
+
+
 class TestReasoningRoundTrip:
     """Agent metamodel -> builder code -> v4 JSON."""
 
@@ -229,6 +294,14 @@ class TestReasoningRoundTrip:
 
     def _nodes_by_type(self, payload, node_type):
         return [n for n in payload.get("nodes", []) if n.get("type") == node_type]
+
+    def _reasoning_nodes(self, payload):
+        """AgentState nodes folded into a reasoning state (``data.stateType
+        == "reasoning"``) — the canonical v4 emission shape."""
+        return [
+            n for n in self._nodes_by_type(payload, "AgentState")
+            if (n.get("data") or {}).get("stateType") == "reasoning"
+        ]
 
     def test_tool_node_reemitted(self, reemitted):
         tools = self._nodes_by_type(reemitted, "AgentTool")
@@ -257,9 +330,10 @@ class TestReasoningRoundTrip:
         assert data["max_read_bytes"] == 50_000
 
     def test_reasoning_state_node_reemitted(self, reemitted):
-        rs_nodes = self._nodes_by_type(reemitted, "AgentReasoningState")
+        rs_nodes = self._reasoning_nodes(reemitted)
         assert len(rs_nodes) == 1
         data = rs_nodes[0]["data"]
+        assert data["stateType"] == "reasoning"
         assert data["name"] == "reason"
         assert data["llm_name"] == ""
         assert data["max_steps"] == 15
@@ -269,7 +343,7 @@ class TestReasoningRoundTrip:
         assert data["fallback_message"] == "Sorry, something broke."
 
     def test_initial_edge_targets_reasoning_state(self, reemitted):
-        rs_node = self._nodes_by_type(reemitted, "AgentReasoningState")[0]
+        rs_node = self._reasoning_nodes(reemitted)[0]
         init_node = self._nodes_by_type(reemitted, "StateInitialNode")[0]
         init_edges = [
             e for e in reemitted.get("edges", [])
@@ -280,7 +354,7 @@ class TestReasoningRoundTrip:
         assert init_edges[0]["target"] == rs_node["id"]
 
     def test_transition_reemitted_between_states(self, reemitted):
-        rs_node = self._nodes_by_type(reemitted, "AgentReasoningState")[0]
+        rs_node = self._reasoning_nodes(reemitted)[0]
         as_node = next(
             n for n in self._nodes_by_type(reemitted, "AgentState")
             if n["data"]["name"] == "farewell"

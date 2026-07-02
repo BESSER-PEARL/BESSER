@@ -619,17 +619,25 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "bodies": [],
                         "fallbackBodies": [],
                     }
+                    # Canonical v4 shape folds reasoning states into
+                    # ``type: "AgentState"`` with ``data.stateType ==
+                    # "reasoning"`` — this is what the React Flow frontend's
+                    # AgentState node component now expects; it no longer
+                    # renders a separate ``AgentReasoningState`` node type.
                     nodes.append(make_node(
                         node_id=state_id,
-                        type_="AgentReasoningState",
+                        type_="AgentState",
                         data={
                             "name": state_name,
+                            "stateType": "reasoning",
                             "llm_name": llm_name_resolved,
                             "max_steps": int(rs_kwargs.get("max_steps", 8)),
                             "enable_task_planning": bool(rs_kwargs.get("enable_task_planning", True)),
                             "stream_steps": bool(rs_kwargs.get("stream_steps", True)),
                             "system_prompt": rs_kwargs.get("system_prompt") or "",
                             "fallback_message": rs_kwargs.get("fallback_message") or "",
+                            "bodies": [],
+                            "fallbackBodies": [],
                         },
                         position={"x": states_x, "y": states_y},
                         width=200,

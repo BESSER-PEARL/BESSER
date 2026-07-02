@@ -216,6 +216,14 @@ class TestMultiLlmRoundTrip:
     def _nodes_by_type(self, payload, node_type):
         return [n for n in payload.get("nodes", []) if n.get("type") == node_type]
 
+    def _reasoning_nodes(self, payload):
+        """AgentState nodes folded into a reasoning state (``data.stateType
+        == "reasoning"``) — the canonical v4 emission shape."""
+        return [
+            n for n in self._nodes_by_type(payload, "AgentState")
+            if (n.get("data") or {}).get("stateType") == "reasoning"
+        ]
+
     def test_agent_llm_nodes_reemitted(self, reemitted):
         llm_nodes = self._nodes_by_type(reemitted, "AgentLLM")
         assert {n["data"]["name"] for n in llm_nodes} == {"fast", "big"}
@@ -232,7 +240,8 @@ class TestMultiLlmRoundTrip:
         assert reemitted.get("config", {}).get("default_llm_name") == "big"
 
     def test_reasoning_state_llm_name_reemitted(self, reemitted):
-        rs = self._nodes_by_type(reemitted, "AgentReasoningState")[0]
+        rs = self._reasoning_nodes(reemitted)[0]
+        assert rs["data"]["stateType"] == "reasoning"
         assert rs["data"]["llm_name"] == "fast"
 
     def test_rag_llm_name_reemitted(self, reemitted):

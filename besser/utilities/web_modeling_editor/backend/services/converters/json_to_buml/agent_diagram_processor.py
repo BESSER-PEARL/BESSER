@@ -491,11 +491,26 @@ def process_agent_diagram(json_data):
         if initial_state_id:
             break
 
-    def _build_reasoning_state(node_id: str, data: dict, is_initial: bool):
-        """Create a ReasoningState from a v4 ``AgentReasoningState`` node.
+    def _is_reasoning_node(node: dict, data: dict) -> bool:
+        """True if this node represents a reasoning agent state.
 
-        Field names mirror ``AgentReasoningStateNodeProps`` on the frontend
-        (``llm_name``, ``max_steps``, ``enable_task_planning``,
+        The canonical v4 shape folds reasoning states into
+        ``type: "AgentState"`` with ``data.stateType == "reasoning"``. The
+        legacy ``type: "AgentReasoningState"`` node is still accepted on
+        read for back-compat with diagrams saved before the fold.
+        """
+        if node.get("type") == "AgentReasoningState":
+            return True
+        return node.get("type") == "AgentState" and data.get("stateType") == "reasoning"
+
+    def _build_reasoning_state(node_id: str, data: dict, is_initial: bool):
+        """Create a ReasoningState from a reasoning agent-state node.
+
+        Handles both the canonical v4 folded shape (``type: "AgentState"``
+        with ``data.stateType == "reasoning"``) and the legacy
+        ``type: "AgentReasoningState"`` shape — the field names are the
+        same in both cases and mirror ``AgentReasoningStateNodeProps`` on
+        the frontend (``llm_name``, ``max_steps``, ``enable_task_planning``,
         ``stream_steps``, ``system_prompt``, ``fallback_message``).
         """
         state_name = data.get("name", "") or ""
@@ -548,7 +563,7 @@ def process_agent_diagram(json_data):
     if initial_state_id:
         node = nodes_by_id[initial_state_id]
         data = node_data(node)
-        if node.get("type") == "AgentReasoningState":
+        if _is_reasoning_node(node, data):
             _build_reasoning_state(initial_state_id, data, is_initial=True)
         else:
             _build_agent_state(initial_state_id, data, is_initial=True)
@@ -558,10 +573,13 @@ def process_agent_diagram(json_data):
         node_id = node.get("id")
         if node_id == initial_state_id:
             continue
-        if node.get("type") == "AgentReasoningState":
-            _build_reasoning_state(node_id, node_data(node), is_initial=False)
-        elif node.get("type") == "AgentState":
-            _build_agent_state(node_id, node_data(node), is_initial=False)
+        if node.get("type") not in ("AgentState", "AgentReasoningState"):
+            continue
+        data = node_data(node)
+        if _is_reasoning_node(node, data):
+            _build_reasoning_state(node_id, data, is_initial=False)
+        else:
+            _build_agent_state(node_id, data, is_initial=False)
 
     intent_lookup = {intent.name: intent for intent in agent.intents}
     intent_lookup_casefold = {

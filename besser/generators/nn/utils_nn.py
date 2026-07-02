@@ -58,7 +58,6 @@ def _get_bidirectional_concat_var(lyr_input, modules_details):
     if f"{base_module}_layer" in modules_names:
         layer_details = modules_details[f"{base_module}_layer"]
         result = layer_details[4] if len(layer_details) > 4 and layer_details[4] else layer_details[1]
-        print(f"DEBUG _get_bidirectional_concat_var: lyr_input={lyr_input}, base_module={base_module}, returning={result}")
         return result
     return None
 
@@ -140,8 +139,6 @@ def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     """
     # NEW: Use layer.input_var if set (takes precedence over name_module_input resolution)
     if layer.input_var is not None and layer.input_var != prev_out_var:
-        if layer.__class__.__name__ in ['Conv1D', 'Conv2D', 'Conv3D']:
-            print(f"DEBUG get_input_var: Conv layer={layer.name}, input_var={layer.input_var}, prev_out_var={prev_out_var}, id(layer)={id(layer)}, RETURNING input_var")
         return layer.input_var
 
     lyr_input = layer.name_module_input
@@ -456,8 +453,6 @@ def _handle_tensorop(layer_name, modules_details):
     """Handle tensorop output."""
     key = layer_name + "_op"
     result = modules_details[key][1]
-    if "subscript" in layer_name:
-        print(f"DEBUG _handle_tensorop: layer_name={layer_name}, key={key}, result={result}")
     return result
 
 
@@ -819,7 +814,6 @@ def _get_rnn_hidden_var_name(layer, out_layer, model):
 
     # NEW: Prefer layer attribute
     if layer.hidden_state_var is not None:
-        print(f"DEBUG _get_rnn_hidden_var_name: layer={layer.name}, out_layer={out_layer}, hidden_state_var={layer.hidden_state_var}")
         return layer.hidden_state_var
 
     return f"{out_layer}_h" if out_layer != "x" else "h"
@@ -848,14 +842,10 @@ def _store_layer_in_modules_details(layer, layer_synt, out_layer, in_layer, modu
         if layer.__class__.__name__ == "LSTMLayer":
             cell_var = _get_lstm_cell_var_name(layer, hidden_var, model)
             modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer, hidden_var, cell_var]
-            print(f"DEBUG _store_layer: LSTM {unique_key} -> [syntax, out={out_layer}, in={in_layer}, layer, hidden={hidden_var}, cell={cell_var}]")
         else:
             modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer, hidden_var]
-            print(f"DEBUG _store_layer: RNN {unique_key} -> [syntax, out={out_layer}, in={in_layer}, layer, hidden={hidden_var}]")
     else:
         modules_details[unique_key] = [layer_synt, out_layer, in_layer, layer]
-        if layer.__class__.__name__ in ['Conv1D', 'Conv2D', 'Conv3D']:
-            print(f"DEBUG _store_layer: Conv {unique_key} -> [syntax, out={out_layer}, in={in_layer}, layer.input_var={layer.input_var}]")
 
 
 def _add_output_permute_if_needed(setup, channel_last, layer, out_layer, is_seq, is_subnn):
@@ -1260,9 +1250,7 @@ def _handle_generic_params(tensorop, modules_details):
     tensors = tensorop.layers_of_tensors
     if any(isinstance(t, str) for t in tensors):
         actual_vars = getattr(tensorop, 'actual_vars', None)
-        print(f"DEBUG _handle_generic_params: tensorop.name={tensorop.name}, tensorop.tns_type={tensorop.tns_type}, layers_of_tensors={tensorop.layers_of_tensors}")
         tensors = get_layers_output_for_tensorops(tensors, modules_details, actual_vars)
-        print(f"DEBUG _handle_generic_params: After get_layers_output_for_tensorops, tensors={tensors}")
 
     params = ', '.join([str(i) for i in tensors])
     return None, params
@@ -1464,25 +1452,7 @@ def handle_tensorop(tensorop: TensorOp, modules_details: dict,
 
     _add_tensorop_input_permute(tensorop, modules_details, get_tensorop_syntax)
 
-    if "binop" in tensorop.tns_type or "subscript" in tensorop.tns_type or tensorop.tns_type == "squeeze":
-        print(f"DEBUG store tensorop: tensorop.name={tensorop.name}, tns_type={tensorop.tns_type}, ts_op_synt={repr(ts_op_synt)} (type={type(ts_op_synt)}), out_var={repr(out_var)} (type={type(out_var)})")
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var, tensorop]
-    if "binop" in tensorop.tns_type or "subscript" in tensorop.tns_type or tensorop.tns_type == "squeeze":
-        print(f"DEBUG stored in modules_details[{tensorop.name}_op]: syntax={repr(modules_details[tensorop.name + '_op'][0])} (type={type(modules_details[tensorop.name + '_op'][0])}), out_var={repr(modules_details[tensorop.name + '_op'][1])} (type={type(modules_details[tensorop.name + '_op'][1])})")
-        print(f"DEBUG are they equal? {modules_details[tensorop.name + '_op'][0] == modules_details[tensorop.name + '_op'][1]}")
-        print(f"DEBUG are they identical? {modules_details[tensorop.name + '_op'][0] is modules_details[tensorop.name + '_op'][1]}")
-
-    # DEBUG: Print ALL modules_details entries at the end
-    if tensorop.name == "op_1":
-        print(f"\nDEBUG: FINAL CHECK for op_1_op:")
-        entry = modules_details.get("op_1_op")
-        if entry:
-            print(f"  entry[0] = {repr(entry[0])} (id={id(entry[0])})")
-            print(f"  entry[1] = {repr(entry[1])} (id={id(entry[1])})")
-            print(f"  entry[0] == entry[1]: {entry[0] == entry[1]}")
-            print(f"  entry[0] is entry[1]: {entry[0] is entry[1]}")
-            print(f"  type(entry[0]): {type(entry[0])}")
-            print(f"  type(entry[1]): {type(entry[1])}")
 
     _update_skip_source_layer(ts_op_synt, out_var, tensorop, modules_details)
     _add_tensorop_output_permute(tensorop, modules_details, get_tensorop_syntax, out_var)

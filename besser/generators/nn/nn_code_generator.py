@@ -206,10 +206,6 @@ class NNCodeGenerator(GeneratorInterface):
         template = env.get_template(self.template_name)
 
         with open(file_path, mode="w", encoding="utf-8") as f:
-            # DEBUG: Check modules_details before rendering
-            for key in self.modules_details:
-                if "op_4" in key or "subscript" in key:
-                    print(f"DEBUG render: modules_details[{key}] = {self.modules_details[key][:2] if isinstance(self.modules_details[key], list) else self.modules_details[key]}")
             generated_code = template.render(
                 model=self.model, modules_details=self.modules_details,
                 generation_type=self.generation_type,

@@ -806,10 +806,8 @@ def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var, param
 
 def _handle_binop_add_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle binop_add tensorop syntax."""
-    print(f"DEBUG _handle_binop_add_syntax: params={params}, type={type(params)}")
     result = (f"{params[0]} + {params[1]}" if isinstance(params, list)
             else f"tf.add({params})")
-    print(f"DEBUG _handle_binop_add_syntax: result={result}")
     return result
 
 

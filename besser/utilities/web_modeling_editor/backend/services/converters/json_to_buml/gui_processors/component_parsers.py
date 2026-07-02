@@ -8,6 +8,8 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 from besser.BUML.metamodel.gui import (
+    Alert,
+    AlertSeverity,
     Button,
     ButtonActionType,
     ButtonType,
@@ -21,6 +23,7 @@ from besser.BUML.metamodel.gui import (
     Link,
     Menu,
     MenuItem,
+    SelectOption,
     Text,
     ViewComponent,
     ViewContainer,
@@ -40,7 +43,7 @@ from .component_helpers import (
     extract_menu_items,
     extract_parameters_from_attributes,
 )
-from .constants import INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
+from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
 from .utils import extract_text_content, clean_attribute_name
 
 
@@ -143,7 +146,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
 
     # Parse confirmation_required flag
     if confirmation_required_str:
-        confirmation_required = confirmation_required_str.lower() in ('true', '1', 'yes')
+        confirmation_required = confirmation_required_str in ('true', '1', 'yes')
 
     # Parse instance_method flag
     if is_instance_str:
@@ -353,6 +356,10 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
     """
     Parse an input field component with validation rules.
 
+    Supports both plain HTML inputs (type="text", type="range", …) and the
+    BESSER GUI editor's custom input blocks, which store the target
+    InputFieldType in a ``data-gui-type`` attribute (e.g. "Slider", "Toggle").
+
     Args:
         component: GrapesJS component dict
         styling: Resolved Styling object
@@ -360,33 +367,153 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
         meta: Frontend metadata
 
     Returns:
-        InputField instance with validation rules
+        InputField instance with validation rules and optional SelectOptions
     """
     attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
     tag = str(component.get("tagName", "")).lower()
 
     field_type = InputFieldType.Text
     validation_rules = []
+    options: list[SelectOption] = []
+    min_value = None
+    max_value = None
+    step_value = None
+    label = None
+    placeholder = None
+    required = False
+    default_value = None
 
     if isinstance(attributes, dict):
-        html_type = str(attributes.get("type", tag) or "").lower()
-        field_type = INPUT_TYPE_MAP.get(html_type, InputFieldType.Text)
+        # data-gui-type takes precedence – set by the BESSER GUI editor palette
+        gui_type = attributes.get("data-gui-type") or component.get("data-gui-type")
+        if gui_type and gui_type in INPUT_TYPE_MAP:
+            field_type = INPUT_TYPE_MAP[gui_type]
+        else:
+            html_type = str(attributes.get("type", tag) or "").lower()
+            field_type = INPUT_TYPE_MAP.get(html_type, InputFieldType.Text)
 
-        # Enhanced validation rules extraction
-        if attributes.get("required"):
+        # Label – data-label (from storeAttr) takes precedence, then top-level prop
+        label = (
+            attributes.get("data-label")
+            or component.get("input-label")
+        ) or None
+
+        # Placeholder
+        placeholder = (
+            attributes.get("data-placeholder")
+            or component.get("placeholder")
+        ) or None
+
+        # Required
+        req_raw = (
+            attributes.get("data-required")
+            or component.get("required")
+        )
+        if req_raw:
+            required = str(req_raw).lower() in ("true", "1", "yes")
+        elif attributes.get("required"):
+            required = True
+
+        # Default value (Toggle's "Default On" / "default-checked")
+        default_raw = (
+            attributes.get("data-default-checked")
+            or component.get("default-checked")
+        )
+        if default_raw is not None:
+            default_value = str(default_raw).lower() in ("true", "1", "yes")
+
+        # Validation rules
+        if required:
             validation_rules.append("required")
         if attributes.get("pattern"):
             validation_rules.append(f"pattern:{attributes.get('pattern')}")
-        if attributes.get("min"):
-            validation_rules.append(f"min:{attributes.get('min')}")
-        if attributes.get("max"):
-            validation_rules.append(f"max:{attributes.get('max')}")
-        if attributes.get("minlength"):
-            validation_rules.append(f"minlength:{attributes.get('minlength')}")
-        if attributes.get("maxlength"):
-            validation_rules.append(f"maxlength:{attributes.get('maxlength')}")
-        if attributes.get("step"):
-            validation_rules.append(f"step:{attributes.get('step')}")
+
+        # Numeric / range constraints – prefer data-* attrs, fallback to top-level props
+        def _try_float(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _first_defined(*keys_and_sources):
+            """Return first non-None value from (attr_key, dict) pairs."""
+            for key, source in keys_and_sources:
+                val = source.get(key)
+                if val is not None:
+                    return val
+            return None
+
+        # min
+        min_raw = _first_defined(
+            ("data-min", attributes), ("min", attributes), ("input-min", component)
+        )
+        if min_raw and min_value is None:
+            min_value = _try_float(min_raw)
+            if min_value is not None:
+                validation_rules.append(f"min:{min_raw}")
+
+        # max
+        max_raw = _first_defined(
+            ("data-max", attributes), ("max", attributes), ("input-max", component)
+        )
+        if max_raw and max_value is None:
+            max_value = _try_float(max_raw)
+            if max_value is not None:
+                validation_rules.append(f"max:{max_raw}")
+
+        # step
+        step_raw = _first_defined(
+            ("data-step", attributes), ("step", attributes), ("input-step", component)
+        )
+        if step_raw and step_value is None:
+            step_value = _try_float(step_raw)
+
+        # maxlength – for TextArea and text-like inputs
+        maxlen_raw = (
+            attributes.get("data-max-length")
+            or attributes.get("maxlength")
+            or component.get("max-length")
+        )
+        if maxlen_raw is not None:
+            maxlen_v = _try_float(maxlen_raw)
+            if maxlen_v is not None:
+                validation_rules.append(f"maxlength:{int(maxlen_v)}")
+
+        # minlength
+        minlen_raw = attributes.get("minlength")
+        if minlen_raw is not None:
+            minlen_v = _try_float(minlen_raw)
+            if minlen_v is not None:
+                validation_rules.append(f"minlength:{int(minlen_v)}")
+
+        # max_value for Rating (data-max-stars / max-stars prop)
+        if field_type == InputFieldType.Rating and max_value is None:
+            stars_raw = attributes.get("data-max-stars") or component.get("max-stars")
+            if stars_raw is not None:
+                max_value = _try_float(stars_raw)
+
+        # multiple – File / MultiSelect
+        multiple_raw = (
+            attributes.get("data-multiple")
+            or component.get("multiple-files")
+        )
+        multiple = str(multiple_raw).lower() in ("true", "1", "yes") if multiple_raw is not None else False
+
+        # Select options for Dropdown / RadioGroup / CheckboxGroup / MultiSelect
+        raw_options = (
+            attributes.get("data-options")
+            or component.get("select-options")
+            or component.get("data-options")
+            or ""
+        )
+        if raw_options and isinstance(raw_options, str):
+            for opt_label in raw_options.split(","):
+                opt_label = opt_label.strip()
+                if opt_label:
+                    options.append(SelectOption(value=opt_label, label=opt_label))
+
+    else:
+        multiple = False
 
     description = f"{field_type.value} input"
     input_field = InputField(
@@ -394,7 +521,16 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
         description=description,
         field_type=field_type,
         styling=styling,
+        label=label,
+        placeholder=placeholder,
+        required=required,
+        default_value=str(default_value) if default_value is not None else None,
         validationRules=",".join(validation_rules) if validation_rules else None,
+        options=options if options else None,
+        min_value=min_value,
+        max_value=max_value,
+        step=step_value,
+        multiple=multiple,
     )
 
     if meta["tagName"] is None:
@@ -403,6 +539,74 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
     _attach_component_metadata(input_field, component, meta)
 
     return input_field
+
+
+def parse_alert(component: Dict[str, Any], styling, name: str, meta: Dict) -> Alert:
+    """
+    Parse an Alert component (gui-alert block from the BESSER GUI editor).
+
+    Reads severity, title, content and dismissible from the component's
+    ``data-*`` attributes and creates an Alert BUML object.
+
+    Args:
+        component: GrapesJS component dict
+        styling: Resolved Styling object
+        name: Component name
+        meta: Frontend metadata
+
+    Returns:
+        Alert instance
+    """
+    attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
+
+    severity_raw = None
+    title = None
+    content = ""
+    dismissible = False
+
+    if isinstance(attributes, dict):
+        severity_raw = (
+            attributes.get("data-severity")
+            or attributes.get("alert-severity")
+            or component.get("alert-severity")
+        )
+        title = (
+            attributes.get("data-title")
+            or attributes.get("alert-title")
+            or component.get("alert-title")
+        ) or None
+        content = (
+            attributes.get("data-content")
+            or attributes.get("alert-content")
+            or component.get("alert-content")
+            or extract_text_content(component)
+            or ""
+        )
+        dismissible_raw = (
+            attributes.get("data-dismissible")
+            or attributes.get("alert-dismissible")
+            or component.get("alert-dismissible")
+        )
+        if dismissible_raw:
+            dismissible = str(dismissible_raw).lower() in ("true", "1", "yes")
+
+    severity = ALERT_SEVERITY_MAP.get(severity_raw or "Info", AlertSeverity.Info)
+
+    alert = Alert(
+        name=name,
+        description=f"Alert component ({severity.value})",
+        content=content,
+        severity=severity,
+        title=title,
+        dismissible=dismissible,
+        styling=styling,
+    )
+
+    if meta["tagName"] is None:
+        meta["tagName"] = "div"
+
+    _attach_component_metadata(alert, component, meta)
+    return alert
 
 
 def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_component_list_func) -> Form:

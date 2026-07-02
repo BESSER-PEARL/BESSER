@@ -40,6 +40,7 @@ from besser.utilities.web_modeling_editor.backend.models import (
 # Backend services - Converters
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_agent_diagram,
     process_object_diagram,
     process_gui_diagram,
@@ -520,6 +521,10 @@ async def generate_code_output(input_data: DiagramInput):
         if generator_info.category == "neural_network":
             return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
 
+        # Handle BPMN generators (reads BPMNDiagram via process_bpmn_diagram)
+        if generator_info.category == "business_process":
+            return await _generate_bpmn(json_data, generator_type, generator_info.generator_class, temp_dir)
+
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
             if diagram_type == "UserDiagram":
@@ -986,6 +991,23 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
     )
+
+
+async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
+    """Generate BPMN 2.0 XML from a BPMN diagram."""
+    try:
+        bpmn_model = process_bpmn_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        # Malformed BPMN payload (dangling ids, wrong types). Surface as a
+        # structured 400 via @handle_endpoint_errors instead of a 500.
+        # ValueError / ConversionError from process_bpmn_diagram is already
+        # mapped to 400 by the decorator — no explicit re-raise needed.
+        raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
+
+    generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    return _create_file_response(temp_dir, generator_type)
 
 
 async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):

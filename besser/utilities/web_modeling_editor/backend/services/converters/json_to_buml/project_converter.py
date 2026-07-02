@@ -9,6 +9,7 @@ import logging
 
 from . import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_object_diagram,
     process_agent_diagram,
     process_state_machine,
@@ -66,6 +67,7 @@ def _collect_valid_diagrams(project):
         "QuantumCircuitDiagram",
         "UserDiagram",
         "NNDiagram",
+        "BPMN",
     ]
 
     result = {}
@@ -207,6 +209,12 @@ def json_to_buml_project(project):
         nn_title = getattr(nn_diag, "title", None)
         if nn_title:
             nn_titles[id(nn_model)] = nn_title
+
+    # ── Process ALL BPMNDiagrams ──────────────────────────────────────
+    # BPMN is standalone (no ClassDiagram cross-reference, unlike
+    # ObjectDiagram / GUINoCodeDiagram).
+    for bpmn_diag in diagrams.get("BPMN", []):
+        model_list.append(process_bpmn_diagram(bpmn_diag.model_dump()))
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

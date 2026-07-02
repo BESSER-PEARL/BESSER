@@ -3,6 +3,7 @@ BUML to JSON conversion modules.
 """
 
 from .class_diagram_converter import class_buml_to_json, parse_buml_content
+from .bpmn_diagram_converter import bpmn_object_to_json, bpmn_buml_to_json
 from .state_machine_converter import state_machine_to_json, state_machine_object_to_json
 from .agent_diagram_converter import agent_buml_to_json, analyze_function_node
 from .object_diagram_converter import object_buml_to_json
@@ -14,6 +15,8 @@ from .nn_diagram_converter import nn_model_to_json, nn_buml_to_json
 __all__ = [
     'class_buml_to_json',
     'parse_buml_content',
+    'bpmn_object_to_json',
+    'bpmn_buml_to_json',
     'state_machine_to_json',
     'state_machine_object_to_json',
     'agent_buml_to_json',

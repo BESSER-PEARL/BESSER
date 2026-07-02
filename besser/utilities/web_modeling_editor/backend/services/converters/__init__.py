@@ -4,6 +4,7 @@ Converters module for handling JSON to BUML and BUML to JSON conversions.
 
 from .json_to_buml import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
@@ -15,6 +16,8 @@ from .json_to_buml import (
 from .buml_to_json import (
     class_buml_to_json,
     parse_buml_content,
+    bpmn_object_to_json,
+    bpmn_buml_to_json,
     state_machine_to_json,
     state_machine_object_to_json,
     agent_buml_to_json,
@@ -30,6 +33,7 @@ from .buml_to_json import (
 
 __all__ = [
     "process_class_diagram",
+    "process_bpmn_diagram",
     "process_state_machine",
     "process_agent_diagram",
     "process_object_diagram",
@@ -39,6 +43,8 @@ __all__ = [
     "process_nn_diagram",
     "class_buml_to_json",
     "parse_buml_content",
+    "bpmn_object_to_json",
+    "bpmn_buml_to_json",
     "state_machine_to_json",
     "state_machine_object_to_json",
     "agent_buml_to_json",

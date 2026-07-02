@@ -59,3 +59,20 @@ RELATIONSHIP_TYPES = {
     "aggregation": "ClassAggregation",
     "inheritance": "ClassInheritance"
 }
+
+# BPMN diagram type wire values.
+# Canonical v4 value matches ``UMLDiagramType.BPMN`` in
+# ``packages/library/lib/types/DiagramType.ts`` ("BPMN", not v3's "BPMNDiagram").
+BPMN_DIAGRAM_TYPE = "BPMN"
+# Both spellings accepted on read (mirrors the COMMENT_NODE_TYPES /
+# COMMENT_LINK_TYPES dual-spelling tuples in class_diagram_processor.py). If the
+# frontend end-to-end value ever changes, only these two constants need updating.
+BPMN_DIAGRAM_TYPES = ("BPMN", "BPMNDiagram")
+# The four concrete v4 BPMN flow-edge ``type`` strings (replacing v3's single
+# "BPMNFlow" type + ``data.flowType`` discriminator).
+BPMN_FLOW_EDGE_TYPES = (
+    "BPMNSequenceFlow",
+    "BPMNMessageFlow",
+    "BPMNAssociationFlow",
+    "BPMNDataAssociationFlow",
+)

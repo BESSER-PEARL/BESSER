@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
+from .bpmn_diagram_converter import bpmn_buml_to_json
 from .state_machine_converter import state_machine_to_json
 from .agent_diagram_converter import agent_buml_to_json
 from .object_diagram_converter import object_buml_to_json
@@ -29,10 +30,12 @@ SECTION_CONFIG = {
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
     'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
+    # diagram_type is 'BPMN' (v4), not v3's 'BPMNDiagram'.
+    'bpmn_model': ('BPMN', 'BPMN', 'BPMN Diagram'),
 }
 
 # All known section header keywords used as boundary markers
-ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN']
+ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN', 'BPMN']
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -186,6 +189,9 @@ def _convert_section(
         elif model_name == "nn_model":
             model = nn_buml_to_json(section_code)
 
+        elif model_name == "bpmn_model":
+            model = bpmn_buml_to_json(section_code)
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
@@ -235,6 +241,9 @@ SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
         '.add_layer(', '.add_tensor_op(', '.add_sub_nn(',
         '.add_configuration(', '.add_train_data(', '.add_test_data(',
     )),
+    ('BPMN', (
+        'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow(',
+    )),
 ]
 
 _SINGLE_DIAGRAM_DEFAULT_TITLES = {
@@ -245,6 +254,7 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'GUINoCodeDiagram': 'GUI Diagram',
     'QuantumCircuitDiagram': 'Quantum Circuit Diagram',
     'NNDiagram': 'NN Diagram',
+    'BPMN': 'BPMN Diagram',
 }
 
 
@@ -286,6 +296,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             model = gui_buml_to_json(content)
         elif diagram_type == 'NNDiagram':
             model = nn_buml_to_json(content)
+        elif diagram_type == 'BPMN':
+            model = bpmn_buml_to_json(content)
         else:
             raise ValueError(f"Unsupported single-diagram type: {diagram_type}")
     except (SyntaxError, ValueError, TypeError) as e:
@@ -308,6 +320,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "BPMN": "BPMN",
     }
 
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
@@ -477,6 +490,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "BPMN": "BPMN",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

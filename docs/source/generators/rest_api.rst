@@ -19,7 +19,7 @@ Parameters
 
 - ``model``: The input B-UML structural model (required).
 - ``http_methods``: List of HTTP methods to generate (default: ``["GET", "POST", "PUT", "PATCH", "DELETE"]``).
-- ``backend``: When ``True``, generates ``main_api.py`` suitable for :doc:`BackendGenerator <backend>` integration instead of standalone ``rest_api.py`` (default: ``False``).
+- ``backend``: When ``True``, generates a single ``main_api.py`` instead of standalone ``rest_api.py`` (default: ``False``). Note: :doc:`BackendGenerator <backend>` no longer uses this mode — it renders its own modular ``main_api.py`` + ``routers/<entity>.py`` layout instead.
 - ``port``: Port number for the generated FastAPI app (optional).
 - ``output_dir``: Output directory (default: ``output/`` in the current directory).
 

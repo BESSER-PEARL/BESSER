@@ -20,7 +20,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY main_api.py pydantic_classes.py sql_alchemy.py ./
+COPY main_api.py database.py bal_stdlib.py pydantic_classes.py sql_alchemy.py ./
+COPY routers/ ./routers/
 
 # Switch to non-root user
 USER appuser

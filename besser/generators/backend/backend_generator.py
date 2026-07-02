@@ -6,6 +6,7 @@ from besser.generators import GeneratorInterface
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.backend.api_generator import generate_modular_api
 from besser.generators.backend.docker_files import generate_docker_files
 
 class BackendGenerator(GeneratorInterface):
@@ -81,8 +82,19 @@ class BackendGenerator(GeneratorInterface):
 
         docker_port = self.config["docker_port"] if self.config else 8000  # Use default port if config not provided
 
-        rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True, port=docker_port)
-        rest_api.generate()
+        # requirements.txt is shared boilerplate with the standalone REST API
+        # generator; reuse it instead of duplicating the dependency list here.
+        RESTAPIGenerator(model=self.model, output_dir=backend_folder_path).generate_requirements()
+
+        # main_api.py (slim app + router includes) + database.py + bal_stdlib.py
+        # + routers/<class>.py, one router per resource.
+        generate_modular_api(
+            model=self.model,
+            http_methods=self.http_methods,
+            nested_creations=self.nested_creations,
+            port=docker_port,
+            output_dir=backend_folder_path,
+        )
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
         sql_alchemy.generate()
@@ -113,8 +125,11 @@ class BackendGenerator(GeneratorInterface):
         WORKDIR /app
 
         COPY main_api.py /app
+        COPY database.py /app
+        COPY bal_stdlib.py /app
         COPY pydantic_classes.py /app
         COPY sql_alchemy.py /app
+        COPY routers/ /app/routers/
 
         RUN pip install requests==2.31.0
         RUN pip install fastapi==0.110.0

@@ -31,9 +31,12 @@ entities using their identifiers. The default setting is False, which restricts 
 
 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
-This method will generate several files:
+This method will generate a modular project (rather than one large file) so each concern lives in its own module:
 
-   + ``main_api.py``: Contains the REST API endpoints.
+   + ``main_api.py``: Slim FastAPI app setup (middleware, exception handlers, system endpoints) that wires in the per-entity routers below. Kept under this filename so ``uvicorn main_api:app`` keeps working.
+   + ``database.py``: Shared SQLAlchemy engine/session setup and the ``get_db`` dependency, used by ``main_api.py`` and every router.
+   + ``bal_stdlib.py``: BESSER Action Language standard-library helpers used by generated method endpoints.
+   + ``routers/<entity>.py``: One ``APIRouter`` per class in your model, containing all of that entity's CRUD, relationship, and method endpoints.
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
    + ``database.db``: A SqlLite database file.

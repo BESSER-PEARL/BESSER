@@ -20,7 +20,6 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     Link,
     EmbeddedContent,
     Alert,
-    AlertSeverity,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,

@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from besser.BUML.metamodel.gui import (
+    Alert,
     Button,
     DataList,
     EmbeddedContent,
@@ -14,6 +15,7 @@ from besser.BUML.metamodel.gui import (
     Link,
     Menu,
     MenuItem,
+    SelectOption,
     Text,
     ViewComponent,
     ViewContainer,
@@ -282,18 +284,61 @@ class GuiSerializationMixin:
         if isinstance(element, InputField):
             node["input_type"] = self._enum_value(getattr(element, "field_type", None))
             node["validation"] = getattr(element, "validationRules", None)
+            label = getattr(element, "label", None)
+            if label:
+                node["label"] = label
+            placeholder = getattr(element, "placeholder", None)
+            if placeholder:
+                node["placeholder"] = placeholder
+            if getattr(element, "required", False):
+                node["required"] = True
+            default_value = getattr(element, "default_value", None)
+            if default_value is not None:
+                node["default_value"] = default_value
+            options = getattr(element, "options", None)
+            if options:
+                node["options"] = [{"value": o.value, "label": o.label} for o in options]
+            min_value = getattr(element, "min_value", None)
+            if min_value is not None:
+                node["min_value"] = min_value
+            max_value = getattr(element, "max_value", None)
+            if max_value is not None:
+                node["max_value"] = max_value
+            step = getattr(element, "step", None)
+            if step is not None:
+                node["step"] = step
+            if getattr(element, "multiple", False):
+                node["multiple"] = True
+
+        if isinstance(element, Alert):
+            node["content"] = getattr(element, "content", "") or ""
+            node["severity"] = self._enum_value(getattr(element, "severity", None)) or "Info"
+            title = getattr(element, "title", None)
+            if title:
+                node["title"] = title
+            if getattr(element, "dismissible", False):
+                node["dismissible"] = True
 
         if isinstance(element, Form):
             inputs = []
             for input_field in sorted(
                 getattr(element, "inputFields", []), key=lambda f: getattr(f, "name", "").lower()
             ):
+                field_options = getattr(input_field, "options", None)
                 inputs.append(
                     self._clean_dict(
                         {
                             "id": getattr(input_field, "name", None),
-                            "label": self._humanize(getattr(input_field, "name", "")),
+                            "label": getattr(input_field, "label", None) or self._humanize(getattr(input_field, "name", "")),
                             "type": self._enum_value(getattr(input_field, "field_type", None)),
+                            "placeholder": getattr(input_field, "placeholder", None),
+                            "required": getattr(input_field, "required", False) or None,
+                            "default_value": getattr(input_field, "default_value", None),
+                            "options": [{"value": o.value, "label": o.label} for o in field_options] if field_options else None,
+                            "min_value": getattr(input_field, "min_value", None),
+                            "max_value": getattr(input_field, "max_value", None),
+                            "step": getattr(input_field, "step", None),
+                            "multiple": getattr(input_field, "multiple", False) or None,
                             "validation": getattr(input_field, "validationRules", None),
                         }
                     )
@@ -1195,6 +1240,8 @@ class GuiSerializationMixin:
             return "metric-card"
         if isinstance(element, AgentComponent):
             return "agent-component"
+        if isinstance(element, Alert):
+            return "alert"
         return "component"
 
     @staticmethod

@@ -10,6 +10,10 @@ class _PageRenderContext:
     def __init__(self) -> None:
         self.imports: Set[str] = set()
         self.needs_navigate: bool = False
+        # Named input components imported from InputComponents
+        self.input_components: Set[str] = set()
+        # Alert component
+        self.needs_alert_block: bool = False
 
 
 class PageBuilderMixin:
@@ -123,6 +127,18 @@ class PageBuilderMixin:
             imports.append("import { AgentComponent } from \"../components/AgentComponent\";")
         if "MethodButton" in context.imports:
             imports.append("import { MethodButton } from \"../components/MethodButton\";")
+
+        # Specialized input / alert components
+        all_input_components: List[str] = sorted(context.input_components)
+        if context.needs_alert_block:
+            all_input_components = ["AlertBlock"] + all_input_components
+        if all_input_components:
+            named = ", ".join(all_input_components)
+            imports.append(f"import {{ {named} }} from \"../components/InputComponents\";")
+
+        # useState is needed for complex input components
+        if context.input_components or context.needs_alert_block:
+            imports.insert(0, "import { useState } from \"react\";")
 
         if not imports:
             return ""
@@ -274,21 +290,11 @@ class PageBuilderMixin:
 
         # Input
         if comp_type == "input":
-            input_type = (node.get("input_type") or attributes.get("type") or "text")
-            input_attrs = dict(attributes)
-            input_attrs.pop("type", None)
-            props = self._build_element_props(
-                component_id,
-                class_list,
-                style,
-                input_attrs,
-                None,
-                extra_props={
-                    "type": str(input_type).lower(),
-                    "placeholder": attributes.get("placeholder") or "",
-                },
-            )
-            return f"{indent_str}<input{props} />"
+            return self._render_input(node, component_id, class_list, style, attributes, indent_str, context)
+
+        # Alert
+        if comp_type == "alert":
+            return self._render_alert(node, component_id, class_list, style, attributes, indent_str, context)
 
         # Form
         if comp_type == "form":
@@ -297,19 +303,8 @@ class PageBuilderMixin:
             props += " onSubmit={" + on_submit_expr + "}"
             inputs = node.get("inputs") or []
             input_lines = []
-            for input_field in inputs:
-                input_id = input_field.get("id") or ""
-                label = input_field.get("label") or input_id
-                field_type = (input_field.get("type") or "text").lower()
-                label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
-                input_lines.append(
-                    f"{indent_str}  <div style={{{{\"marginBottom\": \"10px\"}}}}>\n"
-                    f"{indent_str}    <label htmlFor={json.dumps(input_id)} style={{{{\"display\": \"block\", \"marginBottom\": \"5px\"}}}}>"
-                    f"{label_expr}"
-                    f"</label>\n"
-                    f"{indent_str}    <input id={json.dumps(input_id)} type={json.dumps(field_type)} />\n"
-                    f"{indent_str}  </div>"
-                )
+            for field in inputs:
+                input_lines.append(self._render_form_field(field, indent_str + "  "))
             inner = "\n".join(input_lines) if input_lines else ""
             return (
                 f"{indent_str}<form{props}>\n"
@@ -465,6 +460,397 @@ class PageBuilderMixin:
                 + f"\n{indent_str}</{tag}>"
             )
         return f"{indent_str}<{tag}{props} />"
+
+    def _render_alert(
+        self,
+        node: Dict[str, Any],
+        component_id: str,
+        class_list: List[str],
+        style: Dict[str, Any],
+        attributes: Dict[str, Any],
+        indent_str: str,
+        context: Optional[_PageRenderContext] = None,
+    ) -> str:
+        if context is not None:
+            context.needs_alert_block = True
+
+        severity = (node.get("severity") or "Info").lower()
+        title = node.get("title")
+        content = node.get("content") or ""
+        dismissible = node.get("dismissible", False)
+
+        props = self._build_component_props(
+            component_id=component_id,
+            class_list=class_list,
+            style=style,
+            extra_props={
+                "severity": severity,
+                "title": title,
+                "content": content,
+                "dismissible": dismissible or None,
+            },
+        )
+        return f"{indent_str}<AlertBlock{props} />"
+
+    def _render_input(
+        self,
+        node: Dict[str, Any],
+        component_id: str,
+        class_list: List[str],
+        style: Dict[str, Any],
+        attributes: Dict[str, Any],
+        indent_str: str,
+        context: Optional[_PageRenderContext] = None,
+    ) -> str:
+        input_type = node.get("input_type") or attributes.get("type") or "Text"
+        label = node.get("label") or ""
+        placeholder = node.get("placeholder") or attributes.get("placeholder") or ""
+        required = node.get("required", False)
+        min_value = node.get("min_value")
+        max_value = node.get("max_value")
+        step = node.get("step")
+        multiple = node.get("multiple", False)
+        options = node.get("options") or []
+        default_value = node.get("default_value")
+
+        base_attrs = dict(attributes)
+        base_attrs.pop("type", None)
+        base_attrs.pop("placeholder", None)
+
+        def ep(**kw: Any) -> Dict[str, Any]:
+            return {k: v for k, v in kw.items() if v is not None and v is not False and v != ""}
+
+        input_style: Dict[str, Any] = {
+            "padding": "6px 10px", "border": "1px solid #cbd5e1",
+            "borderRadius": "4px", "fontFamily": "inherit",
+            "width": "100%", "boxSizing": "border-box",
+            **style,
+        }
+
+        def with_label(inner_jsx: str) -> str:
+            """Wrap input in label+div when a label is present."""
+            if not label:
+                return inner_jsx
+            lbl_style = self._format_prop("style", {"fontSize": "0.875em", "fontWeight": 500, "color": "#374151"})
+            wrap_style = self._format_prop("style", {"display": "flex", "flexDirection": "column", "gap": "4px"})
+            req_span = ""
+            if required:
+                req_sty = self._format_prop("style", {"color": "#ef4444", "marginLeft": 2})
+                req_span = f'<span {req_sty}>*</span>'
+            return (
+                f'{indent_str}<div {wrap_style}>\n'
+                f'{indent_str}  <label htmlFor={json.dumps(component_id)} {lbl_style}>'
+                f'{{{json.dumps(label)}}}{req_span}</label>\n'
+                + inner_jsx + "\n"
+                + f'{indent_str}</div>'
+            )
+
+        # ── Components from InputComponents.tsx ──────────────────────────────
+
+        # Toggle — ToggleInput handles its own label inline
+        if input_type == "Toggle":
+            if context is not None:
+                context.input_components.add("ToggleInput")
+            checked = str(default_value).lower() in ("true", "1", "yes") if default_value else False
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(
+                    name=component_id or None,
+                    label=label or None,
+                    defaultChecked=checked or None,
+                    required=required or None,
+                ),
+            )
+            return f"{indent_str}<ToggleInput{props} />"
+
+        # Slider — shows live value next to thumb
+        if input_type == "Slider":
+            if context is not None:
+                context.input_components.add("SliderInput")
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(
+                    name=component_id or None,
+                    min=min_value, max=max_value, step=step,
+                    defaultValue=default_value,
+                ),
+            )
+            return with_label(f"{indent_str}  <SliderInput{props} />") if label else f"{indent_str}<SliderInput{props} />"
+
+        # Rating — interactive star buttons
+        if input_type == "Rating":
+            if context is not None:
+                context.input_components.add("RatingInput")
+            max_stars = int(max_value) if max_value is not None else 5
+            dv = int(default_value) if default_value is not None else None
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(name=component_id or None, maxStars=max_stars, defaultValue=dv),
+            )
+            return with_label(f"{indent_str}  <RatingInput{props} />") if label else f"{indent_str}<RatingInput{props} />"
+
+        # Tags — chip-based text input
+        if input_type == "Tags":
+            if context is not None:
+                context.input_components.add("TagsInput")
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(
+                    name=component_id or None,
+                    placeholder=placeholder or None,
+                    required=required or None,
+                ),
+            )
+            return with_label(f"{indent_str}  <TagsInput{props} />") if label else f"{indent_str}<TagsInput{props} />"
+
+        # OTP — segmented digit boxes
+        if input_type == "OTP":
+            if context is not None:
+                context.input_components.add("OTPInput")
+            length = int(max_value) if max_value is not None else 6
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(name=component_id or None, length=length),
+            )
+            return with_label(f"{indent_str}  <OTPInput{props} />") if label else f"{indent_str}<OTPInput{props} />"
+
+        # DateRange — two linked date pickers
+        if input_type == "DateRange":
+            if context is not None:
+                context.input_components.add("DateRangeInput")
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(
+                    name=component_id or None,
+                    required=required or None,
+                ),
+            )
+            return with_label(f"{indent_str}  <DateRangeInput{props} />") if label else f"{indent_str}<DateRangeInput{props} />"
+
+        # MultiSelect — click-to-toggle chip list
+        if input_type == "MultiSelect":
+            if context is not None:
+                context.input_components.add("MultiSelectInput")
+            dv_list: List[str] = []
+            if isinstance(default_value, str) and default_value:
+                dv_list = [s.strip() for s in default_value.split(",") if s.strip()]
+            props = self._build_component_props(
+                component_id=component_id, class_list=class_list, style=style,
+                extra_props=ep(
+                    name=component_id or None,
+                    options=options or None,
+                    defaultValue=dv_list or None,
+                    required=required or None,
+                ),
+            )
+            return with_label(f"{indent_str}  <MultiSelectInput{props} />") if label else f"{indent_str}<MultiSelectInput{props} />"
+
+        # ── Pure-HTML types ───────────────────────────────────────────────────
+
+        # TextArea / RichText
+        if input_type in {"TextArea", "RichText"}:
+            textarea_style = {**input_style, "minHeight": "80px", "resize": "vertical"}
+            props = self._build_element_props(
+                component_id, class_list, textarea_style, base_attrs, None,
+                extra_props=ep(placeholder=placeholder or None, required=required or None),
+            )
+            inner = f"{indent_str}<textarea{props}></textarea>"
+            return with_label(inner) if label else inner
+
+        # Dropdown
+        if input_type == "Dropdown":
+            props = self._build_element_props(
+                component_id, class_list, input_style, base_attrs, None,
+                extra_props=ep(required=required or None),
+            )
+            placeholder_opt = f'{indent_str}  <option value="">— Select —</option>\n' if not required else ""
+            opt_lines = "\n".join(
+                f'{indent_str}  <option value={json.dumps(o.get("value", ""))}>'
+                f'{{{json.dumps(o.get("label", ""))}}}</option>'
+                for o in options
+            )
+            inner = (
+                f"{indent_str}<select{props}>\n"
+                + placeholder_opt
+                + opt_lines
+                + f"\n{indent_str}</select>"
+            )
+            return with_label(inner) if label else inner
+
+        # RadioGroup
+        if input_type == "RadioGroup":
+            row_style = self._format_prop("style", {"display": "flex", "alignItems": "center", "gap": "6px"})
+            grp_style = self._format_prop("style", {"display": "flex", "flexDirection": "column", "gap": "6px"})
+            lines = [f'{indent_str}<div role="radiogroup" id={json.dumps(component_id)} {grp_style}>']
+            for o in options:
+                lines.append(
+                    f'{indent_str}  <label {row_style}>'
+                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))} />'
+                    f' {{{json.dumps(o.get("label", ""))}}}</label>'
+                )
+            lines.append(f"{indent_str}</div>")
+            inner = "\n".join(lines)
+            return with_label(inner) if label else inner
+
+        # CheckboxGroup
+        if input_type == "CheckboxGroup":
+            row_style = self._format_prop("style", {"display": "flex", "alignItems": "center", "gap": "6px"})
+            grp_style = self._format_prop("style", {"display": "flex", "flexDirection": "column", "gap": "6px"})
+            lines = [f'{indent_str}<div id={json.dumps(component_id)} {grp_style}>']
+            for o in options:
+                lines.append(
+                    f'{indent_str}  <label {row_style}>'
+                    f'<input type="checkbox" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))} />'
+                    f' {{{json.dumps(o.get("label", ""))}}}</label>'
+                )
+            lines.append(f"{indent_str}</div>")
+            inner = "\n".join(lines)
+            return with_label(inner) if label else inner
+
+        # Checkbox — inline [box] label layout
+        if input_type == "Checkbox":
+            checked = str(default_value).lower() in ("true", "1", "yes") if default_value else False
+            lbl_style = self._format_prop("style", {"display": "inline-flex", "alignItems": "center", "gap": "6px", "cursor": "pointer", "userSelect": "none", "fontSize": "0.875em", "fontWeight": 500, "color": "#374151"})
+            req_span = ""
+            if required:
+                req_sty = self._format_prop("style", {"color": "#ef4444", "marginLeft": 2})
+                req_span = f'<span {req_sty}>*</span>'
+            lbl_text = f"{{{json.dumps(label)}}}{req_span}" if label else ""
+            inner_props = self._build_element_props(
+                component_id, class_list, {}, base_attrs, None,
+                extra_props=ep(name=component_id or None, required=required or None, defaultChecked=checked or None),
+            )
+            return (
+                f'{indent_str}<div>\n'
+                f'{indent_str}  <label htmlFor={json.dumps(component_id)} {lbl_style}>\n'
+                f'{indent_str}    <input type="checkbox"{inner_props} />\n'
+                f'{indent_str}    {lbl_text}\n'
+                f'{indent_str}  </label>\n'
+                f'{indent_str}</div>'
+            )
+
+        # Range
+        if input_type == "Range":
+            props = self._build_element_props(
+                component_id, class_list, {"flex": "1", **style}, base_attrs, None,
+                extra_props=ep(min=min_value, max=max_value, step=step, defaultValue=default_value),
+            )
+            inner = f'{indent_str}<input type="range"{props} />'
+            return with_label(inner) if label else inner
+
+        # Spinner (number with step)
+        if input_type == "Spinner":
+            props = self._build_element_props(
+                component_id, class_list, input_style, base_attrs, None,
+                extra_props=ep(
+                    min=min_value, max=max_value,
+                    step=step if step is not None else 1,
+                    required=required or None,
+                    defaultValue=default_value,
+                ),
+            )
+            inner = f'{indent_str}<input type="number"{props} />'
+            return with_label(inner) if label else inner
+
+        # ImageUpload
+        if input_type == "ImageUpload":
+            props = self._build_element_props(
+                component_id, class_list, input_style, base_attrs, None,
+                extra_props=ep(accept="image/*", multiple=multiple or None, required=required or None),
+            )
+            inner = f'{indent_str}<input type="file"{props} />'
+            return with_label(inner) if label else inner
+
+        # File
+        if input_type == "File":
+            props = self._build_element_props(
+                component_id, class_list, input_style, base_attrs, None,
+                extra_props=ep(multiple=multiple or None, required=required or None),
+            )
+            inner = f'{indent_str}<input type="file"{props} />'
+            return with_label(inner) if label else inner
+
+        # Color — small square swatch
+        if input_type == "Color":
+            color_style = {"width": "48px", "height": "36px", "padding": "2px",
+                           "border": "1px solid #cbd5e1", "borderRadius": "4px", "cursor": "pointer"}
+            props = self._build_element_props(
+                component_id, class_list, color_style, base_attrs, None,
+                extra_props=ep(defaultValue=default_value),
+            )
+            inner = f'{indent_str}<input type="color"{props} />'
+            return with_label(inner) if label else inner
+
+        # DateTime
+        if input_type == "DateTime":
+            props = self._build_element_props(
+                component_id, class_list, input_style, base_attrs, None,
+                extra_props=ep(required=required or None),
+            )
+            inner = f'{indent_str}<input type="datetime-local"{props} />'
+            return with_label(inner) if label else inner
+
+        # Remaining types: direct HTML input type mapping
+        html_type_map = {
+            "Text": "text", "Email": "email", "Number": "number", "Password": "password",
+            "Date": "date", "Time": "time", "URL": "url", "Tel": "tel",
+            "Search": "search", "Hidden": "hidden",
+        }
+        html_type = html_type_map.get(input_type, str(input_type).lower())
+        extra_kw = ep(placeholder=placeholder or None, required=required or None, defaultValue=default_value)
+        if input_type == "Number":
+            extra_kw.update(ep(min=min_value, max=max_value, step=step))
+        props = self._build_element_props(
+            component_id, class_list,
+            {} if input_type == "Hidden" else input_style,
+            base_attrs, None,
+            extra_props=extra_kw or None,
+        )
+        inner = f'{indent_str}<input type={json.dumps(html_type)}{props} />'
+        return with_label(inner) if label else inner
+
+    def _render_form_field(self, field: Dict[str, Any], indent_str: str) -> str:
+        field_id = field.get("id") or ""
+        label = field.get("label") or field_id
+        field_type = field.get("type") or "Text"
+        placeholder = field.get("placeholder") or ""
+        required = field.get("required", False)
+        options = field.get("options") or []
+        min_value = field.get("min_value")
+        max_value = field.get("max_value")
+        step = field.get("step")
+        multiple = field.get("multiple", False)
+        default_value = field.get("default_value")
+
+        wrapper_style = self._format_prop("style", {"marginBottom": "16px"})
+        label_style = self._format_prop("style", {"display": "block", "marginBottom": "5px", "fontWeight": "500"})
+
+        label_inner = f"{{{json.dumps(label, ensure_ascii=False)}}}"
+        if required:
+            req_style = self._format_prop("style", {"color": "#ef4444", "marginLeft": "2px"})
+            label_inner += f"<span {req_style}>*</span>"
+
+        label_jsx = f"{indent_str}<label htmlFor={json.dumps(field_id)} {label_style}>{label_inner}</label>"
+
+        field_node: Dict[str, Any] = {
+            "input_type": field_type,
+            "placeholder": placeholder,
+            "required": required,
+            "options": options,
+            "min_value": min_value,
+            "max_value": max_value,
+            "step": step,
+            "multiple": multiple,
+            "default_value": default_value,
+        }
+        input_jsx = self._render_input(field_node, field_id, [], {}, {}, indent_str)
+
+        return (
+            f"{indent_str}<div {wrapper_style}>\n"
+            + label_jsx + "\n"
+            + input_jsx + "\n"
+            + f"{indent_str}</div>"
+        )
 
     def _render_button(
         self,

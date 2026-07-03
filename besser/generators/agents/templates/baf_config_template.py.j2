@@ -7,6 +7,19 @@ nlp:
   timezone: Europe/Madrid
   pre_processing: True
   intent_threshold: 0.4
+{% set _ollama_ns = namespace(found=false, base_url='http://localhost:11434') %}
+{% if agent and agent.llms %}
+{% for _llm in agent.llms %}
+{% if is_class(_llm, 'LLMOllama') and not _ollama_ns.found %}
+{% set _ollama_ns.found = true %}
+{% set _ollama_ns.base_url = (_llm.parameters or {}).get('base_url', 'http://localhost:11434') %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if _ollama_ns.found %}
+  ollama:
+    base_url: {{ _ollama_ns.base_url }}
+{% endif %}
   huggingface:
     token: YOUR-TOKEN
   openai:

@@ -180,6 +180,40 @@ class NNCodeGenerator(GeneratorInterface):
 
         return modules_details
 
+    def _clean_forward_call_methods(self, code: str) -> str:
+        """
+        Remove all blank lines from forward() and call() methods.
+        These methods should be compact sequential computation with no spacing.
+        Add 2 blank lines after the return statement for proper separation.
+        """
+        import re
+
+        # Pattern matches:
+        # 1. Method definition: def forward/call(self, ...):
+        # 2. Method body: everything until next method/class/main block
+        # 3. Next section marker: another def, class, or if __name__
+        pattern = r'(    def (?:forward|call)\([^)]*\):.*?\n)((?:.*?\n)*?)(        return .*?\n)((?=    def |def |class |\nif __name__|$))'
+
+        def remove_blank_lines(match):
+            header = match.group(1)  # def forward/call(...):
+            body = match.group(2)    # method body (before return)
+            return_line = match.group(3)  # return statement
+            next_section = match.group(4)  # lookahead for next section
+
+            # Split body into lines and remove blank lines (including the one right after def)
+            lines = body.split('\n')
+            cleaned_lines = [line for line in lines if line.strip() != '']
+
+            # Rejoin with newlines
+            cleaned_body = '\n'.join(cleaned_lines)
+            if cleaned_body:
+                cleaned_body += '\n'
+
+            # Add 2 blank lines after return statement
+            return header + cleaned_body + return_line + '\n\n' + next_section
+
+        return re.sub(pattern, remove_blank_lines, code, flags=re.DOTALL | re.MULTILINE)
+
     def generate(self, *args):
         """
         Generates NN code based on the provided B-UML model and saves
@@ -205,10 +239,14 @@ class NNCodeGenerator(GeneratorInterface):
 
         template = env.get_template(self.template_name)
 
+        generated_code = template.render(
+            model=self.model, modules_details=self.modules_details,
+            generation_type=self.generation_type,
+            strip_layer_counter_suffix=self.strip_layer_counter_suffix)
+
+        # Post-process: clean blank lines from forward/call methods
+        generated_code = self._clean_forward_call_methods(generated_code)
+
         with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                model=self.model, modules_details=self.modules_details,
-                generation_type=self.generation_type,
-                strip_layer_counter_suffix=self.strip_layer_counter_suffix)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

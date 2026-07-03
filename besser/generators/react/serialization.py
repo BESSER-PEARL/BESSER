@@ -15,7 +15,6 @@ from besser.BUML.metamodel.gui import (
     Link,
     Menu,
     MenuItem,
-    SelectOption,
     Text,
     ViewComponent,
     ViewContainer,

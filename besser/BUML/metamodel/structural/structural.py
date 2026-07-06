@@ -505,14 +505,14 @@ class Multiplicity(Element):
 
     Attributes:
         min (int): The minimum multiplicity.
-        max (int | Literal["*"]): The maximum multiplicity. Use "*" for unlimited.
+        max (int): The maximum multiplicity.
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
     def __init__(self, min_multiplicity: int, max_multiplicity: int | Literal["*"], is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(is_derived=is_derived, uncertainty=uncertainty)
         self.min: int = min_multiplicity
-        self.max: int | Literal["*"] = max_multiplicity
+        self.max: int = max_multiplicity
 
     @property
     def min(self) -> int:
@@ -532,14 +532,14 @@ class Multiplicity(Element):
         self.__min = min_multiplicity
 
     @property
-    def max(self) -> int | Literal["*"]:
-        """int | Literal["*"]: Get the maximum multiplicity."""
+    def max(self) -> int:
+        """int: Get the maximum multiplicity."""
         return self.__max
 
     @max.setter
     def max(self, max_multiplicity: int | Literal["*"]):
         """
-        int | Literal["*"]: Set the maximum multiplicity.
+        int: Set the maximum multiplicity.
 
         Raises:
             ValueError: (Invalid max multiplicity) if the maximum multiplicity is less than 0 or

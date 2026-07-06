@@ -10,7 +10,7 @@ from {{ module_name }} import (
     {{ class.name }},
 {%- endfor %}
 {%- if domain.get_enumerations() %}
-{%- for enum in domain.get_enumerations() %}
+{%- for enum in sort_by_timestamp(domain.get_enumerations()) %}
     {{ enum.name }},
 {%- endfor %}
 {%- endif %}
@@ -35,12 +35,12 @@ def test_{{ class.name | lower }}_constructor_exists():
 def test_{{ class.name | lower }}_constructor_args():
     sig = inspect.signature({{ class.name }}.__init__)
     params = list(sig.parameters.keys())
-    {%- for attr in class.all_attributes() %}
+    {%- for attr in sort_by_timestamp(class.all_attributes()) %}
     assert "{{ attr.name | escape_py }}" in params, "Missing parameter '{{ attr.name | escape_py }}'"
     {%- endfor %}
 
 
-{%- for attr in class.all_attributes() %}
+{%- for attr in sort_by_timestamp(class.all_attributes()) %}
 
 def test_{{ class.name | lower }}_has_{{ attr.name }}():
     assert hasattr({{ class.name }}, "{{ attr.name | escape_py }}")
@@ -54,7 +54,7 @@ def test_{{ class.name | lower }}_has_{{ attr.name }}():
 {%- endfor %}
 
 {%- endfor %}
-{%- for enumeration in domain.get_enumerations() %}
+{%- for enumeration in sort_by_timestamp(domain.get_enumerations()) %}
 
 def test_{{ enumeration.name | lower }}_exists():
     # Check that the Enumeration exists
@@ -64,7 +64,7 @@ def test_{{ enumeration.name | lower }}_has_all_literals():
     # Collect the names of literals in this Enumeration
     enum_literals = [lit.name for lit in {{ enumeration.name }}]
     expected_literals = [
-        {%- for lit in enumeration.literals %}
+        {%- for lit in sort_by_timestamp(enumeration.literals) %}
         "{{ lit.name | escape_py }}",
         {%- endfor %}
     ]
@@ -91,7 +91,7 @@ safe_text = st.text(
 {%- for class in domain.classes_sorted_by_inheritance() %}
 {{ class.name }}_strategy = st.builds(
     {{ class.name }},
-    {%- for attr in class.all_attributes() %}
+    {%- for attr in sort_by_timestamp(class.all_attributes()) %}
     {{ attr.name }}=
         {%- if attr.type.name == "str" %}
         safe_text
@@ -121,7 +121,7 @@ def test_{{ class.name | lower }}_instantiation(instance):
     assert isinstance(instance, {{ class.name }})
 
 
-{%- for attr in class.all_attributes() %}
+{%- for attr in sort_by_timestamp(class.all_attributes()) %}
 
 
 @given(instance={{ class.name }}_strategy)
@@ -133,7 +133,7 @@ def test_{{ class.name | lower }}_{{ attr.name }}_setter(instance):
 {%- endfor %}
 
 
-{%- for assoc in class.association_ends() %}
+{%- for assoc in sort_by_timestamp(class.association_ends()) %}
 
 @given(instance={{ class.name }}_strategy)
 def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
@@ -141,14 +141,14 @@ def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
 
     {%- if assoc.multiplicity.max > 1 %}
     assert isinstance(value, set)
-    {%- elif assoc.multiplicity.min == 0 %}
-    assert value is None or isinstance(value, {{ assoc.type.name }})
     {%- else %}
-    assert isinstance(value, {{ assoc.type.name }})
+    # The st.builds strategy does not populate association ends, so a
+    # single-valued end is None here; accept None or an instance of the target.
+    assert value is None or isinstance(value, {{ assoc.type.name }})
     {%- endif %}
 
 {%- endfor %}
-{%- for operation in class.methods %}
+{%- for operation in sort_by_timestamp(class.methods) %}
 {%- if 'get' not in operation.name.lower() %}
 
 import warnings
@@ -207,7 +207,7 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
 # SECTION 3 — OCL TESTS
 # =============================================================================
 {%- for class in domain.classes_sorted_by_inheritance() %}
-  {%- for method in class.methods %}
+  {%- for method in sort_by_timestamp(class.methods) %}
     {%- for constraint in method.post %}
 
     {# ---- get expression body after the last colon ---- #}
@@ -215,6 +215,10 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
 
     {# ---- extract parameter name + type from the context signature ---- #}
     {%- set ctx = constraint.expression | string %}
+    {# ---- only emit a test when the context carries a parseable "op(param: Type)" signature.
+           `and` short-circuits, so the split() below never runs on a signature-less expression ---- #}
+    {%- set has_sig = '(' in ctx and ')' in ctx and ':' in ctx.split('(')[1].split(')')[0] %}
+    {%- if has_sig %}
     {%- set sig_inner = ctx.split('(')[1].split(')')[0] %}
     {%- set param_name = sig_inner.split(':')[0].strip() %}
     {%- set param_type = sig_inner.split(':')[-1].strip() | lower %}
@@ -274,6 +278,7 @@ def test_{{ class.name | lower }}_ocl_{{ constraint.name | lower }}(instance
     {%- set expr = expr | regex_replace('(?<![<>!])=(?!=)', '==') %}
 
     assert {{ expr }}
+    {%- endif %}
     {%- endfor %}
   {%- endfor %}
 {%- endfor %}

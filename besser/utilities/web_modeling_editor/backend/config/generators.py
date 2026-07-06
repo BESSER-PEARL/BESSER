@@ -264,7 +264,7 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     if generator_type == "python":
         return "classes.py"
     elif generator_type == "test_case":
-        return "test_cases.py"
+        return "test_hypothesis.py"
     elif generator_type == "pydantic":
         return "pydantic_classes.py"
     elif generator_type == "sqlalchemy":

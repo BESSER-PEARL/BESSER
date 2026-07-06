@@ -45,6 +45,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
+    process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -283,6 +284,7 @@ def generate_agent_files(
     agent_model,
     config,
     generation_mode: GenerationMode = GenerationMode.FULL,
+    config_yaml: Optional[str] = None,
 ):
     """
     Generate agent files from an agent model.
@@ -341,6 +343,7 @@ def generate_agent_files(
                     config=config,
                     openai_api_key=openai_api_key,
                     generation_mode=generation_mode,
+                    config_yaml=config_yaml,
                 )
             else:
                 # Fall back to the original agent model
@@ -350,6 +353,7 @@ def generate_agent_files(
                     config=config,
                     openai_api_key=openai_api_key,
                     generation_mode=generation_mode,
+                    config_yaml=config_yaml,
                 )
 
             generator.generate()
@@ -454,6 +458,7 @@ async def generate_code_output_from_project(input_data: ProjectInput):
             lastUpdate=diagram.lastUpdate,
             generator=generator_type,
             config=config,
+            configYaml=diagram.configYaml,
             referenceDiagramData=getattr(diagram, "referenceDiagramData", None),
         )
         return await generate_code_output(diagram_input)
@@ -474,6 +479,7 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         lastUpdate=current_diagram.lastUpdate,
         generator=generator_type,
         config=config,
+        configYaml=current_diagram.configYaml,
         referenceDiagramData=current_diagram.referenceDiagramData
     )
 
@@ -519,6 +525,10 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle neural network generators
         if generator_info.category == "neural_network":
             return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
+
+        # Handle BPMN generators (reads BPMNDiagram via process_bpmn_diagram)
+        if generator_info.category == "business_process":
+            return await _generate_bpmn(json_data, generator_type, generator_info.generator_class, temp_dir)
 
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
@@ -576,12 +586,13 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         # satisfy any binding — we don't filter to the active reference here.
         agent_models = []
         agent_configs = {}
+        agent_config_yamls: dict = {}
         has_agent_components = _check_for_agent_components(gui_model)
 
         if has_agent_components:
             project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
             default_cfg = project_agent_config or config
-            agent_models, agent_configs = collect_agents_from_diagrams(
+            agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
                 input_data.diagrams.get("AgentDiagram", []),
                 default_config=default_cfg,
             )
@@ -601,6 +612,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         return await _generate_web_app(
             buml_model, gui_model, generator_class, config, temp_dir,
             agent_models=agent_models, agent_configs=agent_configs,
+            agent_config_yamls=agent_config_yamls,
         )
 
 
@@ -617,6 +629,7 @@ def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
     config = json_data.get('config', {})
+    config_yaml: Optional[str] = json_data.get('configYaml') if isinstance(json_data.get('configYaml'), str) else None
     sanitized_config_log = (
         json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None'
     )
@@ -624,7 +637,9 @@ async def _handle_agent_generation(json_data: dict):
 
     if config is None:
         agent_model = process_agent_diagram(json_data)
-        zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
+        zip_buffer, file_name = await asyncio.to_thread(
+            generate_agent_files, agent_model, config, config_yaml=config_yaml
+        )
         return _streaming_zip(zip_buffer, file_name)
 
     is_config_dict = isinstance(config, dict)
@@ -647,22 +662,26 @@ async def _handle_agent_generation(json_data: dict):
     if base_model_snapshot is not None and isinstance(variation_entries, list):
         buf, name = handle_variation_generation(
             json_data, config, base_model_snapshot, variation_entries, generate_agent_files,
+            config_yaml=config_yaml,
         )
         return _streaming_zip(buf, name)
 
     if configuration_variants and isinstance(configuration_variants, list):
         buf, name = handle_configuration_variants(
             json_data, configuration_variants, generate_agent_files,
+            config_yaml=config_yaml,
         )
         return _streaming_zip(buf, name)
 
     if is_config_dict and 'personalizationMapping' in config:
-        buf, name = handle_personalized_agent(json_data, config, generate_agent_files)
+        buf, name = handle_personalized_agent(json_data, config, generate_agent_files, config_yaml=config_yaml)
         return _streaming_zip(buf, name)
 
     # Single agent fallback
     agent_model = process_agent_diagram(json_data)
-    zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
+    zip_buffer, file_name = await asyncio.to_thread(
+        generate_agent_files, agent_model, config, config_yaml=config_yaml
+    )
     return _streaming_zip(zip_buffer, file_name)
 
 
@@ -985,6 +1004,24 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     )
 
 
+async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
+    """Generate vendor-neutral BPMN 2.0 XML.
+
+    Processes the BPMN diagram JSON via ``process_bpmn_diagram`` (re-wrapping
+    malformed-payload exceptions as ``ConversionError`` so they surface as 400),
+    then runs the BPMNGenerator and returns the emitted ``.bpmn`` file.
+    """
+    try:
+        bpmn_model = process_bpmn_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
+
+    generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    return _create_file_response(temp_dir, generator_type)
+
+
 async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):
     """Generate Qiskit code."""
     # Validate that this is a quantum diagram (has 'cols' in model)
@@ -1058,7 +1095,7 @@ def _check_container_for_agent_components(container):
     return False
 
 async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
-                            agent_models=None, agent_configs=None):
+                            agent_models=None, agent_configs=None, agent_config_yamls=None):
     """Generate web application files.
 
     Supports multi-agent projects: ``agent_models`` is a list and each is emitted
@@ -1067,6 +1104,7 @@ async def _generate_web_app(buml_model, gui_model, generator_class, config: dict
     generator_instance = generator_class(
         buml_model, gui_model, output_dir=temp_dir,
         agent_models=agent_models, agent_configs=agent_configs,
+        agent_config_yamls=agent_config_yamls,
     )
     await asyncio.to_thread(generator_instance.generate)
     return _create_zip_response(temp_dir, "web_app")

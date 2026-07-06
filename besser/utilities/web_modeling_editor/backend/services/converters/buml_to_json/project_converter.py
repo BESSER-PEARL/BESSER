@@ -17,6 +17,7 @@ from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
+from .bpmn_diagram_converter import bpmn_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +30,14 @@ SECTION_CONFIG = {
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
     'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
+    'bpmn_model': ('BPMN', 'BPMNDiagram', 'BPMN Diagram'),
 }
 
 # All known section header keywords used as boundary markers
-ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN']
+ALL_SECTION_KEYWORDS = [
+    'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
+    'BPMN',
+]
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -191,6 +196,9 @@ def _convert_section(
         elif model_name == "nn_model":
             model = nn_buml_to_json(section_code)
 
+        elif model_name == "bpmn_model":
+            model = bpmn_buml_to_json(section_code)
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
@@ -240,6 +248,10 @@ SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
         '.add_layer(', '.add_tensor_op(', '.add_sub_nn(',
         '.add_configuration(', '.add_train_data(', '.add_test_data(',
     )),
+    ('BPMNDiagram', (
+        'bpmnmodel(', '.add_process(', '.add_flow_node(',
+        '.add_sequence_flow(',
+    )),
 ]
 
 _SINGLE_DIAGRAM_DEFAULT_TITLES = {
@@ -250,6 +262,7 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'GUINoCodeDiagram': 'GUI Diagram',
     'QuantumCircuitDiagram': 'Quantum Circuit Diagram',
     'NNDiagram': 'NN Diagram',
+    'BPMNDiagram': 'BPMN Diagram',
 }
 
 
@@ -275,7 +288,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         raise ValueError(
             "No models defined in 'models=[...]' and the file was not recognized "
             "as a single-diagram BUML file. Supported single-diagram types: "
-            "ClassDiagram, AgentDiagram, StateMachineDiagram, GUINoCodeDiagram, NNDiagram."
+            "ClassDiagram, AgentDiagram, StateMachineDiagram, GUINoCodeDiagram, "
+            "NNDiagram, BPMNDiagram."
         )
 
     title = _SINGLE_DIAGRAM_DEFAULT_TITLES[diagram_type]
@@ -291,6 +305,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             model = gui_buml_to_json(content)
         elif diagram_type == 'NNDiagram':
             model = nn_buml_to_json(content)
+        elif diagram_type == 'BPMNDiagram':
+            model = bpmn_buml_to_json(content)
         else:
             raise ValueError(f"Unsupported single-diagram type: {diagram_type}")
     except (SyntaxError, ValueError, TypeError) as e:
@@ -313,6 +329,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "BPMNDiagram": "BPMNDiagram",
     }
 
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
@@ -327,6 +344,14 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
                 "lastUpdate": datetime.now(timezone.utc).isoformat(),
             }]
 
+    current_diagram_indices = {dt: 0 for dt in diagram_defaults}
+
+    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
+    if "BPMNDiagram" in diagram_jsons:
+        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
+        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
+    current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
+
     return {
         "id": str(uuid.uuid4()),
         "type": "Project",
@@ -335,8 +360,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "description": "Imported from single-diagram BUML file",
         "owner": "Unknown",
         "createdAt": datetime.now(timezone.utc).isoformat(),
-        "currentDiagramType": diagram_type,
-        "currentDiagramIndices": {dt: 0 for dt in diagram_defaults},
+        "currentDiagramType": current_diagram_type,
+        "currentDiagramIndices": current_diagram_indices,
         "diagrams": diagram_jsons,
         "settings": {
             "defaultDiagramType": diagram_type,
@@ -446,6 +471,30 @@ def project_to_json(content: str) -> Dict[str, Any]:
         if diagram_list:
             diagram_jsons[diagram_type] = diagram_list
 
+    # Section-header fallback: some project files declare `models=[domain_model]`
+    # but omit the `# STRUCTURAL MODEL #` (or sibling) section headers entirely —
+    # all the model code lives in one flat block above the project definition.
+    # When this happens, `diagram_jsons` ends up empty and every diagram type
+    # gets an empty placeholder, which the frontend renders as a blank canvas.
+    # Reuse the single-diagram detector to recover the actual model, then
+    # restore the project name/description/owner from the Project(...) wrapper.
+    if not diagram_jsons:
+        logger.info(
+            "Project declares models=%s but no section headers were found; "
+            "falling back to single-diagram detection.", model_names,
+        )
+        try:
+            result = _build_project_from_single_diagram(content)
+        except ValueError:
+            # No detectable single-diagram type either — fall through to the
+            # all-empty default below so the caller sees a structured project.
+            result = None
+        if result is not None:
+            result["name"] = project_name
+            result["description"] = project_description
+            result["owner"] = project_owner
+            return result
+
     project_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
 
@@ -458,6 +507,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
+        "BPMNDiagram": "BPMNDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():
@@ -470,6 +520,11 @@ def project_to_json(content: str) -> Dict[str, Any]:
             }]
 
     current_diagram_indices = {diagram_type: 0 for diagram_type in diagram_defaults}
+
+    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
+    if "BPMNDiagram" in diagram_jsons:
+        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
+        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
 
     return {
         "id": project_id,

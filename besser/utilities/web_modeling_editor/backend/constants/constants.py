@@ -59,3 +59,13 @@ RELATIONSHIP_TYPES = {
     "aggregation": "ClassAggregation",
     "inheritance": "ClassInheritance"
 }
+
+# ---------------------------------------------------------------------------
+# BPMN — WME ↔ B-UML BPMN metamodel constants
+# Single source of truth for the BPMN converter pair (json_to_buml /
+# buml_to_json). Diagram-type discriminator: "BPMNDiagram" (uniform with
+# "ClassDiagram", "StateMachineDiagram", …).
+# ---------------------------------------------------------------------------
+BPMN_DIAGRAM_TYPE = "BPMNDiagram"
+BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
+

@@ -29,6 +29,22 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 )
 
 
+def _format_multiplicity_label(multiplicity):
+    """Render a ``Multiplicity`` as its UML association-end label.
+
+    Collapses an exact multiplicity (``min == max``) to a single value, matching
+    UML convention (``1..1`` -> ``1``, ``5..5`` -> ``5``). An unbounded upper bound
+    renders as ``*`` (``0..*``, ``1..*``). The result round-trips through
+    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
+    """
+    min_val = multiplicity.min
+    if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
+        return f"{min_val}..*"
+    if min_val == multiplicity.max:
+        return f"{min_val}"
+    return f"{min_val}..{multiplicity.max}"
+
+
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
@@ -558,14 +574,14 @@ def class_buml_to_json(domain_model):
                         "type": rel_type,
                         "source": {
                             "element": class_id_map[source_class],
-                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else source_prop.multiplicity.max}",
+                            "multiplicity": _format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
                             "direction": source_dir,
                             "bounds": source_bounds,
                         },
                         "target": {
                             "element": class_id_map[target_class],
-                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else target_prop.multiplicity.max}",
+                            "multiplicity": _format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
                             "direction": target_dir,
                             "bounds": target_bounds,

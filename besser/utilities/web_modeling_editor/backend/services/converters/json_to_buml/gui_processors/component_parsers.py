@@ -146,7 +146,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
 
     # Parse confirmation_required flag
     if confirmation_required_str:
-        confirmation_required = confirmation_required_str in ('true', '1', 'yes')
+        confirmation_required = confirmation_required_str.lower() in ('true', '1', 'yes')
 
     # Parse instance_method flag
     if is_instance_str:

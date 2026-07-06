@@ -12,6 +12,7 @@ from . import (
     process_object_diagram,
     process_agent_diagram,
     process_state_machine,
+    process_bpmn_diagram,
 )
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -60,6 +61,7 @@ def _collect_valid_diagrams(project):
         "QuantumCircuitDiagram",
         "UserDiagram",
         "NNDiagram",
+        "BPMN",
     ]
 
     result = {}
@@ -201,6 +203,11 @@ def json_to_buml_project(project):
         nn_title = getattr(nn_diag, "title", None)
         if nn_title:
             nn_titles[id(nn_model)] = nn_title
+
+    # ── Process ALL BPMNDiagrams ──────────────────────────────────────
+    for bpmn_diag in diagrams.get("BPMN", []):
+        bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
+        model_list.append(bpmn_model)
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

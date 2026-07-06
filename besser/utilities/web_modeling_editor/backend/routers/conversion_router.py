@@ -36,6 +36,7 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -51,6 +52,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_bpmn_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -60,6 +62,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     gui_buml_to_json,
     project_to_json,
     nn_buml_to_json,
+    bpmn_buml_to_json,
 )
 
 # Backend services - Other services
@@ -71,6 +74,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
+)
+from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
+    fit_svg_viewbox_to_content,
 )
 
 # Backend configuration
@@ -86,6 +92,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     CSV_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
+    BPMN_DIAGRAM_TYPE,
 )
 
 # Centralized error handling
@@ -358,6 +365,20 @@ async def export_buml(input_data: DiagramInput):
                 },
             )
 
+        elif elements_data.get("type") == BPMN_DIAGRAM_TYPE:
+            try:
+                bpmn_model = process_bpmn_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
+            output_file_path = os.path.join(temp_dir, "bpmn_model.py")
+            bpmn_model_to_code(model=bpmn_model, file_path=output_file_path)
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": 'attachment; filename="bpmn_model.py"'},
+            )
+
         elif elements_data.get("type") == "NNDiagram":
             try:
                 nn_model = process_nn_diagram(json_data)
@@ -442,6 +463,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         '.add_train_data(', '.add_test_data('
     ])
 
+    is_bpmn = any(keyword in content_lower for keyword in [
+        'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
+    ])
+
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
     # Try to parse based on detected type
@@ -484,7 +509,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "QuantumCircuitDiagram",
+                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -566,11 +591,24 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as nn_error:
             logger.error("NN diagram parsing failed: %s", str(nn_error))
 
+    elif is_bpmn:
+        try:
+            logger.info("Detected BPMN diagram, parsing...")
+            bpmn_json = bpmn_buml_to_json(buml_content)
+            diagram_data = {
+                "title": diagram_title,
+                "model": bpmn_json
+            }
+            diagram_type = BPMN_DIAGRAM_TYPE
+        except Exception as bpmn_error:
+            logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
+
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, or Project."
+            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend
@@ -621,6 +659,11 @@ async def get_svg(buml_file: UploadFile = File(...)):
     svg = render_response.json().get("svg")
     if not svg:
         raise HTTPException(status_code=502, detail="SVG render service returned no SVG content")
+
+    # Safety net: the renderer sizes the canvas to node/edge geometry but omits
+    # association-end labels, so self-referential associations clip on the left.
+    # Expand the viewport to fit all content before returning.
+    svg = fit_svg_viewbox_to_content(svg)
 
     return Response(
         content=svg,

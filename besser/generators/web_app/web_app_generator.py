@@ -24,6 +24,29 @@ def agent_slug(name) -> str:
     return safe_var_name(raw, lowercase=True) if raw else "agent"
 
 
+def resolve_intent_recognition_technology(agent_config) -> str:
+    """Read the intent-recognition technology from flat or structured agent config.
+
+    Mirrors ``_resolve_intent_recognition_technology`` in the GitHub/Render deploy
+    pipeline (``github_deploy_api.py``) so local Docker builds agree with Render
+    builds on when the classical (PyTorch-based) intent classifier is in play.
+    """
+    if not isinstance(agent_config, dict):
+        return ""
+
+    value = agent_config.get("intentRecognitionTechnology")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+
+    system_section = agent_config.get("system")
+    if isinstance(system_section, dict):
+        nested_value = system_section.get("intentRecognitionTechnology")
+        if isinstance(nested_value, str) and nested_value.strip():
+            return nested_value.strip().lower()
+
+    return ""
+
+
 ##############################
 #   Web Application Generator
 ##############################
@@ -171,5 +194,7 @@ class WebAppGenerator(GeneratorInterface):
                 slug = agent_slug(agent)
                 agent_dockerfile_path = os.path.join(self.output_dir, 'agents', slug, 'Dockerfile')
                 os.makedirs(os.path.dirname(agent_dockerfile_path), exist_ok=True)
+                cfg = self.agent_configs.get(getattr(agent, "name", None))
+                needs_torch = resolve_intent_recognition_technology(cfg) == "classical"
                 with open(agent_dockerfile_path, 'w') as f:
-                    f.write(agent_dockerfile_template.render(agent_model=agent))
+                    f.write(agent_dockerfile_template.render(agent_model=agent, needs_torch=needs_torch))

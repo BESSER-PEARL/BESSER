@@ -1,0 +1,25 @@
+Version 7.11.1
+===============
+
+Patch release: **honest** ``Multiplicity.max`` **typing and idiomatic empty-list
+literals**. A metamodel type-hint and lint cleanup with no behavioural change —
+it only aligns the declared types with existing runtime behaviour.
+
+Highlights
+----------
+
+- **Honest** ``Multiplicity.max`` **input typing**: the ``Multiplicity``
+  constructor and ``max`` setter now declare ``int | Literal["*"]`` instead of
+  plain ``int``. ``"*"`` has always been accepted and normalised to
+  ``UNLIMITED_MAX_MULTIPLICITY`` at runtime, but the old signature claimed
+  ``int``, so callers — and static type checkers — passing ``"*"`` saw a false
+  type error. The getter stays ``int``, since a normalised value is always
+  returned. Docstrings were updated to match.
+- **Idiomatic empty lists**: ``Method`` parameter / precondition / postcondition
+  initialisation uses the ``[]`` literal instead of ``list()`` (SonarQube rule
+  ``python:S7498``).
+
+No runtime behaviour changes, and no metamodel or API contract changes.
+
+Thanks to `@ichxorya <https://github.com/ichxorya>`_ for the contribution
+(`#564 <https://github.com/BESSER-PEARL/BESSER/pull/564>`_).

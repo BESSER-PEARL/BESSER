@@ -37,6 +37,7 @@ from .chart_parsers import (
 )
 from .component_helpers import has_data_binding, has_menu_structure
 from .component_parsers import (
+    parse_alert,
     parse_button,
     parse_container,
     parse_data_list,
@@ -97,11 +98,26 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         return candidate
 
     def get_unique_name(component: Optional[Dict[str, Any]], fallback: str) -> str:
-        """Extract and register a unique name from component metadata, preserving original IDs."""
+        """Extract and register a unique name from component metadata, preserving original IDs.
+
+        Priority order:
+        1. ``data-field-name`` attribute — meaningful user-defined name set by the GUI editor
+           on InputField components (also checked for any other component that may carry it).
+        2. ``id``, ``name``, ``data-name``, ``label``, ``title``, ``chart-title`` attributes.
+        3. Component-level ``name``, ``tagName``, ``type`` keys.
+        4. Custom ``displayName``.
+        5. The caller-supplied fallback (e.g. ``"InputField"``, ``"Button"``).
+        """
         if not component:
             return register_name(fallback, fallback)
 
         attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
+
+        # Prefer data-field-name when present and non-empty (set by GUI editor on InputField blocks)
+        data_field_name = attributes.get("data-field-name")
+        if data_field_name and str(data_field_name).strip():
+            return register_name(str(data_field_name).strip(), fallback)
+
         # Prefer explicit id or name from JSON
         for key in ("id", "name", "data-name", "label", "title", "chart-title"):
             if attributes.get(key):
@@ -337,19 +353,55 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             attach_meta(button, meta)
             return button
 
-        # === INPUT FIELD PARSER ===
-        if comp_type in INPUT_COMPONENT_TYPES or tag in INPUT_COMPONENT_TYPES:
+        # === ALERT PARSER (BESSER GUI editor blocks) ===
+        if comp_type == "gui-alert" or (
+            isinstance(attributes, dict) and attributes.get("data-gui-type") == "Alert"
+        ):
+            name = get_unique_name(component, "Alert")
+            alert = parse_alert(component, styling, name, meta)
+            attach_meta(alert, meta)
+            return alert
+
+        # === BESSER GUI INPUT BLOCKS ===
+        # These are wrapper <div> components with a data-gui-type attribute that
+        # specifies the BESSER InputFieldType (e.g. "Slider", "Toggle", …).
+        _gui_input_types = {
+            "gui-input-text", "gui-input-number", "gui-input-password",
+            "gui-input-email", "gui-input-search", "gui-input-url",
+            "gui-input-tel", "gui-input-date", "gui-input-time",
+            "gui-input-datetime", "gui-input-slider", "gui-input-spinner",
+            "gui-input-dropdown", "gui-input-toggle", "gui-input-checkbox",
+            "gui-input-radio", "gui-input-checkbox-group", "gui-input-multi-select",
+            "gui-input-textarea", "gui-input-rating", "gui-input-color",
+            "gui-input-file",
+        }
+        _has_gui_type_attr = (
+            isinstance(attributes, dict)
+            and attributes.get("data-gui-type") is not None
+            and attributes.get("data-gui-type") != "Alert"
+            and attributes.get("data-gui-type") != "Form"
+        )
+        if comp_type in _gui_input_types or _has_gui_type_attr:
             name = get_unique_name(component, "InputField")
             input_field = parse_input_field(component, styling, name, meta)
             attach_meta(input_field, meta)
             return input_field
 
-        # === FORM PARSER ===
-        if comp_type == "form" or tag == "form":
+        # === FORM PARSER (gui-form block OR plain <form> tag) ===
+        if comp_type in {"form", "gui-form"} or tag == "form" or (
+            isinstance(attributes, dict) and attributes.get("data-gui-type") == "Form"
+        ):
             name = get_unique_name(component, "Form")
             form = parse_form(component, styling, name, meta, parse_component_list)
             attach_meta(form, meta)
             return form
+
+        # === INPUT FIELD PARSER (plain HTML inputs) ===
+        if comp_type in INPUT_COMPONENT_TYPES or tag in INPUT_COMPONENT_TYPES:
+            name = get_unique_name(component, "InputField")
+            input_field = parse_input_field(component, styling, name, meta)
+            attach_meta(input_field, meta)
+            return input_field
 
         # === TEXT PARSER ===
         if comp_type == "text" or tag in TEXT_TAGS:

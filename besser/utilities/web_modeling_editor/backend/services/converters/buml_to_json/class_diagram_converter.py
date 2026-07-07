@@ -97,6 +97,12 @@ def parse_buml_content(content: str) -> DomainModel:
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
+        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
+        # "invalid non-printable character U+FEFF" for files saved with a BOM
+        # (common from Windows editors).
+        if content.startswith("﻿"):
+            content = content[1:]
+
         cleaned_lines = []
         in_import_block = False
         for line in content.splitlines():
@@ -143,7 +149,32 @@ def parse_buml_content(content: str) -> DomainModel:
 
 
 def _multiplicity_str(prop: Property) -> str:
-    return f"{prop.multiplicity.min}..{'*' if prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else prop.multiplicity.max}"
+    """Render a property's multiplicity as its UML association-end label.
+
+    Collapses an exact multiplicity (``min == max``) to a single value
+    (``1..1`` -> ``1``); an unbounded upper bound renders as ``*`` (``0..*``,
+    ``1..*``). The result round-trips through ``parse_multiplicity`` (a bare
+    ``N`` is read back as ``N..N``).
+    """
+    min_val = prop.multiplicity.min
+    max_val = prop.multiplicity.max
+    if max_val == UNLIMITED_MAX_MULTIPLICITY:
+        return f"{min_val}..*"
+    if min_val == max_val:
+        return f"{min_val}"
+    return f"{min_val}..{max_val}"
+
+
+def _json_safe_default(value):
+    """Coerce a default value to a JSON-serialisable form.
+
+    ``default_value`` may be an ``EnumerationLiteral`` (or other metamodel
+    object); use its ``name`` (else its string form) so the diagram JSON can
+    be serialised when sent to the render service. Primitives pass through.
+    """
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return getattr(value, "name", None) or str(value)
 
 
 def _attr_row(attr: Property) -> dict:
@@ -160,7 +191,7 @@ def _attr_row(attr: Property) -> dict:
         "isDerived": attr.is_derived,
     }
     if attr.default_value is not None:
-        row["defaultValue"] = attr.default_value
+        row["defaultValue"] = _json_safe_default(attr.default_value)
     return row
 
 
@@ -187,7 +218,7 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
             "parameterType": param_type,
         }
         if hasattr(param, "default_value") and param.default_value is not None:
-            param_row["defaultValue"] = param.default_value
+            param_row["defaultValue"] = _json_safe_default(param.default_value)
         structured_parameters.append(param_row)
 
     row: dict = {

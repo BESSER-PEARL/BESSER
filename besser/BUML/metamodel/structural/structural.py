@@ -1,7 +1,7 @@
 from abc import ABC
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Union, List, TYPE_CHECKING
+from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
 import logging
 import time
@@ -500,16 +500,16 @@ class Multiplicity(Element):
 
     Args:
         min_multiplicity (int): The minimum multiplicity.
-        max_multiplicity (int): The maximum multiplicity. Use "*" for unlimited.
+        max_multiplicity (int | Literal["*"]): The maximum multiplicity. Use "*" for unlimited.
         is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         min (int): The minimum multiplicity.
-        max (int): The maximum multiplicity. Use "*" for unlimited.
+        max (int): The maximum multiplicity.
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False, uncertainty: float = 0.0):
+    def __init__(self, min_multiplicity: int, max_multiplicity: int | Literal["*"], is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(is_derived=is_derived, uncertainty=uncertainty)
         self.min: int = min_multiplicity
         self.max: int = max_multiplicity
@@ -537,7 +537,7 @@ class Multiplicity(Element):
         return self.__max
 
     @max.setter
-    def max(self, max_multiplicity: int):
+    def max(self, max_multiplicity: int | Literal["*"]):
         """
         int: Set the maximum multiplicity.
 

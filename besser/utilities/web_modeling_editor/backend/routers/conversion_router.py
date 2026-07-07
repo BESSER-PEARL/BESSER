@@ -177,9 +177,11 @@ def _validate_file_content(content: bytes, filename: str) -> None:
             )
 
     elif ext == ".py":
-        # Must be valid Python syntax
+        # Must be valid Python syntax. Decode with utf-8-sig so a leading UTF-8
+        # BOM (common from Windows editors) is stripped instead of tripping the
+        # parser with "invalid non-printable character U+FEFF".
         try:
-            text = content.decode("utf-8")
+            text = content.decode("utf-8-sig")
         except UnicodeDecodeError:
             raise HTTPException(status_code=400, detail="Python file is not valid UTF-8 text.")
         try:

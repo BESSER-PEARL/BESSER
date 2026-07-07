@@ -18,9 +18,13 @@ from enum import Enum
 
 {% for enum in domain.get_enumerations() -%}
 class {{ enum.name }}(Enum):
+{%- if enum.literals %}
 {%- for literal in sort_by_timestamp(enum.literals) %}
     {{ literal.name }} = "{{ literal.name }}"
 {%- endfor %}
+{%- else %}
+    pass
+{%- endif %}
 {% endfor -%}
 {% endif %}
 

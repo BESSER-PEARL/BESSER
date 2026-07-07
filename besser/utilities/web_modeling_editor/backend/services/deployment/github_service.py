@@ -5,6 +5,11 @@ Handles creating GitHub repositories and pushing generated code.
 """
 
 import base64
+import io
+import os
+import shutil
+import tarfile
+import tempfile
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import httpx
@@ -43,6 +48,106 @@ class GitHubService:
             )
             response.raise_for_status()
             return response.json()
+
+    # Default hard cap on the downloaded (compressed) archive. A committed
+    # ``node_modules`` / ``target`` could otherwise pull tens of thousands
+    # of files and hundreds of MB into the process.
+    _DEFAULT_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024  # 100 MB
+
+    async def download_repo_tarball(
+        self,
+        owner: str,
+        repo: str,
+        ref: str,
+        max_archive_bytes: int = _DEFAULT_MAX_ARCHIVE_BYTES,
+    ) -> str:
+        """Download a repository tarball for ``ref`` and extract it locally.
+
+        Calls ``GET /repos/{owner}/{repo}/tarball/{ref}``. GitHub answers
+        with a 302 redirect to a pre-signed ``codeload.github.com`` URL;
+        ``follow_redirects=True`` follows it and httpx correctly drops the
+        ``Authorization`` header on the cross-host hop (the codeload URL is
+        already signed, and forwarding the token would be rejected).
+
+        The archive is streamed with a hard size cap (``max_archive_bytes``,
+        default 100 MB) so a committed dependency directory can't blow up
+        the process. GitHub wraps the whole repo under a single top-level
+        ``{owner}-{repo}-{sha}/`` directory; that wrapper is stripped during
+        extraction so the returned path *is* the repo root.
+
+        Args:
+            owner: Repository owner username.
+            repo: Repository name.
+            ref: Branch name, tag, or commit SHA.
+            max_archive_bytes: Abort the download once the streamed archive
+                exceeds this many bytes.
+
+        Returns:
+            Path to a fresh temp directory holding the extracted repo root.
+            The caller owns cleanup of this directory.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/tarball/{ref}"
+
+        buffer = io.BytesIO()
+        total = 0
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with client.stream(
+                "GET", url, headers=self.headers, timeout=60
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > max_archive_bytes:
+                        raise ValueError(
+                            "Repository archive exceeds the "
+                            f"{max_archive_bytes // (1024 * 1024)} MB size cap; "
+                            "refusing to download."
+                        )
+                    buffer.write(chunk)
+
+        buffer.seek(0)
+        extract_root = tempfile.mkdtemp(prefix="besser_gh_import_")
+        try:
+            with tarfile.open(fileobj=buffer, mode="r:*") as tar:
+                self._extract_tarball_stripping_root(tar, extract_root)
+        except Exception:
+            shutil.rmtree(extract_root, ignore_errors=True)
+            raise
+
+        return extract_root
+
+    @staticmethod
+    def _extract_tarball_stripping_root(tar: tarfile.TarFile, dest_dir: str) -> None:
+        """Extract ``tar`` into ``dest_dir``, stripping the single top-level dir.
+
+        GitHub tarballs nest everything under one ``{owner}-{repo}-{sha}/``
+        directory; that leading path component is removed so files land at
+        the repo root. Path-traversal entries (``..`` / absolute paths) are
+        rejected, and non-regular members (symlinks, hardlinks, devices)
+        are skipped so a crafted archive cannot write outside ``dest_dir``.
+        """
+        dest_abs = os.path.abspath(dest_dir)
+        safe_members = []
+        for member in tar.getmembers():
+            # Drop the leading ``{owner}-{repo}-{sha}/`` component.
+            parts = member.name.split("/", 1)
+            if len(parts) == 1:
+                # The wrapper directory entry itself — nothing to keep.
+                continue
+            relative = parts[1]
+            if not relative:
+                continue
+            # Only extract regular files and directories; skip links/devices.
+            if not (member.isfile() or member.isdir()):
+                continue
+            target = os.path.abspath(os.path.join(dest_abs, relative))
+            if target != dest_abs and not target.startswith(dest_abs + os.sep):
+                raise ValueError(
+                    f"Unsafe path in repository archive: {member.name!r}"
+                )
+            member.name = relative
+            safe_members.append(member)
+        tar.extractall(dest_dir, members=safe_members)
 
     async def create_repository(
         self,

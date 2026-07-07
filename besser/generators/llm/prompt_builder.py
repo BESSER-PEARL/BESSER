@@ -37,6 +37,7 @@ def build_system_prompt(
     quantum_circuit=None,
     primary_kind: str | None = None,
     scaffold_snapshot: str = "",
+    modify_mode: bool = False,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -66,6 +67,11 @@ def build_system_prompt(
             "gui", "agent", "state_machine", "object", "quantum". Used to
             frame the LLM's task (e.g. "this is a state-machine-driven
             run — emit the transition code").
+        modify_mode: When True the run is an incremental vibe-modify — the
+            output_dir was seeded from a previous run's generated files and
+            the LLM edits them in place. Prepends a directive that biases
+            the model toward the smallest surgical change. MUST leave the
+            from-scratch prompt byte-identical when False.
 
     Returns:
         The full system prompt string.
@@ -386,7 +392,20 @@ right packages to add, the right order. Do NOT exceed the request scope.
 When done, briefly summarize what you changed.
 """
 
-    return f"{stable_header}\n{models_block}\n{variable_tail}"
+    # Incremental vibe-modify directive. Prepended (not woven into the
+    # cached header) so the from-scratch prompt is byte-identical when
+    # ``modify_mode`` is False — the whole point of the hard separation
+    # between the from-scratch path and the modify path.
+    modify_directive = ""
+    if modify_mode:
+        modify_directive = (
+            "You are MODIFYING an existing, working app. Preserve everything "
+            "that already works; make the smallest change that satisfies the "
+            "request; prefer `modify_file` over `write_file`; do NOT "
+            "regenerate untouched files.\n\n"
+        )
+
+    return f"{modify_directive}{stable_header}\n{models_block}\n{variable_tail}"
 
 
 def _render_gap_section(gap_tasks: list[str] | None) -> str:

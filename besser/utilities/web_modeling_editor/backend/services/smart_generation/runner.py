@@ -126,6 +126,12 @@ class SmartRunEntry:
     is_zip: bool
     temp_dir: str
     created_at: float
+    # Set only by a vibe-MODIFY run whose instruction implied new domain
+    # entities: the run's project export with the active ClassDiagram's
+    # model replaced by the re-serialised, model-synced diagram. The push
+    # endpoint prefers this over the request's projectExport so the pushed
+    # buml/ stays in sync with the code. ``None`` for every other run.
+    updated_project_export: Optional[dict] = None
 
 
 class SmartRunRegistry:
@@ -353,6 +359,51 @@ async def _deregister_active_run(run_id: str) -> None:
 
 
 # ---------------------------------------------------------------------
+# Incremental vibe-modify: seed a new workspace from a previous run
+# ---------------------------------------------------------------------
+
+
+def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
+    """Copy a previous run's files into a fresh workspace for editing.
+
+    Copies ``base_dir`` into ``dest_dir`` (which already exists — the new
+    run's own ``mkdtemp``), skipping build / dependency directories so a
+    prior ``npm install`` / ``cargo build`` doesn't drag thousands of
+    files along. The base is left untouched so it stays downloadable.
+
+    Then strips the seed's crash-recovery internals — the copied
+    ``.besser_checkpoint.json`` and ``.besser_snapshot/`` belong to the
+    OLD run and would make ``modify()`` look resumable / mis-snapshotted —
+    while deliberately KEEPING ``.besser_recipe.json`` so the orchestrator
+    can replay the previous run's generator-file tags.
+    """
+    from besser.generators.llm.checkpoint import CHECKPOINT_FILENAME
+
+    shutil.copytree(
+        base_dir,
+        dest_dir,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(*_EXCLUDED_OUTPUT_DIRS),
+    )
+
+    # Drop the copied checkpoint (old run's mid-flight state).
+    checkpoint = os.path.join(dest_dir, CHECKPOINT_FILENAME)
+    try:
+        if os.path.isfile(checkpoint):
+            os.remove(checkpoint)
+    except OSError:
+        logger.debug("Failed to strip seed checkpoint at %s", checkpoint, exc_info=True)
+
+    # Drop the copied snapshot dir (old run's pre-Phase-3 rollback point).
+    snapshot = os.path.join(dest_dir, ".besser_snapshot")
+    try:
+        if os.path.isdir(snapshot):
+            shutil.rmtree(snapshot, ignore_errors=True)
+    except OSError:
+        logger.debug("Failed to strip seed snapshot at %s", snapshot, exc_info=True)
+
+
+# ---------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------
 
@@ -365,14 +416,27 @@ class SmartGenerationRunner:
         request: SmartGenerateRequest,
         *,
         resume_run_id: Optional[str] = None,
+        base_run_id: Optional[str] = None,
+        mode: str = "generate",
     ) -> None:
         self.request = request
         # Resuming a prior run reuses its run_id so the client can keep
-        # the same identifier across the crash. Fresh runs get a new
-        # UUID. Either way the id is hex[32] so the path regex in the
-        # cancel / download / resume routes accepts it.
+        # the same identifier across the crash. Fresh runs (including a
+        # vibe-modify run seeded from a previous run) get a new UUID.
+        # Either way the id is hex[32] so the path regex in the cancel /
+        # download / resume routes accepts it.
         self.run_id = resume_run_id or uuid.uuid4().hex
         self._resume_run_id = resume_run_id
+        # Incremental vibe-modify. When ``mode == "modify"`` and
+        # ``base_run_id`` still resolves to a live registry entry, this
+        # run is SEEDED from that entry's files and edits them in place.
+        # ``_seeded`` is flipped True once the copy succeeds; if the base
+        # has expired we warn and fall back to a from-scratch ``run()``,
+        # so ``_seeded`` stays False and ``run_orchestrator`` picks the
+        # right entry point.
+        self._base_run_id = base_run_id
+        self._mode = mode
+        self._seeded = False
         self.temp_dir: Optional[str] = None
         self._started_at: Optional[float] = None
 
@@ -428,6 +492,10 @@ class SmartGenerationRunner:
                 return
             self.temp_dir = existing
         else:
+            # Every non-resume run allocates its OWN fresh workspace first.
+            # For a vibe-modify run that own workspace is then seeded from
+            # the base run's files — the base itself is never touched, so it
+            # stays downloadable.
             try:
                 self.temp_dir = tempfile.mkdtemp(
                     prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_"
@@ -439,6 +507,69 @@ class SmartGenerationRunner:
                 ))
                 logger.exception("mkdtemp failed for smart-generate run %s: %s", self.run_id, exc)
                 return
+
+            # ---- Incremental vibe-modify: seed from the base run --------
+            if self._mode == "modify" and self._base_run_id:
+                base_entry = await SMART_RUN_REGISTRY.get(self._base_run_id)
+                if (
+                    base_entry is None
+                    or not base_entry.temp_dir
+                    or not os.path.isdir(base_entry.temp_dir)
+                ):
+                    # Base-expired fallback: the previous run was swept past
+                    # its TTL (or never existed). Warn — non-terminally —
+                    # and fall through to a normal from-scratch run() so the
+                    # user still gets output instead of a hard failure.
+                    yield format_sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            "The previous generation has expired, so there is "
+                            "nothing to edit — rebuilding from scratch instead. "
+                            "Re-run to seed a fresh base for future edits."
+                        ),
+                    ))
+                    logger.info(
+                        "smart-modify base %s expired for run %s; "
+                        "falling back to from-scratch generation",
+                        self._base_run_id, self.run_id,
+                    )
+                    # ``_seeded`` stays False → run_orchestrator uses run().
+                else:
+                    try:
+                        await asyncio.to_thread(
+                            _seed_workspace_from_base,
+                            base_entry.temp_dir,
+                            self.temp_dir,
+                        )
+                        self._seeded = True
+                        logger.info(
+                            "smart-modify run %s seeded from base %s",
+                            self.run_id, self._base_run_id,
+                        )
+                    except Exception:
+                        # A failed copy must not corrupt the run — warn and
+                        # continue from-scratch against the (now partially
+                        # populated) fresh temp dir. Clear it first so we
+                        # don't edit a half-copied tree.
+                        logger.exception(
+                            "Failed to seed workspace for smart-modify run %s "
+                            "from base %s; falling back to from-scratch",
+                            self.run_id, self._base_run_id,
+                        )
+                        self._reset_temp_dir_after_failed_seed()
+                        yield format_sse(ErrorEvent(
+                            code="INCOMPLETE",
+                            message=(
+                                "Could not copy the previous generation — "
+                                "rebuilding from scratch instead."
+                            ),
+                        ))
+                        if self.temp_dir is None:
+                            yield format_sse(ErrorEvent(
+                                code="INTERNAL",
+                                message="Failed to allocate a workspace for this run",
+                            ))
+                            return
 
         # ---- 3. Assemble BUML models from the project ------------------
         try:
@@ -665,6 +796,12 @@ class SmartGenerationRunner:
             target_generator=getattr(
                 self.request, "target_generator_override", None
             ),
+            # The run's original project export (ProjectInput → JSON-safe
+            # dict). Used ONLY by modify()'s model-sync step to slot an
+            # updated ClassDiagram into the push export; ignored by
+            # run()/resume(). model_dump(mode="json") keeps datetimes as
+            # ISO strings so the push can re-validate it as a ProjectInput.
+            source_project_export=self._source_project_export_dict(),
         )
 
         # ---- 6. Spawn the worker + the cost emitter --------------------
@@ -694,6 +831,13 @@ class SmartGenerationRunner:
                 if self._resume_run_id:
                     return await asyncio.to_thread(
                         orchestrator.resume, self.request.instructions
+                    )
+                if self._mode == "modify" and self._seeded:
+                    # Seeded vibe-modify: edit the copied files in place.
+                    # (A base-expired / failed-seed fallback left _seeded
+                    # False and drops through to the from-scratch run().)
+                    return await asyncio.to_thread(
+                        orchestrator.modify, self.request.instructions
                     )
                 return await asyncio.to_thread(
                     orchestrator.run, self.request.instructions
@@ -1021,6 +1165,13 @@ class SmartGenerationRunner:
                 )
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
+                # Carry any vibe-MODIFY model-sync delta so the GitHub push
+                # writes buml/ from the UPDATED model rather than the stale
+                # request export. None for generate/resume runs (and modify
+                # runs whose instruction implied no new domain entities).
+                entry.updated_project_export = getattr(
+                    orchestrator, "_updated_project_export", None
+                )
                 await SMART_RUN_REGISTRY.put(self.run_id, entry)
                 yield format_sse(done_event)
             except _EmptyGenerationError as exc:
@@ -1138,6 +1289,46 @@ class SmartGenerationRunner:
                 "Failed to read .besser_recipe.json for run %s", self.run_id
             )
         return {}
+
+    def _reset_temp_dir_after_failed_seed(self) -> None:
+        """Wipe a partially-seeded temp dir and re-allocate a clean one.
+
+        On a copytree failure the fresh workspace may hold a half-copied
+        tree; editing that would be worse than starting over. Clear it and
+        re-``mkdtemp`` so the from-scratch fallback starts clean. Sets
+        ``self.temp_dir`` to None if re-allocation itself fails (the caller
+        then surfaces INTERNAL and returns).
+        """
+        old = self.temp_dir
+        if old and os.path.isdir(old):
+            shutil.rmtree(old, ignore_errors=True)
+        try:
+            self.temp_dir = tempfile.mkdtemp(
+                prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_"
+            )
+        except OSError:
+            logger.exception(
+                "Failed to re-allocate workspace after seed failure for run %s",
+                self.run_id,
+            )
+            self.temp_dir = None
+
+    def _source_project_export_dict(self) -> Optional[dict]:
+        """JSON-safe dict of the request's project, for modify() model-sync.
+
+        Best-effort: a serialisation failure returns ``None`` (model-sync
+        simply won't be able to build an updated push export) rather than
+        breaking the run.
+        """
+        try:
+            return self.request.project.model_dump(mode="json")
+        except Exception:
+            logger.debug(
+                "Failed to serialise project export for model-sync; "
+                "modify() will skip the push-export update",
+                exc_info=True,
+            )
+            return None
 
     def _cleanup_temp_dir(self) -> None:
         if self.temp_dir and os.path.isdir(self.temp_dir):

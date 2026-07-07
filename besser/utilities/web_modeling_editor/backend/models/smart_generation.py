@@ -80,6 +80,16 @@ class SmartGenerateRequest(BaseModel):
     # plan the user approved is the plan that runs, and one paid LLM
     # call is saved. Validated against the registered generator tools.
     target_generator_override: Optional[str] = Field(default=None, max_length=80)
+    # Incremental vibe-modify. When ``mode == "modify"`` and ``base_run_id``
+    # points at a still-downloadable previous run, the new run is SEEDED
+    # from that run's generated files and edits them in place, instead of
+    # rebuilding from scratch. ``base_run_id`` is the hex run id returned
+    # in the earlier run's ``done`` event; the pattern keeps a malformed
+    # id out of the registry lookup. When the base has expired the runner
+    # warns and falls back to a normal from-scratch generation, so an
+    # invalid pairing degrades gracefully rather than failing the request.
+    base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    mode: Literal["generate", "modify"] = "generate"
 
     @field_validator("instructions")
     @classmethod
@@ -151,6 +161,108 @@ class SmartGenerateRequest(BaseModel):
         and never log, store, or echo it elsewhere.
         """
         return self.api_key.get_secret_value()
+
+
+class SmartPushDeployConfig(BaseModel):
+    """Deployment target for ``POST /besser_api/push-smart-to-github``.
+
+    Mirrors the ``deploy_config`` block the existing ``/deploy-webapp``
+    endpoint reads from its body, but as a typed model. ``is_private``
+    defaults to ``True`` — a vibe/smart-generation run is customized,
+    unreviewed LLM output and should not be world-readable by accident.
+    """
+
+    repo_name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=350)
+    is_private: bool = True
+    use_existing: bool = False
+    # Target branch. When omitted the endpoint resolves the repo default
+    # rather than blindly taking the first branch.
+    branch: Optional[str] = Field(default=None, max_length=250)
+    commit_message: Optional[str] = Field(default=None, max_length=500)
+
+
+class PushSmartToGitHubRequest(BaseModel):
+    """Body of ``POST /besser_api/push-smart-to-github``.
+
+    Pushes the *stored* artifact of a finished vibe/smart-generation run
+    (identified by ``run_id``) plus the re-importable model source, rather
+    than re-generating deterministically (which would discard the LLM
+    customizations). The run's code is read from ``SMART_RUN_REGISTRY``;
+    only the model source travels in the request.
+
+    Attributes
+    ----------
+    run_id
+        The hex run id returned in the smart-generate ``done`` event.
+    projectExport
+        The frontend V2 project-export envelope (a re-importable
+        ``diagrams.json``). Also used to rebuild the B-UML model files
+        written under ``buml/``. Optional — absent just means the pushed
+        repo won't carry the model source.
+    deploy_config
+        Repository/branch/commit target.
+    """
+
+    run_id: str = Field(..., min_length=1, max_length=64)
+    projectExport: Optional[dict] = None
+    deploy_config: SmartPushDeployConfig
+
+
+class PushSmartToGitHubResponse(BaseModel):
+    """Response of ``POST /besser_api/push-smart-to-github``."""
+
+    success: bool
+    repo_url: str
+    owner: str
+    repo_name: str
+    # True when this created a fresh repo (``use_existing=False``), False
+    # when it appended a commit to an existing one.
+    is_first_push: bool
+    files_uploaded: int
+
+
+class ImportGitHubRunRequest(BaseModel):
+    """Body of ``POST /besser_api/import-github-run``.
+
+    Points the editor at an existing repo that BESSER created (so it
+    carries ``buml/diagrams.json`` + the generated code). The endpoint
+    downloads the repo, registers its code tree as a run — so the returned
+    ``run_id`` can be used as a modify seed (``base_run_id``) — and returns
+    the repo's re-importable model.
+
+    Attributes
+    ----------
+    owner
+        Repository owner (login).
+    repo
+        Repository name.
+    branch
+        Optional branch/ref to import. When omitted the repo default is
+        resolved.
+    """
+
+    owner: str = Field(..., min_length=1, max_length=100)
+    repo: str = Field(..., min_length=1, max_length=100)
+    branch: Optional[str] = Field(default=None, max_length=250)
+
+
+class ImportGitHubRunResponse(BaseModel):
+    """Response of ``POST /besser_api/import-github-run``."""
+
+    # A fresh run id whose stored files are the repo's code tree; usable as
+    # the ``base_run_id`` of a subsequent smart-generate modify run.
+    run_id: str
+    # The repo's re-importable V2 project export (``buml/diagrams.json``),
+    # or ``None`` when the repo carries no BESSER model.
+    project: Optional[dict] = None
+    # True when the repo carried a re-importable model.
+    has_model: bool
+    owner: str
+    repo: str
+    branch: str
+    # Human-readable hint when there is no model (or it was unreadable).
+    message: Optional[str] = None
 
 
 class SmartPreviewRequest(BaseModel):

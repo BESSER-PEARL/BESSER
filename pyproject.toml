@@ -9,3 +9,6 @@ addopts = "--import-mode=importlib"
 
 [tool.pylint.'FORMAT']
 max-line-length = 120
+
+[tool.pyrefly]
+search-path = ["."]

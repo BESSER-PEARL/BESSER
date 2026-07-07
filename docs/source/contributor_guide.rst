@@ -217,6 +217,31 @@ We use **Ruff** for linting (run automatically in CI):
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 
+Type checking
+~~~~~~~~~~~~~
+
+We use **Pyrefly** for static type checking (it also powers the inline
+diagnostics in editors such as VS Code):
+
+.. code-block:: bash
+
+   pip install pyrefly
+   pyrefly check
+
+Because the repository directory is itself named ``besser`` **and** contains
+the ``besser`` package, Pyrefly would otherwise mis-infer the import root and
+fail to resolve ``besser.*`` imports. The repo root is pinned as a search path
+in ``pyproject.toml`` so imports resolve against the live source regardless of
+how the package is installed:
+
+.. code-block:: toml
+
+   [tool.pyrefly]
+   search-path = ["."]
+
+Keep this section in ``pyproject.toml``; without it the editor reports spurious
+``Cannot find module besser...`` errors on otherwise-valid code.
+
 Working in core packages
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

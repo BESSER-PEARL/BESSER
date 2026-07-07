@@ -24,6 +24,29 @@ def agent_slug(name) -> str:
     return safe_var_name(raw, lowercase=True) if raw else "agent"
 
 
+def resolve_intent_recognition_technology(agent_config) -> str:
+    """Read the intent-recognition technology from flat or structured agent config.
+
+    Mirrors ``_resolve_intent_recognition_technology`` in the GitHub/Render deploy
+    pipeline (``github_deploy_api.py``) so local Docker builds agree with Render
+    builds on when the classical (PyTorch-based) intent classifier is in play.
+    """
+    if not isinstance(agent_config, dict):
+        return ""
+
+    value = agent_config.get("intentRecognitionTechnology")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+
+    system_section = agent_config.get("system")
+    if isinstance(system_section, dict):
+        nested_value = system_section.get("intentRecognitionTechnology")
+        if isinstance(nested_value, str) and nested_value.strip():
+            return nested_value.strip().lower()
+
+    return ""
+
+
 ##############################
 #   Web Application Generator
 ##############################
@@ -47,7 +70,8 @@ class WebAppGenerator(GeneratorInterface):
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
-                 agent_model=None, agent_config=None):
+                 agent_model=None, agent_config=None,
+                 agent_config_yamls=None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
         if agent_model is not None and not agent_models:
@@ -57,6 +81,7 @@ class WebAppGenerator(GeneratorInterface):
             agent_configs = {name: agent_config}
         self.agent_models = list(agent_models or [])
         self.agent_configs = dict(agent_configs or {})
+        self.agent_config_yamls = dict(agent_config_yamls or {})
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
@@ -126,7 +151,8 @@ class WebAppGenerator(GeneratorInterface):
             agent_dir = os.path.join(agents_root, slug)
             os.makedirs(agent_dir, exist_ok=True)
             cfg = self.agent_configs.get(getattr(agent, "name", None))
-            BAFGenerator(agent, output_dir=agent_dir, config=cfg).generate()
+            cfg_yaml = self.agent_config_yamls.get(getattr(agent, "name", None))
+            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml).generate()
 
     def _generate_docker_files(self, env):
         """
@@ -168,5 +194,7 @@ class WebAppGenerator(GeneratorInterface):
                 slug = agent_slug(agent)
                 agent_dockerfile_path = os.path.join(self.output_dir, 'agents', slug, 'Dockerfile')
                 os.makedirs(os.path.dirname(agent_dockerfile_path), exist_ok=True)
+                cfg = self.agent_configs.get(getattr(agent, "name", None))
+                needs_torch = resolve_intent_recognition_technology(cfg) == "classical"
                 with open(agent_dockerfile_path, 'w') as f:
-                    f.write(agent_dockerfile_template.render(agent_model=agent))
+                    f.write(agent_dockerfile_template.render(agent_model=agent, needs_torch=needs_torch))

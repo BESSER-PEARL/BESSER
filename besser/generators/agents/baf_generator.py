@@ -2,6 +2,7 @@ import logging
 import os
 import textwrap
 from enum import Enum
+from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader
 import json
@@ -100,9 +101,11 @@ class BAFGenerator(GeneratorInterface):
         config: dict = None,
         openai_api_key: str = None,
         generation_mode: GenerationMode | str = GenerationMode.FULL,
+        config_yaml: Optional[str] = None,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
+        self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
@@ -275,12 +278,14 @@ class BAFGenerator(GeneratorInterface):
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
         if generate_code_assets:
-            config_template = env.get_template('baf_config_template.py.j2')
             config_path = self.build_generation_path(file_name="config.yaml")
             with open(config_path, mode="w", encoding="utf-8") as f:
-                properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                generated_code = config_template.render(properties=properties)
-                f.write(generated_code)
+                if self.config_yaml is not None:
+                    f.write(self.config_yaml)
+                else:
+                    config_template = env.get_template('baf_config_template.py.j2')
+                    properties = sorted(self.model.properties, key=lambda prop: prop.section)
+                    f.write(config_template.render(properties=properties))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')

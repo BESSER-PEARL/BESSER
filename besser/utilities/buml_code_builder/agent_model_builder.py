@@ -7,11 +7,40 @@ This module generates Python code for BUML agent models.
 import os
 from re import search
 from besser.BUML.metamodel.state_machine.agent import (
-    Agent, AgentReply, LLMReply, RAGReply, DBReply,
-    ReasoningState, llm_provider_key,
+    Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply,
+    WebCrawlLLMReply, ReasoningState, llm_provider_key,
+    WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech,
+    WebSocketReplyOptions, WebSocketReplyLocation,
+    WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
+
+
+def _websocket_reply_repr(action) -> str:
+    """Return the ``WebSocketReply*(...)`` constructor call for a WebSocket reply action."""
+    if isinstance(action, WebSocketReplyMarkdown):
+        return f"WebSocketReplyMarkdown(message={repr(action.message)})"
+    if isinstance(action, WebSocketReplyHTML):
+        return f"WebSocketReplyHTML(message={repr(action.message)})"
+    if isinstance(action, WebSocketReplySpeech):
+        args = f"message={repr(action.message)}"
+        if action.audio_speed is not None:
+            args += f", audio_speed={action.audio_speed!r}"
+        return f"WebSocketReplySpeech({args})"
+    if isinstance(action, WebSocketReplyOptions):
+        return f"WebSocketReplyOptions(options={action.options!r})"
+    if isinstance(action, WebSocketReplyLocation):
+        return f"WebSocketReplyLocation(latitude={action.latitude!r}, longitude={action.longitude!r})"
+    if isinstance(action, WebSocketReplyFile):
+        return "WebSocketReplyFile()"
+    if isinstance(action, WebSocketReplyImage):
+        return "WebSocketReplyImage()"
+    if isinstance(action, WebSocketReplyDataframe):
+        return "WebSocketReplyDataframe()"
+    if isinstance(action, WebSocketReplyPlotly):
+        return "WebSocketReplyPlotly()"
+    raise TypeError(f"Unsupported WebSocket reply action: {type(action).__name__}")
 
 
 def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "agent"):
@@ -49,7 +78,11 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         )
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "
-            "Agent, AgentReply, LLMReply, RAGReply, DBReply, "
+            "Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply, "
+            "WebCrawlLLMReply, "
+            "WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech, "
+            "WebSocketReplyOptions, WebSocketReplyLocation, "
+            "WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter, "
             "Tool, Skill, Workspace, ReasoningState, "
@@ -159,6 +192,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 f.write(f"    vector_store={vector_var},\n")
                 f.write(f"    splitter={splitter_var},\n")
                 f.write(f"    llm_name={repr(rag.llm_name)},\n")
+                f.write(f"    llm_prompt={repr(getattr(rag, 'llm_prompt', None))},\n")
                 f.write(f"    k={rag.k},\n")
                 f.write(f"    num_previous_messages={rag.num_previous_messages},\n")
                 f.write(")\n\n")
@@ -339,6 +373,54 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             f.write(f"{state_var}_body.add_action(DBReply({args}))\n" if args else f"{state_var}_body.add_action(DBReply())\n")
                         f.write("\n")
                         f.write(f"{state_var}.set_body({state_var}_body)\n")
+                    elif isinstance(state.body.actions[0], LLMChatReply):
+                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
+                        for action in state.body.actions:
+                            kwargs = []
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                kwargs.append(f"llm_name={repr(llm_name)}")
+                            args = ", ".join(kwargs)
+                            f.write(f"{state_var}_body.add_action(LLMChatReply({args}))\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_body({state_var}_body)\n")
+                    elif isinstance(state.body.actions[0], WebCrawlLLMReply):
+                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
+                        for action in state.body.actions:
+                            wc_args = [f"initial_url={repr(action.initial_url)}"]
+                            if action.max_depth != 2:
+                                wc_args.append(f"max_depth={action.max_depth!r}")
+                            if action.max_pages != 20:
+                                wc_args.append(f"max_pages={action.max_pages!r}")
+                            if action.crawl_format != 'markdown':
+                                wc_args.append(f"crawl_format={action.crawl_format!r}")
+                            if action.base_url_prefix:
+                                wc_args.append(f"base_url_prefix={repr(action.base_url_prefix)}")
+                            if not action.run_crawl:
+                                wc_args.append("run_crawl=False")
+                            if action.no_crawl_error_message != 'No web crawl data is available yet.':
+                                wc_args.append(f"no_crawl_error_message={repr(action.no_crawl_error_message)}")
+                            if action.system_message_prefix:
+                                wc_args.append(f"system_message_prefix={repr(action.system_message_prefix)}")
+                            if getattr(action, 'llm_name', None):
+                                wc_args.append(f"llm_name={repr(action.llm_name)}")
+                            f.write(f"{state_var}_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_body({state_var}_body)\n")
+                    elif isinstance(state.body.actions[0], (
+                        WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech,
+                        WebSocketReplyOptions, WebSocketReplyLocation,
+                        WebSocketReplyFile, WebSocketReplyImage,
+                        WebSocketReplyDataframe, WebSocketReplyPlotly,
+                    )):
+                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
+                        for action in state.body.actions:
+                            f.write(f"{state_var}_body.add_action({_websocket_reply_repr(action)})\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_body({state_var}_body)\n")
                     elif isinstance(state.body.actions[0], CustomCodeAction):
                         action = state.body.actions[0]
                         f.write(f"{action.to_code()}\n")
@@ -411,6 +493,54 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 db_args.append(f"llm_name={repr(llm_name)}")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state_var}_fallback_body.add_action(DBReply())\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], LLMChatReply):
+                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            kwargs = []
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            llm_name = getattr(action, 'llm_name', None)
+                            if llm_name:
+                                kwargs.append(f"llm_name={repr(llm_name)}")
+                            args = ", ".join(kwargs)
+                            f.write(f"{state_var}_fallback_body.add_action(LLMChatReply({args}))\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], WebCrawlLLMReply):
+                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            wc_args = [f"initial_url={repr(action.initial_url)}"]
+                            if action.max_depth != 2:
+                                wc_args.append(f"max_depth={action.max_depth!r}")
+                            if action.max_pages != 20:
+                                wc_args.append(f"max_pages={action.max_pages!r}")
+                            if action.crawl_format != 'markdown':
+                                wc_args.append(f"crawl_format={action.crawl_format!r}")
+                            if action.base_url_prefix:
+                                wc_args.append(f"base_url_prefix={repr(action.base_url_prefix)}")
+                            if not action.run_crawl:
+                                wc_args.append("run_crawl=False")
+                            if action.no_crawl_error_message != 'No web crawl data is available yet.':
+                                wc_args.append(f"no_crawl_error_message={repr(action.no_crawl_error_message)}")
+                            if action.system_message_prefix:
+                                wc_args.append(f"system_message_prefix={repr(action.system_message_prefix)}")
+                            if getattr(action, 'llm_name', None):
+                                wc_args.append(f"llm_name={repr(action.llm_name)}")
+                            f.write(f"{state_var}_fallback_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], (
+                        WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech,
+                        WebSocketReplyOptions, WebSocketReplyLocation,
+                        WebSocketReplyFile, WebSocketReplyImage,
+                        WebSocketReplyDataframe, WebSocketReplyPlotly,
+                    )):
+                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            f.write(f"{state_var}_fallback_body.add_action({_websocket_reply_repr(action)})\n")
                         f.write("\n")
                         f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], CustomCodeAction):

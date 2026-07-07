@@ -123,12 +123,17 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 ))
             elif t == "rag":
                 rag_db_name = action.get("ragDatabaseName") or ""
+                rag_prompt = action.get("prompt") or ""
                 display_name = (
                     f"RAG reply using {rag_db_name} database"
                     if rag_db_name
                     else "RAG reply"
                 )
-                result.append(_make_body_row(display_name, "rag", ragDatabaseName=rag_db_name))
+                result.append(_make_body_row(
+                    display_name, "rag",
+                    ragDatabaseName=rag_db_name,
+                    prompt=rag_prompt or None,
+                ))
             elif t == "db_reply":
                 db_selection_type = action.get("dbSelectionType") or "default"
                 db_custom_name = action.get("dbCustomName") or ""
@@ -148,6 +153,63 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     dbSqlQuery=db_sql_query,
                     llm_name=action.get("llm_name") or None,
                 ))
+            elif t == "llm_chat":
+                result.append(_make_body_row(
+                    action.get("prompt") or "AI response 🪄",
+                    "llm_chat",
+                    llm_name=action.get("llm_name") or None,
+                ))
+            elif t == "web_crawl_llm":
+                initial_url = action.get("initial_url") or ""
+                display_name = f"Web Crawl + LLM: {initial_url}" if initial_url else "Web Crawl + LLM Reply"
+                result.append(_make_body_row(
+                    display_name,
+                    "web_crawl_llm",
+                    initial_url=initial_url,
+                    max_depth=action.get("max_depth", 2),
+                    max_pages=action.get("max_pages", 20),
+                    crawl_format=action.get("crawl_format", "markdown"),
+                    base_url_prefix=action.get("base_url_prefix", ""),
+                    run_crawl=action.get("run_crawl", True),
+                    no_crawl_error_message=action.get("no_crawl_error_message", "No web crawl data is available yet."),
+                    system_message_prefix=action.get("system_message_prefix", ""),
+                    llm_name=action.get("llm_name") or None,
+                ))
+            elif t == "ws_markdown":
+                result.append(_make_body_row(
+                    "Reply Markdown", "ws_markdown",
+                    ws_message=action.get("ws_message") or action.get("message") or "",
+                ))
+            elif t == "ws_html":
+                result.append(_make_body_row(
+                    "Reply HTML", "ws_html",
+                    ws_message=action.get("ws_message") or action.get("message") or "",
+                ))
+            elif t == "ws_speech":
+                result.append(_make_body_row(
+                    "Reply Speech", "ws_speech",
+                    ws_message=action.get("ws_message") or action.get("message") or "",
+                    ws_audio_speed=action.get("ws_audio_speed"),
+                ))
+            elif t == "ws_options":
+                opts = action.get("ws_options") or action.get("options") or ""
+                if isinstance(opts, list):
+                    opts = "\n".join(opts)
+                result.append(_make_body_row("Reply Options", "ws_options", ws_options=opts))
+            elif t == "ws_location":
+                result.append(_make_body_row(
+                    "Reply Location", "ws_location",
+                    ws_latitude=float(action.get("ws_latitude") or action.get("latitude") or 0.0),
+                    ws_longitude=float(action.get("ws_longitude") or action.get("longitude") or 0.0),
+                ))
+            elif t == "ws_file":
+                result.append(_make_body_row("Reply File", "ws_file"))
+            elif t == "ws_image":
+                result.append(_make_body_row("Reply Image", "ws_image"))
+            elif t == "ws_dataframe":
+                result.append(_make_body_row("Reply Dataframe", "ws_dataframe"))
+            elif t == "ws_plotly":
+                result.append(_make_body_row("Reply Plotly", "ws_plotly"))
         return result
 
     try:
@@ -216,6 +278,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     ):
                         rag_name = None
                         rag_llm_name = ""
+                        rag_llm_prompt = ""
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
@@ -237,11 +300,19 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 # Registered-LLM reference; empty means
                                 # "(use default)" at codegen time.
                                 rag_llm_name = kw.value.value
+                            elif (
+                                kw.arg == "llm_prompt"
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                # Optional prefix instructions injected before
+                                # each RAG prompt; ``None`` in code -> "" here.
+                                rag_llm_prompt = kw.value.value
                         if isinstance(rag_name, str) and rag_name.strip():
                             nodes.append(make_node(
                                 node_id=str(uuid.uuid4()),
                                 type_="AgentRagElement",
-                                data={"name": rag_name, "llm_name": rag_llm_name},
+                                data={"name": rag_name, "llm_name": rag_llm_name, "llm_prompt": rag_llm_prompt},
                                 position={"x": states_x, "y": states_y},
                                 width=120,
                                 height=110,
@@ -507,6 +578,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         actions.setdefault(body_var, []).append(llm_action)
                     elif fn_id == 'RAGReply':
                         rag_db_name = ""
+                        rag_prompt = ""
                         if (
                             len(node.value.args[0].args) >= 1
                             and isinstance(node.value.args[0].args[0], ast.Constant)
@@ -520,7 +592,15 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value.value, str)
                             ):
                                 rag_db_name = kw.value.value
-                        actions.setdefault(body_var, []).append({"type": "rag", "ragDatabaseName": rag_db_name})
+                            elif (
+                                kw.arg == 'prompt'
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                rag_prompt = kw.value.value
+                        actions.setdefault(body_var, []).append(
+                            {"type": "rag", "ragDatabaseName": rag_db_name, "prompt": rag_prompt}
+                        )
                     elif fn_id == 'DBReply':
                         db_action = {
                             "type": "db_reply",
@@ -546,6 +626,85 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 elif kw.arg == 'llm_name':
                                     db_action["llm_name"] = kw.value.value
                         actions.setdefault(body_var, []).append(db_action)
+                    elif fn_id == 'LLMChatReply':
+                        llm_chat_action: Dict[str, Any] = {"type": "llm_chat"}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_chat_action["prompt"] = kw.value.value
+                            elif kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                llm_chat_action["llm_name"] = kw.value.value
+                        actions.setdefault(body_var, []).append(llm_chat_action)
+                    elif fn_id == 'WebCrawlLLMReply':
+                        web_crawl_action: Dict[str, Any] = {
+                            "type": "web_crawl_llm",
+                            "initial_url": "",
+                            "max_depth": 2,
+                            "max_pages": 20,
+                            "crawl_format": "markdown",
+                            "base_url_prefix": "",
+                            "run_crawl": True,
+                            "no_crawl_error_message": "No web crawl data is available yet.",
+                            "system_message_prefix": "",
+                            "llm_name": "",
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'initial_url' and isinstance(val, str):
+                                web_crawl_action["initial_url"] = val
+                            elif kw.arg == 'max_depth' and isinstance(val, int) and not isinstance(val, bool):
+                                web_crawl_action["max_depth"] = val
+                            elif kw.arg == 'max_pages' and isinstance(val, int) and not isinstance(val, bool):
+                                web_crawl_action["max_pages"] = val
+                            elif kw.arg == 'crawl_format' and isinstance(val, str):
+                                web_crawl_action["crawl_format"] = val
+                            elif kw.arg == 'base_url_prefix':
+                                web_crawl_action["base_url_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'run_crawl' and isinstance(val, bool):
+                                web_crawl_action["run_crawl"] = val
+                            elif kw.arg == 'no_crawl_error_message' and isinstance(val, str):
+                                web_crawl_action["no_crawl_error_message"] = val
+                            elif kw.arg == 'system_message_prefix':
+                                web_crawl_action["system_message_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'llm_name' and isinstance(val, str):
+                                web_crawl_action["llm_name"] = val
+                        actions.setdefault(body_var, []).append(web_crawl_action)
+                    elif fn_id in (
+                        'WebSocketReplyMarkdown', 'WebSocketReplyHTML', 'WebSocketReplySpeech',
+                        'WebSocketReplyOptions', 'WebSocketReplyLocation',
+                        'WebSocketReplyFile', 'WebSocketReplyImage',
+                        'WebSocketReplyDataframe', 'WebSocketReplyPlotly',
+                    ):
+                        ws_type_map = {
+                            'WebSocketReplyMarkdown': 'ws_markdown',
+                            'WebSocketReplyHTML': 'ws_html',
+                            'WebSocketReplySpeech': 'ws_speech',
+                            'WebSocketReplyOptions': 'ws_options',
+                            'WebSocketReplyLocation': 'ws_location',
+                            'WebSocketReplyFile': 'ws_file',
+                            'WebSocketReplyImage': 'ws_image',
+                            'WebSocketReplyDataframe': 'ws_dataframe',
+                            'WebSocketReplyPlotly': 'ws_plotly',
+                        }
+                        ws_action: Dict[str, Any] = {"type": ws_type_map[fn_id]}
+                        for kw in node.value.args[0].keywords:
+                            if kw.arg == 'options' and isinstance(kw.value, ast.List):
+                                opts = [elt.value for elt in kw.value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)]
+                                ws_action["ws_options"] = "\n".join(opts)
+                                continue
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'message' and isinstance(val, str):
+                                ws_action["ws_message"] = val
+                            elif kw.arg == 'audio_speed' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_audio_speed"] = float(val)
+                            elif kw.arg == 'latitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_latitude"] = float(val)
+                            elif kw.arg == 'longitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
+                                ws_action["ws_longitude"] = float(val)
+                        actions.setdefault(body_var, []).append(ws_action)
                 elif isinstance(node.value.args[0], ast.Name):
                     action_var = node.value.args[0].id
                     if action_var in custom_code_actions:

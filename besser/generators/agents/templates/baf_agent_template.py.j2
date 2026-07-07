@@ -5,6 +5,7 @@
 import json
 import logging
 import operator
+import os
 
 from baf.core.agent import Agent
 from baf.library.transition.events.base_events import *
@@ -34,9 +35,23 @@ from baf.nlp.rag.rag import RAG
 {% if has_reasoning_states %}
 from baf.library.state import new_reasoning_state
 {% endif %}
+{% set has_web_crawl_import_ns = namespace(value=false) %}
+{% for state in agent.states %}
+{% for action in (state.body.actions if state.body and state.body.actions else []) %}
+{% if is_class(action, 'WebCrawlLLMReply') and action.run_crawl %}{% set has_web_crawl_import_ns.value = true %}{% endif %}
+{% endfor %}
+{% for action in (state.fallback_body.actions if state.fallback_body and state.fallback_body.actions else []) %}
+{% if is_class(action, 'WebCrawlLLMReply') and action.run_crawl %}{% set has_web_crawl_import_ns.value = true %}{% endif %}
+{% endfor %}
+{% endfor %}
+{% if has_web_crawl_import_ns.value %}
+from baf.utils.web_crawl import crawl_website
+{% endif %}
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 {% if personalization_mapping is defined and personalization_mapping %}
 def build_agent_configuration_prompt(agent_configuration: dict) -> str:
@@ -217,7 +232,7 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     {% endif %}
     {% set vector_var = rag_slug ~ '_vector_store' %}
     {% set splitter_var = rag_slug ~ '_splitter' %}
-    {% set rag_var = rag_slug ~ '_rag' %}
+    {% set rag_var = safe_var_name(rag.name) %}
     {% if rag.vector_store and rag.vector_store.persist_directory %}
         {% set persist_dir = rag.vector_store.persist_directory %}
     {% else %}
@@ -243,6 +258,7 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     vector_store={{ vector_var }},
     splitter={{ splitter_var }},
     llm_name='{{ ((rag.llm_name if rag.llm_name else (agent.default_llm_name if agent.default_llm_name else '')) | string) | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    llm_prompt={% if rag.llm_prompt %}'{{ rag.llm_prompt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% else %}None{% endif %},
     k={{ rag.k if rag.k is not none else 4 }},
     num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
 )
@@ -379,23 +395,14 @@ agent.set_default_ic_config(ic_config)
 ##############################
 # TOOLS
 ##############################
-{% for tool in agent.tools %}
-{{ tool.code }}
-agent.new_tool({{ tool.name }}, description={{ tool.description | string | tojson }})
-{% endfor %}
+agent.load_tools(os.path.join(_HERE, "tools.py"))
 {% endif %}
 
 {% if agent.skills and agent.skills|length > 0 %}
 ##############################
 # SKILLS
 ##############################
-{% for skill in agent.skills %}
-agent.new_skill(
-    {{ skill.content | string | tojson }},
-    name={{ skill.name | string | tojson }}{% if skill.description %},
-    description={{ skill.description | string | tojson }}{% endif %}
-)
-{% endfor %}
+agent.load_skills(os.path.join(_HERE, "skills"))
 {% endif %}
 
 {% if agent.workspaces and agent.workspaces|length > 0 %}
@@ -739,10 +746,19 @@ def {{ body_name }}(session: Session):
     {% endif %}
     {% endif %}
     {% for action in state.body.actions %}
+    {% set rag_var_name = resolve_rag_var_name(agent_model, action.rag_db_name) %}
+    {% if rag_var_name %}
+    {% if action.prompt %}
+    rag_message = {{ rag_var_name }}.run(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = {{ rag_var_name }}.run(session.event.message)
+    {% endif %}
+    {% else %}
     {% if action.prompt %}
     rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
     rag_message = session.run_rag(session.event.message)
+    {% endif %}
     {% endif %}
     platform.reply_rag(session, rag_message)
     {% endfor %}
@@ -763,6 +779,82 @@ def {{ body_name }}(session: Session):
     {% endif %}
     {% endif %}
 {{ render_db_reply_actions(state.body.actions, speech_enabled) }}
+{% elif state.body.actions and is_class(state.body.actions[0], 'LLMChatReply') %}
+def {{ body_name }}(session: Session):
+    {% for action in state.body.actions %}
+    {% if action.llm_name %}{% set chosen_llm = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_llm = 'default_llm' %}{% endif %}
+    {% if action.prompt %}
+    message = {{ chosen_llm }}.chat(session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ chosen_llm }}.chat(session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% endfor %}
+{% elif state.body.actions and is_class(state.body.actions[0], 'WebCrawlLLMReply') %}
+def {{ body_name }}(session: Session):
+    {% for action in state.body.actions %}
+    {% if action.llm_name %}{% set chosen_llm = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_llm = 'default_llm' %}{% endif %}
+    {% if action.run_crawl %}
+    webpages = crawl_website(
+        initial_url='{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        max_depth={{ action.max_depth }},
+        max_pages={{ action.max_pages }},
+        format='{{ action.crawl_format }}'{% if action.base_url_prefix %},
+        base_url_prefix='{{ action.base_url_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}'{% endif %}
+
+    )
+    session.set('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}', webpages)
+    {% else %}
+    webpages = session.get('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    if webpages is None:
+        session.reply('{{ action.no_crawl_error_message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+        return
+    {% endif %}
+    {% if action.system_message_prefix %}
+    system_message = '{{ action.system_message_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}' + str(webpages)
+    {% else %}
+    system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
+    {% endif %}
+    message = {{ chosen_llm }}.predict(message=session.event.message, session=session, system_message=system_message)
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% endfor %}
+{% elif state.body.actions and (is_class(state.body.actions[0], 'WebSocketReplyMarkdown') or is_class(state.body.actions[0], 'WebSocketReplyHTML') or is_class(state.body.actions[0], 'WebSocketReplySpeech') or is_class(state.body.actions[0], 'WebSocketReplyOptions') or is_class(state.body.actions[0], 'WebSocketReplyLocation') or is_class(state.body.actions[0], 'WebSocketReplyFile') or is_class(state.body.actions[0], 'WebSocketReplyImage') or is_class(state.body.actions[0], 'WebSocketReplyDataframe') or is_class(state.body.actions[0], 'WebSocketReplyPlotly')) %}
+def {{ body_name }}(session: Session):
+    {% for action in state.body.actions %}
+    {% if is_class(action, 'WebSocketReplyMarkdown') %}
+    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplyHTML') %}
+    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplySpeech') %}
+    {% if action.audio_speed is not none %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    {% else %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyOptions') %}
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    {% elif is_class(action, 'WebSocketReplyLocation') %}
+    platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
+    {% elif is_class(action, 'WebSocketReplyFile') %}
+    # TODO: Assign a baf.types.File object to `reply_file_obj` before this state is reached
+    platform.reply_file(session, reply_file_obj)
+    {% elif is_class(action, 'WebSocketReplyImage') %}
+    # TODO: Assign a numpy.ndarray image to `reply_image_arr` before this state is reached
+    platform.reply_image(session, reply_image_arr)
+    {% elif is_class(action, 'WebSocketReplyDataframe') %}
+    # TODO: Assign a pandas.DataFrame to `reply_df` before this state is reached
+    platform.reply_dataframe(session, reply_df)
+    {% elif is_class(action, 'WebSocketReplyPlotly') %}
+    # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
+    platform.reply_plotly(session, reply_plot)
+    {% endif %}
+    {% endfor %}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
 {% endif %}
@@ -805,16 +897,101 @@ def {{ fallback_name }}(session: Session):
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
 def {{ fallback_name }}(session: Session):
     {% for action in state.fallback_body.actions %}
+    {% set rag_var_name = resolve_rag_var_name(agent_model, action.rag_db_name) %}
+    {% if rag_var_name %}
+    {% if action.prompt %}
+    rag_message = {{ rag_var_name }}.run(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = {{ rag_var_name }}.run(session.event.message)
+    {% endif %}
+    {% else %}
     {% if action.prompt %}
     rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
     rag_message = session.run_rag(session.event.message)
+    {% endif %}
     {% endif %}
     platform.reply_rag(session, rag_message)
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
 def {{ fallback_name }}(session: Session):
 {{ render_db_reply_actions(state.fallback_body.actions, speech_enabled) }}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMChatReply') %}
+def {{ fallback_name }}(session: Session):
+    {% for action in state.fallback_body.actions %}
+    {% if action.llm_name %}{% set chosen_llm = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_llm = 'default_llm' %}{% endif %}
+    {% if action.prompt %}
+    message = {{ chosen_llm }}.chat(session=session, system_message='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = {{ chosen_llm }}.chat(session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% endfor %}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'WebCrawlLLMReply') %}
+def {{ fallback_name }}(session: Session):
+    {% for action in state.fallback_body.actions %}
+    {% if action.llm_name %}{% set chosen_llm = action.llm_name | replace('-', '_') | replace('.', '_') | replace(' ', '_') %}{% else %}{% set chosen_llm = 'default_llm' %}{% endif %}
+    {% if action.run_crawl %}
+    webpages = crawl_website(
+        initial_url='{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        max_depth={{ action.max_depth }},
+        max_pages={{ action.max_pages }},
+        format='{{ action.crawl_format }}'{% if action.base_url_prefix %},
+        base_url_prefix='{{ action.base_url_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}'{% endif %}
+
+    )
+    session.set('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}', webpages)
+    {% else %}
+    webpages = session.get('web_crawl_{{ action.initial_url | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    if webpages is None:
+        session.reply('{{ action.no_crawl_error_message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+        return
+    {% endif %}
+    {% if action.system_message_prefix %}
+    system_message = '{{ action.system_message_prefix | replace('\\', '\\\\') | replace("'", "\\'") }}' + str(webpages)
+    {% else %}
+    system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
+    {% endif %}
+    message = {{ chosen_llm }}.predict(message=session.event.message, session=session, system_message=system_message)
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+    {% endfor %}
+{% elif state.fallback_body.actions and (is_class(state.fallback_body.actions[0], 'WebSocketReplyMarkdown') or is_class(state.fallback_body.actions[0], 'WebSocketReplyHTML') or is_class(state.fallback_body.actions[0], 'WebSocketReplySpeech') or is_class(state.fallback_body.actions[0], 'WebSocketReplyOptions') or is_class(state.fallback_body.actions[0], 'WebSocketReplyLocation') or is_class(state.fallback_body.actions[0], 'WebSocketReplyFile') or is_class(state.fallback_body.actions[0], 'WebSocketReplyImage') or is_class(state.fallback_body.actions[0], 'WebSocketReplyDataframe') or is_class(state.fallback_body.actions[0], 'WebSocketReplyPlotly')) %}
+def {{ fallback_name }}(session: Session):
+    {% for action in state.fallback_body.actions %}
+    {% if is_class(action, 'WebSocketReplyMarkdown') %}
+    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplyHTML') %}
+    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% elif is_class(action, 'WebSocketReplySpeech') %}
+    {% if action.audio_speed is not none %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    {% else %}
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% endif %}
+    {% elif is_class(action, 'WebSocketReplyOptions') %}
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    {% elif is_class(action, 'WebSocketReplyLocation') %}
+    platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
+    {% elif is_class(action, 'WebSocketReplyFile') %}
+    # TODO: Assign a baf.types.File object to `reply_file_obj` before this state is reached
+    platform.reply_file(session, reply_file_obj)
+    {% elif is_class(action, 'WebSocketReplyImage') %}
+    # TODO: Assign a numpy.ndarray image to `reply_image_arr` before this state is reached
+    platform.reply_image(session, reply_image_arr)
+    {% elif is_class(action, 'WebSocketReplyDataframe') %}
+    # TODO: Assign a pandas.DataFrame to `reply_df` before this state is reached
+    platform.reply_dataframe(session, reply_df)
+    {% elif is_class(action, 'WebSocketReplyPlotly') %}
+    # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
+    platform.reply_plotly(session, reply_plot)
+    {% endif %}
+    {% endfor %}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}
 {% endif %}

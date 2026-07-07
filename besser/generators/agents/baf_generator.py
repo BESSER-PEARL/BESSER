@@ -162,6 +162,30 @@ class BAFGenerator(GeneratorInterface):
             if not slug:
                 slug = f"rag_{index}"
             return slug
+
+        def resolve_rag_var_name(agent: Agent, rag_db_name: str) -> str:
+            """Return the generated RAG variable name for ``rag_db_name``.
+
+            The template falls back to ``session.run_rag(...)`` when this helper
+            returns an empty string.
+            """
+            if not rag_db_name:
+                logger.warning(
+                    "RAGReply in agent '%s' has empty rag_db_name. Falling back to session.run_rag().",
+                    agent.name,
+                )
+                return ''
+
+            for rag in getattr(agent, 'rags', []) or []:
+                if rag.name == rag_db_name:
+                    return safe_var_name(rag.name)
+
+            logger.warning(
+                "RAGReply in agent '%s' references unknown rag_db_name '%s'. Falling back to session.run_rag().",
+                agent.name,
+                rag_db_name,
+            )
+            return ''
         generate_personalized_assets = self.generation_mode in (
             GenerationMode.FULL,
             GenerationMode.PERSONALIZED_ONLY,
@@ -183,6 +207,7 @@ class BAFGenerator(GeneratorInterface):
         # Shared helper so generated identifiers match the code builder and are
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
+        env.globals['resolve_rag_var_name'] = resolve_rag_var_name
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
@@ -264,6 +289,30 @@ class BAFGenerator(GeneratorInterface):
                 generated_code = readme_template.render(agent=self.model)
                 f.write(generated_code)
             logger.info("Agent readme file generated at %s", readme_path)
+
+            # Generate tools.py — one file containing all tool function definitions
+            tools = getattr(self.model, 'tools', []) or []
+            if tools:
+                tools_path = self.build_generation_path(file_name="tools.py")
+                with open(tools_path, mode="w", encoding="utf-8") as f:
+                    f.write("# Auto-generated tool definitions\n\n")
+                    for tool in tools:
+                        f.write(tool.code)
+                        if not tool.code.endswith('\n'):
+                            f.write('\n')
+                        f.write('\n')
+                logger.info("Tools file generated at %s", tools_path)
+
+            # Generate skills/ directory — one .md file per skill
+            skills = getattr(self.model, 'skills', []) or []
+            if skills:
+                skills_dir = os.path.join(self.build_generation_dir(), "skills")
+                os.makedirs(skills_dir, exist_ok=True)
+                for skill in skills:
+                    skill_file = os.path.join(skills_dir, f"{skill.name}.md")
+                    with open(skill_file, mode="w", encoding="utf-8") as f:
+                        f.write(skill.content)
+                logger.info("Skills directory generated at %s", skills_dir)
 
             rag_configs = getattr(self.model, 'rags', []) or []
             if rag_configs:

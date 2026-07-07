@@ -35,8 +35,19 @@ from besser.BUML.metamodel.state_machine.agent import (
     WildcardEvent,
     AgentReply,
     LLMReply,
+    LLMChatReply,
     RAGReply,
     DBReply,
+    WebCrawlLLMReply,
+    WebSocketReplyMarkdown,
+    WebSocketReplyHTML,
+    WebSocketReplySpeech,
+    WebSocketReplyOptions,
+    WebSocketReplyLocation,
+    WebSocketReplyFile,
+    WebSocketReplyImage,
+    WebSocketReplyDataframe,
+    WebSocketReplyPlotly,
     RAGVectorStore,
     RAGTextSplitter,
 )
@@ -88,7 +99,8 @@ def _collect_body_messages(body_rows, language, source_language, translate_text,
             if not rag_name:
                 rag_name = sanitize_text(body_content)
             if rag_name:
-                messages.append(f"RAG:{rag_name}")
+                rag_prompt = sanitize_text(body.get("prompt", "") or "") or None
+                messages.append(f"RAG:{json_lib.dumps({'rag_db_name': rag_name, 'prompt': rag_prompt})}")
         elif reply_type == "db_reply":
             if serialize_db_reply_payload:
                 messages.append(serialize_db_reply_payload(body))
@@ -100,6 +112,82 @@ def _collect_body_messages(body_rows, language, source_language, translate_text,
             if not isinstance(code_source, str) or not code_source:
                 code_source = body_content
             messages.append(f"CODE:{sanitize_text(code_source)}")
+        elif reply_type == "llm_chat":
+            # Mirror the ``llm`` convention: the system prompt rides on
+            # ``body.name``; ``llm_name`` is an optional passthrough.
+            llm_chat_payload = {
+                "prompt": sanitize_text(body_content),
+                "llm_name": sanitize_text(body.get("llm_name", "") or ""),
+            }
+            messages.append(f"LLMCHAT:{json_lib.dumps(llm_chat_payload)}")
+        elif reply_type == "web_crawl_llm":
+            initial_url = sanitize_text(body.get("initial_url", "") or "")
+            if initial_url:
+                max_depth_raw = body.get("max_depth", 2)
+                max_pages_raw = body.get("max_pages", 20)
+                try:
+                    max_depth = int(max_depth_raw) if max_depth_raw is not None else 2
+                except (TypeError, ValueError):
+                    max_depth = 2
+                try:
+                    max_pages = int(max_pages_raw) if max_pages_raw is not None else 20
+                except (TypeError, ValueError):
+                    max_pages = 20
+                run_crawl_raw = body.get("run_crawl", True)
+                web_crawl_payload = {
+                    "initial_url": initial_url,
+                    "max_depth": max_depth,
+                    "max_pages": max_pages,
+                    "crawl_format": sanitize_text(body.get("crawl_format", "markdown") or "markdown") or "markdown",
+                    "base_url_prefix": sanitize_text(body.get("base_url_prefix", "") or "") or None,
+                    "run_crawl": bool(run_crawl_raw) if run_crawl_raw is not None else True,
+                    "no_crawl_error_message": (
+                        sanitize_text(body.get("no_crawl_error_message", "No web crawl data is available yet.")
+                                      or "No web crawl data is available yet.")
+                        or "No web crawl data is available yet."
+                    ),
+                    "system_message_prefix": sanitize_text(body.get("system_message_prefix", "") or "") or None,
+                    "llm_name": sanitize_text(body.get("llm_name", "") or "") or None,
+                }
+                messages.append(f"WEBCRAWL:{json_lib.dumps(web_crawl_payload)}")
+        elif reply_type == "ws_markdown":
+            messages.append(f"WSMD:{json_lib.dumps({'message': sanitize_text(body.get('ws_message', '') or '')})}")
+        elif reply_type == "ws_html":
+            messages.append(f"WSHTML:{json_lib.dumps({'message': sanitize_text(body.get('ws_message', '') or '')})}")
+        elif reply_type == "ws_speech":
+            speed_raw = body.get("ws_audio_speed")
+            try:
+                audio_speed = float(speed_raw) if speed_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                audio_speed = None
+            messages.append(
+                f"WSSPEECH:{json_lib.dumps({'message': sanitize_text(body.get('ws_message', '') or ''), 'audio_speed': audio_speed})}"
+            )
+        elif reply_type == "ws_options":
+            opts_raw = body.get("ws_options", "") or ""
+            if isinstance(opts_raw, list):
+                options = [sanitize_text(str(o).strip()) for o in opts_raw if str(o).strip()]
+            else:
+                options = [sanitize_text(o.strip()) for o in opts_raw.split('\n') if o.strip()]
+            messages.append(f"WSOPTIONS:{json_lib.dumps({'options': options})}")
+        elif reply_type == "ws_location":
+            try:
+                lat = float(body.get("ws_latitude", 0.0))
+            except (TypeError, ValueError):
+                lat = 0.0
+            try:
+                lon = float(body.get("ws_longitude", 0.0))
+            except (TypeError, ValueError):
+                lon = 0.0
+            messages.append(f"WSLOCATION:{json_lib.dumps({'latitude': lat, 'longitude': lon})}")
+        elif reply_type == "ws_file":
+            messages.append("WSFILE:")
+        elif reply_type == "ws_image":
+            messages.append("WSIMAGE:")
+        elif reply_type == "ws_dataframe":
+            messages.append("WSDATAFRAME:")
+        elif reply_type == "ws_plotly":
+            messages.append("WSPLOTLY:")
 
     return messages
 
@@ -113,6 +201,11 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
     has_rag = any(m.startswith("RAG:") for m in messages)
     has_llm = any(m.startswith("LLM:") for m in messages)
     has_code = any(m.startswith("CODE:") for m in messages)
+    has_llm_chat = any(m.startswith("LLMCHAT:") for m in messages)
+    has_web_crawl = any(m.startswith("WEBCRAWL:") for m in messages)
+    ws_prefixes = ("WSMD:", "WSHTML:", "WSSPEECH:", "WSOPTIONS:", "WSLOCATION:",
+                   "WSFILE:", "WSIMAGE:", "WSDATAFRAME:", "WSPLOTLY:")
+    has_ws = any(m.startswith(ws_prefixes) for m in messages)
 
     body = Body(body_name)
 
@@ -121,9 +214,22 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
         for db_reply in db_replies:
             body.add_action(build_db_reply_fn(db_reply))
     elif has_rag:
-        rag_names = [m.split(":", 1)[1] for m in messages if m.startswith("RAG:")]
-        for rag_db_name in rag_names:
-            body.add_action(RAGReply(rag_db_name=rag_db_name))
+        for m in messages:
+            if not m.startswith("RAG:"):
+                continue
+            raw = m.split(":", 1)[1]
+            try:
+                payload = json_lib.loads(raw)
+            except (ValueError, TypeError):
+                payload = None
+            if isinstance(payload, dict):
+                rag_db_name = payload.get("rag_db_name", "")
+                rag_prompt = payload.get("prompt") or None
+            else:
+                # Backward compatibility: legacy ``RAG:<name>`` bare-name form.
+                rag_db_name = raw
+                rag_prompt = None
+            body.add_action(RAGReply(rag_db_name=rag_db_name, prompt=rag_prompt))
     elif has_llm:
         for m in messages:
             if not m.startswith("LLM:"):
@@ -140,6 +246,71 @@ def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
         code_contents = [m[5:] for m in messages if m.startswith("CODE:")]
         for code_content in code_contents:
             body.add_action(CustomCodeAction(source=code_content))
+    elif has_llm_chat:
+        for m in messages:
+            if not m.startswith("LLMCHAT:"):
+                continue
+            payload_str = m.split(":", 1)[1]
+            try:
+                payload = json_lib.loads(payload_str)
+            except (ValueError, TypeError):
+                payload = {"prompt": payload_str, "llm_name": ""}
+            prompt = payload.get("prompt") or None
+            llm_name = payload.get("llm_name") or None
+            body.add_action(LLMChatReply(prompt=prompt, llm_name=llm_name))
+    elif has_web_crawl:
+        for m in messages:
+            if not m.startswith("WEBCRAWL:"):
+                continue
+            try:
+                payload = json_lib.loads(m.split(":", 1)[1])
+            except (ValueError, TypeError):
+                continue
+            body.add_action(WebCrawlLLMReply(
+                initial_url=payload.get("initial_url", ""),
+                max_depth=payload.get("max_depth", 2),
+                max_pages=payload.get("max_pages", 20),
+                crawl_format=payload.get("crawl_format", "markdown"),
+                base_url_prefix=payload.get("base_url_prefix"),
+                run_crawl=payload.get("run_crawl", True),
+                no_crawl_error_message=payload.get(
+                    "no_crawl_error_message", "No web crawl data is available yet."
+                ),
+                system_message_prefix=payload.get("system_message_prefix"),
+                llm_name=payload.get("llm_name"),
+            ))
+    elif has_ws:
+        for m in messages:
+            prefix, _, payload_str = m.partition(":")
+            prefix = prefix + ":"
+            try:
+                payload = json_lib.loads(payload_str) if payload_str else {}
+            except (ValueError, TypeError):
+                payload = {}
+            if prefix == "WSMD:":
+                body.add_action(WebSocketReplyMarkdown(message=payload.get("message", "")))
+            elif prefix == "WSHTML:":
+                body.add_action(WebSocketReplyHTML(message=payload.get("message", "")))
+            elif prefix == "WSSPEECH:":
+                body.add_action(WebSocketReplySpeech(
+                    message=payload.get("message", ""),
+                    audio_speed=payload.get("audio_speed"),
+                ))
+            elif prefix == "WSOPTIONS:":
+                body.add_action(WebSocketReplyOptions(options=payload.get("options", [])))
+            elif prefix == "WSLOCATION:":
+                body.add_action(WebSocketReplyLocation(
+                    latitude=payload.get("latitude", 0.0),
+                    longitude=payload.get("longitude", 0.0),
+                ))
+            elif prefix == "WSFILE:":
+                body.add_action(WebSocketReplyFile())
+            elif prefix == "WSIMAGE:":
+                body.add_action(WebSocketReplyImage())
+            elif prefix == "WSDATAFRAME:":
+                body.add_action(WebSocketReplyDataframe())
+            elif prefix == "WSPLOTLY:":
+                body.add_action(WebSocketReplyPlotly())
     else:
         for message in messages:
             body.add_action(AgentReply(message=message))
@@ -463,11 +634,13 @@ def process_agent_diagram(json_data):
             # the agent default at codegen time" and passes the metamodel's
             # LLM-reference validation (a hard-coded model name would not).
             rag_llm_name = sanitize_text((data.get("llm_name") or "").strip()) or ""
+            rag_llm_prompt = sanitize_text((data.get("llm_prompt") or data.get("llmPrompt") or "").strip()) or None
             rag_config = agent.new_rag(
                 name=rag_name,
                 vector_store=vector_store,
                 splitter=splitter,
                 llm_name=rag_llm_name,
+                llm_prompt=rag_llm_prompt,
                 k=4,
                 num_previous_messages=0,
             )

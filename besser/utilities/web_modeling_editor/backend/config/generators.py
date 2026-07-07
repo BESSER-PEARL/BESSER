@@ -7,6 +7,7 @@ from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.testgen import TestCaseGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.supabase import SupabaseGenerator
@@ -67,6 +68,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "pydantic": GeneratorInfo(
         generator_class=PydanticGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="object_oriented",
+        requires_class_diagram=True
+    ),
+    "test_case": GeneratorInfo(
+        generator_class=TestCaseGenerator,
         output_type="file",
         file_extension=".py",
         category="object_oriented",
@@ -269,6 +277,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "classes.py"
     elif generator_type == "pydantic":
         return "pydantic_classes.py"
+    elif generator_type == "test_case":
+        return "test_hypothesis.py"
     elif generator_type == "sqlalchemy":
         return "sql_alchemy.py"
     elif generator_type == "sql":

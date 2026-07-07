@@ -64,6 +64,22 @@ _RATE_LIMIT_MAX_REQUESTS = int(
     or "12"
 )
 
+# When true, simulation is blocked for agents that contain at least one custom
+# Python code body (CustomCodeAction). Has no effect on code generation.
+_AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE = (
+    os.environ.get("AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE") or "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _model_has_custom_code_action(model: dict) -> bool:
+    """Return True if any element in the diagram model is a custom Python code action."""
+    for element in (model.get("elements") or {}).values():
+        if element.get("actionType") == "CustomCodeAction":
+            return True
+        if element.get("replyType") == "code":
+            return True
+    return False
+
 
 class _SlidingWindowRateLimiter:
     def __init__(self, window_seconds: int, max_requests: int):
@@ -274,9 +290,16 @@ async def start_simulation_session(
     http_request: Request,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
-    """Generate agent code and create an simulator session."""
+    """Generate agent code and create a simulator session."""
     _enforce_agent_simulator_auth(github_session)
     _rate_limiter.check(_resolve_actor_key(github_session, http_request))
+
+    if _AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE and _model_has_custom_code_action(request.model):
+        raise HTTPException(
+            status_code=403,
+            detail="Agent simulation is not available for agents with custom Python code state bodies.",
+        )
+
     session_id = str(uuid.uuid4())
 
     diagram_data = {"title": request.title, "model": request.model}
@@ -338,6 +361,15 @@ async def validate_agent(
     """Validate agent code generation without creating a simulation session."""
     _enforce_agent_simulator_auth(github_session)
     _rate_limiter.check(_resolve_actor_key(github_session, http_request))
+
+    if _AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE and _model_has_custom_code_action(request.model):
+        return ValidateResponse(
+            valid=False,
+            agentCode="",
+            eventList=[],
+            errors=["Agent simulation is not available for agents with custom Python code state bodies."],
+        )
+
     diagram_data = {"title": request.title, "model": request.model}
 
     try:

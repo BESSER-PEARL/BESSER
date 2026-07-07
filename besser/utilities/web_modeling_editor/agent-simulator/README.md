@@ -114,6 +114,7 @@ These are read by the BESSER **backend** (`agent_simulator_router.py`), not by t
 | `AGENT_SIMULATOR_REQUIRE_AUTH` | `true` | When `true`, a valid GitHub session token is required to start a simulation. Set to `false` to disable auth (development only). |
 | `AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window duration for the per-user rate limiter. |
 | `AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS` | `12` | Maximum requests allowed per user within the rate limit window. |
+| `AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE` | `false` | When `true`, simulation is blocked for any agent that contains a custom Python code body (`CustomCodeAction`). Code generation is unaffected. |
 
 ## Scaling notes
 

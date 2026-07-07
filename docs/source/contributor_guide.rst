@@ -217,8 +217,10 @@ We use **Ruff** for linting (run automatically in CI):
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 
-Type checking
+Type checking (Optional)
 ~~~~~~~~~~~~~
+
+Note: This is optional for now (as of version 7.11.x) since there are many unresolved type checking warnings and errors (could be true or false positives).
 
 We use **Pyrefly** for static type checking (it also powers the inline
 diagnostics in editors such as VS Code):

@@ -552,16 +552,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         function_name = custom_code_actions[action_var]
                         actions[body_var] = function_name
 
-        # Initial node.
-        initial_node_id = str(uuid.uuid4())
-        nodes.append(make_node(
-            node_id=initial_node_id,
-            type_="StateInitialNode",
-            data={"name": ""},
-            position={"x": states_x - 300, "y": states_y + 20},
-            width=45,
-            height=45,
-        ))
+        # The initial state is now a boolean property on the state itself
+        # (``data.initial``) rather than a separate ``StateInitialNode`` marker
+        # + init edge. We stamp it below while collecting states, then ensure
+        # exactly one state carries it.
 
         # Collect states.
         for node in ast.walk(tree):
@@ -629,6 +623,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         type_="AgentState",
                         data={
                             "name": state_name,
+                            "initial": is_initial,
                             "stateType": "reasoning",
                             "llm_name": llm_name_resolved,
                             "max_steps": int(rs_kwargs.get("max_steps", 8)),
@@ -680,6 +675,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         type_="AgentState",
                         data={
                             "name": state_name,
+                            "initial": is_initial,
                             "bodies": [],
                             "fallbackBodies": [],
                         },
@@ -707,7 +703,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
         nodes_by_id = {n["id"]: n for n in nodes}
 
-        # Initial state -> AgentStateTransitionInit.
+        # Ensure exactly one state carries ``data.initial = True``. Prefer a
+        # state already flagged ``initial=True`` in the BUML source; otherwise
+        # fall back to the first collected state so the diagram always has an
+        # entry point (mirrors the old init-edge fallback, now as a property).
         initial_state = None
         for state_info in states.values():
             if state_info["is_initial"]:
@@ -716,13 +715,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         if not initial_state and states:
             initial_state = states[next(iter(states))]
         if initial_state:
-            edges.append(make_edge(
-                edge_id=str(uuid.uuid4()),
-                source=initial_node_id,
-                target=initial_state["id"],
-                type_="AgentStateTransitionInit",
-                data={"points": []},
-            ))
+            init_node = nodes_by_id.get(initial_state["id"])
+            if init_node is not None:
+                init_node.setdefault("data", {})["initial"] = True
 
         # Process bodies and transitions.
         for node in ast.walk(tree):

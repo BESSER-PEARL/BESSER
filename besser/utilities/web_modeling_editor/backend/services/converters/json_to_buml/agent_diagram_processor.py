@@ -475,21 +475,32 @@ def process_agent_diagram(json_data):
             rag_dbs_by_name[rag_name] = rag_config
 
     # Find initial state (regular or reasoning).
+    # Prefer the explicit ``data.initial`` property (v4 model: the initial
+    # state is a boolean flag on the state itself). Fall back to the legacy
+    # ``StateInitialNode`` marker + init edge for older diagrams that predate
+    # the property so they keep converting unchanged.
     initial_state_id = None
     for node in nodes:
         if node.get("type") not in ("AgentState", "AgentReasoningState"):
             continue
-        for edge in edges:
-            if edge.get("type") not in ("AgentStateTransition", "AgentStateTransitionInit"):
-                continue
-            if edge.get("target") != node.get("id"):
-                continue
-            source_node = nodes_by_id.get(edge.get("source"))
-            if source_node and source_node.get("type") == "StateInitialNode":
-                initial_state_id = node.get("id")
-                break
-        if initial_state_id:
+        if node_data(node).get("initial") is True:
+            initial_state_id = node.get("id")
             break
+    if initial_state_id is None:
+        for node in nodes:
+            if node.get("type") not in ("AgentState", "AgentReasoningState"):
+                continue
+            for edge in edges:
+                if edge.get("type") not in ("AgentStateTransition", "AgentStateTransitionInit"):
+                    continue
+                if edge.get("target") != node.get("id"):
+                    continue
+                source_node = nodes_by_id.get(edge.get("source"))
+                if source_node and source_node.get("type") == "StateInitialNode":
+                    initial_state_id = node.get("id")
+                    break
+            if initial_state_id:
+                break
 
     def _is_reasoning_node(node: dict, data: dict) -> bool:
         """True if this node represents a reasoning agent state.

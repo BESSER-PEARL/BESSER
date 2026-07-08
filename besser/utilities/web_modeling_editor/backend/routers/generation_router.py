@@ -267,7 +267,7 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
     llm_model = (
         requested_model
         if isinstance(requested_model, str) and requested_model.strip()
-        else "gpt-5"
+        else "gpt-5.4-mini"
     )
 
     # Transform the user profile (UserDiagram) into its JSON object representation.

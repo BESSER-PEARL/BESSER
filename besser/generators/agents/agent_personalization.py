@@ -80,7 +80,7 @@ def flatten_agent_config_structure(raw_config):
     return flattened
 
 
-def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=None, config=None):
+def call_openai_chat(system_prompt, user_prompt, model="gpt-5.4-mini", openai_api_key=None, config=None):
     """
     Calls OpenAI ChatCompletion with a system prompt and user prompt (openai>=1.0.0).
     Returns the response text only.
@@ -97,6 +97,7 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=N
         raise ImportError(
             "OpenAI personalization requires the 'agents' extra: pip install besser[agents]"
         ) from exc
+    print("calling now")
     client = OpenAI(api_key=resolved_api_key)
     response = client.chat.completions.create(
         model=model,
@@ -111,9 +112,9 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=N
 
 
 
-def translate_text_batch(texts, target_language, model="gpt-5", openai_api_key=None, config=None):
+def translate_text_batch(texts, target_language, model="gpt-5.4-mini", openai_api_key=None, config=None):
     """
-    Translates each text in `texts` to the target language using OpenAI GPT-5.
+    Translates each text in `texts` to the target language using OpenAI gpt-5.4-mini.
     Returns a list of translated texts in the same order as input.
     """
     if not isinstance(texts, (list, tuple)):
@@ -170,7 +171,7 @@ def translate_text_api(text, target_language):
 
 
 
-def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=None):
+def style_text_batch(texts, style, model="gpt-5.4-mini", openai_api_key=None, config=None):
     """
     Rewrites each text in `texts` to the requested `style` while preserving meaning and content.
     `style` should be one of 'formal', 'informal', 'friendly', or 'technical'.
@@ -338,6 +339,19 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
         target_language = config['agentLanguage']
         for i, msg in enumerate(personalized_messages):
             personalized_messages[i] = translate_text_api(msg, target_language)
+    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
+        target_language = config['agentLanguage']
+        personalized_messages = translate_text_batch(
+            personalized_messages,
+            target_language,
+            openai_api_key=openai_api_key,
+            config=config,
+        )
     if 'agentStyle' in config and config['agentStyle'] != 'original':
         if not openai_api_key:
             raise RuntimeError(
@@ -388,19 +402,7 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
             config,
             openai_api_key=openai_api_key,
         )
-    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
-            )
-        target_language = config['agentLanguage']
-        personalized_messages = translate_text_batch(
-            personalized_messages,
-            target_language,
-            openai_api_key=openai_api_key,
-            config=config,
-        )
+
 
     return personalized_messages
 
@@ -421,7 +423,7 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
 
     model_name = flattened_config.get('llm')
     if not isinstance(model_name, str) or not model_name.strip():
-        model_name = 'gpt-5'
+        model_name = 'gpt-5.4-mini'
     else:
         model_name = model_name.strip()
 
@@ -495,7 +497,7 @@ def append_speech(match):
     text = match.group(1)
     return f"session.reply('{text}')\n    platform.reply_speech(session, '{text}')"
 
-def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None, config=None):
+def complexity_text_batch(texts, complexity, model="gpt-5.4-mini", openai_api_key=None, config=None):
     """
     Adjusts the complexity of each text in `texts` based on the specified `complexity` level.
     Complexity can be "simple", "medium", or "complex".
@@ -551,7 +553,7 @@ def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None,
     return results
 
 
-def sentence_length_batch(texts, preference, model="gpt-5", openai_api_key=None, config=None):
+def sentence_length_batch(texts, preference, model="gpt-5.4-mini", openai_api_key=None, config=None):
     """
     Adjusts each text in `texts` to be more concise or verbose.
     `preference` accepts "concise" or "verbose" (case-insensitive).

@@ -43,6 +43,7 @@ from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
+    LLM_ENABLE_AUTO_FIX,
     LLM_ENABLE_CHECKPOINTING,
     LLM_ENABLE_TOOLCHAIN_VALIDATION,
     LLM_ENABLE_TRACING,
@@ -791,6 +792,12 @@ class SmartGenerationRunner:
             # opt-in for the web deployment — they were the main driver
             # of the duration/cost regression on non-Python stacks.
             enable_toolchain_validation=LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            # Close the agent's feedback loop: when Phase 3 finds BLOCKER
+            # issues (syntax errors, broken Dockerfile refs, dep conflicts)
+            # run the bounded fix loop instead of shipping the broken app
+            # as a green success. Bounded 3x5 turns with snapshot/rollback;
+            # honours the run's cancel/cost/runtime budget per fix turn.
+            auto_fix_issues=LLM_ENABLE_AUTO_FIX,
             # Binding generator choice from an approved preview plan
             # (validated by the request model). None = auto-select.
             target_generator=getattr(

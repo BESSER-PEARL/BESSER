@@ -117,6 +117,16 @@ LLM_ENABLE_TOOLCHAIN_VALIDATION = _env_bool(
     "BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION", False,
 )
 
+# Phase 3 auto-fix: when validation finds BLOCKER issues (Python syntax
+# errors, broken Dockerfile refs, dependency conflicts — the "app doesn't
+# even start" class), give the LLM a bounded fix loop (up to 3 rounds x
+# 5 turns, snapshot/rollback if fixes regress) instead of shipping the
+# broken artifact as a green success. ON by default for the web deploy:
+# without it Phase 3 is validate-and-report only. The fix loop enforces
+# the run's cancellation / cost-cap / runtime-cap per turn and uses the
+# same guarded tool executor as Phase 2 (no new capability surface).
+LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
+
 # Grace period added on top of the request's max_runtime_seconds before
 # the runner-level watchdog force-cancels a run (covers Phase 3 +
 # packaging time after the Phase 2 loop hits its own runtime check).

@@ -2436,6 +2436,32 @@ class LLMOrchestrator:
             })
 
         for turn in range(5):  # max 5 fix turns per attempt
+            # Same per-turn guards as the Phase 2 loop — the fix loop bills
+            # real turns, so it must honour cancellation and the run's
+            # cost/runtime budget instead of assuming the 5-turn cap is
+            # small enough to never matter (15 worst-case turns across the
+            # outer attempts is NOT small on an expensive model).
+            if self._should_continue is not None and not self._should_continue():
+                logger.warning(
+                    "Phase 3: cancellation requested — stopping fix loop"
+                )
+                return
+            if self._start_time is not None:
+                elapsed = time.monotonic() - self._start_time
+                if elapsed > self.max_runtime_seconds:
+                    logger.warning(
+                        "Phase 3: runtime cap reached (%.1fs > %ds) — "
+                        "stopping fix loop", elapsed, self.max_runtime_seconds,
+                    )
+                    return
+            if self.client.usage.estimated_cost > self.max_cost_usd:
+                logger.warning(
+                    "Phase 3: cost cap reached before fix turn %d "
+                    "($%.4f > $%.4f) — stopping fix loop",
+                    turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
+                )
+                return
+
             self.total_turns += 1
             try:
                 response = self.client.chat(

@@ -4,11 +4,12 @@ Handles project structure processing and diagram coordination.
 Supports both single-diagram and multi-diagram per type formats.
 """
 
+import ast
 import logging
 import uuid
 import re
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
 from .state_machine_converter import state_machine_to_json
@@ -21,23 +22,24 @@ from .bpmn_diagram_converter import bpmn_buml_to_json
 
 logger = logging.getLogger(__name__)
 
-# Maps model variable name prefixes to (section header keyword, diagram type, default title)
-SECTION_CONFIG = {
-    'domain_model': ('STRUCTURAL', 'ClassDiagram', 'Class Diagram'),
-    'object_model': ('OBJECT', 'ObjectDiagram', 'Object Diagram'),
-    'agent': ('AGENT', 'AgentDiagram', 'Agent Diagram'),
-    'gui_model': ('GUI', 'GUINoCodeDiagram', 'GUI Diagram'),
-    'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
-    'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
-    'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
-    'bpmn_model': ('BPMN', 'BPMNDiagram', 'BPMN Diagram'),
+# Maps the *constructor* used in a model's assignment (e.g. ``ObjectModel`` in
+# ``object_model_1 = ObjectModel(...)``) to (diagram type, default title).
+#
+# This is the authoritative source of a model's diagram type: it is derived from
+# the actual Python assignment recovered from the AST, NOT from a comment banner.
+# A stray/duplicate/reformatted ``# ... MODEL #`` banner therefore cannot change
+# the diagram set — only the ``Project(models=[...])`` list and the constructors
+# of the referenced variables can.
+CONSTRUCTOR_TO_DIAGRAM: Dict[str, Tuple[str, str]] = {
+    'DomainModel': ('ClassDiagram', 'Class Diagram'),
+    'ObjectModel': ('ObjectDiagram', 'Object Diagram'),
+    'Agent': ('AgentDiagram', 'Agent Diagram'),
+    'GUIModel': ('GUINoCodeDiagram', 'GUI Diagram'),
+    'QuantumCircuit': ('QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
+    'StateMachine': ('StateMachineDiagram', 'State Machine Diagram'),
+    'NN': ('NNDiagram', 'NN Diagram'),
+    'BPMNModel': ('BPMNDiagram', 'BPMN Diagram'),
 }
-
-# All known section header keywords used as boundary markers
-ALL_SECTION_KEYWORDS = [
-    'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
-    'BPMN',
-]
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -73,146 +75,233 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
     }
 
 
-def _build_section_boundary_pattern() -> str:
-    """
-    Build a regex alternation matching any section header or the project definition marker.
-
-    Returns:
-        Regex pattern string matching known section boundaries
-    """
-    keyword_alts = '|'.join(re.escape(kw) for kw in ALL_SECTION_KEYWORDS)
-    # Match both old format: # KEYWORD MODEL #
-    # and new numbered format: # KEYWORD MODEL 1: "Title" #
-    return rf'#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION'
+# ---------------------------------------------------------------------------
+# AST-based sectioning
+#
+# Instead of counting comment banners, we recover each model's Python source
+# chunk from the module AST: the model's own assignment plus the transitive
+# closure of module-level definitions it references. The diagram set is driven
+# entirely by the ``Project(models=[...])`` list, so stray/duplicate banners are
+# irrelevant.
+# ---------------------------------------------------------------------------
 
 
-def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
-    """
-    Extract ALL sections matching a given type keyword from the project content.
+def _call_func_name(call: ast.Call) -> Optional[str]:
+    """Return the simple callable name of a Call (``Foo(...)`` -> 'Foo', ``x.Foo(...)`` -> 'Foo')."""
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
 
-    Supports both the old single-section format:
-        # STRUCTURAL MODEL #
-    and the new multi-section numbered format:
-        # STRUCTURAL MODEL 1: "User Model" #
-        # STRUCTURAL MODEL 2: "Product Model" #
 
-    Args:
-        content: Full project Python code as string
-        keyword: Section keyword to search for (e.g. 'STRUCTURAL', 'AGENT')
-
-    Returns:
-        List of (title, section_code) tuples. Title is extracted from the header
-        if present, otherwise a default is used based on the keyword.
-    """
-    # Pattern matches:
-    #   # KEYWORD MODEL #                          (old format, no number, no title)
-    #   # KEYWORD MODEL 1 #                        (numbered, no title)
-    #   # KEYWORD MODEL 1: "Some Title" #          (numbered with title)
-    #   #  KEYWORD MODEL  #                        (extra whitespace, e.g. GUI)
-    header_pattern = re.compile(
-        rf'#\s*{re.escape(keyword)}\s+MODEL(?:\s+(\d+))?(?:\s*:\s*"([^"]*)")?\s*#',
-        re.IGNORECASE
-    )
-
-    boundary_pattern = _build_section_boundary_pattern()
-
-    sections = []
-    for match in header_pattern.finditer(content):
-        number = match.group(1)  # e.g. "1", "2", or None
-        title = match.group(2)   # e.g. "User Model" or None
-        section_start = match.end()
-
-        # Find the next section boundary after this header
-        next_boundary = re.search(boundary_pattern, content[section_start:])
-        if next_boundary:
-            section_code = content[section_start:section_start + next_boundary.start()].strip()
+def _expr_root_name(node: ast.AST) -> Optional[str]:
+    """Walk the value/func chain of an Attribute/Call/Subscript down to its root Name id."""
+    while True:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.Subscript):
+            node = node.value
         else:
-            # Last section in the file: take everything until end
-            section_code = content[section_start:].strip()
-
-        if not section_code:
-            logger.debug("Empty section found for keyword '%s' (number=%s)", keyword, number)
-            continue
-
-        # Build a descriptive title
-        if title:
-            resolved_title = title
-        elif number:
-            resolved_title = f"{keyword.title()} Model {number}"
-        else:
-            resolved_title = None  # Caller will use default
-
-        sections.append((resolved_title, section_code))
-
-    return sections
+            return None
 
 
-def _convert_section(
-    model_name: str,
+def _target_base_names(target: ast.AST) -> set:
+    """Base variable names bound or mutated by an assignment target.
+
+    ``x`` -> {'x'}; ``x.attr`` / ``x.attr = ...`` -> {'x'} (mutation of x);
+    ``x[i]`` -> {'x'}; tuple/list targets -> union of their elements.
+    """
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Attribute, ast.Subscript)):
+        root = _expr_root_name(target)
+        return {root} if root else set()
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: set = set()
+        for elt in target.elts:
+            names |= _target_base_names(elt)
+        return names
+    return set()
+
+
+def _statement_defines(stmt: ast.stmt) -> set:
+    """Names a top-level statement binds *or* mutates.
+
+    Mutations count as definitions so that e.g. ``Book.attributes = {...}`` is
+    pulled into any chunk that already needs ``Book``.
+    """
+    names: set = set()
+    if isinstance(stmt, ast.Import):
+        for alias in stmt.names:
+            names.add((alias.asname or alias.name).split('.')[0])
+    elif isinstance(stmt, ast.ImportFrom):
+        for alias in stmt.names:
+            names.add(alias.asname or alias.name)
+    elif isinstance(stmt, ast.Assign):
+        for tgt in stmt.targets:
+            names |= _target_base_names(tgt)
+    elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+        names |= _target_base_names(stmt.target)
+    elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        names.add(stmt.name)
+    elif isinstance(stmt, ast.Expr):
+        # Bare expression such as ``book.add_constraint(c)`` mutates ``book``.
+        root = _expr_root_name(stmt.value)
+        if root:
+            names.add(root)
+    return names
+
+
+def _statement_uses(stmt: ast.stmt) -> set:
+    """Names a statement references (over-approximated as every Name it contains).
+
+    Imports reference nothing at module scope. Over-approximating is safe: it can
+    only pull *more* definitions into a chunk, never fewer, and generated
+    statements never mention two different model variables at once.
+    """
+    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+        return set()
+    return {node.id for node in ast.walk(stmt) if isinstance(node, ast.Name)}
+
+
+def _assignment_name_and_call(stmt: ast.stmt) -> Tuple[Optional[str], Optional[ast.Call]]:
+    """For ``name = Call(...)`` or ``name: Ann = Call(...)`` return (name, call)."""
+    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
+            and isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Call):
+        return stmt.targets[0].id, stmt.value
+    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) \
+            and isinstance(stmt.value, ast.Call):
+        return stmt.target.id, stmt.value
+    return None, None
+
+
+def _extract_name_kwarg(call: ast.Call) -> Optional[str]:
+    """Return the string value of the ``name=`` keyword of a constructor call, if any."""
+    for kw in call.keywords:
+        if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+            return kw.value.value
+    return None
+
+
+def _project_model_names(tree: ast.Module) -> List[str]:
+    """Return the ordered variable names in ``Project(models=[...])``.
+
+    Returns an empty list when no ``Project(...)`` call carrying a ``models=``
+    list/tuple of plain names is present.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_func_name(node) == "Project":
+            for kw in node.keywords:
+                if kw.arg == "models" and isinstance(kw.value, (ast.List, ast.Tuple)):
+                    return [elt.id for elt in kw.value.elts if isinstance(elt, ast.Name)]
+    return []
+
+
+def _closure_indices(root_name: str, name_to_def_indices: Dict[str, List[int]],
+                     uses_by_index: Dict[int, set]) -> set:
+    """Transitive closure of statement indices needed to define ``root_name``.
+
+    Every statement that defines or mutates a needed name is pulled in, and each
+    pulled-in statement contributes its own referenced names to the frontier.
+    """
+    included: set = set()
+    needed = {root_name}
+    processed: set = set()
+    while needed - processed:
+        name = (needed - processed).pop()
+        processed.add(name)
+        for idx in name_to_def_indices.get(name, ()):
+            if idx not in included:
+                included.add(idx)
+                needed |= uses_by_index[idx]
+    return included
+
+
+def _source_of(content: str, tree: ast.Module, indices: set) -> str:
+    """Join the original source segments of the given top-level statement indices, in order."""
+    segments = []
+    for idx in sorted(indices):
+        segment = ast.get_source_segment(content, tree.body[idx])
+        if segment:
+            segments.append(segment)
+    return "\n\n".join(segments)
+
+
+def _convert_model(
+    diagram_type: str,
     section_code: str,
     title: str,
-    domain_sections: List[Tuple[str, str]],
+    domain_prefix_code: str,
     class_diagram_list: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """
-    Convert a single section's code into a diagram JSON entry.
+    Convert a single model's source chunk into a diagram JSON entry.
 
     Args:
-        model_name: Model variable name prefix (e.g. 'domain_model', 'agent')
-        section_code: The extracted Python code for this section
-        title: Display title for the diagram
-        domain_sections: All structural/domain sections (needed for object diagram context)
-        class_diagram_list: Already-converted class diagrams (needed for object diagram references)
+        diagram_type: Frontend diagram type (e.g. 'ClassDiagram', 'ObjectDiagram').
+        section_code: The Python source chunk for this model (see _build_ast_sections).
+        title: Display title for the diagram.
+        domain_prefix_code: Concatenated source of all class-diagram models. Object
+            diagrams need the domain-model code prepended for context (preserved
+            from the previous banner-based behaviour).
+        class_diagram_list: Already-converted class diagrams (object diagrams use the
+            first one as their class reference).
 
     Returns:
-        Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
+        Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys, or None.
     """
     diagram_id = str(uuid.uuid4())
     last_update = datetime.now(timezone.utc).isoformat()
 
     try:
-        if model_name == "domain_model":
+        if diagram_type == "ClassDiagram":
             parsed = parse_buml_content(section_code)
             model = class_buml_to_json(parsed)
 
-        elif model_name == "object_model":
-            # Object diagrams need the domain model code prepended for context
-            # Combine all domain sections as context prefix
-            domain_code = "\n".join(code for _, code in domain_sections)
-            combined_code = domain_code + "\n" + section_code if domain_code else section_code
-            # Use the first class diagram's model as reference, or empty dict
+        elif diagram_type == "ObjectDiagram":
+            # Object diagrams need the domain-model code prepended for context.
+            combined_code = (
+                domain_prefix_code + "\n" + section_code if domain_prefix_code else section_code
+            )
+            # Use the first class diagram's model as reference, or empty dict.
             class_model_ref = class_diagram_list[0]["model"] if class_diagram_list else {}
             model = object_buml_to_json(combined_code, class_model_ref)
 
-        elif model_name == "agent":
+        elif diagram_type == "AgentDiagram":
             model = agent_buml_to_json(section_code)
 
-        elif model_name == "gui_model":
+        elif diagram_type == "GUINoCodeDiagram":
             model = gui_buml_to_json(section_code)
 
-        elif model_name == "quantum_model":
+        elif diagram_type == "QuantumCircuitDiagram":
             model = quantum_buml_to_json(section_code)
 
-        elif model_name == "nn_model":
+        elif diagram_type == "NNDiagram":
             model = nn_buml_to_json(section_code)
 
-        elif model_name == "bpmn_model":
+        elif diagram_type == "BPMNDiagram":
             model = bpmn_buml_to_json(section_code)
 
-        elif model_name == "sm":
+        elif diagram_type == "StateMachineDiagram":
             model = state_machine_to_json(section_code)
 
         else:
-            logger.warning("Unknown model name '%s', skipping conversion", model_name)
+            logger.warning("Unknown diagram type '%s', skipping conversion", diagram_type)
             return None
 
     except (SyntaxError, ValueError, TypeError) as e:
         logger.error(
-            "Failed to convert section '%s' (type: %s): %s",
-            title, model_name, e, exc_info=True,
+            "Failed to convert '%s' (type: %s): %s",
+            title, diagram_type, e, exc_info=True,
         )
         raise ValueError(
-            f"Failed to convert '{title}' section ({model_name}): {e}"
+            f"Failed to convert '{title}' ({diagram_type}): {e}"
         ) from e
 
     return {
@@ -221,6 +310,109 @@ def _convert_section(
         "model": model,
         "lastUpdate": last_update,
     }
+
+
+def _build_ast_sections(content: str) -> Optional[List[Dict[str, Any]]]:
+    """Derive per-model source chunks from the AST, driven by ``Project(models=[...])``.
+
+    Returns an ordered list (matching the ``models=[...]`` order) of dicts with
+    keys ``var``, ``diagram_type``, ``title`` and ``section_code``. Object-diagram
+    chunks have the domain-model statements removed (they are supplied separately
+    via the prepended domain prefix). The domain prefix itself is attached to every
+    object entry under ``domain_prefix_code``.
+
+    Returns ``None`` when the file has no ``Project(models=[...])`` wrapper (the
+    caller then uses the single-diagram fallback).
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError as e:
+        logger.warning("Could not AST-parse project content: %s", e)
+        return None
+
+    model_names = _project_model_names(tree)
+    if not model_names:
+        return None
+
+    logger.debug("Project models=[...] order: %s", model_names)
+
+    # Index every top-level statement's defines/uses.
+    name_to_def_indices: Dict[str, List[int]] = {}
+    uses_by_index: Dict[int, set] = {}
+    ctor_by_name: Dict[str, Tuple[str, str, Optional[str]]] = {}
+    for idx, stmt in enumerate(tree.body):
+        uses_by_index[idx] = _statement_uses(stmt)
+        for name in _statement_defines(stmt):
+            name_to_def_indices.setdefault(name, []).append(idx)
+
+        target_name, call = _assignment_name_and_call(stmt)
+        if target_name is not None and call is not None:
+            ctor = _call_func_name(call)
+            if ctor in CONSTRUCTOR_TO_DIAGRAM and target_name not in ctor_by_name:
+                diagram_type, default_title = CONSTRUCTOR_TO_DIAGRAM[ctor]
+                ctor_by_name[target_name] = (diagram_type, default_title, _extract_name_kwarg(call))
+
+    # Resolve each model variable (in list order) to its diagram type.
+    resolved: List[Dict[str, Any]] = []
+    for var in model_names:
+        if var not in ctor_by_name:
+            logger.debug("Model var '%s' has no recognised constructor; skipping", var)
+            continue
+        diagram_type, default_title, name_kwarg = ctor_by_name[var]
+        resolved.append({
+            "var": var,
+            "diagram_type": diagram_type,
+            "default_title": default_title,
+            "name_kwarg": name_kwarg,
+            "closure": _closure_indices(var, name_to_def_indices, uses_by_index),
+        })
+
+    if not resolved:
+        return None
+
+    # Domain (class-diagram) statements are the shared context for object diagrams.
+    domain_union: set = set()
+    for entry in resolved:
+        if entry["diagram_type"] == "ClassDiagram":
+            domain_union |= entry["closure"]
+    domain_prefix_code = _source_of(content, tree, domain_union)
+
+    # Count per-type occurrences so we can disambiguate default titles.
+    type_counts: Dict[str, int] = {}
+    for entry in resolved:
+        type_counts[entry["diagram_type"]] = type_counts.get(entry["diagram_type"], 0) + 1
+    type_running: Dict[str, int] = {}
+
+    sections: List[Dict[str, Any]] = []
+    for entry in resolved:
+        diagram_type = entry["diagram_type"]
+        type_running[diagram_type] = type_running.get(diagram_type, 0) + 1
+
+        # Title comes from the model's name= argument; fall back to the default,
+        # numbering it when several models of the same type share the default.
+        if entry["name_kwarg"]:
+            title = entry["name_kwarg"]
+        elif type_counts[diagram_type] > 1:
+            title = f"{entry['default_title']} {type_running[diagram_type]}"
+        else:
+            title = entry["default_title"]
+
+        # Object chunks exclude the shared domain statements (prepended separately);
+        # every other type keeps its self-contained closure.
+        if diagram_type == "ObjectDiagram":
+            indices = entry["closure"] - domain_union
+        else:
+            indices = entry["closure"]
+
+        sections.append({
+            "var": entry["var"],
+            "diagram_type": diagram_type,
+            "title": title,
+            "section_code": _source_of(content, tree, indices),
+            "domain_prefix_code": domain_prefix_code,
+        })
+
+    return sections
 
 
 # Detection heuristics for single-diagram BUML files that omit the Project(...)
@@ -375,11 +567,16 @@ def project_to_json(content: str) -> Dict[str, Any]:
     """
     Convert a BUML project content to JSON format matching the frontend structure.
 
-    Supports both the legacy single-diagram-per-type format and the new
-    multi-diagram-per-type format with numbered/titled section headers.
-    Also accepts plain single-diagram BUML files that omit the Project(...)
-    wrapper — they are wrapped into a one-diagram project so that the
-    Project Import flow works with any well-formed BUML file.
+    The diagram set is driven by the authoritative ``Project(models=[...])`` list
+    recovered from the module AST: each variable in that list yields exactly one
+    diagram, whose type is read from its assignment's constructor
+    (``ObjectModel(...)`` -> object diagram, ``DomainModel(...)`` -> class diagram,
+    ...). Comment banners are ignored, so a stray/duplicate ``# ... MODEL #`` line
+    cannot change the number or identity of diagrams (WME issue #161).
+
+    Also accepts plain single-diagram BUML files that omit the ``Project(...)``
+    wrapper — they are wrapped into a one-diagram project so that the Project
+    Import flow works with any well-formed BUML file.
 
     Args:
         content: Project Python code as string
@@ -388,9 +585,9 @@ def project_to_json(content: str) -> Dict[str, Any]:
         Dictionary representing the complete project with all diagrams.
         Each diagram type maps to a list of diagram entries.
     """
-    # Detect models included in the project
-    model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
-    if not model_match:
+    # Derive per-model source chunks from the AST, driven by Project(models=[...]).
+    sections = _build_ast_sections(content)
+    if sections is None:
         # No Project(...) wrapper — fall back to single-diagram detection so
         # plain class/agent/state-machine/GUI/NN files can still be imported.
         logger.info(
@@ -398,10 +595,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         )
         return _build_project_from_single_diagram(content)
 
-    model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
-    logger.debug("Detected model names in project: %s", model_names)
-
-    # Extract project metadata
+    # Extract project metadata (orthogonal to sectioning; kept as lightweight regex).
     project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
     project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
     project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
@@ -410,78 +604,38 @@ def project_to_json(content: str) -> Dict[str, Any]:
     project_description = project_desc_match.group(1) if project_desc_match else "No description"
     project_owner = project_owner_match.group(1) if project_owner_match else "Unknown"
 
-    # diagram_jsons maps diagram type -> list of diagram entries
+    # diagram_jsons maps diagram type -> list of diagram entries.
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
 
-    # First pass: extract all structural/domain sections (needed as context for object diagrams)
-    # Check for both exact "domain_model" and suffixed variants like "domain_model_1"
-    domain_sections: List[Tuple[str, str]] = []
-    has_domain_model = any(re.sub(r'_\d+$', '', name) == "domain_model" for name in model_names)
-    if has_domain_model:
-        keyword = SECTION_CONFIG["domain_model"][0]
-        domain_sections = _extract_all_sections(content, keyword)
-        logger.debug("Found %d structural model section(s)", len(domain_sections))
+    # Convert class diagrams first so object diagrams can reference them, then the
+    # rest. Within each pass, sections keep their Project(models=[...]) order, so
+    # per-type diagram lists are ordered by the models list.
+    def _emit(section: Dict[str, Any]) -> None:
+        entry = _convert_model(
+            section["diagram_type"],
+            section["section_code"],
+            section["title"],
+            section["domain_prefix_code"],
+            diagram_jsons.get("ClassDiagram", []),
+        )
+        if entry is not None:
+            diagram_jsons.setdefault(section["diagram_type"], []).append(entry)
 
-    # Process each model type referenced in the project
-    # Use a deduplicated ordered list to process each base model name only once.
-    # Variable names may carry numeric suffixes (e.g. domain_model_1, agent_2)
-    # generated by project_builder._suffixed_name for multi-diagram projects.
-    # Strip trailing _<digits> to recover the base name used in SECTION_CONFIG.
-    seen_base_names = set()
-    for model_name in model_names:
-        # Strip numeric suffix: "domain_model_1" -> "domain_model", "agent_2" -> "agent"
-        base_name = re.sub(r'_\d+$', '', model_name)
+    for section in sections:
+        if section["diagram_type"] == "ClassDiagram":
+            _emit(section)
+    for section in sections:
+        if section["diagram_type"] != "ClassDiagram":
+            _emit(section)
 
-        if base_name in seen_base_names:
-            continue
-        seen_base_names.add(base_name)
-
-        if base_name not in SECTION_CONFIG:
-            logger.debug("Skipping unknown model name '%s' (base: '%s')", model_name, base_name)
-            continue
-
-        keyword, diagram_type, default_title = SECTION_CONFIG[base_name]
-        sections = _extract_all_sections(content, keyword)
-
-        if not sections:
-            logger.info("No sections found for '%s' (keyword: %s), skipping", base_name, keyword)
-            continue
-
-        diagram_list = []
-        for idx, (title, section_code) in enumerate(sections):
-            resolved_title = title if title else default_title
-            # Append index suffix for multi-diagram types (only when more than one)
-            if len(sections) > 1 and not title:
-                resolved_title = f"{default_title} {idx + 1}"
-
-            logger.debug(
-                "Converting section %d/%d for %s: '%s'",
-                idx + 1, len(sections), diagram_type, resolved_title
-            )
-
-            # class_diagram_list is only needed for object_model; pass current ClassDiagram list
-            class_diagrams = diagram_jsons.get("ClassDiagram", [])
-            entry = _convert_section(
-                base_name, section_code, resolved_title,
-                domain_sections, class_diagrams,
-            )
-            if entry is not None:
-                diagram_list.append(entry)
-
-        if diagram_list:
-            diagram_jsons[diagram_type] = diagram_list
-
-    # Section-header fallback: some project files declare `models=[domain_model]`
-    # but omit the `# STRUCTURAL MODEL #` (or sibling) section headers entirely —
-    # all the model code lives in one flat block above the project definition.
-    # When this happens, `diagram_jsons` ends up empty and every diagram type
-    # gets an empty placeholder, which the frontend renders as a blank canvas.
-    # Reuse the single-diagram detector to recover the actual model, then
-    # restore the project name/description/owner from the Project(...) wrapper.
+    # Safety net: a Project(...) wrapper whose models resolved to nothing usable
+    # (e.g. all constructors unrecognised, or a flat file the AST closure could not
+    # section). Recover the embedded model via single-diagram detection and restore
+    # the project metadata from the wrapper.
     if not diagram_jsons:
         logger.info(
-            "Project declares models=%s but no section headers were found; "
-            "falling back to single-diagram detection.", model_names,
+            "Project wrapper present but no diagrams were produced; "
+            "falling back to single-diagram detection."
         )
         try:
             result = _build_project_from_single_diagram(content)

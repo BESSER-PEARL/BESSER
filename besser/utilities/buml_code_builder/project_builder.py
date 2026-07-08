@@ -228,22 +228,30 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             # (in the domain_pairs loop). Since the whole project is concatenated
             # into ONE file, each object-only section can reference the class and
             # enum variables defined earlier, so we emit just the object portion.
+            #
+            # object_model_to_code writes the single "# OBJECT MODEL ... #" section
+            # banner itself (numbered + titled when there is more than one), so we
+            # must NOT add a second section header here: a duplicate header makes
+            # the project importer split each model into an extra, empty section on
+            # round-trip (WME issue #161).
             if not (len(domain_models) == 1 and len(object_models) == 1):
                 n_standalone_obj = len(object_models)
                 for idx, om in enumerate(object_models, start=1):
                     obj_var_name = _suffixed_name("object_model", idx, n_standalone_obj)
 
-                    section = ""
+                    header_label = None
                     if n_standalone_obj > 1:
-                        section = f"# OBJECT MODEL {idx} #\n\n"
+                        label = (_comment_safe(getattr(om, "name", "")) or f"Object Model {idx}").replace('"', "'")
+                        header_label = f'OBJECT MODEL {idx}: "{label}"'
 
                     tmp_path = os.path.join(temp_dir, f"object_model_{idx}.py")
                     object_model_to_code(
                         objectmodel=om,
                         file_path=tmp_path,
                         object_model_var_name=obj_var_name,
+                        header_label=header_label,
                     )
-                    _write_temp_to_output(tmp_path, f, section_header=section)
+                    _write_temp_to_output(tmp_path, f)
                     model_vars.append(obj_var_name)
 
             # ---------------------------------------------------------- #

@@ -16,6 +16,7 @@ from besser.BUML.metamodel.state_machine.state_machine import StateMachine
 from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
+    object_model_to_code,
     contains_user_class,
     is_user_object_model,
 )
@@ -222,28 +223,28 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
 
-            # Standalone object models (when not paired 1:1 with domain models)
+            # Standalone object models (when not paired 1:1 with domain models).
+            # The domain model these objects reference is already written above
+            # (in the domain_pairs loop). Since the whole project is concatenated
+            # into ONE file, each object-only section can reference the class and
+            # enum variables defined earlier, so we emit just the object portion.
             if not (len(domain_models) == 1 and len(object_models) == 1):
                 n_standalone_obj = len(object_models)
                 for idx, om in enumerate(object_models, start=1):
                     obj_var_name = _suffixed_name("object_model", idx, n_standalone_obj)
-                    # Object models need a domain_model to reference; pass None and
-                    # generate just the object portion via domain_model_to_code.
-                    # For standalone objects without a paired domain model we find
-                    # the domain_model attribute on the ObjectModel itself.
-                    paired_dm = getattr(om, "domain_model", None)
-                    if paired_dm:
-                        dm_var = _suffixed_name("object_domain_model", idx, n_standalone_obj)
-                        tmp_path = os.path.join(temp_dir, f"object_model_{idx}.py")
-                        domain_model_to_code(
-                            model=paired_dm,
-                            file_path=tmp_path,
-                            objectmodel=om,
-                            model_var_name=dm_var,
-                            object_model_var_name=obj_var_name,
-                        )
-                        _write_temp_to_output(tmp_path, f)
-                        model_vars.append(obj_var_name)
+
+                    section = ""
+                    if n_standalone_obj > 1:
+                        section = f"# OBJECT MODEL {idx} #\n\n"
+
+                    tmp_path = os.path.join(temp_dir, f"object_model_{idx}.py")
+                    object_model_to_code(
+                        objectmodel=om,
+                        file_path=tmp_path,
+                        object_model_var_name=obj_var_name,
+                    )
+                    _write_temp_to_output(tmp_path, f, section_header=section)
+                    model_vars.append(obj_var_name)
 
             # ---------------------------------------------------------- #
             # USER DOMAIN MODELS                                         #

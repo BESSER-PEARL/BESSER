@@ -561,91 +561,150 @@ def domain_model_to_code(
 
         # Generate object model code if provided
         if objectmodel:
-            f.write("\n################\n")
-            f.write("# OBJECT MODEL #\n")
-            f.write("################\n")
-
-            # Write object instances using fluent API
-            for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
-                obj_var_name = f"{obj.name_.lower()}_obj"
-                classifier_var_name = safe_class_name(obj.classifier.name)
-
-                # Start the fluent API call using the proper syntax: Class("name")
-                f.write(f"{obj_var_name} = {classifier_var_name}(\"{_escape_python_string(obj.name_)}\")")
-
-                # Add attributes if the object has slots
-                if obj.slots:
-                    attributes_dict = {}
-                    for slot in obj.slots:
-                        attr_name = slot.attribute.name
-
-                        # Format the value based on type
-                        if isinstance(slot.value.value, str):
-                            value_str = f'"{_escape_python_string(slot.value.value)}"'
-                        elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
-                            value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
-                        elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
-                            # This is an enumeration literal - generate the proper reference
-                            enum_name = slot.value.value.owner.name
-                            literal_name = slot.value.value.name
-                            value_str = f"{enum_name}.{literal_name}"
-                        else:
-                            value_str = str(slot.value.value)
-
-                        attributes_dict[attr_name] = value_str
-
-                    # Add attributes to the fluent API call
-                    if attributes_dict:
-                        attr_pairs = [f"{k}={v}" for k, v in attributes_dict.items()]
-                        f.write(f".attributes({', '.join(attr_pairs)})")
-
-                # Complete the fluent API call
-                f.write(".build()\n")
-
-            f.write("\n")
-
-            # Add links after objects are created (avoiding forward reference issues)
-            if hasattr(objectmodel, 'links') and objectmodel.links:
-
-                # Group links by (source_obj_var, end_name)
-                grouped_links = {}
-                for link in objectmodel.links:
-                    if len(link.connections) == 2:
-                        end1, end2 = link.connections
-                        obj1_var = f"{end1.object.name_.lower()}_obj"
-                        obj2_var = f"{end2.object.name_.lower()}_obj"
-                        end2_name = end2.association_end.name
-
-                        key = (obj1_var, end2_name)
-                        grouped_links.setdefault(key, set()).add(obj2_var)
-
-                # Write assignments for each group
-                for (obj_var, end_name), targets in grouped_links.items():
-                    if len(targets) == 1:
-                        [single_target] = targets
-                        f.write(f"{obj_var}.{end_name} = {single_target}\n")
-                    else:
-                        target_str = ", ".join(sorted(targets))  # sorted for consistency
-                        f.write(f"{obj_var}.{end_name} = {{{target_str}}}\n")
-
-                f.write("\n")
-
-            # Create the object model instance
-            f.write("# Object Model instance\n")
-            objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
-            f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
-            f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
-            f.write(f"    objects={{{objects_str}}}")
-
-            # Add metadata if it exists
-            if hasattr(objectmodel, 'metadata') and objectmodel.metadata:
-                if objectmodel.metadata.description:
-                    f.write(",\n")
-                    f.write(f'    metadata=Metadata(description="{_escape_python_string(objectmodel.metadata.description)}")\n')
-                else:
-                    f.write("\n")
-            else:
-                f.write("\n")
-            f.write(")\n")
+            _write_object_model_section(f, objectmodel, object_model_var_name)
 
     print(f"BUML model saved to {file_path}")
+
+
+def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_name: str = "object_model"):
+    """Write the object-model portion of the builder output to an open file handle.
+
+    Emits the ``# OBJECT MODEL #`` banner, the object instances (via the fluent
+    API), the links between objects, and the final ``ObjectModel(...)`` binding.
+    This section assumes the referenced domain classes and enumerations are
+    already defined earlier in the same (concatenated) file.
+
+    Parameters:
+        f: An already-open, writable file handle.
+        objectmodel (ObjectModel): The B-UML object model to serialize.
+        object_model_var_name (str): Name of the ObjectModel variable to bind.
+    """
+    object_model_var_name = object_model_var_name or "object_model"
+
+    f.write("\n################\n")
+    f.write("# OBJECT MODEL #\n")
+    f.write("################\n")
+
+    # Write object instances using fluent API
+    for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
+        obj_var_name = f"{obj.name_.lower()}_obj"
+        classifier_var_name = safe_class_name(obj.classifier.name)
+
+        # Start the fluent API call using the proper syntax: Class("name")
+        f.write(f"{obj_var_name} = {classifier_var_name}(\"{_escape_python_string(obj.name_)}\")")
+
+        # Add attributes if the object has slots
+        if obj.slots:
+            attributes_dict = {}
+            for slot in obj.slots:
+                attr_name = slot.attribute.name
+
+                # Format the value based on type
+                if isinstance(slot.value.value, str):
+                    value_str = f'"{_escape_python_string(slot.value.value)}"'
+                elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
+                    value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
+                elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
+                    # This is an enumeration literal - generate the proper reference
+                    enum_name = slot.value.value.owner.name
+                    literal_name = slot.value.value.name
+                    value_str = f"{enum_name}.{literal_name}"
+                else:
+                    value_str = str(slot.value.value)
+
+                attributes_dict[attr_name] = value_str
+
+            # Add attributes to the fluent API call
+            if attributes_dict:
+                attr_pairs = [f"{k}={v}" for k, v in attributes_dict.items()]
+                f.write(f".attributes({', '.join(attr_pairs)})")
+
+        # Complete the fluent API call
+        f.write(".build()\n")
+
+    f.write("\n")
+
+    # Add links after objects are created (avoiding forward reference issues)
+    if hasattr(objectmodel, 'links') and objectmodel.links:
+
+        # Group links by (source_obj_var, end_name)
+        grouped_links = {}
+        for link in objectmodel.links:
+            if len(link.connections) == 2:
+                end1, end2 = link.connections
+                obj1_var = f"{end1.object.name_.lower()}_obj"
+                obj2_var = f"{end2.object.name_.lower()}_obj"
+                end2_name = end2.association_end.name
+
+                key = (obj1_var, end2_name)
+                grouped_links.setdefault(key, set()).add(obj2_var)
+
+        # Write assignments for each group
+        for (obj_var, end_name), targets in grouped_links.items():
+            if len(targets) == 1:
+                [single_target] = targets
+                f.write(f"{obj_var}.{end_name} = {single_target}\n")
+            else:
+                target_str = ", ".join(sorted(targets))  # sorted for consistency
+                f.write(f"{obj_var}.{end_name} = {{{target_str}}}\n")
+
+        f.write("\n")
+
+    # Create the object model instance
+    f.write("# Object Model instance\n")
+    objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
+    f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
+    f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
+    f.write(f"    objects={{{objects_str}}}")
+
+    # Add metadata if it exists
+    if hasattr(objectmodel, 'metadata') and objectmodel.metadata:
+        if objectmodel.metadata.description:
+            f.write(",\n")
+            f.write(f'    metadata=Metadata(description="{_escape_python_string(objectmodel.metadata.description)}")\n')
+        else:
+            f.write("\n")
+    else:
+        f.write("\n")
+    f.write(")\n")
+
+
+def object_model_to_code(
+    objectmodel: ObjectModel,
+    file_path: str,
+    object_model_var_name: str = "object_model",
+):
+    """Generate Python code for a standalone B-UML object model.
+
+    The generated file is self-contained apart from the domain classes and
+    enumerations it references: it only imports ``ObjectModel`` and ``datetime``
+    and then emits the object-model section. It is meant to be concatenated
+    *after* the corresponding domain model (whose classes/enums it references)
+    so the combined file executes cleanly.
+
+    Parameters:
+        objectmodel (ObjectModel): The B-UML object model to serialize.
+        file_path (str): The path where the generated code will be saved.
+        object_model_var_name (str): Name of the ObjectModel variable in the
+            generated code. Defaults to "object_model".
+
+    Outputs:
+        - A Python file containing the object-model instances and their links.
+    """
+    output_dir = os.path.dirname(file_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    if not file_path.endswith('.py'):
+        file_path += '.py'
+
+    object_model_var_name = object_model_var_name or "object_model"
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        # Object-model imports. The domain classes/enums are assumed to be
+        # defined earlier in the concatenated output.
+        f.write("from besser.BUML.metamodel.object import ObjectModel\n")
+        f.write("import datetime\n")
+
+        _write_object_model_section(f, objectmodel, object_model_var_name)
+
+    print(f"BUML object model saved to {file_path}")

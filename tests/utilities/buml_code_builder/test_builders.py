@@ -1018,6 +1018,9 @@ class TestGUIModelBuilder:
 # project_builder.py
 # ---------------------------------------------------------------------------
 from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.object import (
+    Object, AttributeLink, DataValue, ObjectModel,
+)
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 
@@ -1199,6 +1202,74 @@ class TestProjectBuilder:
             code = f.read()
 
         assert "Test project" in code
+
+    def test_project_multiple_object_models_are_exported(self, tmp_path):
+        """Regression for WME #161.
+
+        A project with ONE domain model and MULTIPLE object models must export
+        every object model to the generated BUML Python file. Previously the
+        "standalone object models" loop gated on a non-existent
+        ``ObjectModel.domain_model`` attribute, so all object models were
+        silently dropped (JSON export was fine; only the .py export lost them).
+        """
+        # --- Domain model: Library + Book -------------------------------
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        lib_name = Property(name="name", type=StringType)
+        library = Class(name="Library", attributes={lib_name})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        # --- Two distinct object models over that same domain -----------
+        book_one = Object(
+            name="BookOne",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100)),
+            ],
+        )
+        om1 = ObjectModel(name="ObjectModelOne", objects={book_one})
+
+        book_two = Object(
+            name="BookTwo",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200)),
+            ],
+        )
+        om2 = ObjectModel(name="ObjectModelTwo", objects={book_two})
+
+        meta = Metadata(description="Multi object-model project")
+        project = Project(
+            name="MultiObjectProject",
+            models=[dm, om1, om2],
+            owner="tester",
+            metadata=meta,
+        )
+
+        file_path = str(tmp_path / "multi_object.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Both object models must be emitted as ObjectModel(...) definitions...
+        assert code.count("ObjectModel(") == 2
+        # ...and both must be referenced in the final Project(models=[...]) list.
+        assert "object_model_1" in code
+        assert "object_model_2" in code
+
+        # The generated file must be valid, runnable Python that reconstructs a
+        # project holding BOTH object models (i.e. nothing was dropped).
+        compile(code, file_path, "exec")
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        object_models = [m for m in recreated.models if isinstance(m, ObjectModel)]
+        assert len(object_models) == 2
 
 
 # ---------------------------------------------------------------------------

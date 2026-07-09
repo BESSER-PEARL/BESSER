@@ -1134,9 +1134,38 @@ class SmartGenerationRunner:
             # unqualified success even though requested changes never ran.
             exited_cleanly = bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
             stop_reason = getattr(orchestrator, "_phase2_stop_reason", "completed")
-            incomplete = not exited_cleanly
+
+            # Phase 3 can DETECT blocker-class issues (syntax / import /
+            # dependency errors — the "won't compile / won't boot" class) that
+            # the bounded auto-fix loop couldn't resolve. Those must also mark
+            # the run incomplete: without this, an app that parsed but has an
+            # unfixed blocker ships as an unqualified green "success" even
+            # though it can't run. (The verdict previously keyed ONLY on Phase 2
+            # emitting end_turn.)
+            _unfixed_blockers = [
+                getattr(i, "message", str(i))
+                for i in (getattr(orchestrator, "_validation_issues", None) or [])
+                if getattr(i, "severity", None) == "blocker"
+            ]
+
+            incomplete = (not exited_cleanly) or bool(_unfixed_blockers)
             incomplete_reason_msg: Optional[str] = None
-            if incomplete:
+            if incomplete and exited_cleanly and _unfixed_blockers:
+                # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                incomplete_reason_msg = (
+                    f"The app was built but {len(_unfixed_blockers)} blocker-level "
+                    "issue(s) remain that likely stop it from running "
+                    "(syntax / import / dependency errors). First: "
+                    + _unfixed_blockers[0][:160]
+                )
+                yield format_sse(ErrorEvent(
+                    code="INCOMPLETE",
+                    message=(
+                        incomplete_reason_msg
+                        + " The downloaded output may not run as-is."
+                    ),
+                ))
+            if not exited_cleanly:
                 api_err = (getattr(orchestrator, "_phase2_api_error", "") or "")[:160]
                 _REASON_TEXT = {
                     "api_error": (

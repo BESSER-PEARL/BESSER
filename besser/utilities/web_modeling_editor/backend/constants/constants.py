@@ -52,7 +52,12 @@ def _env_bool(name: str, default: bool) -> bool:
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.
-LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 2.0)
+# Set to $5 to match the from-scratch ceiling below: the UI reads this hard
+# cap from /smart-gen/config, so a lower value here was DISHONEST — it showed
+# "$2" while a from-scratch run was already permitted up to $5. One honest
+# ceiling everywhere. (The DEFAULT below stays $1 — the cap is the max a user
+# can opt into, not what a normal run spends.)
+LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
 LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 900)
 LLM_DEFAULT_MAX_COST_USD = min(
     _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 1.0),

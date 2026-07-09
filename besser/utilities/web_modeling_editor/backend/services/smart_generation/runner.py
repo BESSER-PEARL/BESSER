@@ -94,12 +94,20 @@ _EVENT_QUEUE_MAXSIZE = 2048
 # otherwise bloat the last SSE frame beyond any reasonable size.
 _MAX_RECIPE_BYTES = 256 * 1024  # 256 KB
 
-# Build-output directories that must never reach the download zip.
-# These are created when the LLM (or Phase 3 validation) runs package
-# managers / compilers inside the workspace.
+# Build-output dirs + runtime/artifact FILE globs that must never reach the
+# download zip OR a GitHub push. Fed to shutil.ignore_patterns (used by both
+# the modify/continue-from-repo SEED copy and the push copy), which fnmatches
+# base names, so file globs work alongside the directory names. The file
+# globs matter because a run leaves artifacts IN the workspace that the seed
+# would otherwise carry into the next run and the push would commit: the
+# download zip itself (besser_smart_*.zip) and the SQLite DB that seed_data /
+# a validation run creates (*.db) were both landing in the pushed repo.
 _EXCLUDED_OUTPUT_DIRS = {
+    # build-output / dependency directories
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
-    ".next", ".gradle", "venv", ".venv", ".besser_snapshot",
+    ".next", ".gradle", "venv", ".venv", ".besser_snapshot", ".pytest_cache",
+    # runtime / build artifact files (never belong in source or a push)
+    "*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log",
 }
 
 

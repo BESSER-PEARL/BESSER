@@ -370,6 +370,16 @@ Keep the plan short (a few lines), then proceed with surgical edits.
       cohesive modern look, not unstyled browser-default HTML.
     - Internal consistency: `package.json` dependencies match the imports; the
       dev/build scripts actually run the app.
+    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
+    - `onSubmit={() => {}}` or any empty/no-op submit handler. A form's submit
+      MUST call the backend (create → POST, edit → PUT) through the API layer,
+      then refresh the list or navigate back. A form that collects input but
+      submits nowhere is worse than no form.
+    - A `<Router>`/`<Routes>` with no `"/"` route → the app renders BLANK on
+      load. Always add a `"/"` landing page and a nav/header (links or a menu)
+      to every entity's list and its "new" page, present on every screen.
+    - A list with no Delete control. Each row needs Edit + Delete wired to
+      PUT / DELETE.
 
 {idiom_section}## Tools for deeper model inspection
 

@@ -208,11 +208,16 @@ _MAX_TOOLCHAIN_FIX_ITERATIONS = 3
 _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
     "generate_fastapi_backend": {
         "generate_pydantic", "generate_sqlalchemy", "generate_rest_api",
+        "generate_json_schema", "generate_sql",
     },
-    "generate_django": {"generate_pydantic", "generate_sqlalchemy"},
+    "generate_django": {
+        "generate_pydantic", "generate_sqlalchemy", "generate_json_schema",
+        "generate_sql",
+    },
     "generate_web_app": {
         "generate_pydantic", "generate_sqlalchemy", "generate_rest_api",
-        "generate_fastapi_backend", "generate_react",
+        "generate_fastapi_backend", "generate_react", "generate_json_schema",
+        "generate_sql",
     },
 }
 

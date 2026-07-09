@@ -4,6 +4,10 @@ Quantum diagram conversion from BUML to JSON format.
 
 from typing import Dict, Any
 
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_eval import (
+    safe_exec,
+    UnsafeConstruct,
+)
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, QuantumOperation, PrimitiveGate, ParametricGate,
     ArithmeticGate, ModularArithmeticGate, ComparisonGate, QFTGate,
@@ -512,9 +516,12 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        # AST whitelist evaluation instead of exec() — the uploaded quantum
+        # circuit source is untrusted (see _safe_eval).
+        local_vars = safe_exec(cleaned_content, safe_globals)
+    except UnsafeConstruct:
+        raise
     except Exception as exc:
         raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
 

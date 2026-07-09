@@ -66,6 +66,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
     serialise_event_type,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_eval import (
+    safe_exec,
+)
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     calculate_connection_points,
     calculate_path_points,
@@ -549,9 +552,11 @@ def bpmn_buml_to_json(content: str) -> dict:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars: dict = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        # AST whitelist evaluation instead of exec() — the uploaded BPMN model
+        # source is untrusted (see _safe_eval). UnsafeConstruct subclasses
+        # ValueError, so a security refusal is reported as a ConversionError too.
+        local_vars: dict = safe_exec(cleaned_content, safe_globals)
     except (SyntaxError, NameError, TypeError, ValueError) as exc:
         raise ConversionError(f"BPMN BUML file failed to execute: {exc}") from exc
 

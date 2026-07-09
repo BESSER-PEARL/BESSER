@@ -8,6 +8,7 @@ including domain model context, file inventory, and scoped task lists.
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from besser.generators.llm.model_serializer import (
@@ -37,6 +38,7 @@ def build_system_prompt(
     quantum_circuit=None,
     primary_kind: str | None = None,
     scaffold_snapshot: str = "",
+    endpoint_manifest: str = "",
     modify_mode: bool = False,
 ) -> str:
     """
@@ -202,6 +204,16 @@ def build_system_prompt(
     inventory_section = ""
     if inventory:
         inventory_section = f"\n## What was already generated\n\n{inventory}\n"
+
+    # Exact backend endpoint manifest — removes the frontend's URL-reconstruction
+    # guesswork (the #1 "builds but 404s" failure). Constant across turns within
+    # a run, so it caches with the rest of the prompt.
+    endpoint_section = ""
+    if endpoint_manifest:
+        endpoint_section = (
+            "\n## Backend REST API — the EXACT routes your frontend must call\n\n"
+            f"{endpoint_manifest}\n"
+        )
 
     # Inline scaffold contents — saves the LLM 2-4 read_file round-trips
     # at the start of nearly every run. Constant ACROSS TURNS within a
@@ -404,7 +416,7 @@ than re-reading or guessing:
     variable_tail = f"""\
 
 ## Variable context (per-run — not cached below this line)
-{inventory_section}{snapshot_section}
+{inventory_section}{endpoint_section}{snapshot_section}
 ## User request
 
 The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to
@@ -520,6 +532,138 @@ _SNAPSHOT_SKIP_DIRS = {
     ".besser_snapshot", "node_modules", "target", "__pycache__", ".git",
     "dist", "build", ".next", ".gradle", "venv", ".venv",
 }
+
+# Route decorators + mount/prefix/port patterns for the endpoint manifest.
+_ENDPOINT_DECORATOR_RE = re.compile(
+    r"@(?P<var>\w+)\.(?P<method>get|post|put|patch|delete|head|options)\("
+    r"\s*(?P<q>[\"'])(?P<path>.*?)(?P=q)",
+    re.IGNORECASE | re.DOTALL,
+)
+_APIROUTER_PREFIX_RE = re.compile(
+    r"APIRouter\([^)]*\bprefix\s*=\s*[\"']([^\"']*)[\"']", re.DOTALL
+)
+_INCLUDE_ROUTER_PREFIX_RE = re.compile(
+    r"include_router\(\s*(?P<ref>[\w.]+)[^)]*\bprefix\s*=\s*[\"'](?P<prefix>[^\"']*)[\"']",
+    re.DOTALL,
+)
+_UVICORN_PORT_RE = re.compile(r"uvicorn\.run\([^)]*\bport\s*=\s*(\d+)", re.DOTALL)
+_IMPORT_ALIAS_RE = re.compile(
+    r"^\s*(?:from\s+[\w.]*\brouters\s+import\s+(?P<mod1>\w+)(?:\s+as\s+(?P<alias1>\w+))?"
+    r"|import\s+[\w.]*routers\.(?P<mod2>\w+)(?:\s+as\s+(?P<alias2>\w+))?)",
+    re.MULTILINE,
+)
+_METHOD_ORDER = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4, "HEAD": 5, "OPTIONS": 6}
+
+
+def _norm_path(*parts: str) -> str:
+    """Join URL fragments and collapse duplicate slashes, keep leading slash."""
+    joined = "/".join(p.strip("/") for p in parts if p and p.strip("/"))
+    path = "/" + joined
+    # Preserve a single trailing slash if any source fragment had one.
+    if parts and parts[-1].endswith("/") and not path.endswith("/"):
+        path += "/"
+    return re.sub(r"/{2,}", "/", path)
+
+
+def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
+    """List the EXACT HTTP routes the generated backend serves.
+
+    The LLM-authored frontend otherwise reconstructs each URL from the router
+    file + where it is mounted and drifts — pluralizes (``/books``), adds an
+    ``/api`` prefix, or drops the trailing slash — producing runtime 404s that
+    look like a finished app. Handing it the already-served paths removes that
+    reconstruction entirely.
+
+    Parsed STATICALLY from the generated FastAPI routers (no import / no code
+    execution). Returns ``""`` when no HTTP routes are found (non-backend runs),
+    so the caller can omit the section.
+    """
+    port = None
+    app_prefix_by_module: dict[str, str] = {}
+    router_files: list[tuple[str, str]] = []  # (module_basename, content)
+
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                content = open(fpath, encoding="utf-8", errors="ignore").read()
+            except OSError:
+                continue
+
+            if port is None:
+                m = _UVICORN_PORT_RE.search(content)
+                if m:
+                    port = int(m.group(1))
+
+            # App/mount file: map each mounted router module -> its include prefix
+            # (only present if a prefix is actually set; usually none).
+            if "include_router(" in content:
+                alias_to_mod = {}
+                for im in _IMPORT_ALIAS_RE.finditer(content):
+                    mod = im.group("mod1") or im.group("mod2")
+                    alias = im.group("alias1") or im.group("alias2") or mod
+                    if mod:
+                        alias_to_mod[alias] = mod
+                for inc in _INCLUDE_ROUTER_PREFIX_RE.finditer(content):
+                    ref = inc.group("ref").split(".")[0]
+                    mod = alias_to_mod.get(ref, ref)
+                    app_prefix_by_module[mod] = inc.group("prefix")
+
+            if _ENDPOINT_DECORATOR_RE.search(content):
+                router_files.append((os.path.splitext(fname)[0], content))
+
+    # (method, path) -> collected, deduped
+    methods_by_path: dict[str, set[str]] = {}
+    for module, content in router_files:
+        rp = _APIROUTER_PREFIX_RE.search(content)
+        router_prefix = rp.group(1) if rp else ""
+        include_prefix = app_prefix_by_module.get(module, "")
+        for m in _ENDPOINT_DECORATOR_RE.finditer(content):
+            method = m.group("method").upper()
+            raw = m.group("path")
+            full = _norm_path(include_prefix, router_prefix, raw)
+            methods_by_path.setdefault(full, set()).add(method)
+
+    if not methods_by_path:
+        return ""
+
+    def _group_key(path: str) -> str:
+        segs = [s for s in path.split("/") if s and not s.startswith("{")]
+        return segs[0] if segs else path
+
+    paths = sorted(methods_by_path.keys())
+    if len(paths) > max_routes:
+        paths = paths[:max_routes]
+        truncated = len(methods_by_path) - max_routes
+    else:
+        truncated = 0
+
+    lines: list[str] = []
+    last_group = None
+    for path in sorted(paths, key=lambda p: (_group_key(p), p)):
+        group = _group_key(path)
+        if group != last_group:
+            if last_group is not None:
+                lines.append("")
+            last_group = group
+        methods = sorted(methods_by_path[path], key=lambda x: _METHOD_ORDER.get(x, 99))
+        lines.append(f"  {', '.join(methods):<20} {path}")
+
+    base_url = f"http://localhost:{port or 8000}"
+    header = (
+        "The FastAPI backend is ALREADY generated and serves the routes below "
+        f"(base URL {base_url}). Call these paths from the frontend EXACTLY as "
+        "written - copy them verbatim. Do NOT add an `/api` prefix, do NOT "
+        "pluralize entity names, and keep the trailing slash. These are the only "
+        "routes that exist; a request to any other path will 404."
+    )
+    body = "\n".join(lines)
+    if truncated:
+        body += f"\n\n  ... and {truncated} more routes (same conventions)."
+    return f"{header}\n\n{body}"
 
 
 def build_scaffold_snapshot(

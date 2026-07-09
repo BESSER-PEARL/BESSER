@@ -57,6 +57,7 @@ from besser.generators.llm.prompt_builder import (
     build_scaffold_snapshot,
     build_system_prompt,
     build_inventory,
+    build_endpoint_manifest,
 )
 from besser.generators.llm.stack_metadata import (
     detect_stack,
@@ -3467,6 +3468,15 @@ class LLMOrchestrator:
             except Exception:
                 logger.debug("Scaffold snapshot build failed", exc_info=True)
 
+        # Exact backend endpoint manifest so the LLM-authored frontend targets
+        # real routes instead of reconstructing (and drifting from) them. Best
+        # effort — never let a parse failure abort prompt construction.
+        endpoint_manifest = ""
+        try:
+            endpoint_manifest = build_endpoint_manifest(self.output_dir)
+        except Exception:
+            logger.debug("Endpoint manifest build failed", exc_info=True)
+
         return build_system_prompt(
             domain_model=self.domain_model,
             gui_model=self.gui_model,
@@ -3481,6 +3491,7 @@ class LLMOrchestrator:
             quantum_circuit=self.quantum_circuit,
             primary_kind=self.primary_kind,
             scaffold_snapshot=scaffold_snapshot,
+            endpoint_manifest=endpoint_manifest,
             # ``_modify_mode`` is False on the run()/resume() paths, so the
             # from-scratch prompt stays byte-identical; only ``modify()``
             # flips it to prepend the "preserve what works" directive.

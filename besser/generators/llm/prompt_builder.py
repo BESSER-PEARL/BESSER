@@ -354,6 +354,22 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     frontend forms wired to working backend auth endpoints. "Login" implies
     the user can also CREATE AN ACCOUNT unless they say otherwise. No auth
     stubs — a user must be able to register, then log in, end to end.
+15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
+    the UI is already specified by GUI screens. Read-only lists are NOT
+    enough. For the React frontend, build:
+    - A home route (`"/"`) AND a persistent navigation bar/header linking every
+      entity's page. The app must NEVER render blank on load — if you use a
+      router, give it a landing page and wire the nav links to the routes.
+    - Per entity: a list/table view PLUS working **Create** (a real form),
+      **Edit** (a pre-filled form), and **Delete** — each wired to the backend's
+      POST / PUT / DELETE endpoints, not just the GET list. A page that can only
+      read is half-built (rule 12).
+    - Loading, empty, and error states on every data fetch.
+    - One shared stylesheet applied across the whole app (cards or clean tables,
+      consistent spacing, a primary + accent colour, readable contrast) — a
+      cohesive modern look, not unstyled browser-default HTML.
+    - Internal consistency: `package.json` dependencies match the imports; the
+      dev/build scripts actually run the app.
 
 {idiom_section}## Tools for deeper model inspection
 

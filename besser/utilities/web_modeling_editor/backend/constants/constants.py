@@ -132,6 +132,16 @@ LLM_ENABLE_TOOLCHAIN_VALIDATION = _env_bool(
 # same guarded tool executor as Phase 2 (no new capability surface).
 LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
 
+# Whether the Phase-2 / Phase-3 agent may use the arbitrary-shell tools
+# (run_command / install_dependencies). OFF by default for the hosted deploy:
+# they execute LLM/user-authored commands with shell=True in the backend
+# process, and the cwd lock + denylist are UX, not a sandbox — on a shared,
+# BYOK, ministry-facing box that is user-steerable remote code execution and
+# server-secret exfiltration. The agent keeps every static tool (read/write/
+# modify/check_syntax). Trusted local/CLI/bench runs can re-enable via the env
+# var. Durable answer is per-run container isolation.
+LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
+
 # Grace period added on top of the request's max_runtime_seconds before
 # the runner-level watchdog force-cancels a run (covers Phase 3 +
 # packaging time after the Phase 2 loop hits its own runtime check).

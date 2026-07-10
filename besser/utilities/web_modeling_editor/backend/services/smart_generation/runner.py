@@ -44,6 +44,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
     LLM_ENABLE_AUTO_FIX,
+    LLM_ENABLE_SHELL_TOOLS,
     LLM_ENABLE_CHECKPOINTING,
     LLM_ENABLE_TOOLCHAIN_VALIDATION,
     LLM_ENABLE_TRACING,
@@ -806,6 +807,12 @@ class SmartGenerationRunner:
             # as a green success. Bounded 3x5 turns with snapshot/rollback;
             # honours the run's cancel/cost/runtime budget per fix turn.
             auto_fix_issues=LLM_ENABLE_AUTO_FIX,
+            # Disable the arbitrary-shell tools on the hosted deploy — they are
+            # user-steerable RCE / secret-exfil on a shared BYOK box. OFF by
+            # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
+            # static tool; only arbitrary `run_command`/`install_dependencies`
+            # are withheld.
+            allow_shell_tools=LLM_ENABLE_SHELL_TOOLS,
             # Binding generator choice from an approved preview plan
             # (validated by the request model). None = auto-select.
             target_generator=getattr(

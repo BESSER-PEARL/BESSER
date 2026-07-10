@@ -548,12 +548,16 @@ def get_available_generator_names(
     ]
 
 
+_SHELL_TOOLS = frozenset({"run_command", "install_dependencies"})
+
+
 def get_tools_for(
     has_domain_model: bool = True,
     has_gui_model: bool = False,
     has_agent_model: bool = False,
     has_state_machines: bool = False,
     has_quantum_circuit: bool = False,
+    allow_shell: bool = True,
 ) -> list[dict[str, Any]]:
     """Return the tool list scoped to which models are actually loaded.
 
@@ -587,6 +591,10 @@ def get_tools_for(
         available.add("quantum")
 
     def _keep(tool: dict[str, Any]) -> bool:
+        # Arbitrary-shell tools are a hosted-RCE surface: drop them unless the
+        # caller (a trusted local/CLI/bench run) explicitly opts in.
+        if not allow_shell and tool["name"] in _SHELL_TOOLS:
+            return False
         requirements = _TOOL_MODEL_REQUIREMENTS.get(tool["name"], frozenset())
         return requirements.issubset(available)
 

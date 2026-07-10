@@ -64,7 +64,7 @@ from besser.generators.llm.stack_metadata import (
     pre_generate_metadata,
     stack_label,
 )
-from besser.generators.llm.tool_executor import ToolExecutor
+from besser.generators.llm.tool_executor import ToolExecutor, _safe_subprocess_env
 from besser.generators.llm.tools import get_all_tools, get_all_tools_including_generators
 from besser.generators.llm.tracing import (
     EVENT_CHECKPOINT,
@@ -290,6 +290,7 @@ class LLMOrchestrator:
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
         enable_toolchain_validation: bool = True,
+        allow_shell_tools: bool = True,
         target_generator: str | None = None,
         source_project_export: dict | None = None,
     ):
@@ -337,6 +338,12 @@ class LLMOrchestrator:
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
         # are hidden when there isn't one so the LLM doesn't waste turns
         # calling generators that will just error. See tools.get_tools_for.
+        # ``allow_shell_tools=False`` drops run_command/install_dependencies —
+        # the arbitrary-shell tools. On a hosted, multi-tenant, BYOK box those
+        # are user-steerable RCE (the cwd lock + denylist are UX, not a
+        # sandbox), so the web runner disables them; trusted local/CLI/bench
+        # runs keep them for self-verification.
+        self.allow_shell_tools = allow_shell_tools
         from besser.generators.llm.tools import get_tools_for
         self.tools = get_tools_for(
             has_domain_model=self.domain_model is not None,
@@ -344,6 +351,7 @@ class LLMOrchestrator:
             has_agent_model=self.agent_model is not None,
             has_state_machines=bool(self.state_machines),
             has_quantum_circuit=self.quantum_circuit is not None,
+            allow_shell=allow_shell_tools,
         )
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
@@ -2758,6 +2766,10 @@ class LLMOrchestrator:
                              "--dry-run", "-r", "requirements.txt", "--quiet"],
                             capture_output=True, text=True, timeout=30,
                             cwd=req_dir,
+                            # Never expose provider keys / OAuth secrets to a
+                            # (possibly untrusted) requirements.txt's build
+                            # backend, which pip may execute to resolve sdists.
+                            env=_safe_subprocess_env(),
                         )
                         if result.returncode != 0:
                             # Extract the meaningful error
@@ -2942,6 +2954,7 @@ class LLMOrchestrator:
                     self.output_dir,
                 ],
                 capture_output=True, text=True, timeout=30,
+                env=_safe_subprocess_env(),
             )
         except (subprocess.TimeoutExpired, OSError):
             return []
@@ -2994,6 +3007,7 @@ class LLMOrchestrator:
                     [tsc_bin, "--noEmit", "-p", "."],
                     capture_output=True, text=True, timeout=60,
                     cwd=project_dir,
+                    env=_safe_subprocess_env(),
                 )
             except (subprocess.TimeoutExpired, OSError):
                 continue
@@ -3053,7 +3067,10 @@ class LLMOrchestrator:
         # lands inside the output dir — bloating the download zip — and
         # every check cold-compiles all dependency crates from scratch.
         # A shared per-host cache dir makes repeat checks incremental.
-        cargo_env = {**os.environ}
+        # Strip secrets from the env handed to cargo (it can execute build.rs /
+        # proc-macros from generated crates). Keeps PATH/HOME so cargo still
+        # resolves its toolchain + ~/.cargo.
+        cargo_env = {**_safe_subprocess_env()}
         cargo_env.setdefault(
             "CARGO_TARGET_DIR",
             os.path.join(tempfile.gettempdir(), "besser_cargo_cache"),
@@ -3189,6 +3206,7 @@ class LLMOrchestrator:
                     [kotlinc_bin, "-nowarn", "-d", os.devnull, *kt_files],
                     capture_output=True, text=True, timeout=180,
                     cwd=self.output_dir,
+                    env=_safe_subprocess_env(),
                 )
             except (subprocess.TimeoutExpired, OSError):
                 continue

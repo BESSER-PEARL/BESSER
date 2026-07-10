@@ -778,6 +778,8 @@ class SmartGenerationRunner:
             object_model=assembled.object_model,
             state_machines=assembled.state_machines,
             quantum_circuit=assembled.quantum_circuit,
+            bpmn_model=assembled.bpmn_model,
+            nn_model=assembled.nn_model,
             output_dir=self.temp_dir,
             max_cost_usd=self.request.max_cost_usd,
             max_runtime_seconds=self.request.max_runtime_seconds,

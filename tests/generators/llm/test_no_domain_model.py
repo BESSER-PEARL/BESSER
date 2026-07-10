@@ -100,6 +100,8 @@ def test_tool_filter_restores_domain_generators_when_model_present():
         t["name"]
         for t in get_tools_for(
             has_domain_model=True, has_gui_model=True, has_quantum_circuit=True,
+            has_agent_model=True, has_object_model=True, has_bpmn_model=True,
+            has_nn_model=True,
         )
     }
     with_domain_gui = {

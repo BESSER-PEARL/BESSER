@@ -192,6 +192,83 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "generate_supabase",
+        "description": (
+            "Generate Supabase-flavoured PostgreSQL DDL from the domain model — "
+            "UUID primary keys, auth.users mirroring, and Row-Level-Security (RLS) "
+            "policies. Output: a .sql file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_root": {
+                    "type": "string",
+                    "description": "Class mapped to Supabase auth users (default: User)",
+                },
+            },
+        },
+    },
+    {
+        "name": "generate_json_object",
+        "description": (
+            "Generate a JSON document of the object (instance) model — the concrete "
+            "instances and their attribute/relationship values (useful as seed data / "
+            "fixtures). REQUIRES an object model. Output: <model>.json"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "generate_baf",
+        "description": (
+            "Generate a BESSER Agent Framework (BAF) chatbot/agent project from the "
+            "agent model. REQUIRES an agent model. Output: a Python BAF agent project."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "generate_bpmn",
+        "description": (
+            "Generate vendor-neutral BPMN 2.0 XML from the BPMN process model. "
+            "REQUIRES a BPMN model. Output: bpmn_diagram.bpmn"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "generate_pytorch",
+        "description": (
+            "Generate PyTorch neural-network training/eval code from the NN model. "
+            "REQUIRES a neural-network model (and PyTorch installed). Output: pytorch_nn.py"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "generation_type": {
+                    "type": "string",
+                    "enum": ["subclassing", "sequential"],
+                    "description": "PyTorch code style (default: subclassing)",
+                },
+            },
+        },
+    },
+    {
+        "name": "generate_tensorflow",
+        "description": (
+            "Generate TensorFlow/Keras neural-network training/eval code from the NN "
+            "model. REQUIRES a neural-network model (and TensorFlow installed). "
+            "Output: tf_nn.py"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "generation_type": {
+                    "type": "string",
+                    "enum": ["subclassing", "sequential"],
+                    "description": "TensorFlow code style (default: subclassing)",
+                },
+            },
+        },
+    },
 ]
 
 # ======================================================================
@@ -505,8 +582,15 @@ _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
     "generate_react":           frozenset({"domain", "gui"}),
     "generate_flutter":         frozenset({"domain", "gui"}),
     "generate_web_app":         frozenset({"domain", "gui"}),
+    # Supabase DDL is domain-only, like the other database generators
+    "generate_supabase":        frozenset({"domain"}),
     # Generators driven by other models
     "generate_qiskit":          frozenset({"quantum"}),
+    "generate_json_object":     frozenset({"object"}),
+    "generate_baf":             frozenset({"agent"}),
+    "generate_bpmn":            frozenset({"bpmn"}),
+    "generate_pytorch":         frozenset({"nn"}),
+    "generate_tensorflow":      frozenset({"nn"}),
     # Model-query tools need the domain model
     "query_class":              frozenset({"domain"}),
     "list_classes_with":        frozenset({"domain"}),
@@ -521,6 +605,9 @@ def get_available_generator_names(
     has_agent_model: bool = False,
     has_state_machines: bool = False,
     has_quantum_circuit: bool = False,
+    has_object_model: bool = False,
+    has_bpmn_model: bool = False,
+    has_nn_model: bool = False,
 ) -> list[str]:
     """Names of the generators whose required models are present.
 
@@ -541,6 +628,12 @@ def get_available_generator_names(
         available.add("state_machine")
     if has_quantum_circuit:
         available.add("quantum")
+    if has_object_model:
+        available.add("object")
+    if has_bpmn_model:
+        available.add("bpmn")
+    if has_nn_model:
+        available.add("nn")
     return [
         tool["name"]
         for tool in GENERATOR_TOOLS
@@ -557,6 +650,9 @@ def get_tools_for(
     has_agent_model: bool = False,
     has_state_machines: bool = False,
     has_quantum_circuit: bool = False,
+    has_object_model: bool = False,
+    has_bpmn_model: bool = False,
+    has_nn_model: bool = False,
     allow_shell: bool = True,
 ) -> list[dict[str, Any]]:
     """Return the tool list scoped to which models are actually loaded.
@@ -589,6 +685,12 @@ def get_tools_for(
         available.add("state_machine")
     if has_quantum_circuit:
         available.add("quantum")
+    if has_object_model:
+        available.add("object")
+    if has_bpmn_model:
+        available.add("bpmn")
+    if has_nn_model:
+        available.add("nn")
 
     def _keep(tool: dict[str, Any]) -> bool:
         # Arbitrary-shell tools are a hosted-RCE surface: drop them unless the

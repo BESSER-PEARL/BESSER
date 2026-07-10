@@ -31,6 +31,12 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import (
     process_gui_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.bpmn_diagram_processor import (
+    process_bpmn_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+    process_nn_diagram,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.object_diagram_processor import (
     process_object_diagram,
 )
@@ -81,6 +87,8 @@ class AssembledModels:
     object_model: Optional[Any] = None                  # ObjectModel — instance data / fixtures
     state_machines: List[Any] = field(default_factory=list)  # list of StateMachine
     quantum_circuit: Optional[Any] = None               # QuantumCircuit or None
+    bpmn_model: Optional[Any] = None                    # BPMNModel or None
+    nn_model: Optional[Any] = None                      # NN model or None
 
     def summary(self) -> dict[str, Any]:
         """Shape suitable for the preview endpoint response.
@@ -193,6 +201,8 @@ def assemble_models_from_project(
     object_model = _assemble_object_model(project, domain_model)
     state_machines = _assemble_state_machines(project)
     quantum_circuit = _assemble_quantum_circuit(project)
+    bpmn_model = _assemble_bpmn_model(project)
+    nn_model = _assemble_nn_model(project)
 
     primary_kind = _resolve_primary_kind(
         override=primary_kind_override,
@@ -219,6 +229,8 @@ def assemble_models_from_project(
         object_model=object_model,
         state_machines=state_machines,
         quantum_circuit=quantum_circuit,
+        bpmn_model=bpmn_model,
+        nn_model=nn_model,
     )
 
 
@@ -382,6 +394,36 @@ def _assemble_object_model(
         logger.exception(
             "Failed to process ObjectDiagram for smart generation; "
             "continuing without object model"
+        )
+        return None
+
+
+def _assemble_bpmn_model(project: ProjectInput) -> Optional[Any]:
+    """Process the active BPMNDiagram into a ``BPMNModel`` (best-effort)."""
+    diagram = project.get_active_diagram("BPMNDiagram")
+    if diagram is None or not getattr(diagram, "model", None):
+        return None
+    try:
+        return process_bpmn_diagram(diagram.model_dump())
+    except Exception:
+        logger.exception(
+            "Failed to process BPMNDiagram for smart generation; "
+            "continuing without BPMN model"
+        )
+        return None
+
+
+def _assemble_nn_model(project: ProjectInput) -> Optional[Any]:
+    """Process the active NNDiagram into a BUML NN model (best-effort)."""
+    diagram = project.get_active_diagram("NNDiagram")
+    if diagram is None or not getattr(diagram, "model", None):
+        return None
+    try:
+        return process_nn_diagram(diagram.model_dump())
+    except Exception:
+        logger.exception(
+            "Failed to process NNDiagram for smart generation; "
+            "continuing without NN model"
         )
         return None
 

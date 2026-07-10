@@ -195,6 +195,9 @@ class ToolExecutor:
         agent_model: Any = None,
         agent_config: dict | None = None,
         quantum_circuit: Any = None,
+        object_model: Any = None,
+        bpmn_model: Any = None,
+        nn_model: Any = None,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.domain_model = domain_model
@@ -202,6 +205,9 @@ class ToolExecutor:
         self.agent_model = agent_model
         self.agent_config = agent_config
         self.quantum_circuit = quantum_circuit
+        self.object_model = object_model
+        self.bpmn_model = bpmn_model
+        self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
         # Per-path modify_file counts. Once the LLM has demonstrably
@@ -476,6 +482,114 @@ class ToolExecutor:
             backend_type=args.get("backend_type", "aer_simulator"),
             shots=int(args.get("shots", 1024)),
         ).generate()
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
+    def _gen_supabase(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_supabase")
+        if err:
+            return err
+        from besser.generators.supabase.supabase_generator import SupabaseGenerator
+        out = self._gen_dir("supabase")
+        SupabaseGenerator(
+            model=self.domain_model, output_dir=out,
+            user_root=args.get("user_root", "User"),
+        ).generate()
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
+    def _gen_json_object(self, args: dict) -> dict:
+        if self.object_model is None:
+            return {
+                "error": (
+                    "generate_json_object requires an object model (ObjectDiagram) "
+                    "but this project does not include one. Skip this tool and use "
+                    "write_file instead."
+                ),
+            }
+        from besser.generators.json.json_object_generator import JSONObjectGenerator
+        out = self._gen_dir("json_object")
+        JSONObjectGenerator(model=self.object_model, output_dir=out).generate()
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
+    def _gen_baf(self, args: dict) -> dict:
+        if self.agent_model is None:
+            return {
+                "error": (
+                    "generate_baf requires an agent model (AgentDiagram) but this "
+                    "project does not include one. Skip this tool and use write_file "
+                    "instead."
+                ),
+            }
+        # Pure templated generation (GenerationMode.FULL without a config emits the
+        # templated agent code); personalization needs a provider key we don't hold
+        # here, so we deliberately skip it. Wrapped so a generator error surfaces as
+        # a tool error rather than aborting the run.
+        try:
+            from besser.generators.agents.baf_generator import BAFGenerator
+            out = self._gen_dir("baf")
+            BAFGenerator(model=self.agent_model, output_dir=out).generate()
+        except Exception as exc:
+            return {"status": "error", "error": f"BAF generation failed: {exc}"}
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
+    def _gen_bpmn(self, args: dict) -> dict:
+        if self.bpmn_model is None:
+            return {
+                "error": (
+                    "generate_bpmn requires a BPMN model (BPMNDiagram) but this "
+                    "project does not include one. Skip this tool and use write_file "
+                    "instead."
+                ),
+            }
+        from besser.generators.bpmn.bpmn_generator import BPMNGenerator
+        out = self._gen_dir("bpmn")
+        BPMNGenerator(model=self.bpmn_model, output_dir=out).generate()
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
+    def _gen_pytorch(self, args: dict) -> dict:
+        if self.nn_model is None:
+            return {
+                "error": (
+                    "generate_pytorch requires a neural-network model (NNDiagram) "
+                    "but this project does not include one. Skip this tool and use "
+                    "write_file instead."
+                ),
+            }
+        # torch is an OPTIONAL dependency, not installed in the hosted image —
+        # import lazily and degrade to a clear tool error rather than crashing.
+        try:
+            from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
+            out = self._gen_dir("pytorch")
+            PytorchGenerator(
+                model=self.nn_model, output_dir=out,
+                generation_type=args.get("generation_type", "subclassing"),
+            ).generate()
+        except ImportError as exc:
+            return {"status": "error", "error": f"PyTorch is not installed in this environment ({exc})."}
+        except Exception as exc:
+            return {"status": "error", "error": f"PyTorch generation failed: {exc}"}
+        return {"status": "ok", "files": self._track_generated_files(out)}
+
+    def _gen_tensorflow(self, args: dict) -> dict:
+        if self.nn_model is None:
+            return {
+                "error": (
+                    "generate_tensorflow requires a neural-network model (NNDiagram) "
+                    "but this project does not include one. Skip this tool and use "
+                    "write_file instead."
+                ),
+            }
+        # tensorflow is an OPTIONAL dependency — import lazily and degrade cleanly.
+        try:
+            from besser.generators.nn.tf.tf_code_generator import TFGenerator
+            out = self._gen_dir("tensorflow")
+            TFGenerator(
+                model=self.nn_model, output_dir=out,
+                generation_type=args.get("generation_type", "subclassing"),
+            ).generate()
+        except ImportError as exc:
+            return {"status": "error", "error": f"TensorFlow is not installed in this environment ({exc})."}
+        except Exception as exc:
+            return {"status": "error", "error": f"TensorFlow generation failed: {exc}"}
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_java_classes(self, args: dict) -> dict:
@@ -1029,6 +1143,12 @@ class ToolExecutor:
         "generate_web_app": _gen_web_app,
         "generate_rdf": _gen_rdf,
         "generate_qiskit": _gen_qiskit,
+        "generate_supabase": _gen_supabase,
+        "generate_json_object": _gen_json_object,
+        "generate_baf": _gen_baf,
+        "generate_bpmn": _gen_bpmn,
+        "generate_pytorch": _gen_pytorch,
+        "generate_tensorflow": _gen_tensorflow,
         # Files
         "list_files": _list_files,
         "read_file": _read_file,

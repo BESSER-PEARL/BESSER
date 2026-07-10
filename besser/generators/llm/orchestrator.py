@@ -283,6 +283,8 @@ class LLMOrchestrator:
         object_model=None,
         state_machines=None,
         quantum_circuit=None,
+        bpmn_model=None,
+        nn_model=None,
         auto_fix_issues: bool = False,
         should_continue: Callable[[], bool] | None = None,
         primary_kind: str | None = None,
@@ -300,6 +302,8 @@ class LLMOrchestrator:
         self.agent_model = agent_model
         self.agent_config = agent_config
         self.object_model = object_model
+        self.bpmn_model = bpmn_model
+        self.nn_model = nn_model
         # Normalise to a list so the prompt builder can iterate uniformly.
         if state_machines is None:
             self.state_machines: list = []
@@ -333,6 +337,9 @@ class LLMOrchestrator:
             agent_model=agent_model,
             agent_config=agent_config,
             quantum_circuit=quantum_circuit,
+            object_model=object_model,
+            bpmn_model=bpmn_model,
+            nn_model=nn_model,
         )
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
@@ -351,6 +358,9 @@ class LLMOrchestrator:
             has_agent_model=self.agent_model is not None,
             has_state_machines=bool(self.state_machines),
             has_quantum_circuit=self.quantum_circuit is not None,
+            has_object_model=self.object_model is not None,
+            has_bpmn_model=self.bpmn_model is not None,
+            has_nn_model=self.nn_model is not None,
             allow_shell=allow_shell_tools,
         )
         # Phase 3 auto-fix policy. False = report-only (industry default
@@ -1330,6 +1340,9 @@ class LLMOrchestrator:
                 has_agent_model=self.agent_model is not None,
                 has_state_machines=bool(self.state_machines),
                 has_quantum_circuit=self.quantum_circuit is not None,
+                has_object_model=self.object_model is not None,
+                has_bpmn_model=self.bpmn_model is not None,
+                has_nn_model=self.nn_model is not None,
             )
             gen_lines = [
                 f"- {tool['name']} → {tool['description']}"

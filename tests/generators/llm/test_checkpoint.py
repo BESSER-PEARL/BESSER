@@ -56,6 +56,7 @@ def _make_checkpoint(**overrides) -> Checkpoint:
         compaction_count=0,
         project_fingerprint="fp123",
         saved_at=time.time(),
+        owner_id="github:123",
     )
     base.update(overrides)
     return Checkpoint(**base)
@@ -74,6 +75,7 @@ def test_save_load_round_trip(tmp_path):
     assert loaded.turn == original.turn
     assert loaded.messages == original.messages
     assert loaded.project_fingerprint == original.project_fingerprint
+    assert loaded.owner_id == original.owner_id
 
 
 def test_load_missing_returns_none(tmp_path):

@@ -4,8 +4,10 @@ The ``api_key`` field is a ``SecretStr`` so Pydantic never renders it in
 its default ``repr`` / ``model_dump(mode='python')`` output — it shows
 as ``**********``. Even if a future developer adds a debug-level
 ``logger.info("request: %s", request)`` somewhere in the endpoint, the
-key will not leak. The runner calls ``resolved_api_key()`` exactly once,
-when constructing the LLM client, and never stores the plaintext.
+The legacy runner consumes the key in memory. The durable controller stores
+only a KMS/Fernet envelope bound to the run and owner; the isolated worker
+decrypts and removes that envelope. Plaintext key material is never persisted
+or logged.
 
 The ``max_cost_usd`` and ``max_runtime_seconds`` fields are clamped by
 field validators to the server-side hard caps so clients cannot exceed
@@ -49,7 +51,8 @@ class SmartGenerateRequest(BaseModel):
         by the modeling agent before being sent.
     api_key
         The user's Anthropic, OpenAI, or Mistral API key. BYOK — sent only
-        in the POST body, never in the URL, never logged, never persisted.
+        in the POST body and never in URLs or logs. Durable jobs temporarily
+        persist only a run-bound encrypted envelope, never plaintext.
     provider
         Which provider the key is for.
     llm_model

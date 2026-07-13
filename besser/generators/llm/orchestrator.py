@@ -191,6 +191,11 @@ def _classify_issue(message: str) -> ValidationIssue:
 # Tools that are read-only and shouldn't count for loop detection
 _READONLY_TOOLS = frozenset({"read_file", "list_files", "search_in_files", "check_syntax"})
 
+# File edits are confined to the run workspace and are the purpose of the
+# coding agent. Arbitrary shell and package-manager execution crosses a wider
+# trust boundary, so hosted workers may require an owner decision per call.
+_APPROVAL_REQUIRED_TOOLS = frozenset({"run_command", "install_dependencies"})
+
 # Maximum workers for parallel tool execution
 _MAX_PARALLEL_WORKERS = 4
 
@@ -269,13 +274,15 @@ class LLMOrchestrator:
         should_continue: Callable[[], bool] | None = None,
         primary_kind: str | None = None,
         run_id: str = "",
+        owner_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
         enable_toolchain_validation: bool = True,
-        allow_shell_tools: bool = True,
+        allow_shell_tools: bool = False,
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
+        request_tool_approval: Callable[[int, str, dict], bool] | None = None,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -329,9 +336,9 @@ class LLMOrchestrator:
         # ``allow_shell_tools=False`` drops run_command/install_dependencies —
         # the arbitrary-shell tools. On a hosted, multi-tenant, BYOK box those
         # are user-steerable RCE (the cwd lock + denylist are UX, not a
-        # sandbox), so the web runner disables them; trusted local/CLI/bench
-        # runs keep them for self-verification.
+        # sandbox), so every caller must explicitly opt in on a trusted host.
         self.allow_shell_tools = allow_shell_tools
+        self.request_tool_approval = request_tool_approval
         from besser.generators.llm.tools import get_tools_for
         self.tools = get_tools_for(
             has_domain_model=self.domain_model is not None,
@@ -413,6 +420,7 @@ class LLMOrchestrator:
         # care (or that use in-memory ``tempfile.mkdtemp`` workspaces)
         # can disable them without polluting the working tree.
         self.run_id = run_id
+        self.owner_id = owner_id
         self._trace: TraceWriter | NullTraceWriter = (
             TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind)
             if enable_tracing
@@ -654,6 +662,11 @@ class LLMOrchestrator:
         if checkpoint is None:
             raise FileNotFoundError(
                 f"No checkpoint at {self.output_dir}; nothing to resume"
+            )
+
+        if checkpoint.owner_id != self.owner_id:
+            raise CheckpointMismatchError(
+                "Checkpoint owner does not match the current principal."
             )
 
         expected = compute_fingerprint(
@@ -2168,7 +2181,11 @@ class LLMOrchestrator:
 
         tool_results = []
 
-        if len(tool_blocks) > 1:
+        requires_serial_approval = self.request_tool_approval is not None and any(
+            getattr(block, "name", "") in _APPROVAL_REQUIRED_TOOLS
+            for block in tool_blocks
+        )
+        if len(tool_blocks) > 1 and not requires_serial_approval:
             # Parallel execution for multiple independent tool calls
             logger.info("Executing %d tool calls in parallel", len(tool_blocks))
             with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
@@ -2194,9 +2211,10 @@ class LLMOrchestrator:
             block_id_order = {block.id: i for i, block in enumerate(tool_blocks)}
             tool_results.sort(key=lambda r: block_id_order.get(r["tool_use_id"], 0))
         else:
-            # Single tool call -- execute directly
-            block = tool_blocks[0]
-            tool_results.append(self._execute_single_tool(block, turn))
+            # Approval-gated calls are deliberately serial so the user sees
+            # one concrete decision at a time and results keep model order.
+            for block in tool_blocks:
+                tool_results.append(self._execute_single_tool(block, turn))
 
         return tool_results
 
@@ -2243,10 +2261,30 @@ class LLMOrchestrator:
                 -self._PER_FILE_MODIFY_THRESHOLD * 2 :
             ]
 
-        if self.on_progress:
-            self.on_progress(turn + 1, tool_name, "executing")
+        approved = True
+        if (
+            self.request_tool_approval is not None
+            and tool_name in _APPROVAL_REQUIRED_TOOLS
+        ):
+            try:
+                approved = bool(
+                    self.request_tool_approval(turn + 1, tool_name, block.input)
+                )
+            except Exception:
+                approved = False
+                logger.exception("Tool approval callback failed for %s", tool_name)
 
-        result = self.executor.execute(tool_name, block.input)
+        if approved:
+            if self.on_progress:
+                self.on_progress(turn + 1, tool_name, "executing")
+            result = self.executor.execute(tool_name, block.input)
+        else:
+            result = json.dumps({
+                "error": (
+                    f"Owner approval was not granted for {tool_name}. "
+                    "Do not retry the same action unchanged."
+                )
+            })
 
         if self._is_stuck():
             logger.warning("Possible loop: %s", tool_name)
@@ -2272,6 +2310,12 @@ class LLMOrchestrator:
             success=success,
             input=_sanitize_for_log(block.input),
         )
+        if self.on_progress:
+            self.on_progress(
+                turn + 1,
+                tool_name,
+                "done" if success else "error",
+            )
 
         return {
             "type": "tool_result",
@@ -2301,6 +2345,7 @@ class LLMOrchestrator:
             ckpt = Checkpoint(
                 schema_version=CHECKPOINT_SCHEMA_VERSION,
                 run_id=self.run_id,
+                owner_id=self.owner_id,
                 instructions=instructions,
                 primary_kind=self.primary_kind,
                 turn=turn,
@@ -2641,15 +2686,9 @@ class LLMOrchestrator:
                 tool_results = []
                 for block in response["content"]:
                     if hasattr(block, "type") and block.type == "tool_use":
-                        result = self.executor.execute(
-                            getattr(block, "name", ""),
-                            getattr(block, "input", {}),
+                        tool_results.append(
+                            self._execute_single_tool(block, self.total_turns - 1)
                         )
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                        })
                 messages.append({"role": "user", "content": tool_results})
 
     def _toolchain_commands_for(

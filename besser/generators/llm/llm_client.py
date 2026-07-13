@@ -884,14 +884,16 @@ class OpenAIProvider(LLMProvider):
 
     Args:
         api_key: OpenAI API key (or set ``OPENAI_API_KEY`` env var).
-        model: Model identifier (default: ``gpt-4o``).
+        model: Model identifier (default: ``gpt-5.6-terra``).
         max_tokens: Maximum output tokens per response.
         base_url: Custom API base URL for proxies/gateways.
     """
 
-    DEFAULT_MODEL = "gpt-4o"
+    DEFAULT_MODEL = os.environ.get(
+        "BESSER_LLM_DEFAULT_OPENAI_MODEL", "gpt-5.6-terra"
+    )
     DEFAULT_MAX_TOKENS = 16384
-    PLANNING_MODEL = "gpt-4o-mini"
+    PLANNING_MODEL = "gpt-5.6-luna"
 
     def __init__(
         self,

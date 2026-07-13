@@ -1,0 +1,4 @@
+bucket     = "replace-with-versioned-private-state-bucket"
+key        = "besser/smartgen/experimental.tfstate"
+region     = "eu-north-1"
+kms_key_id = "replace-with-terraform-state-kms-key-arn"

@@ -7,16 +7,17 @@ final download URL back to the browser.
 Security caveat
 ---------------
 ``LLMOrchestrator`` executes shell commands produced by the LLM inside a
-per-run temp directory (120s per-command timeout, no command denylist).
-It runs in the same process as the rest of the BESSER backend. This
+per-run temp directory in the backend process. Hosted deployments therefore
+keep arbitrary shell tools disabled on this legacy streaming route. This
 endpoint is BYOK — the user provides their own Anthropic or OpenAI API
-key and pays for their own run. Container-level isolation (e.g. Render)
-is the only sandbox between runs. Never deploy this endpoint on
-infrastructure shared with untrusted workloads.
+key and pays for their own run. Production paid work should use the durable
+run endpoints and isolated worker, where shell/package actions are both
+denylist-checked and owner-approved.
 
 The user's API key is accepted only in the JSON POST body, never via
 URL, query string, or headers. It is never logged, never echoed in SSE
-events, and never stored on disk.
+events. Durable jobs persist only a run-bound encrypted envelope until the
+worker decrypts and removes it; plaintext key material is never stored.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ import uuid
 from typing import AsyncIterator, Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
@@ -75,6 +76,11 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_ser
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
     get_user_token,
 )
+from besser.utilities.web_modeling_editor.backend.services.principal import (
+    Principal,
+    get_current_principal,
+    smart_gen_auth_required,
+)
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import (
     _extract_github_error_message,
     _sanitize_repo_name,
@@ -86,6 +92,7 @@ from besser.utilities.buml_code_builder import (
 )
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
+from besser.generators.llm.checkpoint import load_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +153,11 @@ async def _stream_with_slot_release(
 
 
 @router.post("/smart-generate", response_class=StreamingResponse)
-async def smart_generate(request: SmartGenerateRequest, http_request: Request):
+async def smart_generate(
+    request: SmartGenerateRequest,
+    http_request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
     """Stream an LLM-orchestrated code generation run as SSE events.
 
     Emits events in order: ``start`` → zero or more of
@@ -160,6 +171,14 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
     against ``/download-smart/{runId}`` serves the file; subsequent GETs
     return 404.
     """
+    # A modify seed is an owned artifact. Missing seeds keep the existing
+    # from-scratch fallback, but another principal's seed is hidden behind
+    # the same response shape as an expired ID.
+    if request.mode == "modify" and request.base_run_id:
+        base_entry = await SMART_RUN_REGISTRY.get(request.base_run_id)
+        if base_entry is not None and base_entry.owner_id != principal.subject:
+            raise HTTPException(status_code=404, detail="base_run_expired")
+
     # Reserve a concurrency slot BEFORE allocating any resources.
     # ``try_acquire_run_slot`` is non-blocking: the client sees an
     # immediate 429 when the server is saturated, never a hung SSE
@@ -181,6 +200,7 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
         request,
         base_run_id=request.base_run_id,
         mode=request.mode,
+        owner_id=principal.subject,
     )
     return StreamingResponse(
         _stream_with_slot_release(
@@ -218,6 +238,9 @@ async def smart_gen_config():
     # module see fresh values. The indirection has zero measurable
     # overhead vs. the LLM work these caps gate.
     from besser.utilities.web_modeling_editor.backend.constants import constants as C
+    from besser.utilities.web_modeling_editor.backend.services.smart_generation.durable_jobs import (
+        durable_jobs_enabled,
+    )
 
     return {
         "caps": {
@@ -236,6 +259,11 @@ async def smart_gen_config():
             "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            "durable_jobs": durable_jobs_enabled(),
+        },
+        "auth": {
+            "required": smart_gen_auth_required(),
+            "provider": "github",
         },
         "supported_providers": ["anthropic", "openai", "mistral"],
         # Per-provider default model names, sourced from the LLM client
@@ -251,7 +279,10 @@ async def smart_gen_config():
 
 
 @router.post("/smart-preview")
-async def smart_preview(request: SmartPreviewRequest):
+async def smart_preview(
+    request: SmartPreviewRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """Return the plan smart-generate would run, without executing it.
 
     The response lets the UI show a confirmation screen before the user
@@ -281,6 +312,11 @@ async def smart_preview(request: SmartPreviewRequest):
     at the decorator module, so ``SmartPreviewRequest`` isn't visible
     when the schema is built.
     """
+    if request.mode == "modify" and request.base_run_id:
+        base_entry = await SMART_RUN_REGISTRY.get(request.base_run_id)
+        if base_entry is not None and base_entry.owner_id != principal.subject:
+            raise HTTPException(status_code=404, detail="base_run_expired")
+
     try:
         assembled = assemble_models_from_project(
             request.project, primary_kind_override=request.primary_kind_override,
@@ -313,6 +349,7 @@ async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
     http_request: Request,
+    principal: Principal = Depends(get_current_principal),
 ):
     """Resume a smart-generate run that crashed before completion.
 
@@ -343,10 +380,19 @@ async def resume_smart_gen(
             ),
         )
 
+    checkpoint = load_checkpoint(temp_dir)
+    if (
+        checkpoint is None
+        or checkpoint.run_id != run_id
+        or checkpoint.owner_id != principal.subject
+    ):
+        # Do not reveal whether a run exists to a different principal.
+        raise HTTPException(status_code=404, detail="Unknown or expired run ID")
+
     # Atomically reserve the checkpoint/run ID before the global slot.
     # This prevents the original run and a resume (or two resumes) from
     # sharing one workspace and checkpoint.
-    cancel_event = await reserve_active_run(run_id)
+    cancel_event = await reserve_active_run(run_id, principal.subject)
     if cancel_event is None:
         raise HTTPException(
             status_code=409,
@@ -371,6 +417,7 @@ async def resume_smart_gen(
         request,
         resume_run_id=run_id,
         reserved_cancel_event=cancel_event,
+        owner_id=principal.subject,
     )
     return StreamingResponse(
         _stream_with_slot_release(
@@ -399,6 +446,7 @@ async def cancel_smart_gen(
         pattern=r"^[a-f0-9]{32}$",
         description="Hex run ID returned in the `start` SSE event",
     ),
+    principal: Principal = Depends(get_current_principal),
 ):
     """Signal a live smart-generation run to stop at its next turn.
 
@@ -413,7 +461,7 @@ async def cancel_smart_gen(
     closing so the frontend can show a definite "stopped by user"
     state instead of waiting for ``done``.
     """
-    cancelled = await request_cancellation(run_id)
+    cancelled = await request_cancellation(run_id, principal.subject)
     return {"status": "cancelled" if cancelled else "not_found", "runId": run_id}
 
 
@@ -430,6 +478,7 @@ async def download_smart(
         pattern=r"^[a-f0-9]{32}$",
         description="Hex run ID returned in the `done` SSE event",
     ),
+    principal: Principal = Depends(get_current_principal),
 ):
     """Download the output produced by a completed run.
 
@@ -441,7 +490,7 @@ async def download_smart(
     longer deletes anything.
     """
     entry = await SMART_RUN_REGISTRY.get(run_id)
-    if entry is None:
+    if entry is None or entry.owner_id != principal.subject:
         raise HTTPException(
             status_code=404,
             detail="Unknown or expired run ID",
@@ -449,11 +498,7 @@ async def download_smart(
 
     if not os.path.isfile(entry.file_path):
         # Should not happen, but guard against disk-level races.
-        logger.error(
-            "SmartRunRegistry had an entry for %s but file %s is missing",
-            run_id,
-            entry.file_path,
-        )
+        logger.error("Registered SmartGen artifact file is missing")
         raise HTTPException(
             status_code=404,
             detail="Generated output is no longer available",
@@ -681,6 +726,7 @@ def _resolve_target_branch(
 async def push_smart_to_github(
     req: PushSmartToGitHubRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+    principal: Principal = Depends(get_current_principal),
 ):
     """Push a finished vibe/smart-generation run to a GitHub repository.
 
@@ -716,7 +762,12 @@ async def push_smart_to_github(
 
     # ---- 2. Resolve the stored run (non-destructive; None if swept) ----
     entry = await SMART_RUN_REGISTRY.get(req.run_id)
-    if entry is None or not entry.temp_dir or not os.path.isdir(entry.temp_dir):
+    if (
+        entry is None
+        or entry.owner_id != principal.subject
+        or not entry.temp_dir
+        or not os.path.isdir(entry.temp_dir)
+    ):
         # Machine-usable code the frontend can branch on, plus a human
         # hint: "This generation has expired — re-generate to push."
         raise HTTPException(status_code=404, detail="run_expired")
@@ -862,6 +913,7 @@ async def push_smart_to_github(
 async def import_github_run(
     req: ImportGitHubRunRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+    principal: Principal = Depends(get_current_principal),
 ):
     """Import an existing BESSER-created GitHub repo as a modify seed.
 
@@ -932,6 +984,7 @@ async def import_github_run(
             is_zip=False,
             temp_dir=extract_dir,
             created_at=time.time(),
+            owner_id=principal.subject,
         )
         await SMART_RUN_REGISTRY.put(run_id, entry)
 

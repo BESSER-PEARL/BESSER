@@ -374,6 +374,7 @@ class TestOrchestratorIntegration:
             llm_client=MockClient(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
+            allow_shell_tools=True,
         )
 
         progress_log = []

@@ -67,12 +67,16 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     conversion_router,
     validation_router,
     deployment_router,
+    smart_generation_jobs_router,
     smart_generation_router,
 )
 
 # Smart-generation download registry — started/cancelled in the lifespan below
 from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
     SMART_RUN_REGISTRY,
+)
+from besser.utilities.web_modeling_editor.backend.services.smart_generation.durable_jobs import (
+    DURABLE_JOB_RUNTIME,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,31 +165,31 @@ def _validate_env_vars() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _validate_env_vars()
-
-    # Run an immediate cleanup of stale temp files left from previous runs,
-    # then schedule a background task that repeats every hour.
-    cleanup_old_temp_files()
-    cleanup_task = schedule_cleanup()
-
-    # Sweep expired smart-generation download entries every minute.
-    smart_gen_sweeper = asyncio.create_task(
-        SMART_RUN_REGISTRY.periodic_sweep(),
-        name="smart-gen-registry-sweeper",
-    )
-
-    yield
-
-    # Cancel background tasks on shutdown.
-    cleanup_task.cancel()
-    smart_gen_sweeper.cancel()
+    await DURABLE_JOB_RUNTIME.initialize()
+    cleanup_task = None
+    smart_gen_sweeper = None
     try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await smart_gen_sweeper
-    except asyncio.CancelledError:
-        pass
+        # Run an immediate cleanup of stale temp files left from previous runs,
+        # then schedule a background task that repeats every hour.
+        cleanup_old_temp_files()
+        cleanup_task = schedule_cleanup()
+
+        # Sweep expired smart-generation download entries every minute.
+        smart_gen_sweeper = asyncio.create_task(
+            SMART_RUN_REGISTRY.periodic_sweep(),
+            name="smart-gen-registry-sweeper",
+        )
+        yield
+    finally:
+        # Cancel background tasks on shutdown.
+        tasks = tuple(
+            task for task in (cleanup_task, smart_gen_sweeper) if task is not None
+        )
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await DURABLE_JOB_RUNTIME.close()
 
 
 # Initialize FastAPI application
@@ -208,8 +212,15 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
-    expose_headers=["Content-Disposition"],
+    allow_headers=[
+        "Content-Type",
+        "X-GitHub-Session",
+        "Content-Disposition",
+        "Authorization",
+        "Idempotency-Key",
+        "Last-Event-ID",
+    ],
+    expose_headers=["Content-Disposition", "Location", "Retry-After"],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)
@@ -226,6 +237,7 @@ app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
 app.include_router(smart_generation_router.router)
+app.include_router(smart_generation_jobs_router.router)
 
 
 # Exception handlers
@@ -269,6 +281,8 @@ def get_api_root():
             "generate": "/besser_api/generate-output",
             "generate_from_project": "/besser_api/generate-output-from-project",
             "smart_generate": "/besser_api/smart-generate",
+            "smart_gen_runs": "/besser_api/smart-gen/runs",
+            "smart_gen_run_events": "/besser_api/smart-gen/runs/{run_id}/events",
             "download_smart": "/besser_api/download-smart/{run_id}",
             "deploy": "/besser_api/deploy-app",
             "export_buml": "/besser_api/export-buml",

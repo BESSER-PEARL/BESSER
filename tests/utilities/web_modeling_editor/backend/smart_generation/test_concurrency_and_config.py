@@ -63,13 +63,19 @@ def test_config_endpoint_exposes_expected_fields():
 
     # Feature flags
     features = payload["features"]
-    for key in ("tracing_enabled", "checkpointing_enabled", "resume_enabled"):
+    for key in (
+        "tracing_enabled",
+        "checkpointing_enabled",
+        "resume_enabled",
+        "durable_jobs",
+    ):
         assert isinstance(features[key], bool)
 
     # Providers
     assert set(payload["supported_providers"]) == {
         "anthropic", "openai", "mistral",
     }
+    assert payload["auth"] == {"required": False, "provider": "github"}
 
 
 def test_config_endpoint_reflects_monkeypatched_caps(monkeypatch):
@@ -143,6 +149,18 @@ def test_resume_returns_409_when_run_id_is_already_active(monkeypatch):
     run_id = "b" * 32
     monkeypatch.setattr(
         router_module, "_locate_run_temp_dir", lambda candidate: "recoverable"
+    )
+    monkeypatch.setattr(
+        router_module,
+        "load_checkpoint",
+        lambda _directory: type(
+            "Checkpoint",
+            (),
+            {
+                "run_id": run_id,
+                "owner_id": runner_module.LOCAL_PRINCIPAL_SUBJECT,
+            },
+        )(),
     )
 
     async def _exercise() -> httpx.Response:

@@ -10,7 +10,8 @@ orchestrator picks up from the saved turn via :func:`load_checkpoint`.
 What we save
 ------------
 
-* The original request (``instructions``, ``primary_kind``, ``run_id``).
+* The original request (``instructions``, ``primary_kind``, ``run_id``)
+  and provider-neutral owner identifier.
 * The message list that's been accumulating in Phase 2. This is the
   heaviest payload — it's full conversation history including tool
   results — so we serialize it with ``default=str`` to swallow any
@@ -47,7 +48,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = ".besser_checkpoint.json"
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -69,6 +70,7 @@ class Checkpoint:
     compaction_count: int
     project_fingerprint: str           # see ``compute_fingerprint``
     saved_at: float                    # unix ts
+    owner_id: str = ""                 # provider-neutral principal subject
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +89,7 @@ class Checkpoint:
             "compaction_count": self.compaction_count,
             "project_fingerprint": self.project_fingerprint,
             "saved_at": self.saved_at,
+            "owner_id": self.owner_id,
         }
 
 
@@ -221,6 +224,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             compaction_count=int(data.get("compaction_count", 0)),
             project_fingerprint=data.get("project_fingerprint", ""),
             saved_at=float(data.get("saved_at", 0.0)),
+            owner_id=data.get("owner_id", ""),
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

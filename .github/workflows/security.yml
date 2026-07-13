@@ -9,6 +9,23 @@ on:
     - cron: '0 6 * * 1'  # Weekly Monday 6am
 
 jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Scan repository history for secrets
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo:ro"
+          -w /repo
+          ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git --redact --no-banner --log-opts=--all .
+
   codeql:
     runs-on: ubuntu-latest
     timeout-minutes: 15

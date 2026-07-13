@@ -45,7 +45,14 @@ class SessionStore:
             pruned on read and via :meth:`cleanup_expired`.
     """
 
-    def __init__(self, store_path: str = None, ttl: int = 3600):
+    def __init__(
+        self,
+        store_path: str = None,
+        ttl: int = 3600,
+        *,
+        encryption_key: str | bytes | None = None,
+        require_external_key: bool | None = None,
+    ):
         self._lock = threading.Lock()
         self._ttl = ttl
 
@@ -57,7 +64,17 @@ class SessionStore:
             self._store_path = Path(
                 store_path or os.environ.get("SESSION_STORE_PATH", default_path)
             )
-            self._key = self._get_or_create_key()
+            configured_key = encryption_key or os.environ.get(
+                "SESSION_STORE_FERNET_KEY"
+            )
+            if require_external_key is None:
+                require_external_key = os.environ.get(
+                    "BESSER_REQUIRE_EXTERNAL_SESSION_KEY", "false"
+                ).strip().lower() in {"1", "true", "yes", "on"}
+            self._key = self._get_or_create_key(
+                configured_key=configured_key,
+                require_external_key=require_external_key,
+            )
             self._fernet = Fernet(self._key)
             self._memory: Optional[Dict[str, Any]] = None
             logger.info(
@@ -75,8 +92,30 @@ class SessionStore:
     # Key management
     # ------------------------------------------------------------------
 
-    def _get_or_create_key(self) -> bytes:
-        """Load or generate a Fernet encryption key stored next to the session file."""
+    def _get_or_create_key(
+        self,
+        *,
+        configured_key: str | bytes | None,
+        require_external_key: bool,
+    ) -> bytes:
+        """Load the configured key or create a development-only local key.
+
+        Production deployments set ``SESSION_STORE_FERNET_KEY`` from their
+        secret manager and enable ``BESSER_REQUIRE_EXTERNAL_SESSION_KEY``.
+        Keeping the key beside its ciphertext remains available only as a
+        backwards-compatible local-development fallback.
+        """
+        if configured_key:
+            return (
+                configured_key.encode("ascii")
+                if isinstance(configured_key, str)
+                else configured_key
+            )
+        if require_external_key:
+            raise RuntimeError(
+                "SESSION_STORE_FERNET_KEY is required when "
+                "BESSER_REQUIRE_EXTERNAL_SESSION_KEY is enabled"
+            )
         key_path = self._store_path.with_suffix(".key")
         if key_path.exists():
             return key_path.read_bytes()

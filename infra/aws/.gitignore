@@ -1,0 +1,7 @@
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+backend.hcl
+worker-image.auto.tfvars.json

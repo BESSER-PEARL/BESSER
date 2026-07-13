@@ -82,6 +82,7 @@ class LLMGenerator(GeneratorInterface):
         max_cost_usd: Maximum estimated cost in USD before stopping (default: 5.0).
         max_runtime_seconds: Maximum wall-clock time in seconds (default: 1200 = 20 min).
         base_url: Custom API base URL (for gateways/proxies).
+        allow_shell_tools: Enable arbitrary shell tools on a trusted host only.
     """
 
     def __init__(
@@ -103,6 +104,7 @@ class LLMGenerator(GeneratorInterface):
         max_runtime_seconds: int = 1200,
         base_url: str | None = None,
         primary_kind: str | None = None,
+        allow_shell_tools: bool = False,
     ):
         # ``model`` (DomainModel) is optional now — smart generation
         # can also be driven from a state machine, agent, GUI, object,
@@ -134,6 +136,7 @@ class LLMGenerator(GeneratorInterface):
         self.max_turns = max_turns
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
+        self.allow_shell_tools = allow_shell_tools
 
         # Create client via factory (handles API key resolution per provider)
         self.llm_client: LLMProvider = create_llm_client(
@@ -174,6 +177,7 @@ class LLMGenerator(GeneratorInterface):
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
             primary_kind=self.primary_kind,
+            allow_shell_tools=self.allow_shell_tools,
         )
         result = self._orchestrator.run(self.instructions)
 

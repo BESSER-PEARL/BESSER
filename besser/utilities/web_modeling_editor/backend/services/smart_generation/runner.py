@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -28,7 +29,7 @@ import time
 import uuid
 import zipfile
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Callable, Optional
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -59,6 +60,9 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
     ValidationError,
 )
+from besser.utilities.web_modeling_editor.backend.services.principal import (
+    LOCAL_PRINCIPAL_SUBJECT,
+)
 from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
     assemble_models_from_project,
 )
@@ -76,6 +80,11 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _run_log_ref(run_id: str) -> str:
+    """Return a non-reversible correlation reference for log records."""
+    return hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:12]
 
 
 # Provider default models — single source in llm_client.DEFAULT_MODELS
@@ -137,6 +146,7 @@ class SmartRunEntry:
     is_zip: bool
     temp_dir: str
     created_at: float
+    owner_id: str = LOCAL_PRINCIPAL_SUBJECT
     # Set only by a vibe-MODIFY run whose instruction implied new domain
     # entities: the run's project export with the active ClassDiagram's
     # model replaced by the re-serialised, model-synced diagram. The push
@@ -208,7 +218,8 @@ class SmartRunRegistry:
                     shutil.rmtree(entry.temp_dir, ignore_errors=True)
                 except Exception:
                     logger.exception(
-                        "Failed to remove temp dir for expired run %s", run_id
+                        "Failed to remove temp dir for expired run ref=%s",
+                        _run_log_ref(run_id),
                     )
             if expired:
                 logger.info(
@@ -338,11 +349,20 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
 # the event between turns to stop cleanly. Closing the SSE stream alone
 # is not enough — the orchestrator runs in a worker thread and would
 # keep burning the user's BYOK budget until natural completion.
-_ACTIVE_RUNS: dict[str, asyncio.Event] = {}
+@dataclass(frozen=True)
+class _ActiveRun:
+    event: asyncio.Event
+    owner_id: str
+
+
+_ACTIVE_RUNS: dict[str, _ActiveRun] = {}
 _ACTIVE_RUNS_LOCK = asyncio.Lock()
 
 
-async def request_cancellation(run_id: str) -> bool:
+async def request_cancellation(
+    run_id: str,
+    owner_id: str = LOCAL_PRINCIPAL_SUBJECT,
+) -> bool:
     """Signal a live run to stop at its next turn boundary.
 
     Returns True if the run was found and signalled, False if no such
@@ -350,27 +370,31 @@ async def request_cancellation(run_id: str) -> bool:
     download already happened).
     """
     async with _ACTIVE_RUNS_LOCK:
-        event = _ACTIVE_RUNS.get(run_id)
-    if event is None:
+        active_run = _ACTIVE_RUNS.get(run_id)
+    if active_run is None or active_run.owner_id != owner_id:
         return False
-    event.set()
+    active_run.event.set()
     return True
 
 
-async def reserve_active_run(run_id: str) -> Optional[asyncio.Event]:
+async def reserve_active_run(
+    run_id: str,
+    owner_id: str = LOCAL_PRINCIPAL_SUBJECT,
+) -> Optional[asyncio.Event]:
     """Atomically reserve ``run_id`` for one live runner."""
     event = asyncio.Event()
     async with _ACTIVE_RUNS_LOCK:
         if run_id in _ACTIVE_RUNS:
             return None
-        _ACTIVE_RUNS[run_id] = event
+        _ACTIVE_RUNS[run_id] = _ActiveRun(event=event, owner_id=owner_id)
     return event
 
 
 async def release_active_run(run_id: str, event: asyncio.Event) -> bool:
     """Release ``run_id`` only when ``event`` is still its owner."""
     async with _ACTIVE_RUNS_LOCK:
-        if _ACTIVE_RUNS.get(run_id) is not event:
+        active_run = _ACTIVE_RUNS.get(run_id)
+        if active_run is None or active_run.event is not event:
             return False
         _ACTIVE_RUNS.pop(run_id, None)
         return True
@@ -437,6 +461,12 @@ class SmartGenerationRunner:
         reserved_cancel_event: Optional[asyncio.Event] = None,
         base_run_id: Optional[str] = None,
         mode: str = "generate",
+        owner_id: str = LOCAL_PRINCIPAL_SUBJECT,
+        run_id: Optional[str] = None,
+        allow_shell_tools: Optional[bool] = None,
+        request_tool_approval: Optional[
+            Callable[[int, str, dict], bool]
+        ] = None,
     ) -> None:
         self.request = request
         # Resuming a prior run reuses its run_id so the client can keep
@@ -444,7 +474,9 @@ class SmartGenerationRunner:
         # vibe-modify run seeded from a previous run) get a new UUID.
         # Either way the id is hex[32] so the path regex in the cancel /
         # download / resume routes accepts it.
-        self.run_id = resume_run_id or uuid.uuid4().hex
+        if resume_run_id is not None and run_id is not None:
+            raise ValueError("run_id cannot be combined with resume_run_id")
+        self.run_id = resume_run_id or run_id or uuid.uuid4().hex
         self._resume_run_id = resume_run_id
         self._reserved_cancel_event = reserved_cancel_event
         # Incremental vibe-modify. When ``mode == "modify"`` and
@@ -456,6 +488,9 @@ class SmartGenerationRunner:
         # right entry point.
         self._base_run_id = base_run_id
         self._mode = mode
+        self.owner_id = owner_id
+        self._allow_shell_tools = allow_shell_tools
+        self._request_tool_approval = request_tool_approval
         self._seeded = False
         self.temp_dir: Optional[str] = None
         self._started_at: Optional[float] = None
@@ -541,7 +576,11 @@ class SmartGenerationRunner:
                     code="INTERNAL",
                     message="Failed to allocate a workspace for this run",
                 ))
-                logger.exception("mkdtemp failed for smart-generate run %s: %s", self.run_id, exc)
+                logger.exception(
+                    "mkdtemp failed for smart-generate run ref=%s: %s",
+                    _run_log_ref(self.run_id),
+                    exc,
+                )
                 return
 
             # ---- Incremental vibe-modify: seed from the base run --------
@@ -549,6 +588,7 @@ class SmartGenerationRunner:
                 base_entry = await SMART_RUN_REGISTRY.get(self._base_run_id)
                 if (
                     base_entry is None
+                    or base_entry.owner_id != self.owner_id
                     or not base_entry.temp_dir
                     or not os.path.isdir(base_entry.temp_dir)
                 ):
@@ -565,9 +605,10 @@ class SmartGenerationRunner:
                         ),
                     ))
                     logger.info(
-                        "smart-modify base %s expired for run %s; "
+                        "smart-modify base ref=%s expired for run ref=%s; "
                         "falling back to from-scratch generation",
-                        self._base_run_id, self.run_id,
+                        _run_log_ref(self._base_run_id),
+                        _run_log_ref(self.run_id),
                     )
                     # ``_seeded`` stays False → run_orchestrator uses run().
                 else:
@@ -579,8 +620,9 @@ class SmartGenerationRunner:
                         )
                         self._seeded = True
                         logger.info(
-                            "smart-modify run %s seeded from base %s",
-                            self.run_id, self._base_run_id,
+                            "smart-modify run ref=%s seeded from base ref=%s",
+                            _run_log_ref(self.run_id),
+                            _run_log_ref(self._base_run_id),
                         )
                     except Exception:
                         # A failed copy must not corrupt the run — warn and
@@ -588,9 +630,10 @@ class SmartGenerationRunner:
                         # populated) fresh temp dir. Clear it first so we
                         # don't edit a half-copied tree.
                         logger.exception(
-                            "Failed to seed workspace for smart-modify run %s "
-                            "from base %s; falling back to from-scratch",
-                            self.run_id, self._base_run_id,
+                            "Failed to seed workspace for smart-modify run ref=%s "
+                            "from base ref=%s; falling back to from-scratch",
+                            _run_log_ref(self.run_id),
+                            _run_log_ref(self._base_run_id),
                         )
                         self._reset_temp_dir_after_failed_seed()
                         yield format_sse(ErrorEvent(
@@ -629,8 +672,8 @@ class SmartGenerationRunner:
             return
         except Exception:
             logger.exception(
-                "Unexpected error while assembling models for smart-generate run %s",
-                self.run_id,
+                "Unexpected error while assembling models for smart-generate run ref=%s",
+                _run_log_ref(self.run_id),
             )
             yield format_sse(ErrorEvent(
                 code="INTERNAL",
@@ -783,7 +826,8 @@ class SmartGenerationRunner:
                         message="LLM customising generator output",
                     )
                 )
-            _put(ToolCallEvent(turn=turn, tool=tool, status="executing"))
+            tool_status = status if status in {"executing", "done", "error"} else "executing"
+            _put(ToolCallEvent(turn=turn, tool=tool, status=tool_status))
 
         # Register this run for cancellation NOW that we've cleared all
         # the early-return paths (mkdtemp / model assembly / LLM client
@@ -791,7 +835,7 @@ class SmartGenerationRunner:
         # event and the orchestrator will stop at the next turn boundary.
         cancel_event = self._reserved_cancel_event
         if cancel_event is None:
-            cancel_event = await reserve_active_run(self.run_id)
+            cancel_event = await reserve_active_run(self.run_id, self.owner_id)
         if cancel_event is None:
             yield format_sse(ErrorEvent(
                 code="BAD_REQUEST",
@@ -844,6 +888,7 @@ class SmartGenerationRunner:
             # assemble_models_from_project.
             primary_kind=assembled.primary_kind,
             run_id=self.run_id,
+            owner_id=self.owner_id,
             # Honour the deploy-wide feature flags. The orchestrator
             # defaults to both on; ops can disable per deploy via the
             # BESSER_LLM_ENABLE_* env vars without a code change.
@@ -864,7 +909,12 @@ class SmartGenerationRunner:
             # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
             # static tool; only arbitrary `run_command`/`install_dependencies`
             # are withheld.
-            allow_shell_tools=LLM_ENABLE_SHELL_TOOLS,
+            allow_shell_tools=(
+                LLM_ENABLE_SHELL_TOOLS
+                if self._allow_shell_tools is None
+                else self._allow_shell_tools
+            ),
+            request_tool_approval=self._request_tool_approval,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,
@@ -962,8 +1012,8 @@ class SmartGenerationRunner:
                         return
                     if disconnected:
                         logger.info(
-                            "smart-gen client disconnected, cancelling run %s",
-                            self.run_id,
+                            "smart-gen client disconnected, cancelling run ref=%s",
+                            _run_log_ref(self.run_id),
                         )
                         cancel_event.set()
                         return
@@ -1011,8 +1061,8 @@ class SmartGenerationRunner:
                     self.request.max_runtime_seconds,
                 )
                 logger.warning(
-                    "smart-gen watchdog fired for run %s (cap %ds + %ds grace)",
-                    self.run_id,
+                    "smart-gen watchdog fired for run ref=%s (cap %ds + %ds grace)",
+                    _run_log_ref(self.run_id),
                     effective_cap,
                     LLM_WATCHDOG_GRACE_SECONDS,
                 )
@@ -1082,7 +1132,8 @@ class SmartGenerationRunner:
             except Exception as exc:
                 worker_exception = exc
                 logger.exception(
-                    "Unexpected error in smart_generate worker %s", self.run_id
+                    "Unexpected error in smart_generate worker ref=%s",
+                    _run_log_ref(self.run_id),
                 )
                 yield format_sse(ErrorEvent(
                     code="INTERNAL",
@@ -1284,13 +1335,15 @@ class SmartGenerationRunner:
                 # its real message (previously swallowed by the generic
                 # packaging branch below).
                 logger.error(
-                    "Smart-gen worker %s produced no output files", self.run_id
+                    "Smart-gen worker ref=%s produced no output files",
+                    _run_log_ref(self.run_id),
                 )
                 yield format_sse(ErrorEvent(code="INTERNAL", message=str(exc)))
                 self._cleanup_temp_dir()
             except Exception:
                 logger.exception(
-                    "Failed to package smart-generate output for run %s", self.run_id
+                    "Failed to package smart-generate output for run ref=%s",
+                    _run_log_ref(self.run_id),
                 )
                 yield format_sse(ErrorEvent(
                     code="INTERNAL",
@@ -1344,6 +1397,7 @@ class SmartGenerationRunner:
                 is_zip=False,
                 temp_dir=self.temp_dir,
                 created_at=time.time(),
+                owner_id=self.owner_id,
             )
         else:
             zip_name = f"besser_smart_{self.run_id}.zip"
@@ -1358,6 +1412,7 @@ class SmartGenerationRunner:
                 is_zip=True,
                 temp_dir=self.temp_dir,
                 created_at=time.time(),
+                owner_id=self.owner_id,
             )
 
         event = DoneEvent(
@@ -1379,8 +1434,8 @@ class SmartGenerationRunner:
             return {}
         if size > _MAX_RECIPE_BYTES:
             logger.warning(
-                "Skipping .besser_recipe.json for run %s: size %d exceeds %d bytes",
-                self.run_id, size, _MAX_RECIPE_BYTES,
+                "Skipping .besser_recipe.json for run ref=%s: size %d exceeds %d bytes",
+                _run_log_ref(self.run_id), size, _MAX_RECIPE_BYTES,
             )
             return {"warning": "recipe file exceeded size limit and was dropped"}
         try:
@@ -1390,7 +1445,8 @@ class SmartGenerationRunner:
                     return data
         except Exception:
             logger.exception(
-                "Failed to read .besser_recipe.json for run %s", self.run_id
+                "Failed to read .besser_recipe.json for run ref=%s",
+                _run_log_ref(self.run_id),
             )
         return {}
 
@@ -1412,8 +1468,8 @@ class SmartGenerationRunner:
             )
         except OSError:
             logger.exception(
-                "Failed to re-allocate workspace after seed failure for run %s",
-                self.run_id,
+                "Failed to re-allocate workspace after seed failure for run ref=%s",
+                _run_log_ref(self.run_id),
             )
             self.temp_dir = None
 
@@ -1440,6 +1496,7 @@ class SmartGenerationRunner:
                 shutil.rmtree(self.temp_dir, ignore_errors=True)
             except Exception:
                 logger.exception(
-                    "Failed to clean up temp dir for run %s", self.run_id
+                    "Failed to clean up temp dir for run ref=%s",
+                    _run_log_ref(self.run_id),
                 )
         self.temp_dir = None

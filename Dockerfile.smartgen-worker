@@ -1,0 +1,69 @@
+FROM python:3.12-slim
+
+ARG NODE_MAJOR=20
+ARG KOTLIN_VERSION=1.9.24
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    RUSTUP_HOME=/opt/rust/rustup \
+    CARGO_HOME=/opt/rust/cargo \
+    PATH=/opt/rust/cargo/bin:/opt/kotlinc/bin:${PATH} \
+    HOME=/home/besser \
+    PGSSLROOTCERT=/opt/aws/rds/global-bundle.pem \
+    BESSER_SMARTGEN_WORKSPACE_ROOT=/workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        openjdk-21-jdk-headless \
+        unzip \
+    && mkdir -p /opt/aws/rds \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+        -o /opt/aws/rds/global-bundle.pem \
+    && grep -q 'BEGIN CERTIFICATE' /opt/aws/rds/global-bundle.pem \
+    && chmod 0444 /opt/aws/rds/global-bundle.pem \
+    && curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install --global typescript \
+    && mkdir -p "${RUSTUP_HOME}" "${CARGO_HOME}" \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path \
+    && curl -fsSL -o /tmp/kotlinc.zip \
+        "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip" \
+    && unzip -q /tmp/kotlinc.zip -d /opt \
+    && rm -f /tmp/kotlinc.zip \
+    && apt-get purge -y --auto-remove unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt ./requirements.txt
+COPY besser/utilities/web_modeling_editor/backend/requirements.txt ./backend-requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
+
+COPY pyproject.toml README.md ./
+COPY besser/ ./besser/
+RUN pip install --no-cache-dir . \
+    && groupadd --gid 10001 besser \
+    && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/besser besser \
+    && mkdir -p \
+        /workspace/tmp \
+        /workspace/home \
+        /workspace/cache \
+        /workspace/cargo \
+        /home/besser/.cache \
+    && chown -R 10001:10001 /workspace /home/besser \
+    && chmod 0700 /workspace/tmp /workspace/home /workspace/cache /workspace/cargo \
+    && chmod -R a+rX /opt/rust /opt/kotlinc /app
+
+VOLUME ["/workspace"]
+
+USER 10001:10001
+WORKDIR /workspace
+
+ENTRYPOINT ["python", "-m", "besser.utilities.web_modeling_editor.backend.workers.smart_generation_worker"]

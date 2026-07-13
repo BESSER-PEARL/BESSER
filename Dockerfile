@@ -3,6 +3,12 @@
 # ``typing.Self`` (used in the NN metamodel, PEP 673) requires 3.11+.
 FROM python:3.12-slim
 
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PGSSLROOTCERT=/opt/aws/rds/global-bundle.pem
+
 # Phase 3 toolchains for per-project TS/Rust/Kotlin compile validation.
 # Without these binaries on PATH, the Phase 3 validation loop soft-skips
 # (shutil.which returns None), so generated nextjs/rust/spring-boot
@@ -21,6 +27,12 @@ RUN apt-get update \
         unzip \
         build-essential \
         openjdk-21-jdk-headless \
+    && mkdir -p /opt/aws/rds \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+        -o /opt/aws/rds/global-bundle.pem \
+    && grep -q 'BEGIN CERTIFICATE' /opt/aws/rds/global-bundle.pem \
+    && chmod 0444 /opt/aws/rds/global-bundle.pem \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g typescript \
@@ -32,7 +44,7 @@ RUN apt-get update \
     && rm /tmp/kotlinc.zip \
     && apt-get purge -y --auto-remove unzip \
     && rm -rf /var/lib/apt/lists/*
-ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
+ENV PATH="/opt/cargo/bin:/opt/kotlinc/bin:${PATH}"
 
 WORKDIR /app
 
@@ -51,7 +63,15 @@ COPY besser/ ./besser/
 # Install BESSER package
 RUN pip install --no-cache-dir -e .
 
-ENV PYTHONPATH=/app
+RUN groupadd --gid 10001 besser \
+    && useradd --uid 10001 --gid besser --create-home --home-dir /home/besser --shell /usr/sbin/nologin besser \
+    && mkdir -p /app/besser/feedback_data /app/besser/session_data /app/besser/smartgen_data \
+    && chown -R besser:besser /app /opt/cargo /opt/rustup /home/besser
+
+ENV PYTHONPATH=/app \
+    HOME=/home/besser
+
+USER 10001:10001
 
 EXPOSE 9000
 

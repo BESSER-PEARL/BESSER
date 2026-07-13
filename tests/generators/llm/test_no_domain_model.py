@@ -99,7 +99,7 @@ def test_tool_filter_hides_domain_generators_when_no_model():
     the LLM's tool list when no domain model is loaded. Keeps the LLM
     from wasting turns calling generators that would just error.
     """
-    tools = get_tools_for(has_domain_model=False)
+    tools = get_tools_for(has_domain_model=False, allow_shell=True)
     tool_names = {t["name"] for t in tools}
 
     # Domain-only generators must be gone
@@ -127,13 +127,19 @@ def test_tool_filter_restores_domain_generators_when_model_present():
         for t in get_tools_for(
             has_domain_model=True, has_gui_model=True, has_quantum_circuit=True,
             has_agent_model=True, has_object_model=True, has_bpmn_model=True,
-            has_nn_model=True,
+            has_nn_model=True, allow_shell=True,
         )
     }
     with_domain_gui = {
-        t["name"] for t in get_tools_for(has_domain_model=True, has_gui_model=True)
+        t["name"] for t in get_tools_for(
+            has_domain_model=True,
+            has_gui_model=True,
+            allow_shell=True,
+        )
     }
-    without_model = {t["name"] for t in get_tools_for(has_domain_model=False)}
+    without_model = {
+        t["name"] for t in get_tools_for(has_domain_model=False, allow_shell=True)
+    }
     all_tools = {t["name"] for t in get_all_tools_including_generators()}
 
     # With every model present we should have everything

@@ -12,6 +12,7 @@ from besser.BUML.metamodel.structural import (
 from besser.generators.llm.llm_client import UsageTracker
 from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.generators.llm.tools import get_tools_for, _SHELL_TOOLS
+from types import SimpleNamespace
 
 
 def _simple_model():
@@ -58,10 +59,10 @@ def test_only_shell_tools_are_dropped():
         assert essential in off
 
 
-def test_default_allows_shell_for_library_callers():
-    # Library/CLI/bench default keeps self-verification shell tools.
+def test_default_denies_shell_for_library_callers():
     names = {t["name"] for t in get_tools_for()}
-    assert "run_command" in names
+    assert "run_command" not in names
+    assert "install_dependencies" not in names
 
 
 # --------------------------------------------------------------------------- #
@@ -80,14 +81,65 @@ def test_orchestrator_disables_shell_tools(tmp_path):
     assert orch.allow_shell_tools is False
 
 
-def test_orchestrator_default_keeps_shell_tools(tmp_path):
+def test_orchestrator_default_drops_shell_tools(tmp_path):
     orch = LLMOrchestrator(
         llm_client=_MockClient(),
         domain_model=_simple_model(),
         output_dir=str(tmp_path),
     )
     names = {t["name"] for t in orch.tools}
-    assert "run_command" in names
+    assert "run_command" not in names
+    assert orch.allow_shell_tools is False
+
+
+def test_shell_execution_waits_for_owner_approval(tmp_path, monkeypatch):
+    decisions = []
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(),
+        domain_model=_simple_model(),
+        output_dir=str(tmp_path),
+        request_tool_approval=lambda turn, tool, arguments: decisions.append(
+            (turn, tool, arguments)
+        ) or False,
+    )
+    executed = []
+    monkeypatch.setattr(
+        orch.executor,
+        "execute",
+        lambda tool, arguments: executed.append((tool, arguments)) or "{}",
+    )
+    block = SimpleNamespace(
+        name="run_command",
+        input={"command": "npm test"},
+        id="tool-1",
+    )
+
+    result = orch._execute_single_tool(block, 0)
+
+    assert decisions == [(1, "run_command", {"command": "npm test"})]
+    assert executed == []
+    assert "approval was not granted" in result["content"]
+
+
+def test_workspace_file_edits_do_not_prompt(tmp_path, monkeypatch):
+    decisions = []
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(),
+        domain_model=_simple_model(),
+        output_dir=str(tmp_path),
+        request_tool_approval=lambda *args: decisions.append(args) or False,
+    )
+    monkeypatch.setattr(orch.executor, "execute", lambda *_: "{}")
+    block = SimpleNamespace(
+        name="write_file",
+        input={"path": "README.md", "content": "ok"},
+        id="tool-2",
+    )
+
+    result = orch._execute_single_tool(block, 0)
+
+    assert decisions == []
+    assert result["content"] == "{}"
 
 
 def test_hosted_validation_never_invokes_pip(tmp_path, monkeypatch):

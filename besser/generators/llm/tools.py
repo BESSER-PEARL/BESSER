@@ -653,7 +653,7 @@ def get_tools_for(
     has_object_model: bool = False,
     has_bpmn_model: bool = False,
     has_nn_model: bool = False,
-    allow_shell: bool = True,
+    allow_shell: bool = False,
 ) -> list[dict[str, Any]]:
     """Return the tool list scoped to which models are actually loaded.
 

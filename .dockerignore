@@ -1,1 +1,15 @@
 besser/utilities/web_modeling_editor/frontend
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

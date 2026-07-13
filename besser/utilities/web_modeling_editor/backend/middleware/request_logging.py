@@ -20,6 +20,7 @@ References: GitHub issues #15 (structured logging) and #16 (performance timing).
 """
 
 import logging
+import re
 import time
 import uuid
 
@@ -30,6 +31,15 @@ logger = logging.getLogger("besser.backend.requests")
 
 # Threshold in seconds above which a request is considered slow.
 SLOW_REQUEST_THRESHOLD_S = 1.0
+
+_SMARTGEN_RUN_PATH_RE = re.compile(
+    r"(/besser_api/(?:resume-smart-gen|cancel-smart-gen|download-smart)/)[^/]+"
+)
+
+
+def _safe_request_path(path: str) -> str:
+    """Redact opaque SmartGen run IDs while retaining the route shape."""
+    return _SMARTGEN_RUN_PATH_RE.sub(r"\1{run_id}", path)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -57,7 +67,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_data = {
                 "request_id": request_id,
                 "method": request.method,
-                "path": request.url.path,
+                "path": _safe_request_path(request.url.path),
                 "status_code": 500,
                 "duration_ms": round(duration_ms, 2),
             }
@@ -75,7 +85,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         log_data = {
             "request_id": request_id,
             "method": request.method,
-            "path": request.url.path,
+            "path": _safe_request_path(request.url.path),
             "status_code": response.status_code,
             "duration_ms": round(duration_ms, 2),
         }

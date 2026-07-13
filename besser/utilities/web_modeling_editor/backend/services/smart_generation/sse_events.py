@@ -92,6 +92,25 @@ class ToolCallEvent(BaseSseEvent):
     summary: Optional[str] = None
 
 
+class ApprovalRequiredEvent(BaseSseEvent):
+    """A risky tool call paused until the run owner decides."""
+
+    event: Literal["approval_required"] = "approval_required"
+    approvalId: str
+    turn: int
+    tool: str
+    summary: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalResolvedEvent(BaseSseEvent):
+    """Resolution for a previously paused tool call."""
+
+    event: Literal["approval_resolved"] = "approval_resolved"
+    approvalId: str
+    decision: Literal["approved", "rejected", "timed_out"]
+
+
 class CostEvent(BaseSseEvent):
     """Periodic cost / runtime tick emitted by the cost emitter task.
 
@@ -142,6 +161,7 @@ ErrorCode = Literal[
     "INCOMPLETE",
     "INTERNAL",
     "BAD_REQUEST",
+    "QUOTA",
     "CANCELLED",
 ]
 

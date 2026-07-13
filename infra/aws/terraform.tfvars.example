@@ -1,0 +1,25 @@
+aws_region                  = "eu-north-1"
+environment                 = "experimental"
+vpc_id                      = "vpc-xxxxxxxx"
+private_subnet_ids          = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+controller_security_group_id = "sg-xxxxxxxx"
+controller_instance_role_name = "besser-experimental-ec2-role"
+
+# `deploy-smartgen-worker.sh` supplies the required digest-pinned worker_image.
+
+database_instance_class      = "db.t4g.micro"
+database_multi_az            = false
+database_deletion_protection = true
+artifact_retention_days      = 7
+worker_desired_count              = 1
+worker_max_count                  = 10
+worker_allow_shell_tools          = false
+worker_approval_timeout_seconds   = 600
+worker_task_protection_minutes         = 30
+worker_task_protection_timeout_seconds = 3
+worker_stop_timeout_seconds            = 120
+worker_visibility_timeout_seconds = 3600
+worker_max_attempts                = 3
+worker_retry_delay_seconds         = 5
+
+# alarm_sns_topic_arn = "arn:aws:sns:eu-north-1:123456789012:operations"

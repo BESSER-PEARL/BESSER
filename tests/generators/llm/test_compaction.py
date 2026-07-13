@@ -12,12 +12,23 @@ from besser.generators.llm.orchestrator import (
     LLMOrchestrator, _estimate_tokens, COMPACT_TOKEN_THRESHOLD,
 )
 from besser.generators.llm.compaction import (
+    _compact_model_recap,
     _estimate_tokens as standalone_estimate_tokens,
     maybe_compact as standalone_maybe_compact,
     _summarize_messages as standalone_summarize_messages,
     COMPACT_TOKEN_THRESHOLD as STANDALONE_THRESHOLD,
     COMPACT_PRESERVE_RECENT as STANDALONE_PRESERVE_RECENT,
 )
+
+
+def test_compaction_recap_keeps_bpmn_and_nn_identity():
+    bpmn_model = type("BPMN", (), {"name": "Checkout", "processes": [object()]})()
+    nn_model = type("NN", (), {"name": "Fraud", "modules": [object(), object()]})()
+
+    recap = _compact_model_recap(bpmn_model=bpmn_model, nn_model=nn_model)
+
+    assert "BPMN Checkout (1 processes)" in recap
+    assert "Neural network Fraud (2 modules)" in recap
 
 
 @pytest.fixture

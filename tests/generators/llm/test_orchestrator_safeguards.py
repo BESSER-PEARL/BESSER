@@ -9,7 +9,7 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.generators.llm.llm_client import UsageTracker
+from besser.generators.llm.llm_client import FROM_SCRATCH_MAX_TOKENS, UsageTracker
 from besser.generators.llm.orchestrator import LLMOrchestrator
 
 
@@ -52,6 +52,26 @@ def _make_end_turn_client():
 # ======================================================================
 
 class TestCostCap:
+
+    def test_from_scratch_keeps_explicit_cost_and_runtime_caps(
+        self, simple_model, tmp_path,
+    ):
+        client = _make_end_turn_client()
+        client.max_tokens = 128
+        orchestrator = LLMOrchestrator(
+            llm_client=client,
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+            max_cost_usd=0.05,
+            max_runtime_seconds=7,
+        )
+        orchestrator._generator_used = None
+
+        orchestrator._apply_adaptive_budget()
+
+        assert orchestrator.max_cost_usd == 0.05
+        assert orchestrator.max_runtime_seconds == 7
+        assert client.max_tokens == FROM_SCRATCH_MAX_TOKENS
 
     def test_cost_cap_stops_generation(self, simple_model, tmp_path):
         """Generation stops when estimated cost exceeds max_cost_usd."""

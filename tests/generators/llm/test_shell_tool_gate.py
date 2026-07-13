@@ -90,6 +90,31 @@ def test_orchestrator_default_keeps_shell_tools(tmp_path):
     assert "run_command" in names
 
 
+def test_hosted_validation_never_invokes_pip(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("example-package==1.0\n")
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(),
+        domain_model=_simple_model(),
+        output_dir=str(tmp_path),
+        allow_shell_tools=False,
+        enable_toolchain_validation=False,
+    )
+    monkeypatch.setattr(orch, "_collect_frontend_contract_issues", lambda: [])
+    monkeypatch.setattr(orch, "_collect_ruff_issues", lambda: [])
+
+    import subprocess
+    calls = []
+
+    def _record_run(command, *args, **kwargs):
+        calls.append(command)
+        raise AssertionError("hosted validation must not launch subprocesses")
+
+    monkeypatch.setattr(subprocess, "run", _record_run)
+    orch._collect_validation_issues()
+
+    assert calls == []
+
+
 # --------------------------------------------------------------------------- #
 # The hosted backend defaults the flag OFF
 # --------------------------------------------------------------------------- #

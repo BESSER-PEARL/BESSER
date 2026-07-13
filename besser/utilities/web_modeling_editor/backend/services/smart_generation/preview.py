@@ -21,7 +21,6 @@ under-promise than over-promise — we round up.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -51,6 +50,7 @@ class PreviewPlan:
     LLM from scratch (e.g. state-machine-only or user asked for NestJS).
     """
 
+    execution_mode: str
     primary_kind: str
     auxiliary_kinds: list[str]
     target_generator: str | None
@@ -63,6 +63,7 @@ class PreviewPlan:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "execution_mode": self.execution_mode,
             "primary_kind": self.primary_kind,
             "auxiliary_kinds": self.auxiliary_kinds,
             "target_generator": self.target_generator,
@@ -80,6 +81,7 @@ def build_preview(
     instructions: str,
     max_cost_usd: float,
     max_runtime_seconds: int,
+    mode: str = "generate",
 ) -> PreviewPlan:
     """Build a ``PreviewPlan`` from assembled models + user instructions.
 
@@ -104,27 +106,53 @@ def build_preview(
         if entry["kind"] != assembled.primary_kind
     ]
 
-    target_generator, confidence = _predict_target_generator(
-        assembled, instructions,
-    )
+    if mode == "modify":
+        target_generator, confidence = None, 1.0
+    else:
+        target_generator, confidence = _predict_target_generator(
+            assembled, instructions,
+        )
 
-    estimated_turns = _estimate_turns(assembled, instructions, target_generator)
-    estimated_cost_usd = min(
-        _estimate_cost_usd(estimated_turns, instructions),
-        max_cost_usd,
+    estimated_turns = _estimate_turns(
+        assembled,
+        instructions,
+        target_generator,
+        modify_mode=mode == "modify",
     )
+    uncapped_cost_usd = _estimate_cost_usd(estimated_turns, instructions)
+    uncapped_duration_seconds = _estimate_duration_seconds(estimated_turns)
+    estimated_cost_usd = min(uncapped_cost_usd, max_cost_usd)
     estimated_duration_seconds = min(
-        _estimate_duration_seconds(estimated_turns),
+        uncapped_duration_seconds,
         max_runtime_seconds,
     )
 
     summary = _build_summary(
-        assembled, target_generator, auxiliary_kinds,
+        assembled, target_generator, auxiliary_kinds, modify_mode=mode == "modify",
     )
 
     notes = _build_notes(assembled, target_generator, instructions)
+    if mode == "modify":
+        notes.insert(
+            0,
+            "Incremental mode reuses the previous generated workspace and "
+            "skips the deterministic scaffold phase.",
+        )
+    if uncapped_cost_usd > max_cost_usd:
+        notes.append(
+            f"The estimated scope may reach the ${max_cost_usd:.2f} cost limit. "
+            "Narrow the request or raise the limit before running if partial "
+            "output would not be useful."
+        )
+    if uncapped_duration_seconds > max_runtime_seconds:
+        notes.append(
+            "The estimated scope may reach the runtime limit. Narrow the "
+            "request or raise the limit before running if partial output "
+            "would not be useful."
+        )
 
     return PreviewPlan(
+        execution_mode=mode,
         primary_kind=assembled.primary_kind,
         auxiliary_kinds=auxiliary_kinds,
         target_generator=target_generator,
@@ -169,6 +197,43 @@ def _predict_target_generator(
     for framework in _EXPLICIT_NO_GENERATOR_FRAMEWORKS:
         if framework in lower:
             return None, 0.9
+
+    # Specialist generators for non-class modeling artifacts.
+    if assembled.bpmn_model is not None and (
+        assembled.primary_kind == "bpmn"
+        or _has("bpmn")
+        or _has("workflow")
+        or "business process" in lower
+        or "process model" in lower
+    ):
+        return "generate_bpmn", 0.9
+    if assembled.nn_model is not None:
+        if _has("tensorflow") or _has("keras"):
+            return "generate_tensorflow", 0.9
+        if (
+            assembled.primary_kind == "nn"
+            or _has("pytorch")
+            or _has("torch")
+            or "neural network" in lower
+        ):
+            return "generate_pytorch", 0.9
+    if assembled.agent_model is not None and (
+        assembled.primary_kind == "agent"
+        or _has("baf")
+        or _has("chatbot")
+        or "agent framework" in lower
+    ):
+        return "generate_baf", 0.8
+    if assembled.object_model is not None and (
+        assembled.primary_kind == "object"
+        or "json object" in lower
+        or _has("fixture")
+        or _has("fixtures")
+        or "seed data" in lower
+    ):
+        return "generate_json_object", 0.8
+    if assembled.domain_model is not None and _has("supabase"):
+        return "generate_supabase", 0.9
 
     # Quantum — specialist generator always wins when circuit is present
     if assembled.quantum_circuit is not None:
@@ -220,6 +285,7 @@ def _estimate_turns(
     assembled: AssembledModels,
     instructions: str,
     target_generator: str | None,
+    modify_mode: bool = False,
 ) -> int:
     """Rough turn count based on scope signals.
 
@@ -229,7 +295,7 @@ def _estimate_turns(
     never promise more than the engine delivers.
     """
     lower = instructions.lower()
-    turns = 6 if target_generator else 12   # from-scratch runs take longer
+    turns = 6 if modify_mode or target_generator else 12
 
     # Scope keywords each add a few turns
     scope_hints = {
@@ -294,6 +360,7 @@ def _build_summary(
     assembled: AssembledModels,
     target_generator: str | None,
     auxiliary_kinds: list[str],
+    modify_mode: bool = False,
 ) -> str:
     primary_labels = {
         "class": "Class Diagram",
@@ -301,12 +368,16 @@ def _build_summary(
         "agent": "Agent Model",
         "state_machine": "State Machine",
         "object": "Object Diagram",
+        "bpmn": "BPMN Model",
+        "nn": "Neural Network",
         "quantum": "Quantum Circuit",
     }
     aux_labels = [primary_labels.get(k, k) for k in auxiliary_kinds]
     primary = primary_labels.get(assembled.primary_kind, assembled.primary_kind)
 
-    if target_generator:
+    if modify_mode:
+        base = f"Modify the previous generated app using {primary}"
+    elif target_generator:
         gen_friendly = {
             "generate_fastapi_backend": "FastAPI backend (CRUD + ORM + schemas)",
             "generate_django": "Django project (models + views + admin)",
@@ -320,6 +391,12 @@ def _build_summary(
             "generate_java_classes": "Java classes",
             "generate_json_schema": "JSON Schema",
             "generate_qiskit": "Qiskit circuit code",
+            "generate_supabase": "Supabase schema and client configuration",
+            "generate_json_object": "JSON object seed data",
+            "generate_baf": "BESSER Agent Framework chatbot",
+            "generate_bpmn": "BPMN process XML",
+            "generate_pytorch": "PyTorch neural network",
+            "generate_tensorflow": "TensorFlow neural network",
             "generate_rest_api": "FastAPI REST endpoints",
             "generate_rdf": "RDF / OWL vocabulary",
         }.get(target_generator, target_generator)

@@ -84,6 +84,8 @@ def maybe_compact(
     state_machines: list[Any] | None = None,
     object_model: Any | None = None,
     quantum_circuit: Any | None = None,
+    bpmn_model: Any | None = None,
+    nn_model: Any | None = None,
     primary_kind: str | None = None,
 ) -> tuple[list[dict], bool]:
     """
@@ -122,6 +124,8 @@ def maybe_compact(
         state_machines=state_machines,
         object_model=object_model,
         quantum_circuit=quantum_circuit,
+        bpmn_model=bpmn_model,
+        nn_model=nn_model,
         primary_kind=primary_kind,
     )
 
@@ -143,6 +147,8 @@ def _summarize_messages(
     state_machines: list[Any] | None = None,
     object_model: Any | None = None,
     quantum_circuit: Any | None = None,
+    bpmn_model: Any | None = None,
+    nn_model: Any | None = None,
     primary_kind: str | None = None,
 ) -> str:
     """Build a compact summary of earlier conversation messages."""
@@ -161,6 +167,8 @@ def _summarize_messages(
         state_machines=state_machines,
         object_model=object_model,
         quantum_circuit=quantum_circuit,
+        bpmn_model=bpmn_model,
+        nn_model=nn_model,
     )
     if recap:
         lines.append(recap)
@@ -192,6 +200,8 @@ def _compact_model_recap(
     state_machines: list[Any] | None = None,
     object_model: Any | None = None,
     quantum_circuit: Any | None = None,
+    bpmn_model: Any | None = None,
+    nn_model: Any | None = None,
 ) -> str:
     """One-line summary of the loaded BUML models for compaction context.
 
@@ -247,6 +257,16 @@ def _compact_model_recap(
 
     if quantum_circuit is not None:
         parts.append("Quantum circuit present")
+
+    if bpmn_model is not None:
+        process_count = len(getattr(bpmn_model, "processes", []) or [])
+        label = getattr(bpmn_model, "name", None) or "BPMN"
+        parts.append(f"BPMN {label} ({process_count} processes)")
+
+    if nn_model is not None:
+        module_count = len(getattr(nn_model, "modules", []) or [])
+        label = getattr(nn_model, "name", None) or "NN"
+        parts.append(f"Neural network {label} ({module_count} modules)")
 
     if not parts:
         return ""

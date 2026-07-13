@@ -71,6 +71,22 @@ class TestRequestValidators:
         req = _build_request(target_generator_override="  ")
         assert req.target_generator_override is None
 
+    def test_explicit_generator_skip_is_accepted(self):
+        req = _build_request(skip_deterministic_generator=True)
+        assert req.skip_deterministic_generator is True
+
+    def test_generator_skip_rejects_contradictory_override(self):
+        with pytest.raises(ValidationError, match="cannot be combined"):
+            _build_request(
+                skip_deterministic_generator=True,
+                target_generator_override="generate_fastapi_backend",
+            )
+
+    @pytest.mark.parametrize("primary_kind", ["bpmn", "nn"])
+    def test_new_primary_kind_overrides_are_accepted(self, primary_kind):
+        req = _build_request(primary_kind_override=primary_kind)
+        assert req.primary_kind_override == primary_kind
+
     def test_llm_model_with_slashes_accepted(self):
         """Some Anthropic model IDs use vendor/model format."""
         req = _build_request(llm_model="anthropic/claude-3-5-sonnet")

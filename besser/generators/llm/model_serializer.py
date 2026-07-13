@@ -9,6 +9,7 @@ A typical 10-class model serializes to ~2-3 KB of JSON.
 """
 
 import json
+from enum import Enum
 from typing import Any
 
 from besser.BUML.metamodel.structural import (
@@ -526,4 +527,231 @@ def serialize_quantum_circuit(circuit) -> dict[str, Any] | None:
         result["cregs"] = cregs
     if operations:
         result["operations"] = operations
+    return result
+
+
+def _compact_json_value(value: Any) -> Any:
+    """Return a deterministic JSON-safe representation of a model value."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Enum):
+        return value.name.lower()
+    if isinstance(value, dict):
+        return {
+            str(key): _compact_json_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_compact_json_value(item) for item in value]
+    if isinstance(value, set):
+        return sorted(
+            (_compact_json_value(item) for item in value),
+            key=lambda item: json.dumps(item, sort_keys=True, default=str),
+        )
+    named_value = getattr(value, "name", None)
+    if isinstance(named_value, str):
+        return named_value
+    return str(value)
+
+
+def _selected_model_fields(model: Any, names: tuple[str, ...]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for name in names:
+        try:
+            value = getattr(model, name)
+        except Exception:
+            continue
+        if value is None or value == "":
+            continue
+        if isinstance(value, (list, tuple, set, dict)) and not value:
+            continue
+        result[name] = _compact_json_value(value)
+    return result
+
+
+def _serialize_bpmn_container(container: Any) -> dict[str, Any]:
+    nodes = []
+    for node in sorted(
+        getattr(container, "flow_nodes", []) or [],
+        key=lambda item: (getattr(item, "name", ""), type(item).__name__),
+    ):
+        entry = {
+            "type": type(node).__name__,
+            "name": getattr(node, "name", ""),
+        }
+        entry.update(_selected_model_fields(node, (
+            "task_type", "gateway_type", "direction", "event_definition",
+            "loop_characteristics", "called_element",
+        )))
+        lane = getattr(node, "lane", None)
+        if lane is not None and getattr(lane, "name", None):
+            entry["lane"] = lane.name
+        if hasattr(node, "flow_nodes"):
+            children = _serialize_bpmn_container(node)
+            if children.get("nodes") or children.get("sequence_flows"):
+                entry["subprocess"] = children
+        nodes.append(entry)
+
+    sequence_flows = []
+    for flow in sorted(
+        getattr(container, "sequence_flows", []) or [],
+        key=lambda item: getattr(item, "name", ""),
+    ):
+        sequence_flows.append({
+            "name": getattr(flow, "name", ""),
+            "source": getattr(getattr(flow, "source", None), "name", ""),
+            "target": getattr(getattr(flow, "target", None), "name", ""),
+            "is_default": bool(getattr(flow, "is_default", False)),
+        })
+
+    result: dict[str, Any] = {}
+    if nodes:
+        result["nodes"] = nodes
+    if sequence_flows:
+        result["sequence_flows"] = sequence_flows
+    return result
+
+
+def serialize_bpmn_model(bpmn_model: Any) -> dict[str, Any] | None:
+    """Convert a BPMNModel into compact process, node, and flow context."""
+    if bpmn_model is None:
+        return None
+
+    processes = []
+    for process in sorted(
+        getattr(bpmn_model, "processes", []) or [],
+        key=lambda item: getattr(item, "name", ""),
+    ):
+        entry: dict[str, Any] = {"name": getattr(process, "name", "")}
+        entry.update(_serialize_bpmn_container(process))
+        lanes = []
+        for lane in sorted(
+            getattr(process, "lanes", []) or [],
+            key=lambda item: getattr(item, "name", ""),
+        ):
+            lanes.append({
+                "name": getattr(lane, "name", ""),
+                "nodes": sorted(
+                    getattr(node, "name", "")
+                    for node in (getattr(lane, "flow_nodes", []) or [])
+                ),
+            })
+        if lanes:
+            entry["lanes"] = lanes
+        processes.append(entry)
+
+    result: dict[str, Any] = {
+        "name": getattr(bpmn_model, "name", "BPMNModel"),
+    }
+    if processes:
+        result["processes"] = processes
+
+    collaboration = getattr(bpmn_model, "collaboration", None)
+    if collaboration is not None:
+        participants = [
+            {
+                "name": getattr(participant, "name", ""),
+                "process": getattr(
+                    getattr(participant, "process", None), "name", ""
+                ),
+            }
+            for participant in sorted(
+                getattr(collaboration, "participants", []) or [],
+                key=lambda item: getattr(item, "name", ""),
+            )
+        ]
+        message_flows = [
+            {
+                "name": getattr(flow, "name", ""),
+                "source": getattr(getattr(flow, "source", None), "name", ""),
+                "target": getattr(getattr(flow, "target", None), "name", ""),
+            }
+            for flow in sorted(
+                getattr(collaboration, "message_flows", []) or [],
+                key=lambda item: getattr(item, "name", ""),
+            )
+        ]
+        result["collaboration"] = {
+            "name": getattr(collaboration, "name", ""),
+            "participants": participants,
+            "message_flows": message_flows,
+        }
+
+    return result if processes or collaboration is not None else None
+
+
+_NN_MODULE_FIELDS = (
+    "actv_func", "name_module_input", "input_reused", "in_features",
+    "out_features", "in_channels", "out_channels", "kernel_dim",
+    "stride_dim", "padding_amount", "padding_type", "pooling_type",
+    "dimension", "rate", "dropout", "input_size", "hidden_size",
+    "bidirectional", "batch_first", "return_type", "num_embeddings",
+    "embedding_dim", "normalized_shape", "num_features", "start_dim",
+    "end_dim", "output_dim", "tns_type", "concatenate_dim",
+    "layers_of_tensors", "reshape_dim", "transpose_dim", "permute_dim",
+)
+
+
+def _serialize_nn_dataset(dataset: Any) -> dict[str, Any] | None:
+    if dataset is None:
+        return None
+    result = {"name": getattr(dataset, "name", "")}
+    result.update(_selected_model_fields(
+        dataset,
+        ("path_data", "task_type", "input_format"),
+    ))
+    labels = sorted(
+        getattr(label, "name", str(label))
+        for label in (getattr(dataset, "labels", []) or [])
+    )
+    if labels:
+        result["labels"] = labels
+    image = getattr(dataset, "image", None)
+    if image is not None:
+        result["image"] = _selected_model_fields(
+            image,
+            ("channels", "height", "width", "dimension", "shape"),
+        )
+    return result
+
+
+def serialize_nn_model(nn_model: Any, _seen: set[int] | None = None) -> dict[str, Any] | None:
+    """Convert a neural-network model into ordered modules and training context."""
+    if nn_model is None:
+        return None
+    if _seen is None:
+        _seen = set()
+    if id(nn_model) in _seen:
+        return {"name": getattr(nn_model, "name", "NN"), "recursive_ref": True}
+    _seen.add(id(nn_model))
+
+    result: dict[str, Any] = {"name": getattr(nn_model, "name", "NN")}
+    modules = []
+    for module in getattr(nn_model, "modules", []) or []:
+        if hasattr(module, "modules"):
+            nested = serialize_nn_model(module, _seen)
+            if nested:
+                modules.append({"type": "NN", **nested})
+            continue
+        entry = {
+            "type": type(module).__name__,
+            "name": getattr(module, "name", ""),
+        }
+        entry.update(_selected_model_fields(module, _NN_MODULE_FIELDS))
+        modules.append(entry)
+    if modules:
+        result["modules"] = modules
+
+    configuration = getattr(nn_model, "configuration", None)
+    if configuration is not None:
+        result["configuration"] = _selected_model_fields(configuration, (
+            "batch_size", "epochs", "learning_rate", "optimizer",
+            "loss_function", "metrics", "weight_decay", "momentum",
+        ))
+    train_data = _serialize_nn_dataset(getattr(nn_model, "train_data", None))
+    test_data = _serialize_nn_dataset(getattr(nn_model, "test_data", None))
+    if train_data:
+        result["train_data"] = train_data
+    if test_data:
+        result["test_data"] = test_data
     return result

@@ -2,6 +2,7 @@
 
 import pytest
 
+from besser.BUML.metamodel.nn import Configuration, LinearLayer, NN
 from besser.BUML.metamodel.structural import (
     BinaryAssociation,
     Class,
@@ -20,11 +21,49 @@ from besser.BUML.metamodel.structural import (
     AssociationClass,
 )
 from besser.generators.llm.model_serializer import (
+    serialize_bpmn_model,
     serialize_domain_model,
+    serialize_nn_model,
     serialize_object_model,
     serialize_quantum_circuit,
     serialize_state_machines,
 )
+from tests.bpmn_models import _poolless_model
+
+
+def test_real_bpmn_model_serializes_process_nodes_and_flows():
+    result = serialize_bpmn_model(_poolless_model())
+
+    assert result["name"] == "Poolless"
+    process = result["processes"][0]
+    assert {node["name"] for node in process["nodes"]} == {
+        "received", "Review", "done",
+    }
+    assert len(process["sequence_flows"]) == 2
+
+
+def test_real_nn_model_serializes_layers_and_training_configuration():
+    model = NN(name="Classifier")
+    model.add_layer(LinearLayer(
+        name="output",
+        in_features=16,
+        out_features=3,
+        actv_func="softmax",
+    ))
+    model.add_configuration(Configuration(
+        batch_size=8,
+        epochs=4,
+        learning_rate=0.001,
+        optimizer="adam",
+        loss_function="crossentropy",
+        metrics=["accuracy"],
+    ))
+
+    result = serialize_nn_model(model)
+
+    assert result["name"] == "Classifier"
+    assert result["modules"][0]["out_features"] == 3
+    assert result["configuration"]["epochs"] == 4
 
 
 class TestSerializeDomainModel:
@@ -452,3 +491,4 @@ class TestSerializeQuantumCircuit:
         assert op["type"] == "Hadamard"
         assert op["targets"] == [0]
         assert "controls" not in op  # empty list suppressed
+    serialize_nn_model,

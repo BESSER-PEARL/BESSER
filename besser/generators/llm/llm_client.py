@@ -73,6 +73,9 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     # OpenAI — early-2026 public rates
     "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
     "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
+    "gpt-5.6-sol":   {"input": 5.0, "output": 30.0, "cache_write": 0, "cache_read": 0.5},
+    "gpt-5.6-terra": {"input": 2.5, "output": 15.0, "cache_write": 0, "cache_read": 0.25},
+    "gpt-5.6-luna":  {"input": 1.0, "output": 6.0,  "cache_write": 0, "cache_read": 0.1},
     "gpt-5.5":     {"input": 5.0,  "output": 30.0, "cache_write": 0, "cache_read": 0.5},
     "gpt-5":       {"input": 1.25, "output": 10.0, "cache_write": 0, "cache_read": 0.125},
     "o3-mini":     {"input": 1.1,  "output": 4.4,  "cache_write": 0, "cache_read": 0},
@@ -108,8 +111,13 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     for key in ("mistral-large",):
         if key in model_lower:
             return _MODEL_PRICING[key]
-    # OpenAI: ``gpt-5.5`` must precede ``gpt-5`` (substring conflict).
-    for key in ("gpt-4o-mini", "gpt-4o", "gpt-5.5", "gpt-5", "o3-mini", "o3"):
+    # OpenAI: variant-specific GPT-5.6 / GPT-5.5 keys must precede the
+    # generic ``gpt-5`` substring or their spend would be under-counted.
+    for key in (
+        "gpt-4o-mini", "gpt-4o",
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+        "gpt-5.5", "gpt-5", "o3-mini", "o3",
+    ):
         if key in model_lower:
             return _MODEL_PRICING[key]
     return _MODEL_PRICING["gpt-4o"]  # default

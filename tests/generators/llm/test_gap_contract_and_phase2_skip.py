@@ -293,6 +293,23 @@ def test_target_generator_override_is_binding(tmp_path):
     assert orch._select_generator("anything at all") == "generate_fastapi_backend"
 
 
+def test_explicit_no_generator_override_is_binding(tmp_path):
+    """An approved from-scratch plan must skip the paid selector call."""
+    client = _ExplodingClient()  # chat() raises if reached
+
+    class _SM:
+        name = "DummySM"
+
+    orch = LLMOrchestrator(
+        llm_client=client,
+        state_machines=[_SM()],
+        output_dir=str(tmp_path),
+        target_generator=None,
+        target_generator_bound=True,
+    )
+    assert orch._select_generator("anything at all") is None
+
+
 def test_resume_seeds_prior_cost(tmp_path, monkeypatch):
     """A resumed run's cost cap must cover what the crashed run spent."""
     tracker = UsageTracker("mock-model")

@@ -21,6 +21,7 @@ events, and never stored on disk.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import mimetypes
@@ -62,8 +63,10 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation.prev
 from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
     _EXCLUDED_OUTPUT_DIRS,
     _locate_run_temp_dir,
+    release_active_run,
     release_run_slot,
     request_cancellation,
+    reserve_active_run,
     try_acquire_run_slot,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
@@ -118,6 +121,7 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
 
 async def _stream_with_slot_release(
     inner: AsyncIterator[bytes],
+    run_reservation: Optional[tuple[str, asyncio.Event]] = None,
 ) -> AsyncIterator[bytes]:
     """Yield from an SSE generator and return its concurrency slot
     when the stream ends, regardless of outcome.
@@ -131,6 +135,8 @@ async def _stream_with_slot_release(
         async for frame in inner:
             yield frame
     finally:
+        if run_reservation is not None:
+            await release_active_run(*run_reservation)
         release_run_slot()
 
 
@@ -290,6 +296,7 @@ async def smart_preview(request: SmartPreviewRequest):
         instructions=request.instructions,
         max_cost_usd=request.max_cost_usd,
         max_runtime_seconds=request.max_runtime_seconds,
+        mode=request.mode,
     )
     payload = plan.to_dict()
     payload["model_summary"] = assembled.summary()
@@ -336,9 +343,22 @@ async def resume_smart_gen(
             ),
         )
 
-    # Same concurrency gate as /smart-generate — a resumed run consumes
+    # Atomically reserve the checkpoint/run ID before the global slot.
+    # This prevents the original run and a resume (or two resumes) from
+    # sharing one workspace and checkpoint.
+    cancel_event = await reserve_active_run(run_id)
+    if cancel_event is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This smart-generation run is already active or being resumed."
+            ),
+        )
+
+    # Same concurrency gate as /smart-generate - a resumed run consumes
     # the same resources as a fresh one.
     if not try_acquire_run_slot():
+        await release_active_run(run_id, cancel_event)
         raise HTTPException(
             status_code=429,
             detail=(
@@ -347,10 +367,15 @@ async def resume_smart_gen(
             ),
         )
 
-    runner = SmartGenerationRunner(request, resume_run_id=run_id)
+    runner = SmartGenerationRunner(
+        request,
+        resume_run_id=run_id,
+        reserved_cancel_event=cancel_event,
+    )
     return StreamingResponse(
         _stream_with_slot_release(
             runner.generate_and_stream(http_request=http_request),
+            run_reservation=(run_id, cancel_event),
         ),
         media_type="text/event-stream",
         headers={

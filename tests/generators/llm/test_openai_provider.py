@@ -289,6 +289,19 @@ class TestOpenAIPricing:
         assert p55["input"] == 5.0
         assert p55["output"] == 30.0
 
+    @pytest.mark.parametrize(
+        ("model", "input_rate", "output_rate"),
+        [
+            ("gpt-5.6-sol", 5.0, 30.0),
+            ("gpt-5.6-terra", 2.5, 15.0),
+            ("gpt-5.6-luna", 1.0, 6.0),
+        ],
+    )
+    def test_gpt56_variant_pricing(self, model, input_rate, output_rate):
+        pricing = _get_pricing(model)
+        assert pricing["input"] == input_rate
+        assert pricing["output"] == output_rate
+
     def test_o3_pricing(self):
         p = _get_pricing("o3")
         assert p["input"] == 10.0
@@ -348,7 +361,7 @@ class TestCreateLLMClient:
 
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
-            create_llm_client(provider="mistral", api_key="x")
+            create_llm_client(provider="cohere", api_key="x")
 
     @patch("besser.generators.llm.llm_client._resolve_api_key", return_value="sk-ant-test")
     @patch("besser.generators.llm.llm_client._resolve_base_url", return_value=None)

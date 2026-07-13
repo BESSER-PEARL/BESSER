@@ -13,8 +13,10 @@ from typing import Any
 
 from besser.generators.llm.model_serializer import (
     serialize_agent_model,
+    serialize_bpmn_model,
     serialize_domain_model,
     serialize_gui_model,
+    serialize_nn_model,
     serialize_object_model,
     serialize_quantum_circuit,
     serialize_state_machines,
@@ -36,6 +38,8 @@ def build_system_prompt(
     object_model=None,
     state_machines=None,
     quantum_circuit=None,
+    bpmn_model=None,
+    nn_model=None,
     primary_kind: str | None = None,
     scaffold_snapshot: str = "",
     endpoint_manifest: str = "",
@@ -65,8 +69,11 @@ def build_system_prompt(
         object_model: Optional ObjectModel (instance data — useful as fixtures/seeders).
         state_machines: Optional list of StateMachine objects.
         quantum_circuit: Optional QuantumCircuit.
+        bpmn_model: Optional BPMNModel process specification.
+        nn_model: Optional neural-network architecture and training spec.
         primary_kind: Which model is driving the generation: "class",
-            "gui", "agent", "state_machine", "object", "quantum". Used to
+            "gui", "agent", "state_machine", "object", "bpmn", "nn",
+            "quantum". Used to
             frame the LLM's task (e.g. "this is a state-machine-driven
             run — emit the transition code").
         modify_mode: When True the run is an incremental vibe-modify — the
@@ -177,6 +184,34 @@ def build_system_prompt(
             "```",
         ])
 
+    bpmn_json = serialize_bpmn_model(bpmn_model)
+    if bpmn_json:
+        model_sections.extend([
+            "",
+            "## BPMN Process Model",
+            "",
+            "Executable process specification. Preserve task ordering, gateway "
+            "semantics, events, lanes, and message flows in the implementation.",
+            "",
+            "```json",
+            json.dumps(bpmn_json, indent=2),
+            "```",
+        ])
+
+    nn_json = serialize_nn_model(nn_model)
+    if nn_json:
+        model_sections.extend([
+            "",
+            "## Neural Network Model",
+            "",
+            "Ordered architecture, tensor operations, datasets, and training "
+            "configuration. Preserve declared dimensions and module inputs.",
+            "",
+            "```json",
+            json.dumps(nn_json, indent=2),
+            "```",
+        ])
+
     # Cross-model links — heuristic correlations so the LLM treats related
     # diagrams as a single system, not as independent islands.
     cross_links = _compute_cross_model_links(
@@ -267,6 +302,8 @@ def build_system_prompt(
             "state_machine": "State-machine-driven run — transition tables are the spec. Generate transition code / guards.",
             "object": "Object-diagram-driven run — instance data is the spec. Emit seed data / fixtures.",
             "quantum": "Quantum-circuit-driven run — circuit gates are the spec. Emit Qiskit code.",
+            "bpmn": "BPMN-driven run - process flow, gateways, events, and tasks are the spec. Emit executable workflow integration.",
+            "nn": "Neural-network-driven run - layers and tensor flow are the spec. Emit training and evaluation code.",
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 

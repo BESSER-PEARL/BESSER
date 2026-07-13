@@ -62,6 +62,32 @@ def test_orchestrator_accepts_state_machine_only(tmp_path):
     assert len(orch.state_machines) == 1
 
 
+@pytest.mark.parametrize(
+    ("model_kwarg", "primary_kind", "instructions", "generator"),
+    [
+        ("bpmn_model", "bpmn", "Generate the BPMN workflow", "generate_bpmn"),
+        ("nn_model", "nn", "Generate a PyTorch network", "generate_pytorch"),
+        (
+            "nn_model",
+            "nn",
+            "Generate a TensorFlow Keras network",
+            "generate_tensorflow",
+        ),
+    ],
+)
+def test_orchestrator_routes_bpmn_and_nn_models(
+    tmp_path, model_kwarg, primary_kind, instructions, generator,
+):
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(),
+        output_dir=str(tmp_path),
+        **{model_kwarg: object()},
+    )
+
+    assert orch.primary_kind == primary_kind
+    assert orch._select_generator_keyword(instructions) == generator
+
+
 def test_orchestrator_rejects_empty_project():
     """No models at all → clear error. We never want a silent no-op run."""
     with pytest.raises(ValueError, match="at least one model"):

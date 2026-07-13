@@ -99,6 +99,8 @@ def compute_fingerprint(
     agent_model: Any | None = None,
     object_model: Any | None = None,
     quantum_circuit: Any | None = None,
+    bpmn_model: Any | None = None,
+    nn_model: Any | None = None,
 ) -> str:
     """Build a stable fingerprint for checkpoint validation.
 
@@ -137,6 +139,10 @@ def compute_fingerprint(
         parts.append("object=present")
     if quantum_circuit is not None:
         parts.append("quantum=present")
+    if bpmn_model is not None:
+        parts.append(f"bpmn={getattr(bpmn_model, 'name', None) or 'present'}")
+    if nn_model is not None:
+        parts.append(f"nn={getattr(nn_model, 'name', None) or 'present'}")
 
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
     return digest[:32]

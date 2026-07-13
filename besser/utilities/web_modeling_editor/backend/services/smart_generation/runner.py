@@ -28,7 +28,7 @@ import time
 import uuid
 import zipfile
 from dataclasses import dataclass
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -356,16 +356,23 @@ async def request_cancellation(run_id: str) -> bool:
     return True
 
 
-async def _register_active_run(run_id: str) -> asyncio.Event:
+async def reserve_active_run(run_id: str) -> Optional[asyncio.Event]:
+    """Atomically reserve ``run_id`` for one live runner."""
     event = asyncio.Event()
     async with _ACTIVE_RUNS_LOCK:
+        if run_id in _ACTIVE_RUNS:
+            return None
         _ACTIVE_RUNS[run_id] = event
     return event
 
 
-async def _deregister_active_run(run_id: str) -> None:
+async def release_active_run(run_id: str, event: asyncio.Event) -> bool:
+    """Release ``run_id`` only when ``event`` is still its owner."""
     async with _ACTIVE_RUNS_LOCK:
+        if _ACTIVE_RUNS.get(run_id) is not event:
+            return False
         _ACTIVE_RUNS.pop(run_id, None)
+        return True
 
 
 # ---------------------------------------------------------------------
@@ -426,6 +433,7 @@ class SmartGenerationRunner:
         request: SmartGenerateRequest,
         *,
         resume_run_id: Optional[str] = None,
+        reserved_cancel_event: Optional[asyncio.Event] = None,
         base_run_id: Optional[str] = None,
         mode: str = "generate",
     ) -> None:
@@ -437,6 +445,7 @@ class SmartGenerationRunner:
         # download / resume routes accepts it.
         self.run_id = resume_run_id or uuid.uuid4().hex
         self._resume_run_id = resume_run_id
+        self._reserved_cancel_event = reserved_cancel_event
         # Incremental vibe-modify. When ``mode == "modify"`` and
         # ``base_run_id`` still resolves to a live registry entry, this
         # run is SEEDED from that entry's files and edits them in place.
@@ -730,8 +739,8 @@ class SmartGenerationRunner:
                         )
                     elif status == "no_model":
                         msg = (
-                            "skipped — no class diagram or quantum circuit "
-                            "to build from"
+                            "skipped — no deterministic scaffold is available "
+                            "for the primary model"
                         )
                     else:
                         msg = "skipped"
@@ -762,12 +771,35 @@ class SmartGenerationRunner:
         # the early-return paths (mkdtemp / model assembly / LLM client
         # build). ``POST /cancel-smart-gen/{run_id}`` will set this
         # event and the orchestrator will stop at the next turn boundary.
-        cancel_event = await _register_active_run(self.run_id)
+        cancel_event = self._reserved_cancel_event
+        if cancel_event is None:
+            cancel_event = await reserve_active_run(self.run_id)
+        if cancel_event is None:
+            yield format_sse(ErrorEvent(
+                code="BAD_REQUEST",
+                message=(
+                    "This smart-generation run is already active or being resumed."
+                ),
+            ))
+            return
 
         # Bridge the asyncio.Event into a thread-safe boolean check the
         # synchronous orchestrator can poll between turns.
         def should_continue() -> bool:
             return not cancel_event.is_set()
+
+        target_generator = getattr(
+            self.request, "target_generator_override", None
+        )
+        skip_deterministic_generator = getattr(
+            self.request, "skip_deterministic_generator", False
+        )
+        if self._mode == "modify" and not self._seeded:
+            # The approved incremental plan skipped Phase 1 because it expected
+            # a reusable workspace. If that base expired, rebuild with normal
+            # generator selection instead of forcing an unnecessarily costly
+            # LLM-only run.
+            skip_deterministic_generator = False
 
         orchestrator = LLMOrchestrator(
             llm_client=client,
@@ -815,10 +847,11 @@ class SmartGenerationRunner:
             # static tool; only arbitrary `run_command`/`install_dependencies`
             # are withheld.
             allow_shell_tools=LLM_ENABLE_SHELL_TOOLS,
-            # Binding generator choice from an approved preview plan
-            # (validated by the request model). None = auto-select.
-            target_generator=getattr(
-                self.request, "target_generator_override", None
+            # Binding generator choice from an approved preview plan. A
+            # bound None explicitly skips Phase 1; an unbound None auto-selects.
+            target_generator=target_generator,
+            target_generator_bound=(
+                target_generator is not None or skip_deterministic_generator
             ),
             # The run's original project export (ProjectInput → JSON-safe
             # dict). Used ONLY by modify()'s model-sync step to slot an
@@ -1063,7 +1096,7 @@ class SmartGenerationRunner:
 
             # Always deregister so a future cancel call returns False
             # cleanly and the dict doesn't leak entries.
-            await _deregister_active_run(self.run_id)
+            await release_active_run(self.run_id, cancel_event)
 
             # Terminal events are mutually exclusive: CANCELLED (or
             # TIMEOUT when the watchdog fired) is emitted ONLY when the

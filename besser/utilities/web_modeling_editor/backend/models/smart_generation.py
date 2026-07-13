@@ -18,7 +18,7 @@ import math
 import re
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_DEFAULT_MAX_COST_USD,
@@ -72,7 +72,10 @@ class SmartGenerateRequest(BaseModel):
     # generator, those overrides travel here. Unset values fall back to
     # auto-detection — the backend never forces a primary.
     primary_kind_override: Optional[
-        Literal["class", "gui", "agent", "state_machine", "object", "quantum"]
+        Literal[
+            "class", "gui", "agent", "state_machine", "object",
+            "bpmn", "nn", "quantum",
+        ]
     ] = None
     # Optional binding choice of the Phase-1 deterministic generator.
     # When set (e.g. from an approved /smart-preview plan), the
@@ -80,6 +83,10 @@ class SmartGenerateRequest(BaseModel):
     # plan the user approved is the plan that runs, and one paid LLM
     # call is saved. Validated against the registered generator tools.
     target_generator_override: Optional[str] = Field(default=None, max_length=80)
+    # ``target_generator_override=None`` normally means auto-select. Preview
+    # also needs to bind an explicit "LLM from scratch" decision, so that
+    # distinct state travels as a boolean instead of being collapsed to null.
+    skip_deterministic_generator: bool = False
     # Incremental vibe-modify. When ``mode == "modify"`` and ``base_run_id``
     # points at a still-downloadable previous run, the new run is SEEDED
     # from that run's generated files and edits them in place, instead of
@@ -115,6 +122,15 @@ class SmartGenerateRequest(BaseModel):
                 f"{', '.join(sorted(registered))}"
             )
         return value
+
+    @model_validator(mode="after")
+    def _validate_generator_plan(self) -> "SmartGenerateRequest":
+        if self.skip_deterministic_generator and self.target_generator_override:
+            raise ValueError(
+                "skip_deterministic_generator cannot be combined with "
+                "target_generator_override"
+            )
+        return self
 
     @field_validator("api_key")
     @classmethod
@@ -277,8 +293,13 @@ class SmartPreviewRequest(BaseModel):
     instructions: str = Field(..., min_length=1, max_length=8000)
     max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
     max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    mode: Literal["generate", "modify"] = "generate"
+    base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     primary_kind_override: Optional[
-        Literal["class", "gui", "agent", "state_machine", "object", "quantum"]
+        Literal[
+            "class", "gui", "agent", "state_machine", "object",
+            "bpmn", "nn", "quantum",
+        ]
     ] = None
 
     @field_validator("instructions")
@@ -299,3 +320,11 @@ class SmartPreviewRequest(BaseModel):
     @classmethod
     def _validate_and_clamp_runtime(cls, value: int) -> int:
         return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
+
+    @model_validator(mode="after")
+    def _validate_preview_mode(self) -> "SmartPreviewRequest":
+        if self.mode == "modify" and self.base_run_id is None:
+            raise ValueError("base_run_id is required when preview mode is modify")
+        if self.mode == "generate" and self.base_run_id is not None:
+            raise ValueError("base_run_id is only valid when preview mode is modify")
+        return self

@@ -13,8 +13,14 @@ import httpx
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.routers import (
+    smart_generation_router as router_module,
+)
 from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
     runner as runner_module,
+)
+from tests.utilities.web_modeling_editor.backend.smart_generation.test_smart_generation_router import (
+    _build_project_body,
 )
 
 
@@ -61,7 +67,9 @@ def test_config_endpoint_exposes_expected_fields():
         assert isinstance(features[key], bool)
 
     # Providers
-    assert set(payload["supported_providers"]) == {"anthropic", "openai"}
+    assert set(payload["supported_providers"]) == {
+        "anthropic", "openai", "mistral",
+    }
 
 
 def test_config_endpoint_reflects_monkeypatched_caps(monkeypatch):
@@ -115,6 +123,46 @@ def test_try_acquire_and_release_round_trips():
             runner_module._reset_concurrency_semaphore_for_tests()
 
     asyncio.run(_exercise())
+
+
+def test_run_id_reservation_is_single_flight():
+    async def _exercise() -> None:
+        run_id = "a" * 32
+        first, second = await asyncio.gather(
+            runner_module.reserve_active_run(run_id),
+            runner_module.reserve_active_run(run_id),
+        )
+        owned = [event for event in (first, second) if event is not None]
+        assert len(owned) == 1
+        assert await runner_module.release_active_run(run_id, owned[0]) is True
+
+    asyncio.run(_exercise())
+
+
+def test_resume_returns_409_when_run_id_is_already_active(monkeypatch):
+    run_id = "b" * 32
+    monkeypatch.setattr(
+        router_module, "_locate_run_temp_dir", lambda candidate: "recoverable"
+    )
+
+    async def _exercise() -> httpx.Response:
+        event = await runner_module.reserve_active_run(run_id)
+        assert event is not None
+        try:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url=BASE_URL,
+            ) as client:
+                return await client.post(
+                    f"/besser_api/resume-smart-gen/{run_id}",
+                    json=_build_project_body(),
+                )
+        finally:
+            await runner_module.release_active_run(run_id, event)
+
+    response = asyncio.run(_exercise())
+    assert response.status_code == 409
+    assert "already active" in response.json()["detail"].lower()
 
 
 def test_release_when_at_max_does_not_crash():

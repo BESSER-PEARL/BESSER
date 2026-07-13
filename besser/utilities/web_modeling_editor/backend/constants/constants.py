@@ -68,32 +68,6 @@ LLM_DEFAULT_MAX_RUNTIME_SECONDS = min(
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
 )
 
-# Adaptive ceiling for FROM-SCRATCH runs — i.e. Phase 1 found no
-# deterministic BESSER generator to run (no domain/quantum model at all,
-# or the request targets a stack BESSER doesn't scaffold, e.g. Next.js /
-# Rust / Kotlin). Those runs have no Phase-1 output to build on top of:
-# the LLM has to author the entire application in Phase 2, which
-# legitimately costs and takes longer than the common case (a Python
-# scaffold that Phase 2 only patches). A benchmark showed from-scratch
-# runs blowing the $2.00 default hard cap (up to $2.51) and truncating
-# output as a result (hitting the output-token limit mid-write).
-#
-# ``LLMOrchestrator._apply_adaptive_budget`` raises the run's internal
-# ``max_cost_usd`` / ``max_runtime_seconds`` to these values ONLY when
-# Phase 1 ran no generator; the scaffolded-Python default above (and its
-# hard cap) is untouched, so that common case's cost profile doesn't
-# change. Deliberately NOT clamped against ``LLM_MAX_COST_USD_HARD_CAP``
-# / ``LLM_MAX_RUNTIME_SECONDS_HARD_CAP`` above — those are the ceiling
-# for the common case; this is a separate, larger ceiling for the harder
-# one. Env-tunable so ops can raise/lower it per deploy without a code
-# change.
-LLM_FROM_SCRATCH_MAX_COST_USD_HARD_CAP = _env_float(
-    "BESSER_LLM_FROM_SCRATCH_MAX_COST_USD_HARD_CAP", 5.0,
-)
-LLM_FROM_SCRATCH_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int(
-    "BESSER_LLM_FROM_SCRATCH_MAX_RUNTIME_SECONDS_HARD_CAP", 1800,
-)
-
 # Generated-output TTL + SSE cadence.
 LLM_DOWNLOAD_TTL_SECONDS = _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 1800)
 LLM_COST_EMITTER_INTERVAL_SECONDS = _env_float(
@@ -115,7 +89,7 @@ LLM_ENABLE_CHECKPOINTING = _env_bool("BESSER_LLM_ENABLE_CHECKPOINTING", True)
 # Phase 3 toolchain validation (tsc / cargo / kotlinc) compiles real
 # projects server-side and can add minutes of wall-clock + real billing
 # to a run. Off by default in the web deployment — the cheap checks
-# (ast.parse, Dockerfile refs, ruff, pip dry-run) always run. Enable
+# (ast.parse, Dockerfile refs) always run; pip is shell-tools-gated. Enable
 # per deploy when the host has the toolchains installed and the extra
 # latency is acceptable.
 LLM_ENABLE_TOOLCHAIN_VALIDATION = _env_bool(

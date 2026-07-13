@@ -162,3 +162,23 @@ def test_fingerprint_includes_state_machines():
         state_machines=[_MockSM("OrderSM")],
     )
     assert fp_none != fp_one
+
+
+@pytest.mark.parametrize("model_arg", ["bpmn_model", "nn_model"])
+def test_fingerprint_includes_new_model_presence_and_identity(model_arg):
+    base = compute_fingerprint(
+        instructions="X", primary_kind=model_arg.removesuffix("_model"),
+    )
+    first = compute_fingerprint(
+        instructions="X",
+        primary_kind=model_arg.removesuffix("_model"),
+        **{model_arg: type("Model", (), {"name": "First"})()},
+    )
+    second = compute_fingerprint(
+        instructions="X",
+        primary_kind=model_arg.removesuffix("_model"),
+        **{model_arg: type("Model", (), {"name": "Second"})()},
+    )
+
+    assert base != first
+    assert first != second

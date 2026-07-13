@@ -1,6 +1,8 @@
 """Tests for build_system_prompt — verifies every available model type
 ends up in the prompt, and that cross-model links are computed."""
 
+from types import SimpleNamespace
+
 from besser.BUML.metamodel.structural import (
     Class,
     DomainModel,
@@ -67,6 +69,8 @@ def test_optional_sections_are_omitted_when_models_absent():
     assert "## Object Model" not in prompt
     assert "## State Machines" not in prompt
     assert "## Quantum Circuit" not in prompt
+    assert "## BPMN Process Model" not in prompt
+    assert "## Neural Network Model" not in prompt
     assert "## Cross-model links" not in prompt
 
 
@@ -188,3 +192,76 @@ def test_idiom_guidance_omitted_when_no_stack_named():
         max_turns=20,
     )
     assert "Idiomatic conventions" not in prompt
+
+
+def test_bpmn_and_nn_primary_banners_are_explicit():
+    for primary_kind, expected in (
+        ("bpmn", "BPMN-driven run"),
+        ("nn", "Neural-network-driven run"),
+    ):
+        prompt = build_system_prompt(
+            domain_model=None,
+            gui_model=None,
+            agent_model=None,
+            inventory="",
+            instructions="Generate code",
+            max_turns=20,
+            primary_kind=primary_kind,
+        )
+        assert expected in prompt
+
+
+def test_bpmn_and_nn_models_are_serialized_into_agent_context():
+    start = SimpleNamespace(name="Start", lane=None)
+    review = SimpleNamespace(name="Review request", lane=None)
+    flow = SimpleNamespace(
+        name="start-to-review",
+        source=start,
+        target=review,
+        is_default=False,
+    )
+    process = SimpleNamespace(
+        name="Approval",
+        flow_nodes=[start, review],
+        sequence_flows=[flow],
+        lanes=[],
+    )
+    bpmn_model = SimpleNamespace(
+        name="Approval workflow",
+        processes=[process],
+        collaboration=None,
+    )
+    dense = SimpleNamespace(
+        name="classifier",
+        actv_func="relu",
+        name_module_input=None,
+        input_reused=False,
+        in_features=32,
+        out_features=4,
+    )
+    nn_model = SimpleNamespace(
+        name="Risk classifier",
+        modules=[dense],
+        configuration=None,
+        train_data=None,
+        test_data=None,
+    )
+
+    prompt = build_system_prompt(
+        domain_model=None,
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Implement both specifications",
+        max_turns=20,
+        bpmn_model=bpmn_model,
+        nn_model=nn_model,
+        primary_kind="bpmn",
+    )
+
+    assert "## BPMN Process Model" in prompt
+    assert "Approval workflow" in prompt
+    assert "start-to-review" in prompt
+    assert "## Neural Network Model" in prompt
+    assert "Risk classifier" in prompt
+    assert '"out_features": 4' in prompt

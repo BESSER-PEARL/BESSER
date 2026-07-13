@@ -63,6 +63,8 @@ _PRIMARY_KIND_PREFERENCE: tuple[tuple[str, str], ...] = (
     ("AgentDiagram", "agent"),
     ("StateMachineDiagram", "state_machine"),
     ("ObjectDiagram", "object"),
+    ("BPMN", "bpmn"),
+    ("NNDiagram", "nn"),
     ("QuantumCircuitDiagram", "quantum"),
 )
 
@@ -76,10 +78,10 @@ class AssembledModels:
     because there is nothing to generate from an empty project. Which
     model the orchestrator treats as the primary anchor is carried in
     ``primary_kind``; auto-detection prefers class → gui → agent →
-    state_machine → object → quantum.
+    state_machine → object → BPMN → neural network → quantum.
     """
 
-    primary_kind: str                                   # one of: class|gui|agent|state_machine|object|quantum
+    primary_kind: str                                   # class|gui|agent|state_machine|object|bpmn|nn|quantum
     domain_model: Optional[Any] = None                  # DomainModel or None
     gui_model: Optional[Any] = None                     # GUIModel or None
     agent_model: Optional[Any] = None                   # AgentModel or None
@@ -124,6 +126,10 @@ class AssembledModels:
             present.append({"kind": "object"})
         if self.quantum_circuit is not None:
             present.append({"kind": "quantum"})
+        if self.bpmn_model is not None:
+            present.append({"kind": "bpmn"})
+        if self.nn_model is not None:
+            present.append({"kind": "nn"})
         return {"primary": self.primary_kind, "present": present}
 
 
@@ -211,13 +217,16 @@ def assemble_models_from_project(
         agent_model=agent_model,
         state_machines=state_machines,
         object_model=object_model,
+        bpmn_model=bpmn_model,
+        nn_model=nn_model,
         quantum_circuit=quantum_circuit,
     )
     if primary_kind is None:
         raise ValueError(
             "Smart generation requires at least one modeling artifact "
             "(ClassDiagram, GUINoCodeDiagram, AgentDiagram, "
-            "StateMachineDiagram, ObjectDiagram, or QuantumCircuitDiagram)"
+            "StateMachineDiagram, ObjectDiagram, BPMN, NNDiagram, "
+            "or QuantumCircuitDiagram)"
         )
 
     return AssembledModels(
@@ -241,6 +250,8 @@ def _resolve_primary_kind(
     agent_model: Any,
     state_machines: list[Any],
     object_model: Any,
+    bpmn_model: Any,
+    nn_model: Any,
     quantum_circuit: Any,
 ) -> Optional[str]:
     """Pick the primary model kind based on what was assembled.
@@ -256,6 +267,8 @@ def _resolve_primary_kind(
         "agent": agent_model is not None,
         "state_machine": bool(state_machines),
         "object": object_model is not None,
+        "bpmn": bpmn_model is not None,
+        "nn": nn_model is not None,
         "quantum": quantum_circuit is not None,
     }
     if override:
@@ -399,15 +412,15 @@ def _assemble_object_model(
 
 
 def _assemble_bpmn_model(project: ProjectInput) -> Optional[Any]:
-    """Process the active BPMNDiagram into a ``BPMNModel`` (best-effort)."""
-    diagram = project.get_active_diagram("BPMNDiagram")
+    """Process the active BPMN diagram into a ``BPMNModel`` (best-effort)."""
+    diagram = project.get_active_diagram("BPMN")
     if diagram is None or not getattr(diagram, "model", None):
         return None
     try:
         return process_bpmn_diagram(diagram.model_dump())
     except Exception:
         logger.exception(
-            "Failed to process BPMNDiagram for smart generation; "
+            "Failed to process BPMN for smart generation; "
             "continuing without BPMN model"
         )
         return None

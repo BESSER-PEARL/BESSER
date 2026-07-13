@@ -3,6 +3,9 @@
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+    model_assembly as model_assembly_module,
+)
 from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
     assemble_models_from_project,
 )
@@ -49,6 +52,44 @@ CLASS_DIAGRAM_MODEL = {
     },
 }
 
+BPMN_DIAGRAM_MODEL = {
+    "version": "3.0.0",
+    "type": "BPMNDiagram",
+    "size": {"width": 1400, "height": 700},
+    "elements": {
+        "start": {
+            "id": "start", "name": "Start", "type": "BPMNStartEvent",
+            "owner": None, "eventType": "default",
+            "bounds": {"x": 100, "y": 100, "width": 50, "height": 50},
+        },
+        "review": {
+            "id": "review", "name": "Review", "type": "BPMNTask",
+            "owner": None, "taskType": "user", "marker": "none",
+            "bounds": {"x": 250, "y": 100, "width": 110, "height": 60},
+        },
+    },
+    "relationships": {
+        "flow": {
+            "id": "flow", "name": "", "type": "BPMNFlow", "owner": None,
+            "bounds": {"x": 0, "y": 0, "width": 100, "height": 1},
+            "path": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
+            "source": {
+                "element": "start", "direction": "Right",
+                "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+            },
+            "target": {
+                "element": "review", "direction": "Left",
+                "bounds": {"x": 100, "y": 0, "width": 0, "height": 0},
+            },
+            "isManuallyLayouted": False,
+            "flowType": "sequence",
+            "isDefault": False,
+        },
+    },
+    "interactive": {"elements": {}, "relationships": {}},
+    "assessments": {},
+}
+
 
 def _project_with(diagrams: dict) -> ProjectInput:
     """Build a minimal ProjectInput for testing."""
@@ -80,6 +121,60 @@ class TestAssembleModels:
         assert result.gui_model is None
         assert result.agent_model is None
         assert result.agent_config is None
+
+    def test_real_wme_bpmn_bucket_drives_assembly(self):
+        project = _project_with({
+            "BPMN": [{
+                "id": "bpmn-1",
+                "title": "Approval",
+                "model": BPMN_DIAGRAM_MODEL,
+            }],
+        })
+
+        result = assemble_models_from_project(project)
+
+        assert result.primary_kind == "bpmn"
+        assert result.bpmn_model is not None
+        assert result.bpmn_model.name == "Approval"
+
+    @pytest.mark.parametrize(
+        ("diagram_type", "processor_name", "field_name", "primary_kind"),
+        [
+            ("BPMN", "process_bpmn_diagram", "bpmn_model", "bpmn"),
+            ("NNDiagram", "process_nn_diagram", "nn_model", "nn"),
+        ],
+    )
+    def test_bpmn_and_nn_can_drive_assembly(
+        self,
+        monkeypatch,
+        diagram_type,
+        processor_name,
+        field_name,
+        primary_kind,
+    ):
+        sentinel = object()
+        monkeypatch.setattr(
+            model_assembly_module, processor_name, lambda payload: sentinel,
+        )
+        project = _project_with({
+            diagram_type: [{
+                "id": "model-1",
+                "title": "Primary",
+                "model": {
+                    "type": diagram_type,
+                    "elements": {},
+                    "relationships": {},
+                },
+            }],
+        })
+
+        result = assemble_models_from_project(project)
+
+        assert result.primary_kind == primary_kind
+        assert getattr(result, field_name) is sentinel
+        assert primary_kind in {
+            entry["kind"] for entry in result.summary()["present"]
+        }
 
     def test_project_without_class_diagram_is_accepted(self):
         """A project with only an AgentDiagram is now valid — smart

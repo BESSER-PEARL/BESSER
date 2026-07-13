@@ -228,26 +228,6 @@ _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
     },
 }
 
-# Adaptive budget ceiling for FROM-SCRATCH runs (Phase 1 found no
-# deterministic generator to run). These are deploy-tunable, so they live
-# in the web backend's constants module next to the default cap they
-# override -- see constants.py for the full rationale. The import is
-# best-effort and deliberately NOT at call time: ``besser.generators.llm``
-# is also used as a standalone library (``LLMGenerator``, no web backend
-# installed/importable), and this module must keep working there. When
-# the web backend isn't importable we fall back to the same defaults
-# constants.py itself ships, so behaviour is identical either way -- ops
-# just lose the env-var override unless the web backend is present.
-try:
-    from besser.utilities.web_modeling_editor.backend.constants.constants import (
-        LLM_FROM_SCRATCH_MAX_COST_USD_HARD_CAP as _FROM_SCRATCH_MAX_COST_USD,
-        LLM_FROM_SCRATCH_MAX_RUNTIME_SECONDS_HARD_CAP as _FROM_SCRATCH_MAX_RUNTIME_SECONDS,
-    )
-except Exception:  # pragma: no cover - defensive, web backend optional
-    _FROM_SCRATCH_MAX_COST_USD = 5.0
-    _FROM_SCRATCH_MAX_RUNTIME_SECONDS = 1800
-
-
 class LLMOrchestrator:
     """
     Three-phase orchestrator for LLM-augmented code generation.
@@ -294,6 +274,7 @@ class LLMOrchestrator:
         enable_toolchain_validation: bool = True,
         allow_shell_tools: bool = True,
         target_generator: str | None = None,
+        target_generator_bound: bool = False,
         source_project_export: dict | None = None,
     ):
         self.client = llm_client
@@ -320,7 +301,7 @@ class LLMOrchestrator:
         if self.primary_kind is None:
             raise ValueError(
                 "LLMOrchestrator requires at least one model (domain, gui, "
-                "agent, state_machine, object, or quantum)"
+                "agent, state_machine, object, BPMN, neural network, or quantum)"
             )
         self.output_dir = output_dir or tempfile.mkdtemp(prefix="besser_llm_")
         self.max_turns = max_turns or self.MAX_TURNS
@@ -370,12 +351,16 @@ class LLMOrchestrator:
         # projects and can add minutes of wall-clock per run. The web
         # runner disables them per deploy (BESSER_LLM_ENABLE_TOOLCHAIN_
         # VALIDATION); library users keep the default. The cheap checks
-        # (ast.parse, Dockerfile refs, ruff, pip dry-run) always run.
+        # In-process checks always run; shell/toolchain checks are gated.
         self.enable_toolchain_validation = enable_toolchain_validation
         # Binding Phase-1 generator choice (e.g. from a user-approved
-        # preview plan). When set, _select_generator returns it directly —
-        # no selection LLM call, no keyword fallback.
+        # preview plan). A bound ``None`` explicitly skips Phase 1; an
+        # unbound ``None`` keeps auto-selection. Either bound state avoids a
+        # paid selector call and executes exactly the approved plan.
         self.target_generator = target_generator
+        self.target_generator_bound = (
+            target_generator_bound or target_generator is not None
+        )
         # Cooperative cancellation hook. The orchestrator polls this at
         # the top of each Phase 2 turn. Returning False causes the loop
         # to exit cleanly — used by the SSE runner to honour
@@ -412,9 +397,9 @@ class LLMOrchestrator:
         self._phase0_5_files: list[str] = []
         self._inventory: str = ""
         # Set by ``_apply_adaptive_budget`` when Phase 1 found no
-        # deterministic generator to run: the cost / runtime ceiling and
-        # the client's output-token limit were raised for this run. Kept
-        # for observability (surfaced in the saved recipe).
+        # deterministic generator and the client's output-token limit was
+        # raised. The legacy recipe field name is retained for compatibility;
+        # cost and runtime limits are never raised.
         self._adaptive_budget_applied: bool = False
         self._start_time: float | None = None
         # Stored as ValidationIssue objects so the recipe captures severity.
@@ -445,6 +430,8 @@ class LLMOrchestrator:
             agent_model=agent_model,
             object_model=object_model,
             quantum_circuit=quantum_circuit,
+            bpmn_model=bpmn_model,
+            nn_model=nn_model,
         )
         self._resume_from_turn: int = 0
         self._resume_messages: list[dict] | None = None
@@ -516,6 +503,10 @@ class LLMOrchestrator:
             return "state_machine"
         if self.object_model is not None:
             return "object"
+        if self.bpmn_model is not None:
+            return "bpmn"
+        if self.nn_model is not None:
+            return "nn"
         if self.quantum_circuit is not None:
             return "quantum"
         return None
@@ -541,6 +532,8 @@ class LLMOrchestrator:
             agent_model=self.agent_model,
             object_model=self.object_model,
             quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
         )
         self._trace.write(
             EVENT_RUN_START,
@@ -672,6 +665,8 @@ class LLMOrchestrator:
             agent_model=self.agent_model,
             object_model=self.object_model,
             quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
         )
         if expected != checkpoint.project_fingerprint:
             raise CheckpointMismatchError(
@@ -1191,7 +1186,14 @@ class LLMOrchestrator:
         # quantum-only project, there is nothing for Phase 1 to do —
         # skip straight to Phase 2, where the LLM writes from the
         # primary model using write_file / run_command.
-        if self.domain_model is None and self.quantum_circuit is None:
+        if not any((
+            self.domain_model is not None,
+            self.agent_model is not None,
+            self.object_model is not None,
+            self.quantum_circuit is not None,
+            self.bpmn_model is not None,
+            self.nn_model is not None,
+        )):
             logger.info(
                 "Phase 1: skipped (no domain_model or quantum_circuit — "
                 "primary_kind=%s). LLM writes from scratch in Phase 2.",
@@ -1252,7 +1254,12 @@ class LLMOrchestrator:
         # A binding override (user-approved preview plan) wins outright —
         # no LLM call, no keywords. Validated upstream against the
         # registered generator tools.
-        if self.target_generator:
+        if self.target_generator_bound:
+            if self.target_generator is None:
+                logger.info(
+                    "Phase 1: caller explicitly selected no deterministic generator"
+                )
+                return None
             logger.info(
                 "Phase 1: using caller-specified generator %s",
                 self.target_generator,
@@ -1278,9 +1285,20 @@ class LLMOrchestrator:
             # Both LLM and keywords agree: no generator
             return None
 
-        # Last resort: default based on available models. Quantum and GUI
-        # specialise first because they map cleanly to a single generator;
-        # bare class diagrams fall through to a backend.
+        # Last resort: default based on the primary specialist model.
+        if self.primary_kind == "bpmn" and self.bpmn_model is not None:
+            return "generate_bpmn"
+        if self.primary_kind == "nn" and self.nn_model is not None:
+            lower = instructions.lower()
+            if "tensorflow" in lower or "keras" in lower:
+                return "generate_tensorflow"
+            return "generate_pytorch"
+        if self.primary_kind == "agent" and self.agent_model is not None:
+            return "generate_baf"
+        if self.primary_kind == "object" and self.object_model is not None:
+            return "generate_json_object"
+
+        # Legacy specialist/default ordering.
         if self.quantum_circuit is not None:
             return "generate_qiskit"
         if self.gui_model and self.domain_model is not None:
@@ -1326,6 +1344,18 @@ class LLMOrchestrator:
                 )
             else:
                 available_models.append("Quantum circuit: NO")
+            if self.bpmn_model is not None:
+                available_models.append(
+                    "BPMN model: YES - prefer generate_bpmn for executable process XML"
+                )
+            else:
+                available_models.append("BPMN model: NO")
+            if self.nn_model is not None:
+                available_models.append(
+                    "Neural-network model: YES - choose PyTorch or TensorFlow"
+                )
+            else:
+                available_models.append("Neural-network model: NO")
 
             # Build the generator menu from the tool registry, restricted
             # to generators whose required models are actually loaded.
@@ -1365,6 +1395,12 @@ class LLMOrchestrator:
                 "- If a Quantum circuit is present and the user asks for quantum/Qiskit code → generate_qiskit\n"
                 "- If state machines are present, pick the generator that fits the rest of the request — "
                 "the LLM in Phase 2 will wire state transitions on top of the generator output\n"
+                "- BPMN/workflow/process requests with a BPMN model: generate_bpmn\n"
+                "- PyTorch/torch requests with an NN model: generate_pytorch\n"
+                "- TensorFlow/Keras requests with an NN model: generate_tensorflow\n"
+                "- Agent/chatbot/BAF requests with an Agent model: generate_baf\n"
+                "- JSON fixture/seed requests with an Object model: generate_json_object\n"
+                "- Supabase requests with a Domain model: generate_supabase\n"
                 "- ONLY answer NONE if the user explicitly asks for a framework like NestJS, Next.js, Express, Spring Boot, Go, Rust\n"
                 "- If the user says 'backend', 'API', 'FastAPI', or 'REST' → answer generate_fastapi_backend\n"
                 "- If the user says 'Django' → answer generate_django\n"
@@ -1521,6 +1557,43 @@ class LLMOrchestrator:
             if _has(fw):
                 return ""
 
+        # Specialist generators for the newer modeling artifacts.
+        if self.bpmn_model is not None and (
+            self.primary_kind == "bpmn"
+            or _has("bpmn")
+            or _has("workflow")
+            or "business process" in lower
+            or "process model" in lower
+        ):
+            return "generate_bpmn"
+        if self.nn_model is not None:
+            if _has("tensorflow") or _has("keras"):
+                return "generate_tensorflow"
+            if (
+                self.primary_kind == "nn"
+                or _has("pytorch")
+                or _has("torch")
+                or "neural network" in lower
+            ):
+                return "generate_pytorch"
+        if self.agent_model is not None and (
+            self.primary_kind == "agent"
+            or _has("baf")
+            or _has("chatbot")
+            or "agent framework" in lower
+        ):
+            return "generate_baf"
+        if self.object_model is not None and (
+            self.primary_kind == "object"
+            or "json object" in lower
+            or _has("fixture")
+            or _has("fixtures")
+            or "seed data" in lower
+        ):
+            return "generate_json_object"
+        if self.domain_model is not None and _has("supabase"):
+            return "generate_supabase"
+
         # Positive matches — check what user explicitly asked for
         if _has("django"):
             return "generate_django"
@@ -1633,11 +1706,11 @@ class LLMOrchestrator:
             )
 
     # ==================================================================
-    # Adaptive budget: raise the ceiling for from-scratch runs
+    # Adaptive response sizing for from-scratch runs
     # ==================================================================
 
     def _apply_adaptive_budget(self) -> None:
-        """Raise the cost / runtime / output-token ceiling for from-scratch runs.
+        """Raise only the output-token ceiling for from-scratch runs.
 
         Called from ``run()`` / ``resume()`` after Phase 1 (and Phase 0.5)
         have run, so ``self._generator_used`` is authoritative:
@@ -1648,40 +1721,21 @@ class LLMOrchestrator:
           generator matches the request (e.g. the user asked for Next.js,
           Rust, or Kotlin -- stacks BESSER doesn't scaffold). Either way,
           Phase 2 has NOTHING to build on top of: it authors the entire
-          application from nothing, which legitimately needs more turns,
-          more spend, and bigger individual responses than the common
-          case (a Python scaffold Phase 2 only patches).
+          application from nothing, which legitimately needs bigger
+          individual responses than the common case (a Python scaffold
+          Phase 2 only patches).
         - Anything else means a deterministic generator actually ran --
-          the common, cheaper case -- so the caller-supplied cap (already
-          clamped upstream to the web deployment's tight default) is left
-          exactly as-is. This keeps the BYOK safety rail unchanged for
-          the case it was sized for.
+          the common, cheaper case -- so no response-size adaptation is
+          needed.
 
-        Uses ``max()`` semantics throughout: this only ever RAISES the
-        ceiling, never lowers a caller-supplied value that's already
-        higher (e.g. a library caller that explicitly asked for more).
+        Cost and runtime are user-authorised safety rails. They are never
+        changed here: a from-scratch run may need more budget, but it must
+        stop at the explicit cap rather than silently spending more.
         """
         if self._generator_used is not None:
             return  # scaffolded Python run — caller's cap is untouched
 
-        raised_cost = self.max_cost_usd < _FROM_SCRATCH_MAX_COST_USD
-        raised_runtime = self.max_runtime_seconds < _FROM_SCRATCH_MAX_RUNTIME_SECONDS
-        if raised_cost or raised_runtime:
-            logger.info(
-                "Adaptive budget: from-scratch run detected (generator_used=None, "
-                "stack=%s) — raising ceiling cost $%.2f -> $%.2f, runtime %ds -> %ds",
-                self._phase0_5_stack or "unrecognised",
-                self.max_cost_usd, max(self.max_cost_usd, _FROM_SCRATCH_MAX_COST_USD),
-                self.max_runtime_seconds,
-                max(self.max_runtime_seconds, _FROM_SCRATCH_MAX_RUNTIME_SECONDS),
-            )
-            self.max_cost_usd = max(self.max_cost_usd, _FROM_SCRATCH_MAX_COST_USD)
-            self.max_runtime_seconds = max(
-                self.max_runtime_seconds, _FROM_SCRATCH_MAX_RUNTIME_SECONDS,
-            )
-            self._adaptive_budget_applied = True
-
-        # Also widen the per-call output-token limit: a from-scratch run
+        # Widen the per-call output-token limit: a from-scratch run
         # writes large files with no scaffold underneath them, which is
         # far more likely to hit the provider's default max_tokens
         # mid-``write_file`` than the scaffolded case. See
@@ -1696,7 +1750,7 @@ class LLMOrchestrator:
             current_max_tokens = None
         if current_max_tokens is not None and current_max_tokens < FROM_SCRATCH_MAX_TOKENS:
             logger.info(
-                "Adaptive budget: raising output-token limit %d -> %d for "
+                "Adaptive response sizing: raising output-token limit %d -> %d for "
                 "from-scratch run",
                 current_max_tokens, FROM_SCRATCH_MAX_TOKENS,
             )
@@ -2760,39 +2814,41 @@ class LLMOrchestrator:
                     except Exception:
                         pass
 
-        # Verify Python dependencies actually install without conflicts.
-        # This is the ROOT FIX for dependency issues — instead of hardcoding
-        # specific workarounds (passlib/bcrypt, etc.), we test ALL deps.
-        for root, _, files in os.walk(self.output_dir):
-            for fname in files:
-                if fname == "requirements.txt":
-                    req_path = os.path.join(root, fname)
-                    rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
-                    if rel.startswith(_SNAPSHOT_DIR):
-                        continue
-                    try:
-                        import subprocess
-                        # Dry-run install to check for conflicts
-                        req_dir = os.path.dirname(req_path)
-                        result = subprocess.run(
-                            [sys.executable, "-m", "pip", "install",
-                             "--dry-run", "-r", "requirements.txt", "--quiet"],
-                            capture_output=True, text=True, timeout=30,
-                            cwd=req_dir,
-                            # Never expose provider keys / OAuth secrets to a
-                            # (possibly untrusted) requirements.txt's build
-                            # backend, which pip may execute to resolve sdists.
-                            env=_safe_subprocess_env(),
-                        )
-                        if result.returncode != 0:
-                            # Extract the meaningful error
-                            err_lines = [l for l in result.stderr.strip().split("\n")
-                                         if l.strip() and "WARNING" not in l]
-                            if err_lines:
-                                err = "\n".join(err_lines[-3:])
-                                raw_issues.append(f"Dependency conflict in {rel}:\n{err}")
-                    except Exception:
-                        pass  # pip not available or timeout — skip
+        # Dependency resolution may execute untrusted build backends and
+        # access the network. Keep it behind the same explicit shell-tools
+        # trust gate as run_command/install_dependencies; hosted mode has
+        # this disabled by default and therefore never invokes pip.
+        if self.allow_shell_tools:
+            for root, _, files in os.walk(self.output_dir):
+                for fname in files:
+                    if fname == "requirements.txt":
+                        req_path = os.path.join(root, fname)
+                        rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
+                        if rel.startswith(_SNAPSHOT_DIR):
+                            continue
+                        try:
+                            import subprocess
+                            # Dry-run install to check for conflicts
+                            req_dir = os.path.dirname(req_path)
+                            result = subprocess.run(
+                                [sys.executable, "-m", "pip", "install",
+                                 "--dry-run", "-r", "requirements.txt", "--quiet"],
+                                capture_output=True, text=True, timeout=30,
+                                cwd=req_dir,
+                                # Never expose provider keys / OAuth secrets to a
+                                # (possibly untrusted) requirements.txt's build
+                                # backend, which pip may execute to resolve sdists.
+                                env=_safe_subprocess_env(),
+                            )
+                            if result.returncode != 0:
+                                # Extract the meaningful error
+                                err_lines = [l for l in result.stderr.strip().split("\n")
+                                             if l.strip() and "WARNING" not in l]
+                                if err_lines:
+                                    err = "\n".join(err_lines[-3:])
+                                    raw_issues.append(f"Dependency conflict in {rel}:\n{err}")
+                        except Exception:
+                            pass  # pip not available or timeout — skip
 
         # ``ruff``, ``tsc``, ``cargo``, and ``kotlinc`` are best-effort
         # static checks — each skips silently if the binary isn't on
@@ -3520,6 +3576,8 @@ class LLMOrchestrator:
             object_model=self.object_model,
             state_machines=self.state_machines,
             quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
             primary_kind=self.primary_kind,
             scaffold_snapshot=scaffold_snapshot,
             endpoint_manifest=endpoint_manifest,
@@ -3545,6 +3603,8 @@ class LLMOrchestrator:
             state_machines=self.state_machines,
             object_model=self.object_model,
             quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
             primary_kind=self.primary_kind,
         )
         if did_compact:
@@ -3691,6 +3751,16 @@ class LLMOrchestrator:
             recipe_model["gui_present"] = True
         if self.quantum_circuit is not None:
             recipe_model["quantum_present"] = True
+        if self.bpmn_model is not None:
+            recipe_model["bpmn"] = {
+                "name": getattr(self.bpmn_model, "name", None),
+                "processes": len(getattr(self.bpmn_model, "processes", []) or []),
+            }
+        if self.nn_model is not None:
+            recipe_model["neural_network"] = {
+                "name": getattr(self.nn_model, "name", None),
+                "modules": len(getattr(self.nn_model, "modules", []) or []),
+            }
 
         recipe = {
             "instructions": instructions,
@@ -3703,10 +3773,8 @@ class LLMOrchestrator:
             "elapsed_seconds": round(elapsed, 1),
             "max_cost_usd": self.max_cost_usd,
             "max_runtime_seconds": self.max_runtime_seconds,
-            # True when this was a from-scratch run (no deterministic
-            # Phase 1 generator) and the cost/runtime/output-token ceiling
-            # above was therefore raised past the caller-supplied default.
-            # See LLMOrchestrator._apply_adaptive_budget.
+            # Legacy field name: true only when from-scratch response-token
+            # sizing was raised. Cost/runtime caps remain caller-authorised.
             "adaptive_budget_applied": self._adaptive_budget_applied,
             "usage": self.client.usage.summary(),
             "validation_issues": [

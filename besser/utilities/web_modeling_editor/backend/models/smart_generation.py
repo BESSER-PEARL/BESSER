@@ -65,6 +65,13 @@ class SmartGenerateRequest(BaseModel):
     api_key: SecretStr
     provider: Literal["anthropic", "openai", "mistral"] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
+    # OpenAI-compatible base URL for the frontend's 'PIA (LIST)' and 'Local
+    # (self-hosted)' providers (both arrive as provider="openai" + this URL).
+    # Passed to the OpenAI SDK. SECURITY: having the server open a user-supplied
+    # URL is an SSRF surface, so a request carrying base_url is REJECTED unless
+    # the deploy opts in via BESSER_LLM_ALLOW_CUSTOM_BASE_URL (see the runner) —
+    # these providers are meant for local / single-tenant use.
+    base_url: Optional[str] = Field(default=None, max_length=500)
     max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
     max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
     # Optional plan override from the preview screen. When the user
@@ -103,6 +110,18 @@ class SmartGenerateRequest(BaseModel):
     def _validate_instructions_not_whitespace(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("instructions cannot be empty or whitespace-only")
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if not re.match(r"^https?://", value, re.IGNORECASE):
+            raise ValueError("base_url must be an http:// or https:// URL")
         return value
 
     @field_validator("target_generator_override")

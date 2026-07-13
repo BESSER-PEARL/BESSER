@@ -229,6 +229,44 @@ def _parse_frame(frame: bytes) -> dict:
     return json.loads(data_line[len("data: "):])
 
 
+_RUNNER_MODULE = (
+    "besser.utilities.web_modeling_editor.backend.services."
+    "smart_generation.runner.LLM_ALLOW_CUSTOM_BASE_URL"
+)
+
+
+class TestBaseUrlSsrfGate:
+    """The 'PIA'/'local' providers send a custom OpenAI-compatible base_url.
+    On a shared deploy the server must NOT open an arbitrary user URL (SSRF)."""
+
+    def test_custom_base_url_rejected_when_flag_off(self, stub_orchestrator, monkeypatch):
+        monkeypatch.setattr(_RUNNER_MODULE, False)
+        request = _build_request(
+            provider="openai", api_key="sk-test", llm_model="gpt-4o",
+            base_url="http://localhost:11434/v1",
+        )
+        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        assert any(p.get("event") == "error" and p.get("code") == "BAD_REQUEST" for p in parsed)
+        assert "done" not in [p.get("event") for p in parsed]
+
+    def test_custom_base_url_allowed_when_flag_on(self, stub_orchestrator, monkeypatch):
+        monkeypatch.setattr(_RUNNER_MODULE, True)
+        request = _build_request(
+            provider="openai", api_key="sk-test", llm_model="gpt-4o",
+            base_url="http://localhost:11434/v1",
+        )
+        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        assert not any(p.get("code") == "BAD_REQUEST" for p in parsed)
+        assert "done" in [p.get("event") for p in parsed]
+
+    def test_no_base_url_unaffected_when_flag_off(self, stub_orchestrator, monkeypatch):
+        monkeypatch.setattr(_RUNNER_MODULE, False)
+        request = _build_request()  # anthropic, no base_url
+        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        assert not any(p.get("code") == "BAD_REQUEST" for p in parsed)
+        assert "done" in [p.get("event") for p in parsed]
+
+
 class TestHappyPath:
     def test_happy_path_event_ordering(self, stub_orchestrator):
         request = _build_request()

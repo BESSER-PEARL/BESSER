@@ -942,6 +942,16 @@ def _looks_class_derived_role(
     if not stem_lower:
         return False
 
+    # A role whose singular stem is contained in the TARGET class name
+    # (e.g. ``items`` -> ``OrderItem``, ``members`` -> ``TeamMember``) is a
+    # legitimate semantic collection role for a compound-named class, not a
+    # stale leftover from a rename — the stem being INSIDE the target is the
+    # opposite of "stale". Stay quiet. A genuine stale role (``members`` after
+    # renaming ``Member`` -> ``User``) has a stem NOT contained in the target
+    # (``member`` not in ``user``), so it still falls through and warns.
+    if stem_lower in target_class_name.lower():
+        return False
+
     # 2. Stem is a substring of any class name in the model -> probably
     # derived from a class name (possibly a renamed class that left behind
     # this role, or a class whose name partly overlaps).

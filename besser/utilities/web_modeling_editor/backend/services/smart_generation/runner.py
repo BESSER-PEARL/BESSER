@@ -43,6 +43,7 @@ from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
+    LLM_ALLOW_CUSTOM_BASE_URL,
     LLM_ENABLE_AUTO_FIX,
     LLM_ENABLE_SHELL_TOOLS,
     LLM_ENABLE_CHECKPOINTING,
@@ -491,6 +492,22 @@ class SmartGenerationRunner:
             maxRuntime=self.request.max_runtime_seconds,
         ))
 
+        # ---- 1b. SSRF gate for the 'PIA' / 'local' providers -----------
+        # These send a custom OpenAI-compatible base_url. Having the server
+        # open an arbitrary user URL is an SSRF surface on a shared box, so it
+        # is opt-in per deploy (local / on-prem / PIA set the flag). Fail fast
+        # with a clear, actionable message.
+        if self.request.base_url and not LLM_ALLOW_CUSTOM_BASE_URL:
+            yield format_sse(ErrorEvent(
+                code="BAD_REQUEST",
+                message=(
+                    "Custom LLM endpoints (PIA / local) are disabled on this "
+                    "deployment. Run the WME locally (on the LIST VPN for PIA) "
+                    "to use your own gateway or model server."
+                ),
+            ))
+            return
+
         # ---- 2. Create (or recover) the temp dir -----------------------
         # When resuming, we reattach to the temp dir from the crashed run
         # so the orchestrator sees its existing output + checkpoint. The
@@ -631,6 +648,7 @@ class SmartGenerationRunner:
                 provider=self.request.provider,
                 api_key=self.request.resolved_api_key(),
                 model=self.request.llm_model,
+                base_url=self.request.base_url,
             )
         except ValueError as exc:
             yield format_sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))

@@ -116,6 +116,16 @@ LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
 # var. Durable answer is per-run container isolation.
 LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
 
+# Whether a smart-generation request may carry a custom LLM ``base_url`` (the
+# 'PIA (LIST)' and 'Local / self-hosted' BYOK providers route through an
+# OpenAI-compatible endpoint at a user-supplied URL). OFF by default: on a
+# shared hosted box, having the server open an arbitrary user-provided URL is an
+# SSRF vector. Local / on-prem / PIA deploys set this TRUE (their whole point is
+# reaching a private gateway or localhost). When FALSE the request is rejected
+# with a clear "run WME locally" message and the providers stay visible-but-inert
+# in the dropdown.
+LLM_ALLOW_CUSTOM_BASE_URL = _env_bool("BESSER_LLM_ALLOW_CUSTOM_BASE_URL", False)
+
 # Grace period added on top of the request's max_runtime_seconds before
 # the runner-level watchdog force-cancels a run (covers Phase 3 +
 # packaging time after the Phase 2 loop hits its own runtime check).

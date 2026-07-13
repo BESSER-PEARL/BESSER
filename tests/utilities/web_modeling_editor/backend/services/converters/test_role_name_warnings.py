@@ -267,3 +267,51 @@ def test_matching_role_name_does_not_warn(caplog):
     assert not any(
         "stale role name" in r.message for r in caplog.records
     ), [r.message for r in caplog.records]
+
+
+def test_semantic_collection_role_on_compound_class_does_not_warn(caplog):
+    """A ``0..*`` collection role named for its meaning (``items``) on an end
+    typed with a COMPOUND class name (``OrderItem``) is a legitimate, idiomatic
+    role — the modeling agent generates exactly these. The stem ``item`` is
+    CONTAINED in ``OrderItem``, which is the opposite of a stale rename, so the
+    stale-role warning must NOT fire (regression for the false positive)."""
+    json_data = {
+        "title": "ShopModel",
+        "model": {
+            "elements": {
+                "cls-order": {
+                    "id": "cls-order", "name": "Order", "type": "Class",
+                    "owner": None, "attributes": [], "methods": [],
+                },
+                "cls-orderitem": {
+                    "id": "cls-orderitem", "name": "OrderItem", "type": "Class",
+                    "owner": None, "attributes": [], "methods": [],
+                },
+            },
+            "relationships": {
+                "rel-contains": {
+                    "id": "rel-contains",
+                    "name": "contains",
+                    "type": "ClassBidirectional",
+                    "source": {
+                        "element": "cls-order",
+                        "multiplicity": "1",
+                        "role": "order",
+                    },
+                    "target": {
+                        "element": "cls-orderitem",
+                        "multiplicity": "0..*",
+                        "role": "items",  # semantic collection role for a compound class
+                    },
+                },
+            },
+        },
+    }
+
+    with caplog.at_level(logging.WARNING, logger=CLASS_DIAGRAM_LOGGER):
+        process_class_diagram(json_data)
+
+    assert not any(
+        "stale role name" in r.message and "items" in r.message
+        for r in caplog.records
+    ), [r.message for r in caplog.records]

@@ -1099,24 +1099,23 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         elements, domain_model, all_warnings,
     )
 
-    # Stale-role-name detection.
+    # Stale-role-name detection — DISABLED (2026-07-14).
     #
-    # The metamodel's ``Class.name`` setter (BESSER commit 7a62486d) keeps
-    # role names in sync with class renames -- e.g. renaming ``Member`` to
-    # ``User`` rewrites a ``members`` end-role to ``users``. But the visual
-    # editor never calls that setter: when the user renames a class in the
-    # UI, the editor POSTs a fresh JSON model and we rebuild the BUML model
-    # via ``Class.__init__`` here. If the editor (or any other JSON
-    # producer) forgets to update the relationship JSON's ``role`` fields,
-    # the freshly built model carries stale role names.
-    #
-    # This pass is **informational**: we emit a warning when an end's role
-    # name does not match its target class via the metamodel's matching
-    # heuristic and the role *looks* class-derived. We deliberately do NOT
-    # auto-rename -- doing so would clobber intentional aliases like
-    # ``borrower`` on a ``Member`` end. A human reviewer can act on the
-    # warning when it fires.
-    _warn_potentially_stale_role_names(domain_model, all_warnings)
+    # This pass warned when an association end's role name didn't match its
+    # target class and "looked" class-derived, on the theory it was a stale
+    # role left behind by a visual-editor rename (the editor rebuilds via
+    # ``Class.__init__``, bypassing the ``Class.name`` setter's role
+    # propagation). In practice the heuristic could NOT distinguish a stale
+    # rename from a perfectly legitimate collection role: ``tasks`` on a
+    # ``TodoItem`` end is structurally identical to ``members`` on a ``User``
+    # end (plural stem, not contained in the target, no matching class), so
+    # the warning fired on essentially every idiomatic collection role in
+    # freshly generated models — a false-positive flood with no reliable
+    # signal. It's been removed. The correct fix for the underlying editor
+    # rename bug is to propagate renames into the relationship JSON's
+    # ``role`` fields at the editor / JSON layer (not a post-hoc guess here).
+    # ``_warn_potentially_stale_role_names`` / ``_looks_class_derived_role``
+    # are retained below (unused) in case that reliable path is built later.
 
     # Process OCL constraints (must run AFTER methods are attached so that
     # parse_ocl can resolve method-return-types and property navigation).

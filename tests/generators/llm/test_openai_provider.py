@@ -16,6 +16,7 @@ from besser.generators.llm.llm_client import (
     _ToolUseBlock,
     _anthropic_tools_to_openai,
     _get_pricing,
+    _needs_reasoning_none_for_tools,
     _openai_messages_to_api,
     _openai_response_to_common,
     create_llm_client,
@@ -607,6 +608,101 @@ class TestOpenAIProviderStream:
         assert provider.usage.input_tokens == 5000
         assert provider.usage.output_tokens == 2500
         assert provider.usage.api_calls == 5
+
+
+# ======================================================================
+# reasoning_effort='none' for tool-using gpt-5.6 reasoning models
+# ======================================================================
+
+def _provider_with_model(model):
+    """OpenAIProvider on ``model`` with a mocked SDK client."""
+    mock_openai_module = MagicMock()
+    mock_client = MagicMock()
+    mock_openai_module.OpenAI.return_value = mock_client
+    with patch.dict("sys.modules", {"openai": mock_openai_module}):
+        provider = OpenAIProvider(api_key="sk-test", model=model)
+        provider._client = mock_client
+        return provider
+
+
+_ONE_TOOL = [
+    {"name": "my_tool", "description": "A tool",
+     "input_schema": {"type": "object", "properties": {}}},
+]
+
+
+def _mock_chat_text(provider):
+    usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5)
+    message = SimpleNamespace(content="ok", tool_calls=None)
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider._client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[choice], usage=usage,
+    )
+
+
+def _mock_stream_text(provider):
+    chunk = SimpleNamespace(
+        choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="hi", tool_calls=None),
+            finish_reason="stop",
+        )],
+        usage=None,
+    )
+    provider._client.chat.completions.create.return_value = iter([chunk])
+
+
+class TestReasoningEffortHelper:
+    """The ``gpt-5.6`` reasoning trio cannot combine function tools + reasoning
+    on /chat/completions; the client sends ``reasoning_effort='none'`` for them
+    so tools work. Every other tier must NOT get the param (they 400 on it).
+    Verified empirically against the live API (scratchpad probe_tools)."""
+
+    @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra",
+                                       "gpt-5.6-luna", "GPT-5.6-TERRA"])
+    def test_gpt56_needs_flag(self, model):
+        assert _needs_reasoning_none_for_tools(model) is True
+
+    @pytest.mark.parametrize("model", ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
+                                       "gpt-5", "gpt-5-mini", "gpt-4.1",
+                                       "gpt-4o", "gpt-4o-mini",
+                                       "claude-sonnet-4-6"])
+    def test_others_do_not(self, model):
+        assert _needs_reasoning_none_for_tools(model) is False
+
+
+class TestReasoningEffortInRequest:
+
+    def test_gpt56_chat_sends_reasoning_none_with_tools(self):
+        provider = _provider_with_model("gpt-5.6-terra")
+        _mock_chat_text(provider)
+        provider.chat(system="sys", messages=[], tools=_ONE_TOOL)
+        kw = provider._client.chat.completions.create.call_args.kwargs
+        assert kw.get("reasoning_effort") == "none"
+        assert "tools" in kw
+
+    def test_gpt56_stream_sends_reasoning_none_with_tools(self):
+        provider = _provider_with_model("gpt-5.6-sol")
+        _mock_stream_text(provider)
+        list(provider.chat_stream(system="sys", messages=[], tools=_ONE_TOOL))
+        kw = provider._client.chat.completions.create.call_args.kwargs
+        assert kw.get("reasoning_effort") == "none"
+
+    def test_gpt56_no_reasoning_effort_without_tools(self):
+        """No tools → no need to disable reasoning; don't send the param."""
+        provider = _provider_with_model("gpt-5.6-terra")
+        _mock_chat_text(provider)
+        provider.chat(system="sys", messages=[], tools=[])
+        kw = provider._client.chat.completions.create.call_args.kwargs
+        assert "reasoning_effort" not in kw
+
+    @pytest.mark.parametrize("model", ["gpt-5.5", "gpt-4o"])
+    def test_non_gpt56_never_sends_reasoning_effort(self, model):
+        """gpt-5/gpt-4o REJECT reasoning_effort — must never be sent for them."""
+        provider = _provider_with_model(model)
+        _mock_chat_text(provider)
+        provider.chat(system="sys", messages=[], tools=_ONE_TOOL)
+        kw = provider._client.chat.completions.create.call_args.kwargs
+        assert "reasoning_effort" not in kw
 
 
 class TestUsageTrackerAccumulation:

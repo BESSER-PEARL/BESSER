@@ -467,6 +467,39 @@ def _is_auth_error(error: Exception) -> bool:
     )
 
 
+def _is_tools_unsupported_error(error: Exception) -> bool:
+    """Heuristic: did the provider reject *function tools* for this model?
+
+    OpenAI's gpt-5.x *reasoning* models return a 400 like "Function tools
+    with reasoning_effort are not supported for gpt-5.6-terra in
+    /v1/chat/completions" whenever a chat/completions request carries tools.
+    The Spec-Driven customization loop is tool-driven, so such a model simply
+    cannot run it. This is a model-*choice* error, not a transient upstream
+    failure — surface an actionable message (pick a tool-capable model)
+    instead of the raw provider 400.
+    """
+    s = str(error).lower()
+    return "not supported" in s and (
+        "function tool" in s or "tools with" in s or "tool_choice" in s
+    )
+
+
+def _tools_unsupported_message(model: str) -> str:
+    """Actionable guidance when a model can't use the code-generation tools.
+
+    (gpt-5.6 is auto-handled via reasoning_effort='none'; this fires only for
+    OTHER models that still reject function tools — e.g. an unrecognised
+    reasoning model typed into the Custom field.)
+    """
+    return (
+        f"The selected model '{model}' can't run the Spec-Driven Agent: it "
+        f"rejected the code-generation tools on the chat/completions endpoint. "
+        f"Pick a tool-capable model instead — e.g. gpt-5.5 or gpt-4o for "
+        f"OpenAI, or an Anthropic Claude model (claude-sonnet-4-6) for the "
+        f"strongest code fidelity."
+    )
+
+
 # ======================================================================
 # Client
 # ======================================================================
@@ -674,6 +707,24 @@ def _openai_max_tokens_key(model: str) -> str:
     if any(k in m for k in ("gpt-5", "o3", "o1", "o4")):
         return "max_completion_tokens"
     return "max_tokens"
+
+
+def _needs_reasoning_none_for_tools(model: str) -> bool:
+    """Whether this model REQUIRES ``reasoning_effort='none'`` to use tools.
+
+    OpenAI's gpt-5.6 reasoning models (sol/terra/luna) reject function tools on
+    /chat/completions unless reasoning is explicitly disabled — the API returns
+    "Function tools with reasoning_effort are not supported for <model>... set
+    reasoning_effort to 'none'." Verified empirically (probe_tools):
+      - gpt-5.6-*        : REQUIRE reasoning_effort='none' to use tools
+      - gpt-5.5 / 5.4    : accept-but-don't-need it (tools work either way)
+      - gpt-5 / gpt-4o…  : REJECT the param entirely (400 if sent)
+    So apply the flag ONLY to the models that require it. The Spec-Driven
+    customization loop is tool-driven, so this is what makes gpt-5.6 usable at
+    all here (chat/completions can't combine tools + reasoning; the /v1/responses
+    API could, but that's a larger migration).
+    """
+    return "gpt-5.6" in model.lower()
 
 
 def _anthropic_tools_to_openai(tools: list[dict]) -> list[dict]:
@@ -975,6 +1026,10 @@ class OpenAIProvider(LLMProvider):
                             "type": "function",
                             "function": {"name": force_tool},
                         }
+                    # gpt-5.6 reasoning models can't combine tools + reasoning
+                    # on chat/completions — disable reasoning so tools work.
+                    if _needs_reasoning_none_for_tools(effective_model):
+                        kwargs["reasoning_effort"] = "none"
 
                 response = self._client.chat.completions.create(**kwargs)
 
@@ -1005,6 +1060,8 @@ class OpenAIProvider(LLMProvider):
                     continue
                 if _is_auth_error(e):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                if _is_tools_unsupported_error(e):
+                    raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
                 raise UpstreamLLMError(f"OpenAI API call failed: {e}") from None
 
         raise UpstreamLLMError(f"OpenAI API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
@@ -1040,6 +1097,10 @@ class OpenAIProvider(LLMProvider):
                 }
                 if openai_tools:
                     kwargs["tools"] = openai_tools
+                    # gpt-5.6 reasoning models can't combine tools + reasoning
+                    # on chat/completions — disable reasoning so tools work.
+                    if _needs_reasoning_none_for_tools(self._model):
+                        kwargs["reasoning_effort"] = "none"
 
                 collected_text = ""
                 tool_calls_accum: dict[int, dict] = {}
@@ -1137,6 +1198,8 @@ class OpenAIProvider(LLMProvider):
                     continue
                 if _is_auth_error(e):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                if _is_tools_unsupported_error(e):
+                    raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
                 raise UpstreamLLMError(f"OpenAI API streaming failed: {e}") from None
 
         raise UpstreamLLMError(f"OpenAI streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None

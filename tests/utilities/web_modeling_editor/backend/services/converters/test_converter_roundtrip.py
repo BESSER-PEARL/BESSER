@@ -1322,6 +1322,49 @@ class TestObjectDiagramRoundtrip:
                 }
                 assert slot_values.get("name") == "Fitzgerald"
 
+    def test_user_model_equality_attribute_value(self, minimal_class_diagram_json):
+        """UserModelAttribute equality criteria ('==') are parsed, not dropped.
+
+        Regression test: the editor renders equality as a single '=' (e.g.
+        "title = TheGreatGatsby") while storing attributeOperator as '=='. The
+        parser must split on the displayed symbol; otherwise every '=='
+        criterion falls through with an empty value ("attributes are empty").
+        """
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        user_diagram_json = {
+            "title": "UserProfile",
+            "model": {
+                "type": "UserDiagram",
+                "elements": {
+                    "u-book1": {
+                        "id": "u-book1",
+                        "name": "book1",
+                        "type": "UserModelName",
+                        "owner": None,
+                        "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
+                        "attributes": ["u-title"],
+                        "methods": [],
+                        "className": "Book",
+                    },
+                    "u-title": {
+                        "id": "u-title",
+                        "name": "title = TheGreatGatsby",
+                        "type": "UserModelAttribute",
+                        "owner": "u-book1",
+                        "attributeOperator": "==",
+                        "bounds": {"x": 0, "y": 30, "width": 199, "height": 30},
+                    },
+                },
+                "relationships": {},
+            },
+        }
+
+        obj_model = process_object_diagram(user_diagram_json, domain_model)
+
+        book = next(obj for obj in obj_model.objects if obj.name == "book1")
+        slot_values = {slot.attribute.name: slot.value.value for slot in book.slots}
+        assert slot_values.get("title") == "TheGreatGatsby"
+
 
 # ===========================================================================
 # NN Diagram Roundtrip: JSON -> NN -> JSON

@@ -198,8 +198,13 @@ def process_object_diagram(json_data, domain_model):
                         continue
                 elif attr_type == "UserModelAttribute":
                     operator = attr_element.get("attributeOperator", "==")
-                    if operator and operator in attr_string:
-                        attr_part, value_part = attr_string.split(operator, 1)
+                    # The editor renders equality as a single '=' (e.g.
+                    # "age = 18") while storing the operator as '=='. Match on
+                    # the *displayed* symbol so equality criteria are parsed
+                    # instead of dropped (which left every '==' attribute empty).
+                    display_operator = "=" if operator == "==" else operator
+                    if display_operator and display_operator in attr_string:
+                        attr_part, value_part = attr_string.split(display_operator, 1)
                         attr_name = attr_part.strip()
                         value = value_part.strip()
                     else:

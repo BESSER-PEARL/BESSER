@@ -58,6 +58,8 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "WebSocketReplyOptions, WebSocketReplyLocation, "
             "WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
+            "LLMMistral, LLMDeepSeek, LLMGoogle, LLMMeta, LLMAnthropic, "
+            "LLMQwen, LLMxAI, LLMGroq, LLMTogether, LLMOpenRouter, "
             "RAGVectorStore, RAGTextSplitter, "
             "Tool, Skill, Workspace, ReasoningState, "
             "ReceiveTextEvent, ReceiveFileEvent, ReceiveJSONEvent, "

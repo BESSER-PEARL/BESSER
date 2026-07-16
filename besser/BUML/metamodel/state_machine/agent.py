@@ -731,6 +731,429 @@ class LLMReplicate(LLMWrapper):
         self.num_previous_messages = num_previous_messages
 
 
+class LLMMistral(LLMWrapper):
+    """An LLM wrapper for Mistral AI models via Mistral's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"mistral-small-latest"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMDeepSeek(LLMWrapper):
+    """An LLM wrapper for DeepSeek models via DeepSeek's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"deepseek-chat"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMGoogle(LLMWrapper):
+    """An LLM wrapper for Google Gemini models via Google's OpenAI-compatible endpoint.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"gemini-2.5-flash"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMMeta(LLMWrapper):
+    """An LLM wrapper for Meta Llama models via Meta's hosted OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"Llama-3.3-70B-Instruct"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMAnthropic(LLMWrapper):
+    """An LLM wrapper for Anthropic Claude models using the native anthropic SDK.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"claude-opus-4-5"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMQwen(LLMWrapper):
+    """An LLM wrapper for Alibaba Qwen models via DashScope's OpenAI-compatible endpoint.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"qwen-max"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMxAI(LLMWrapper):
+    """An LLM wrapper for xAI Grok models via xAI's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"grok-3-mini"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMGroq(LLMWrapper):
+    """An LLM wrapper for Groq-hosted models via Groq's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"llama-3.3-70b-versatile"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMTogether(LLMWrapper):
+    """An LLM wrapper for Together AI-hosted models via Together's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"meta-llama/Llama-3.3-70B-Instruct-Turbo"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMOpenRouter(LLMWrapper):
+    """An LLM wrapper for models accessed via OpenRouter's OpenAI-compatible API.
+
+    OpenRouter provides a unified gateway to hundreds of models from many providers.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier in OpenRouter format
+            (e.g. ``"anthropic/claude-opus-4"``, ``"openai/gpt-4o"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
 class RAGVectorStore:
     """Declarative description of a vector store used by a RAG pipeline.
 
@@ -2268,6 +2691,16 @@ Agent._LLM_PROVIDERS = {
     "huggingface": LLMHuggingFace,
     "huggingface_api": LLMHuggingFaceAPI,
     "replicate": LLMReplicate,
+    "mistral": LLMMistral,
+    "deepseek": LLMDeepSeek,
+    "google": LLMGoogle,
+    "meta": LLMMeta,
+    "anthropic": LLMAnthropic,
+    "qwen": LLMQwen,
+    "xai": LLMxAI,
+    "groq": LLMGroq,
+    "together": LLMTogether,
+    "openrouter": LLMOpenRouter,
 }
 
 

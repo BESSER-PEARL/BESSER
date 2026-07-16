@@ -870,6 +870,16 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "LLMHuggingFace": "huggingface",
             "LLMHuggingFaceAPI": "huggingface_api",
             "LLMReplicate": "replicate",
+            "LLMMistral": "mistral",
+            "LLMDeepSeek": "deepseek",
+            "LLMGoogle": "google",
+            "LLMMeta": "meta",
+            "LLMAnthropic": "anthropic",
+            "LLMQwen": "qwen",
+            "LLMxAI": "xai",
+            "LLMGroq": "groq",
+            "LLMTogether": "together",
+            "LLMOpenRouter": "openrouter",
         }
 
         def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:

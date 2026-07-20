@@ -86,6 +86,7 @@ from besser.utilities.buml_code_builder import (
 )
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
+from besser.generators.llm.llm_client import free_tier_available, free_tier_model
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,13 @@ async def smart_gen_config():
         # layer (single source of truth — the BYOK dialog should read
         # these instead of hardcoding its own copies).
         "default_models": dict(_LLM_DEFAULT_MODELS),
+        # Keyless free tier (server-hosted open-weight model). The frontend
+        # shows the "Free" option only when ``available`` is true, so a deploy
+        # without the endpoint configured never offers a button that 500s.
+        "free_tier": {
+            "available": free_tier_available(),
+            "model": free_tier_model() or None,
+        },
     }
 
 

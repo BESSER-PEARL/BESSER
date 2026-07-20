@@ -62,8 +62,11 @@ class SmartGenerateRequest(BaseModel):
 
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=8000)
-    api_key: SecretStr
-    provider: Literal["anthropic", "openai", "mistral"] = "anthropic"
+    # Optional: the ``"free"`` provider needs no key (the server injects a
+    # hosted open-weight model). Every other provider requires a non-empty key,
+    # enforced provider-aware in ``_validate_key_matches_provider`` below.
+    api_key: Optional[SecretStr] = None
+    provider: Literal["anthropic", "openai", "mistral", "free"] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
     # OpenAI-compatible base URL for the frontend's 'PIA (LIST)' and 'Local
     # (self-hosted)' providers (both arrive as provider="openai" + this URL).
@@ -151,15 +154,23 @@ class SmartGenerateRequest(BaseModel):
             )
         return self
 
-    @field_validator("api_key")
-    @classmethod
-    def _validate_api_key_not_empty(cls, value: SecretStr) -> SecretStr:
-        # SecretStr accepts empty strings by default. An empty key would
-        # fall through to create_llm_client and produce a generic error;
-        # catch it here with a clear message instead.
-        if not value.get_secret_value().strip():
-            raise ValueError("api_key cannot be empty")
-        return value
+    @model_validator(mode="after")
+    def _validate_key_matches_provider(self) -> "SmartGenerateRequest":
+        # The keyless "free" tier must NOT carry a key (the server injects the
+        # hosted endpoint + token); every other provider requires a non-empty
+        # one. SecretStr accepts empty strings, so an empty/whitespace key would
+        # otherwise fall through to create_llm_client and produce a generic
+        # error — catch it here with a clear, provider-aware message.
+        has_key = bool(self.api_key and self.api_key.get_secret_value().strip())
+        if self.provider == "free":
+            # Ignore any accidentally-sent key rather than erroring — the free
+            # provider never uses it.
+            self.api_key = None
+        elif not has_key:
+            raise ValueError(
+                f"api_key is required for provider '{self.provider}'"
+            )
+        return self
 
     @field_validator("llm_model")
     @classmethod
@@ -190,11 +201,15 @@ class SmartGenerateRequest(BaseModel):
         return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
 
     def resolved_api_key(self) -> str:
-        """Return the plaintext API key.
+        """Return the plaintext API key, or ``""`` for the keyless free tier.
 
         Callers must pass the returned string directly to the LLM client
-        and never log, store, or echo it elsewhere.
+        and never log, store, or echo it elsewhere. For ``provider == "free"``
+        there is no user key — the factory ignores this value and injects the
+        server-side hosted endpoint instead.
         """
+        if self.api_key is None:
+            return ""
         return self.api_key.get_secret_value()
 
 

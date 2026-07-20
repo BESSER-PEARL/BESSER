@@ -38,7 +38,11 @@ from besser.generators.llm.errors import (
     InvalidApiKeyError,
     UpstreamLLMError,
 )
-from besser.generators.llm.llm_client import DEFAULT_MODELS, create_llm_client
+from besser.generators.llm.llm_client import (
+    DEFAULT_MODELS,
+    create_llm_client,
+    free_tier_model,
+)
 from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
@@ -479,9 +483,14 @@ class SmartGenerationRunner:
         """
         loop = asyncio.get_running_loop()
         self._started_at = time.monotonic()
-        llm_model = (
-            self.request.llm_model or _DEFAULT_MODELS.get(self.request.provider, "")
-        )
+        if self.request.provider == "free":
+            # Free tier is pinned to the server's hosted model, not the
+            # request; show that name in the start event.
+            llm_model = free_tier_model() or "free"
+        else:
+            llm_model = (
+                self.request.llm_model or _DEFAULT_MODELS.get(self.request.provider, "")
+            )
 
         # ---- 1. Emit start (no api_key anywhere in the payload) --------
         yield format_sse(StartEvent(

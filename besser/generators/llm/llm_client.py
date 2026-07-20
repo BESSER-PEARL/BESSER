@@ -91,6 +91,33 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     "mistral-large": {"input": 2.0, "output": 6.0, "cache_write": 0, "cache_read": 2.0},
 }
 
+# Self-hosted / open-weight models served through an OpenAI-compatible
+# endpoint (Ollama, vLLM, LM Studio, ...) cost the platform nothing, so they
+# must be priced at $0 — otherwise the ``gpt-4o`` fallback below invents a
+# ~$2.50/$10-per-1M phantom cost that trips ``max_cost_usd`` and aborts the
+# run mid-generation with ``stop_reason="cost_cap"``. Matched case-insensitively
+# as substrings. Kept conservative (clearly open families only) so a genuinely
+# unknown *paid* cloud model still gets the protective fallback rate.
+_ZERO_PRICING: dict[str, float] = {
+    "input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0,
+}
+_FREE_LOCAL_MODEL_MARKERS = (
+    "qwen", "llama", "codellama", "deepseek", "mixtral",
+    "gemma", "starcoder", "granite", "phi-", "phi3", "phi4",
+)
+
+
+def _is_free_local_model(model_lower: str) -> bool:
+    """True for self-hosted / open-weight models that cost the platform $0.
+
+    The ``name:size`` tag syntax (e.g. ``qwen3-coder:30b``) is the strongest
+    signal — no paid cloud model id from OpenAI/Anthropic/Mistral uses a colon.
+    The family allow-list backstops tagless ids.
+    """
+    if ":" in model_lower:
+        return True
+    return any(marker in model_lower for marker in _FREE_LOCAL_MODEL_MARKERS)
+
 
 def _get_pricing(model_id: str) -> dict[str, float]:
     """Get pricing tier based on model ID.
@@ -98,10 +125,14 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     Order matters in the OpenAI loop — longer / more-specific keys
     must come first so e.g. ``gpt-5.5`` doesn't get mis-matched to
     ``gpt-5`` (which is a substring) and silently billed at the
-    cheaper tier. Falls back to ``gpt-4o`` so an unknown model gets a
-    reasonable middle-tier rate.
+    cheaper tier. Falls back to ``gpt-4o`` so an unknown *paid* model
+    gets a reasonable middle-tier rate; self-hosted/open models are
+    detected first and priced at $0.
     """
     model_lower = model_id.lower()
+    # Self-hosted / free local models — never bill, never trip the cost cap.
+    if _is_free_local_model(model_lower):
+        return _ZERO_PRICING
     # Anthropic tiers — unambiguous identifiers so order doesn't matter.
     for tier in ("haiku", "sonnet", "opus"):
         if tier in model_lower:
@@ -938,6 +969,9 @@ class OpenAIProvider(LLMProvider):
         model: Model identifier (default: ``gpt-4o``).
         max_tokens: Maximum output tokens per response.
         base_url: Custom API base URL for proxies/gateways.
+        default_headers: Extra headers sent on every request. Needed for
+            gateways that authenticate out-of-band of the API key (e.g. an
+            Access-protected endpoint expecting ``CF-Access-Client-*``).
     """
 
     DEFAULT_MODEL = "gpt-4o"
@@ -951,6 +985,7 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
+        default_headers: dict[str, str] | None = None,
     ):
         try:
             from openai import OpenAI
@@ -967,6 +1002,8 @@ class OpenAIProvider(LLMProvider):
         resolved_base = base_url or os.environ.get("OPENAI_BASE_URL")
         if resolved_base:
             client_kwargs["base_url"] = resolved_base
+        if default_headers:
+            client_kwargs["default_headers"] = default_headers
 
         self._client = OpenAI(**client_kwargs)
         self._model = model or self.DEFAULT_MODEL
@@ -1334,6 +1371,50 @@ def _resolve_mistral_api_key(
 
 
 # ======================================================================
+# Free tier (hosted open-weight model, no user key)
+# ======================================================================
+#
+# The platform can offer a keyless "free" tier backed by a self-hosted
+# open-weight model behind an OpenAI-compatible endpoint (e.g. Ollama). The
+# endpoint URL, bearer token, and model are read from SERVER env only — they
+# are never accepted from the request, so the token stays server-side and a
+# client cannot point the free tier at an arbitrary host or model.
+
+FREE_TIER_PROVIDER = "free"
+
+
+def free_tier_model() -> str:
+    """The model served by the free tier (from server env), or ``""``."""
+    return os.environ.get("BESSER_FREE_LLM_MODEL", "").strip()
+
+
+def free_tier_available() -> bool:
+    """True when the server is configured to offer the keyless free tier."""
+    return bool(
+        os.environ.get("BESSER_FREE_LLM_BASE_URL", "").strip()
+        and free_tier_model()
+    )
+
+
+def _resolve_free_tier_config() -> tuple[str, str, str]:
+    """Return ``(base_url, token, model)`` for the free tier from server env.
+
+    Raises ``ValueError`` if the free tier is not configured, so a run started
+    against an unconfigured server fails fast with a clear message rather than
+    silently falling back to a paid provider.
+    """
+    base_url = os.environ.get("BESSER_FREE_LLM_BASE_URL", "").strip()
+    model = free_tier_model()
+    if not base_url or not model:
+        raise ValueError(
+            "The free tier is not available on this server "
+            "(BESSER_FREE_LLM_BASE_URL / BESSER_FREE_LLM_MODEL are unset)."
+        )
+    token = os.environ.get("BESSER_FREE_LLM_TOKEN", "").strip()
+    return base_url, token, model
+
+
+# ======================================================================
 # Factory
 # ======================================================================
 
@@ -1348,10 +1429,14 @@ def create_llm_client(
     Create an LLM client for the specified provider.
 
     Args:
-        provider: ``"anthropic"`` (default), ``"openai"``, or ``"mistral"``.
+        provider: ``"anthropic"`` (default), ``"openai"``, ``"mistral"``, or
+            ``"free"`` (server-hosted open-weight model; needs no user key).
         api_key: API key. If not provided, resolved from environment variables.
-        model: Model identifier. Defaults to provider-specific default.
-        base_url: Custom API base URL.
+            Ignored for the ``"free"`` provider.
+        model: Model identifier. Defaults to provider-specific default. Ignored
+            for the ``"free"`` provider, which is pinned to the server's model.
+        base_url: Custom API base URL. Ignored for the ``"free"`` provider,
+            which reads its endpoint from server env.
         **kwargs: Additional keyword arguments passed to the provider constructor
             (e.g. ``max_tokens``).
 
@@ -1359,10 +1444,24 @@ def create_llm_client(
         An ``LLMProvider`` instance.
 
     Raises:
-        ValueError: If the provider is unknown or the API key cannot be resolved.
+        ValueError: If the provider is unknown, the API key cannot be resolved,
+            or the ``"free"`` provider is selected but not configured.
         ImportError: If the required SDK package is not installed.
     """
-    if provider == "anthropic":
+    if provider == FREE_TIER_PROVIDER:
+        # Endpoint, token, and model all come from SERVER env — never from the
+        # request. The bearer header is the real gate; the api_key is a
+        # placeholder the endpoint ignores.
+        free_base_url, token, free_model = _resolve_free_tier_config()
+        headers = {"Authorization": f"Bearer {token}"} if token else None
+        return OpenAIProvider(
+            api_key="free",
+            model=free_model,
+            base_url=free_base_url,
+            default_headers=headers,
+            **kwargs,
+        )
+    elif provider == "anthropic":
         resolved_key = _resolve_api_key(api_key=api_key)
         resolved_base = _resolve_base_url(base_url=base_url)
         return ClaudeLLMClient(

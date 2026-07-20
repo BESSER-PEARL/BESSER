@@ -20,6 +20,8 @@ from besser.generators.llm.llm_client import (
     _openai_messages_to_api,
     _openai_response_to_common,
     create_llm_client,
+    free_tier_available,
+    free_tier_model,
 )
 
 
@@ -334,9 +336,36 @@ class TestOpenAIPricing:
 
     def test_unknown_model_defaults_to_gpt4o(self):
         # _get_pricing falls back to the gpt-4o middle tier for unknown
-        # model ids (see the function's docstring).
+        # *paid* model ids (see the function's docstring). A tagless name
+        # that matches no open family must still get the protective rate.
         p = _get_pricing("some-unknown-model")
         assert p["input"] == 2.5
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "qwen3-coder:30b",   # the free-tier model (Ollama tag syntax)
+            "qwen2.5-coder",
+            "llama3.1:8b",
+            "deepseek-coder-v2",
+            "mixtral:8x7b",
+            "gemma2",
+            "anything:with-a-colon",  # tag syntax => self-hosted, $0
+        ],
+    )
+    def test_local_open_models_are_free(self, model):
+        # Self-hosted / open-weight models must price at $0 so they never
+        # trip max_cost_usd and abort a free run mid-generation.
+        p = _get_pricing(model)
+        assert p == {
+            "input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0,
+        }
+
+    def test_paid_model_with_no_colon_still_protected(self):
+        # A genuinely-unknown *paid* cloud id (no colon, no open family)
+        # keeps the protective gpt-4o fallback — the $0 rule must not
+        # over-broaden and remove the cost cap for real spend.
+        assert _get_pricing("gpt-6-preview")["input"] == 2.5
 
 
 # ======================================================================
@@ -363,6 +392,72 @@ class TestCreateLLMClient:
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
             create_llm_client(provider="cohere", api_key="x")
+
+    def test_free_provider_unconfigured_raises(self, monkeypatch):
+        # No BESSER_FREE_LLM_* env => free tier fails fast with a clear
+        # message rather than silently hitting a paid provider.
+        monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
+        monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
+        with pytest.raises(ValueError, match="free tier is not available"):
+            create_llm_client(provider="free")
+
+    def test_free_provider_reads_env_and_injects_header(self, monkeypatch):
+        # The free provider ignores any client-supplied key/model/base_url and
+        # builds an OpenAIProvider from SERVER env, with the token as a bearer
+        # header (never a request field).
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://free.example/v1")
+        monkeypatch.setenv("BESSER_FREE_LLM_TOKEN", "secret-token")
+        monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "qwen3-coder:30b")
+
+        captured = {}
+
+        def _fake_openai_provider(**kwargs):
+            captured.update(kwargs)
+            return MagicMock(spec=LLMProvider)
+
+        monkeypatch.setattr(
+            "besser.generators.llm.llm_client.OpenAIProvider", _fake_openai_provider,
+        )
+        # Client passes junk model/base_url — all must be ignored for free.
+        create_llm_client(
+            provider="free", api_key="sk-should-be-ignored",
+            model="gpt-4o", base_url="http://evil.example",
+        )
+        assert captured["base_url"] == "https://free.example/v1"
+        assert captured["model"] == "qwen3-coder:30b"
+        assert captured["default_headers"] == {"Authorization": "Bearer secret-token"}
+        assert captured["api_key"] == "free"  # placeholder, endpoint ignores it
+
+    def test_free_provider_without_token_sends_no_auth_header(self, monkeypatch):
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://free.example/v1")
+        monkeypatch.delenv("BESSER_FREE_LLM_TOKEN", raising=False)
+        monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "qwen3-coder:30b")
+        captured = {}
+        monkeypatch.setattr(
+            "besser.generators.llm.llm_client.OpenAIProvider",
+            lambda **kw: captured.update(kw) or MagicMock(spec=LLMProvider),
+        )
+        create_llm_client(provider="free")
+        assert captured["default_headers"] is None
+
+
+class TestFreeTierConfig:
+
+    def test_available_requires_base_url_and_model(self, monkeypatch):
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://free.example/v1")
+        monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "qwen3-coder:30b")
+        assert free_tier_available() is True
+        assert free_tier_model() == "qwen3-coder:30b"
+
+    def test_unavailable_when_base_url_missing(self, monkeypatch):
+        monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
+        monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "qwen3-coder:30b")
+        assert free_tier_available() is False
+
+    def test_unavailable_when_model_missing(self, monkeypatch):
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://free.example/v1")
+        monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
+        assert free_tier_available() is False
 
     @patch("besser.generators.llm.llm_client._resolve_api_key", return_value="sk-ant-test")
     @patch("besser.generators.llm.llm_client._resolve_base_url", return_value=None)

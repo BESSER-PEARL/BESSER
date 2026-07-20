@@ -566,7 +566,8 @@ def domain_model_to_code(
     print(f"BUML model saved to {file_path}")
 
 
-def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_name: str = "object_model"):
+def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_name: str = "object_model",
+                                header_label: str = None):
     """Write the object-model portion of the builder output to an open file handle.
 
     Emits the ``# OBJECT MODEL #`` banner, the object instances (via the fluent
@@ -578,12 +579,24 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
         f: An already-open, writable file handle.
         objectmodel (ObjectModel): The B-UML object model to serialize.
         object_model_var_name (str): Name of the ObjectModel variable to bind.
+        header_label (str, optional): Custom text for the banner's middle line
+            (e.g. ``OBJECT MODEL 2: "Orders"``) — the single section marker the
+            project importer keys on. Defaults to the plain ``OBJECT MODEL`` banner.
     """
     object_model_var_name = object_model_var_name or "object_model"
 
-    f.write("\n################\n")
-    f.write("# OBJECT MODEL #\n")
-    f.write("################\n")
+    # This banner's middle line is the single section marker the project importer
+    # keys on. When a custom label is given (numbered + titled, for multi-object
+    # projects) we size the box border to it; otherwise keep the plain, historic
+    # "# OBJECT MODEL #" banner. Callers must NOT emit a second header alongside
+    # this one, or the importer splits each model into an extra empty section.
+    if header_label:
+        border = "#" * (len(header_label) + 4)
+        f.write(f"\n{border}\n# {header_label} #\n{border}\n")
+    else:
+        f.write("\n################\n")
+        f.write("# OBJECT MODEL #\n")
+        f.write("################\n")
 
     # Write object instances using fluent API
     for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
@@ -673,6 +686,7 @@ def object_model_to_code(
     objectmodel: ObjectModel,
     file_path: str,
     object_model_var_name: str = "object_model",
+    header_label: str = None,
 ):
     """Generate Python code for a standalone B-UML object model.
 
@@ -687,6 +701,9 @@ def object_model_to_code(
         file_path (str): The path where the generated code will be saved.
         object_model_var_name (str): Name of the ObjectModel variable in the
             generated code. Defaults to "object_model".
+        header_label (str, optional): Custom banner text for the section header
+            (numbered + titled, e.g. ``OBJECT MODEL 2: "Orders"``). Defaults to
+            the plain ``OBJECT MODEL`` banner.
 
     Outputs:
         - A Python file containing the object-model instances and their links.
@@ -705,6 +722,6 @@ def object_model_to_code(
         f.write("from besser.BUML.metamodel.object import ObjectModel\n")
         f.write("import datetime\n")
 
-        _write_object_model_section(f, objectmodel, object_model_var_name)
+        _write_object_model_section(f, objectmodel, object_model_var_name, header_label)
 
     print(f"BUML object model saved to {file_path}")

@@ -368,6 +368,26 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 elements[state_id][state_key].append(body_id)
 
     try:
+        # Pre-pass: collect RAGVectorStore variable bindings (var_name → {embedding_provider, ...})
+        # so they can be emitted back onto AgentRagElement when found in new_rag() calls.
+        rag_vector_store_vars: Dict[str, Dict] = {}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "RAGVectorStore"
+            ):
+                vs_info: Dict = {}
+                for kw in node.value.keywords:
+                    try:
+                        vs_info[kw.arg] = ast.literal_eval(kw.value)
+                    except (ValueError, SyntaxError):
+                        pass
+                rag_vector_store_vars[node.targets[0].id] = vs_info
+
         # First pass: collect all intents and Agent metadata
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
@@ -456,6 +476,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         rag_llm_prompt = ""
                         rag_k = 4
                         rag_num_previous_messages = 0
+                        rag_vector_store_var = None
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
@@ -485,6 +506,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             elif kw.arg == "num_previous_messages":
                                 if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
                                     rag_num_previous_messages = kw.value.value
+                            elif kw.arg == "vector_store" and isinstance(kw.value, ast.Name):
+                                rag_vector_store_var = kw.value.id
+
+                        vs_info = rag_vector_store_vars.get(rag_vector_store_var or "", {})
+                        rag_embedding_provider = vs_info.get("embedding_provider", "openai")
+                        rag_embedding_params = vs_info.get("embedding_parameters") or {}
+                        rag_embedding_base_url = rag_embedding_params.get("base_url", "")
+                        rag_embedding_model = rag_embedding_params.get("model", "")
 
                         if isinstance(rag_name, str) and rag_name.strip():
                             rag_id = str(uuid.uuid4())
@@ -505,6 +534,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 "k": rag_k,
                                 "num_previous_messages": rag_num_previous_messages,
                                         "numPreviousMessages": rag_num_previous_messages,
+                                "embedding_provider": rag_embedding_provider,
+                                "embedding_base_url": rag_embedding_base_url,
+                                "embedding_model": rag_embedding_model,
                             }
                             if states_x < 200:
                                 states_x += 300
@@ -870,6 +902,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "LLMHuggingFace": "huggingface",
             "LLMHuggingFaceAPI": "huggingface_api",
             "LLMReplicate": "replicate",
+            "LLMOllama": "ollama",
         }
 
         def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:

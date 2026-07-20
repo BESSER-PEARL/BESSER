@@ -108,3 +108,57 @@ def test_agent_roundtrip_preserves_multi_llm_and_reasoning(tmp_path):
     assert rag_actions[0].rag_db_name == "docs_rag"
     assert rag_actions[0].prompt == "Use only cited docs."
 
+
+def test_agent_roundtrip_preserves_ollama_llm_and_embedding(tmp_path):
+    """Ollama LLM provider and Ollama RAG embedding survive the converter
+    round-trip (Agent -> B-UML code -> JSON -> Agent), including base_url/model."""
+    from besser.BUML.metamodel.state_machine.agent import LLMOllama
+
+    agent = Agent("OllamaAgent")
+    agent.new_llm(
+        name="local",
+        provider="ollama",
+        parameters={"base_url": "http://localhost:11434", "model": "llama3"},
+    )
+    agent.set_default_llm("local")
+    vector_store = RAGVectorStore(
+        embedding_provider="ollama",
+        embedding_parameters={"base_url": "http://localhost:11434", "model": "nomic-embed-text"},
+        persist_directory="vector_store/local",
+    )
+    splitter = RAGTextSplitter(splitter_type="recursive_character", chunk_size=1000, chunk_overlap=100)
+    agent.new_rag(
+        name="local_rag",
+        vector_store=vector_store,
+        splitter=splitter,
+        llm_name="local",
+        llm_prompt="Answer only using the docs corpus.",
+        k=4,
+        num_previous_messages=0,
+    )
+    initial = agent.new_state("initial", initial=True)
+    initial.set_body(Body("initial_body", actions=[RAGReply("local_rag", prompt="Use only cited docs.")]))
+
+    code_path = os.path.join(str(tmp_path), "agent.py")
+    agent_model_to_code(agent, code_path)
+    with open(code_path, encoding="utf-8") as handle:
+        content = handle.read()
+
+    json_model = agent_buml_to_json(content)
+    restored = process_agent_diagram({"model": json_model, "config": json_model.get("config", {})})
+
+    # The Ollama LLM survives as an LLMOllama carrying its base_url + model.
+    llms = {llm.name: llm for llm in restored.llms}
+    assert "local" in llms
+    assert isinstance(llms["local"], LLMOllama)
+    assert llms["local"].parameters.get("base_url") == "http://localhost:11434"
+    assert llms["local"].parameters.get("model") == "llama3"
+
+    # The Ollama RAG embedding provider + its parameters survive the trip.
+    rags = {r.name: r for r in restored.rags}
+    assert set(rags) == {"local_rag"}
+    vector = rags["local_rag"].vector_store
+    assert vector.embedding_provider == "ollama"
+    assert vector.embedding_parameters.get("base_url") == "http://localhost:11434"
+    assert vector.embedding_parameters.get("model") == "nomic-embed-text"
+

@@ -86,8 +86,15 @@ The full list of allowed values is defined in
 - ``responseTiming``: ``instant``, ``delayed``
 - ``agentPlatform``: ``websocket``, ``streamlit``, ``telegram``
 - ``intentRecognitionTechnology``: ``classical``, ``llm-based``
-- ``llmProvider``: ``openai``, ``huggingface``, ``huggingfaceapi``, ``replicate``
+- ``llmProvider``: ``openai``, ``huggingface``, ``huggingfaceapi``, ``replicate``, ``ollama``
 - ``openaiModels``: ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``
+- ``ollamaModels``: ``llama3``, ``llama3.1``, ``mistral``, ``qwen2.5``, ``gemma3``, ``phi4``, ``gemma3n:e2b``
+
+The ``ollama`` provider targets a locally hosted `Ollama <https://ollama.com>`_
+server: set the ``model`` and optionally the ``base_url`` (default
+``http://localhost:11434``) in the LLM parameters. Ollama can also be selected as
+the embedding provider for RAG vector stores, with its own ``base_url`` and
+embedding ``model`` (e.g. ``nomic-embed-text``).
 
 .. note::
 

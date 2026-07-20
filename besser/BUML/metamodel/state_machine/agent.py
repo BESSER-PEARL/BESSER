@@ -423,6 +423,7 @@ class LLMSuite(Enum):
     huggingface = "huggingface"
     huggingface_inference_api = "huggingface-inference-api"
     replicate = "replicate"
+    ollama = "ollama"
 
 
 class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
@@ -706,6 +707,49 @@ class LLMReplicate(LLMWrapper):
             to add to the prompt context (must be > 0)
         _global_context (str): the global context to be provided to the LLM for each request
         _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMOllama(LLMWrapper):
+    """An LLM wrapper for locally hosted models served via Ollama.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name
+        parameters (dict): the LLM parameters. Typically includes ``base_url``
+            (default ``http://localhost:11434``) and ``model`` (e.g. ``"llama3"``).
+        num_previous_messages (int): for the chat functionality, the number of previous
+            messages of the conversation to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous
+            messages of the conversation to add to the prompt context (must be > 0)
+        _global_context (str): the global context to be provided to the LLM for each request
     """
 
     def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
@@ -1908,7 +1952,8 @@ class Agent(StateMachine):
         ``provider`` selects the concrete subclass: ``openai`` →
         :class:`LLMOpenAI`, ``huggingface`` → :class:`LLMHuggingFace`,
         ``huggingface_api`` → :class:`LLMHuggingFaceAPI`,
-        ``replicate`` → :class:`LLMReplicate`. Names must be unique on the
+        ``replicate`` → :class:`LLMReplicate`,
+        ``ollama`` → :class:`LLMOllama`. Names must be unique on the
         agent so other elements (reasoning states, RAG, replies, intent
         classifiers) can reference the LLM by ``llm_name``.
         """
@@ -2268,6 +2313,7 @@ Agent._LLM_PROVIDERS = {
     "huggingface": LLMHuggingFace,
     "huggingface_api": LLMHuggingFaceAPI,
     "replicate": LLMReplicate,
+    "ollama": LLMOllama,
 }
 
 

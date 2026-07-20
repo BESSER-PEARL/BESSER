@@ -30,8 +30,9 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "responseTiming": ["instant", "delayed"],
     "agentPlatform": ["websocket", "streamlit", "telegram"],
     "intentRecognitionTechnology": ["classical", "llm-based"],
-    "llmProvider": ["openai", "huggingface", "huggingfaceapi", "replicate"],
+    "llmProvider": ["openai", "huggingface", "huggingfaceapi", "replicate", "ollama"],
     "openaiModels": ["gpt-5.5", "gpt-5", "gpt-5-mini", "gpt-5-nano"],
+    "ollamaModels": ["llama3", "llama3.1", "mistral", "qwen2.5", "gemma3", "phi4", "gemma4:e2b",],
 }
 
 

@@ -5,6 +5,11 @@ Everything you need to test **"describe an app → generate code"**, including t
 three repos — `BESSER` (backend), the frontend submodule, and `modeling-agent` —
 so this is the single place that indexes them and shows how to run each one.
 
+> 🧪 Prefer a visual version? Open **[`SMART_GEN_TESTING.html`](./SMART_GEN_TESTING.html)**
+> in a browser — the same content as a styled, light/dark page (a test-pyramid
+> diagram, layer cards, console-styled commands). This Markdown stays the source
+> of truth; keep the two in sync when you edit.
+
 **Contents:** [Mental model](#mental-model) · [Quick start](#quick-start) ·
 [Prerequisites](#prerequisites) · [The five layers](#the-five-layers) ·
 [Environment flags](#environment-flags) · [What is NOT tested](#what-is-not-tested) ·

@@ -201,6 +201,25 @@ def check_ocl_constraint(domain_model, object_model = None):
                     if not context_instances:
                         continue
 
+                    # Skip constraints whose referenced attributes are unset on
+                    # the instance(s). In user-profile ("user model") diagrams a
+                    # blank criterion (e.g. an empty ``age``) is intentionally
+                    # not materialised as a slot, so ``self.age`` has no value to
+                    # evaluate. Evaluating anyway builds an expression like
+                    # "  >= 0 and  <= 120" and blows up with a Python
+                    # ``invalid syntax`` error. An unset attribute means "no
+                    # constraint to check", so we skip instead.
+                    referenced_attrs = set(re.findall(r'self\.(\w+)', expression))
+                    if referenced_attrs:
+                        def _has_all_referenced(obj):
+                            slot_names = {
+                                s.attribute.name for s in getattr(obj, 'slots', [])
+                            }
+                            return referenced_attrs.issubset(slot_names)
+
+                        if not all(_has_all_referenced(obj) for obj in context_instances):
+                            continue
+
                     result = parser.evaluate(constraint)
                     if result is True:
                         valid_constraints.append(

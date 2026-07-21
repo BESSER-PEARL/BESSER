@@ -75,6 +75,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
     normalize_user_model_output as _normalize_user_model_output,
     safe_path as _safe_path,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
+    personalize_gui_page as run_gui_personalization,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -245,144 +248,27 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
     Returns the same ``{components, css}`` shape adapted in style and content,
     ready to be imported back into the editor as a page variant.
     """
-    gui_page = payload.get("guiPage")
-    if not isinstance(gui_page, dict):
-        raise ValidationError(
-            "guiPage is required and must be a JSON object with 'components' and 'css'"
-        )
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object")
 
-    user_profile_model = payload.get("userProfileModel")
-    if not isinstance(user_profile_model, dict):
-        raise ValidationError("userProfileModel is required and must be a JSON object")
-
-    components = gui_page.get("components")
-    if not isinstance(components, list):
-        raise ValidationError("guiPage.components must be a list")
-    css = gui_page.get("css")
-    if not isinstance(css, list):
-        css = []
-
-    page_name = payload.get("pageName") if isinstance(payload.get("pageName"), str) else "page"
-    requested_model = payload.get("model")
-    llm_model = (
-        requested_model
-        if isinstance(requested_model, str) and requested_model.strip()
-        else "gpt-5.6-luna"
+    # All validation, prompt building, the LLM call and response parsing live in
+    # gui_personalization_utils (mirroring agent_personalization). The router
+    # only resolves the API key, delegates off the event loop, and shapes the
+    # HTTP response; @handle_endpoint_errors maps ValidationError/GenerationError.
+    result = await asyncio.to_thread(
+        run_gui_personalization,
+        payload.get("guiPage"),
+        payload.get("userProfileModel"),
+        page_name=payload.get("pageName"),
+        model=payload.get("model"),
+        openai_api_key=extract_openai_api_key(payload),
     )
-
-    # Transform the user profile (UserDiagram) into its JSON object representation.
-    profile_document = _generate_user_profile_document(user_profile_model)
-
-    system_prompt = (
-        "You are a UI personalization assistant for a GrapesJS-based no-code GUI editor. "
-        "You receive a single GUI page as GrapesJS data: a 'components' array (the component "
-        "tree, each node carrying fields such as type, tagName, attributes, classes, components, "
-        "style, and text content) and a 'css' array (GrapesJS style-rule objects with 'selectors', "
-        "'selectorsAdd', 'style', and 'pageId'). You also receive a user profile model.\n\n"
-        "Your job is to adapt the page's PRESENTATION to this user, making decisions based on the "
-        "information in the profile. Presentation covers both visual styling AND the wording of the "
-        "page — its language, tone, and verbosity. Preserve the page's MEANING (its message, "
-        "purpose, and the information each element conveys), but you MAY re-express that meaning in "
-        "different words when the profile calls for it. When the profile clearly implies a "
-        "preference — for example a single language the user reads, a reading level, or a tone — "
-        "act on it decisively across the WHOLE page rather than leaving the wording unchanged.\n\n"
-        "HOW TO APPLY STYLE — TWO TIERS:\n"
-        "Tier 1 (PREFER THIS): express broad, consistent adaptations as high-level CSS rules keyed "
-        "by semantic category, appended to the 'css' array. Target a category with the "
-        "'selectorsAdd' field (a raw CSS selector string), NOT the 'selectors' array. Useful "
-        "categories: 'body' (base font-size and line-height — most text inherits from here), "
-        "headings ('h1, h2, h3, h4, h5, h6'), buttons ('button, .btn, a.button'), form fields "
-        "('input, textarea, select'), 'label', links ('a'). Many components in this editor ship "
-        "with baked-in inline/id-level styles that would otherwise win the cascade, so EVERY "
-        "declaration in a Tier-1 rule MUST end with '!important' (e.g. {\"font-size\": \"20px "
-        "!important\"}). A single 'body' rule with a larger font-size and line-height is the "
-        "correct way to enlarge text everywhere — do NOT resize each text node individually.\n"
-        "Tier 2 (USE SPARINGLY): for an adaptation a category rule cannot express (e.g. emphasizing "
-        "one specific call-to-action), you MAY edit the 'style' object of individual components in "
-        "the 'components' tree. Keep this to a small, deliberate set of nodes, and append "
-        "'!important' when overriding an existing baked-in value.\n\n"
-        "STRICT OUTPUT RULES: "
-        "1) Return ONLY a single JSON object with EXACTLY this shape: "
-        '{"components": [...], "css": [...]}. No markdown, no comments, no prose. '
-        "2) Preserve the overall structure: keep each component's 'type', 'tagName', and "
-        "'attributes.id' unchanged, and do not add, remove, or reorder components. "
-        "3) You MAY (a) append new high-level rules to the 'css' array, (b) change the 'style' "
-        "objects of existing css rules, (c) change class lists and 'style' objects of individual "
-        "components (Tier 2), and (d) rewrite the user-visible wording of the page — text-node "
-        "content and text-bearing attributes/properties (placeholder, title, alt, aria-label, link "
-        "text, button and field labels) — to translate it or adjust its tone/verbosity. Every "
-        "OTHER value must be byte-for-byte identical to the input. "
-        "3a) Preserve MEANING, not exact words: when you rewrite wording (per 3d) the message, "
-        "purpose, and information of every element must stay identical — translation and "
-        "tone/verbosity changes are allowed, but do NOT add, drop, or alter what the page tells the "
-        "user. A VISUAL adaptation such as enlarging the font is made ENTIRELY through "
-        "'style'/class/CSS-rule changes and must not touch wording; never rewrite text into a "
-        "description of the adaptation (e.g. do NOT turn a heading into 'bigger text for "
-        "readability'). "
-        "4) Keep every EXISTING css rule's 'selectors', 'selectorsAdd', and 'pageId' values exactly "
-        "as given (you may still edit its 'style'). For each NEW Tier-1 rule you add, set "
-        "'selectors' to an empty array and put the category selector in 'selectorsAdd'; you may "
-        "omit 'pageId'. "
-        "5) Return the input page verbatim if the profile gives no basis to adapt the presentation. "
-        "6) The result must be valid JSON, parseable as-is, and remain a working GrapesJS page."
-    )
-    user_prompt = (
-        f'Personalize the GUI page named "{page_name}" for the following user profile model.\n\n'
-        f"User profile model:\n{json.dumps(profile_document, ensure_ascii=False, indent=2)}\n\n"
-        "GUI page to adapt (GrapesJS):\n"
-        f"{json.dumps({'components': components, 'css': css}, ensure_ascii=False)}\n\n"
-        "Make decisions based on the information in the profile. Only adapt something when the "
-        "profile gives a clear reason to. You can assume the profile contains the most important "
-        "information about the user, and anything missing can be assumed absent.\n\n"
-        "Prefer Tier-1 category CSS rules (every declaration ending with '!important') for anything "
-        "that should apply broadly and consistently — e.g. if the user needs larger text, add a "
-        "'body' rule with a larger font-size and line-height rather than resizing individual "
-        "nodes. Use Tier-2 per-component edits only for targeted exceptions. Presentation includes "
-        "textual presentation too (tone, verbosity, language) as long as the core meaning is "
-        "preserved, as well as colors, contrast, font sizing, spacing, and forms. Your goal is the "
-        "best possible experience for this user with all their needs met.\n\n"
-        'Return only the resulting JSON object {"components": [...], "css": [...]}.'
-    )
-
-    try:
-        response_text = await asyncio.to_thread(
-            call_openai_chat,
-            system_prompt,
-            user_prompt,
-            model=llm_model,
-            openai_api_key=extract_openai_api_key(payload if isinstance(payload, dict) else {}),
-            config=payload,
-        )
-        parsed = extract_json_object(response_text)
-        personalized_components = parsed.get("components")
-        personalized_css = parsed.get("css", [])
-        if not isinstance(personalized_components, list):
-            raise GenerationError("LLM response did not include a valid 'components' list")
-        if not isinstance(personalized_css, list):
-            personalized_css = []
-
-        return {
-            "guiPage": {
-                "components": personalized_components,
-                "css": personalized_css,
-            },
-            "source": "openai",
-            "model": llm_model,
-            "generatedAt": _utc_now_iso(),
-        }
-    except RuntimeError as runtime_error:
-        # Raised by call_openai_chat when no OpenAI API key is configured.
-        raise ValidationError(str(runtime_error)) from runtime_error
-    except ValueError as parse_error:
-        logger.exception("Failed to parse LLM personalization response")
-        raise GenerationError("Failed to parse LLM personalization response") from parse_error
-    except (ValidationError, GenerationError):
-        raise
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to personalize GUI page")
-        raise GenerationError("Failed to personalize GUI page") from exc
+    return {
+        "guiPage": {"components": result["components"], "css": result["css"]},
+        "source": "openai",
+        "model": result["model"],
+        "generatedAt": _utc_now_iso(),
+    }
 
 
 @router.get("/agent-config-manual-mapping")

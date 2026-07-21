@@ -1,11 +1,13 @@
 """Round-trip tests for the agent converters covering the multi-LLM and
-reasoning-extension surface added in 7.8.0.
+reasoning-extension surface, plus the ten new provider families added in 7.9.0.
 
 Direction exercised: Agent (B-UML) -> generated B-UML code -> JSON (buml_to_json)
 -> Agent (json_to_buml). The new fields (multiple LLMs + designated default,
 per-reasoning-state LLM, tools/skills/workspaces) must survive the trip.
 """
 import os
+
+import pytest
 
 from besser.BUML.metamodel.state_machine.agent import Agent, RAGReply, RAGTextSplitter, RAGVectorStore, ReasoningState
 from besser.BUML.metamodel.state_machine.state_machine import Body
@@ -107,4 +109,94 @@ def test_agent_roundtrip_preserves_multi_llm_and_reasoning(tmp_path):
     assert len(rag_actions) == 1
     assert rag_actions[0].rag_db_name == "docs_rag"
     assert rag_actions[0].prompt == "Use only cited docs."
+
+
+# ---------------------------------------------------------------------------
+# New LLM provider round-trip — parametrized over all 10 new families
+# ---------------------------------------------------------------------------
+
+_NEW_PROVIDERS = [
+    "mistral",
+    "deepseek",
+    "google",
+    "meta",
+    "anthropic",
+    "qwen",
+    "xai",
+    "groq",
+    "together",
+    "openrouter",
+]
+
+# Representative model names per provider (used as the 'model' parameter so the
+# generated code is realistic, not just a bare empty-parameters instantiation).
+_PROVIDER_MODEL = {
+    "mistral": "mistral-small-latest",
+    "deepseek": "deepseek-chat",
+    "google": "gemini-2.5-flash",
+    "meta": "Llama-3.3-70B-Instruct",
+    "anthropic": "claude-sonnet-4-5",
+    "qwen": "qwen-plus",
+    "xai": "grok-3-mini",
+    "groq": "llama-3.3-70b-versatile",
+    "together": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "openrouter": "openai/gpt-4o",
+}
+
+# Exact class names as they appear in generated imports (non-trivial capitalisation).
+_PROVIDER_CLASS = {
+    "mistral": "LLMMistral",
+    "deepseek": "LLMDeepSeek",
+    "google": "LLMGoogle",
+    "meta": "LLMMeta",
+    "anthropic": "LLMAnthropic",
+    "qwen": "LLMQwen",
+    "xai": "LLMxAI",
+    "groq": "LLMGroq",
+    "together": "LLMTogether",
+    "openrouter": "LLMOpenRouter",
+}
+
+
+@pytest.mark.parametrize("provider", _NEW_PROVIDERS)
+def test_new_provider_roundtrip_preserves_provider_key(provider, tmp_path):
+    """Agent (B-UML) → code → JSON → Agent: provider key and model survive intact.
+
+    This catches missing or misnamed entries in _LLM_PROVIDERS, _direct_llm_class_to_provider,
+    and the generator import block — all of which would break the round-trip silently.
+    """
+    model = _PROVIDER_MODEL[provider]
+    agent = Agent(f"agent_{provider}")
+    agent.new_llm(name="main_llm", provider=provider, parameters={"model": model})
+
+    code_path = os.path.join(str(tmp_path), "agent.py")
+    from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        agent_buml_to_json,
+        process_agent_diagram,
+    )
+
+    agent_model_to_code(agent, code_path)
+    with open(code_path, encoding="utf-8") as fh:
+        code = fh.read()
+
+    # The generated code must import the correct provider class.
+    expected_class = _PROVIDER_CLASS[provider]
+    assert expected_class in code, (
+        f"Generated agent.py for provider '{provider}' missing import of '{expected_class}'"
+    )
+
+    json_model = agent_buml_to_json(code)
+    restored = process_agent_diagram({"model": json_model, "config": json_model.get("config", {})})
+
+    # Exactly one LLM must survive with its original name.
+    assert len(list(restored.llms)) == 1
+    llm = next(iter(restored.llms))
+    assert llm.name == "main_llm"
+
+    # The model parameter must be preserved through the round-trip.
+    assert llm.parameters.get("model") == model, (
+        f"model parameter lost for provider '{provider}': "
+        f"expected {model!r}, got {llm.parameters.get('model')!r}"
+    )
 

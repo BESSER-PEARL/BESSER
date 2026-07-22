@@ -76,6 +76,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
     normalize_user_model_output as _normalize_user_model_output,
     safe_path as _safe_path,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
+    personalize_gui_page as run_gui_personalization,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -227,6 +230,46 @@ async def recommend_agent_config_llm(
     except Exception as exc:
         logger.exception("Failed to generate LLM recommendation")
         raise GenerationError("Failed to generate LLM recommendation") from exc
+
+
+@router.post("/personalize-gui-page")
+@handle_endpoint_errors("personalize_gui_page")
+async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
+    """Personalize a GUI page (GrapesJS) for a user profile using an LLM.
+
+    Open endpoint (no GitHub session required). The OpenAI API key is resolved
+    from the payload or the server's ``OPENAI_API_KEY`` environment variable.
+
+    Request body:
+        guiPage: {"components": [...], "css": [...]}  -- a GrapesJS page snapshot
+        userProfileModel: <UserDiagram UML model JSON>
+        pageName: str (optional)
+        model: str (optional OpenAI model id)
+
+    Returns the same ``{components, css}`` shape adapted in style and content,
+    ready to be imported back into the editor as a page variant.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object")
+
+    # All validation, prompt building, the LLM call and response parsing live in
+    # gui_personalization_utils (mirroring agent_personalization). The router
+    # only resolves the API key, delegates off the event loop, and shapes the
+    # HTTP response; @handle_endpoint_errors maps ValidationError/GenerationError.
+    result = await asyncio.to_thread(
+        run_gui_personalization,
+        payload.get("guiPage"),
+        payload.get("userProfileModel"),
+        page_name=payload.get("pageName"),
+        model=payload.get("model"),
+        openai_api_key=extract_openai_api_key(payload),
+    )
+    return {
+        "guiPage": {"components": result["components"], "css": result["css"]},
+        "source": "openai",
+        "model": result["model"],
+        "generatedAt": _utc_now_iso(),
+    }
 
 
 @router.get("/agent-config-manual-mapping")
@@ -575,45 +618,67 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             detail="ClassDiagram is required for Web App generator"
         )
 
+    # Personalization versions (optional). When present, the frontend has
+    # pre-assembled one COMPLETE GUI model per version (base + each user
+    # profile), each already resolved page-by-page. When absent, we generate a
+    # single app from the GUI diagram's own model (unchanged behavior).
+    web_app_versions = config.get("webAppVersions") if isinstance(config, dict) else None
+    if web_app_versions:
+        version_specs = [
+            (str(v.get("slug") or f"version-{i + 1}"), v.get("guiModel"))
+            for i, v in enumerate(web_app_versions)
+        ]
+    else:
+        version_specs = [(None, gui_diagram.model)]
+
+    multi = len(version_specs) > 1
+    generator_class = generator_info.generator_class
+
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
-        # Process class diagram to BUML
-        buml_model = process_class_diagram(class_diagram.model_dump())
+        for slug, gui_json in version_specs:
+            # Re-derive the class BUML per version so the generator can't leak
+            # mutations from one version into the next.
+            buml_model = process_class_diagram(class_diagram.model_dump())
+            gui_model = process_gui_diagram(gui_json, class_diagram.model, buml_model)
 
-        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
-
-        # Collect every AgentDiagram in the project if the GUI uses agent components.
-        # The frontend dropdown enumerates all agents, so the generator must
-        # satisfy any binding — we don't filter to the active reference here.
-        agent_models = []
-        agent_configs = {}
-        agent_config_yamls: dict = {}
-        has_agent_components = _check_for_agent_components(gui_model)
-
-        if has_agent_components:
-            project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
-            default_cfg = project_agent_config or config
-            agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
-                input_data.diagrams.get("AgentDiagram", []),
-                default_config=default_cfg,
-            )
-            for name, cfg in agent_configs.items():
-                logger.debug("[WebApp agent] resolved config for %s: %s",
-                             name,
-                             json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
-            if not agent_models:
-                logger.warning(
-                    "GUI contains agent components but no AgentDiagram was found. "
-                    "Agent components will not be functional."
+            # Collect every AgentDiagram in the project if this version's GUI uses
+            # agent components. The frontend dropdown enumerates all agents, so the
+            # generator must satisfy any binding — we don't filter to the active
+            # reference here.
+            agent_models = []
+            agent_configs = {}
+            agent_config_yamls: dict = {}
+            if _check_for_agent_components(gui_model):
+                project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                default_cfg = project_agent_config or config
+                agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
+                    input_data.diagrams.get("AgentDiagram", []),
+                    default_config=default_cfg,
                 )
+                for name, cfg in agent_configs.items():
+                    logger.debug("[WebApp agent] resolved config for %s: %s",
+                                 name,
+                                 json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
+                if not agent_models:
+                    logger.warning(
+                        "GUI contains agent components but no AgentDiagram was found. "
+                        "Agent components will not be functional."
+                    )
 
-        # Generate Web App TypeScript project
-        generator_class = generator_info.generator_class
+            # Single version → generate at the zip root (current layout).
+            # Multiple versions → one profile-named subfolder each.
+            out_dir = temp_dir
+            if multi:
+                out_dir = _safe_path(temp_dir, os.path.basename(slug))
+                os.makedirs(out_dir, exist_ok=True)
 
-        return await _generate_web_app(
-            buml_model, gui_model, generator_class, config, temp_dir,
-            agent_models=agent_models, agent_configs=agent_configs,
-            agent_config_yamls=agent_config_yamls,
-        )
+            await _run_web_app_generator(
+                buml_model, gui_model, generator_class, out_dir,
+                agent_models=agent_models, agent_configs=agent_configs,
+                agent_config_yamls=agent_config_yamls,
+            )
+
+        return _create_zip_response(temp_dir, "web_app")
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -1094,19 +1159,33 @@ def _check_container_for_agent_components(container):
                 return True
     return False
 
-async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
-                            agent_models=None, agent_configs=None, agent_config_yamls=None):
-    """Generate web application files.
+async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir: str,
+                                 agent_models=None, agent_configs=None, agent_config_yamls=None):
+    """Run the web app generator into ``out_dir`` WITHOUT zipping.
 
-    Supports multi-agent projects: ``agent_models`` is a list and each is emitted
-    under ``agents/<slug>/`` in the generated output.
+    Split out from ``_generate_web_app`` so multiple personalization versions can
+    each be generated into their own subdirectory before a single zip is built.
     """
     generator_instance = generator_class(
-        buml_model, gui_model, output_dir=temp_dir,
+        buml_model, gui_model, output_dir=out_dir,
         agent_models=agent_models, agent_configs=agent_configs,
         agent_config_yamls=agent_config_yamls,
     )
     await asyncio.to_thread(generator_instance.generate)
+
+
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
+                            agent_models=None, agent_configs=None, agent_config_yamls=None):
+    """Generate web application files (single version) and return a ZIP response.
+
+    Supports multi-agent projects: ``agent_models`` is a list and each is emitted
+    under ``agents/<slug>/`` in the generated output.
+    """
+    await _run_web_app_generator(
+        buml_model, gui_model, generator_class, temp_dir,
+        agent_models=agent_models, agent_configs=agent_configs,
+        agent_config_yamls=agent_config_yamls,
+    )
     return _create_zip_response(temp_dir, "web_app")
 
 @handle_endpoint_errors("_generate_standard")

@@ -1,0 +1,53 @@
+Version 7.13.0
+==============
+
+Minor release: **LLM-driven GUI personalization**. The Web Modeling Editor can now
+adapt no-code GUI pages to individual user profiles with an LLM, model those
+profiles with a dedicated form editor and the modeling agent, and generate the web
+application together with one personalized variant per profile. Additive only:
+when a project defines no variants, generation is byte-for-byte the previous
+single-app behavior.
+
+Highlights
+----------
+
+- **Per-profile GUI page variants**: from the GrapesJS-based no-code editor you can
+  auto-personalize a page for a user profile with an LLM. A new backend endpoint
+  ``POST /personalize-gui-page`` takes a page snapshot (``{components, css}``) plus
+  a user-profile model and returns the same shape adapted in styling and wording,
+  ready to be imported back as a page variant. The personalization logic lives in a
+  dedicated ``gui_personalization_utils`` service module (the router stays a thin
+  HTTP layer) and its LLM system prompt is a versionable module constant.
+- **Personalized web-application generation**: the web-app generator can emit one
+  complete app per version — a Base app plus one personalized variant per user
+  profile — each into its own profile-named subfolder of the output ZIP. The
+  frontend assembles the per-version GUI models (``webAppVersions``) and the
+  backend generates and zips them; a project with no variants generates exactly one
+  app as before.
+- **User-profile modeling**: a new form-based user-profile editor, plus modeling-
+  agent support for creating and editing user-profile (``UserDiagram``) models, so
+  profiles can be authored by hand or by the assistant.
+
+Fixes
+-----
+
+- **User-profile criterion parsing**: a criterion typed as ``age == 22`` is now
+  split on the stored ``==`` operator instead of the first ``=`` (which previously
+  captured ``= 22`` as the value and broke type conversion), and blank criteria
+  (e.g. ``age =``) are skipped rather than materialized as empty-valued slots.
+- **OCL evaluation on user profiles**: constraints that reference an attribute left
+  unset on a profile are now skipped instead of building an invalid expression like
+  ``"  >= 0 and  <= 120"`` and crashing with a Python ``invalid syntax`` error.
+- **Backend cleanup**: the personalization OpenAI model default is consolidated into
+  a single ``DEFAULT_OPENAI_MODEL`` constant (removing inconsistent/invalid
+  defaults), a stray debug ``print`` and two dead branches were removed, and the
+  new parsing logic is covered by regression tests.
+
+Frontend (via the submodule bump)
+---------------------------------
+
+The frontend submodule moves to include the GUI-personalization UI: the
+user-profile form editor, per-profile page variants with variant switching, web-app
+version selection in the generation dialog, and review cleanups (shared variant
+types, HTML-escaped page/profile names in the pages list, and a non-silent
+generation-flush timeout).

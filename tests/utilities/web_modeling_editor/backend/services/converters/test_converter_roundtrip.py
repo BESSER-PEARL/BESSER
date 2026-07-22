@@ -1365,6 +1365,71 @@ class TestObjectDiagramRoundtrip:
         slot_values = {slot.attribute.name: slot.value.value for slot in book.slots}
         assert slot_values.get("title") == "TheGreatGatsby"
 
+    def test_user_model_stored_operator_equality(self, minimal_class_diagram_json):
+        """A manually-typed '==' criterion splits on '==', not the first '='.
+
+        Regression: the earlier fix split every '==' on the displayed '=', so
+        "title == TheGreatGatsby" captured "= TheGreatGatsby" as the value and
+        broke type conversion. The stored operator must be tried first.
+        """
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        user_diagram_json = {
+            "title": "UserProfile",
+            "model": {
+                "type": "UserDiagram",
+                "elements": {
+                    "u-book1": {
+                        "id": "u-book1", "name": "book1", "type": "UserModelName",
+                        "owner": None,
+                        "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
+                        "attributes": ["u-title"], "methods": [], "className": "Book",
+                    },
+                    "u-title": {
+                        "id": "u-title", "name": "title == TheGreatGatsby",
+                        "type": "UserModelAttribute", "owner": "u-book1",
+                        "attributeOperator": "==",
+                        "bounds": {"x": 0, "y": 30, "width": 199, "height": 30},
+                    },
+                },
+                "relationships": {},
+            },
+        }
+        obj_model = process_object_diagram(user_diagram_json, domain_model)
+        book = next(obj for obj in obj_model.objects if obj.name == "book1")
+        slot_values = {slot.attribute.name: slot.value.value for slot in book.slots}
+        assert slot_values.get("title") == "TheGreatGatsby"
+
+    def test_user_model_blank_criterion_skipped(self, minimal_class_diagram_json):
+        """A blank criterion ("title = ") is skipped, not materialised as an
+        empty-valued slot (which would break type conversion / OCL evaluation).
+        """
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        user_diagram_json = {
+            "title": "UserProfile",
+            "model": {
+                "type": "UserDiagram",
+                "elements": {
+                    "u-book1": {
+                        "id": "u-book1", "name": "book1", "type": "UserModelName",
+                        "owner": None,
+                        "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
+                        "attributes": ["u-title"], "methods": [], "className": "Book",
+                    },
+                    "u-title": {
+                        "id": "u-title", "name": "title = ",
+                        "type": "UserModelAttribute", "owner": "u-book1",
+                        "attributeOperator": "==",
+                        "bounds": {"x": 0, "y": 30, "width": 199, "height": 30},
+                    },
+                },
+                "relationships": {},
+            },
+        }
+        obj_model = process_object_diagram(user_diagram_json, domain_model)
+        book = next(obj for obj in obj_model.objects if obj.name == "book1")
+        slot_names = {slot.attribute.name for slot in book.slots}
+        assert "title" not in slot_names
+
 
 # ===========================================================================
 # NN Diagram Roundtrip: JSON -> NN -> JSON

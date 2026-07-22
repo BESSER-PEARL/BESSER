@@ -52,7 +52,11 @@ from besser.generators.llm.errors import (
     InvalidApiKeyError,
 )
 from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
-from besser.generators.llm.llm_client import ClaudeLLMClient, FROM_SCRATCH_MAX_TOKENS
+from besser.generators.llm.llm_client import (
+    ClaudeLLMClient,
+    FROM_SCRATCH_MAX_TOKENS,
+    _is_free_local_model,
+)
 from besser.generators.llm.prompt_builder import (
     build_scaffold_snapshot,
     build_system_prompt,
@@ -311,6 +315,11 @@ class LLMOrchestrator:
         self.on_text = on_text
         self.on_phase_details = on_phase_details
         self.use_streaming = use_streaming
+        # Weak / free-tier open models (e.g. qwen3-coder) ignore "don't switch
+        # frameworks" and delete the whole deterministic scaffold to rebuild it.
+        # Make that scaffold delete-proof for them only; capable cloud models are
+        # unaffected and keep full delete_file.
+        _model_name = (getattr(self.client, "model", "") or "").lower()
         self.executor = ToolExecutor(
             workspace=self.output_dir,
             domain_model=domain_model,
@@ -321,6 +330,7 @@ class LLMOrchestrator:
             object_model=object_model,
             bpmn_model=bpmn_model,
             nn_model=nn_model,
+            protect_scaffold=_is_free_local_model(_model_name),
         )
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)

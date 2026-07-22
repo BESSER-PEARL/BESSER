@@ -198,6 +198,7 @@ class ToolExecutor:
         object_model: Any = None,
         bpmn_model: Any = None,
         nn_model: Any = None,
+        protect_scaffold: bool = False,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.domain_model = domain_model
@@ -217,6 +218,12 @@ class ToolExecutor:
         # the write_file rejection ("use modify_file") contradict each
         # other and ping-pong the model.
         self._modify_counts: dict[str, int] = {}
+        # When True (weak / free-tier models only), the deterministic Phase-1
+        # scaffold is IMMUTABLE to delete_file: the model may edit those files
+        # in place but cannot tear them down and rebuild in another framework.
+        # Observed with the free qwen tier deleting a whole FastAPI backend to
+        # rewrite it in Flask; capable cloud models keep full delete_file.
+        self._protect_scaffold = protect_scaffold
 
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.
@@ -809,6 +816,20 @@ class ToolExecutor:
                 "error": (
                     f"Refused to delete: {args['path']} is a directory. "
                     "delete_file only removes regular files."
+                ),
+            }
+        # Scaffold protection (weak / free-tier models only): the deterministic
+        # Phase-1 scaffold is the app's foundation and must not be torn down and
+        # rebuilt in another framework. Files the model created this run are not
+        # tracked here, so it can still delete its own junk.
+        rel_path = args["path"].replace("\\", "/")
+        if self._protect_scaffold and rel_path in self._generator_files:
+            return {
+                "error": (
+                    f"Refused to delete: '{args['path']}' is part of the generated "
+                    "scaffold — the app's foundation. Do NOT remove or replace it. "
+                    "Edit it in place with modify_file (or write_file), keep the "
+                    "existing framework, and build on top of what is already generated."
                 ),
             }
         try:

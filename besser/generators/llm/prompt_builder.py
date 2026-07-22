@@ -315,11 +315,34 @@ def build_system_prompt(
     # stack_metadata.idiom_guidance_section for the detection + content.
     idiom_section = idiom_guidance_section(instructions)
 
+    # --- Previous header (kept for reference / easy rollback) ------------
+    # Weaker models (e.g. the free qwen tier) ignored this softer wording and
+    # would delete the whole generated FastAPI scaffold to rebuild in Flask.
+    # The forceful HARD-CONSTRAINTS block below replaced it; revert to this if
+    # the stronger wording ever hurts the paid models.
+    #
+    #   You are an expert full-stack developer. You make targeted, scoped changes to code.
+    #
+    #   Read the generated code before changing it and keep changes tightly scoped to the user's request.
+    #   Do not rewrite generated files from scratch — make surgical modifications.{primary_banner}
+    # ---------------------------------------------------------------------
     stable_header = f"""\
-You are an expert full-stack developer. You make targeted, scoped changes to code.
+You are an expert full-stack developer. You EXTEND an already-working codebase — you never rebuild it.
+
+## HARD CONSTRAINTS — breaking any of these FAILS the task
+- **Keep the existing tech stack and framework.** The scaffold below is already
+  built in a specific stack; extend it in that SAME framework. NEVER switch
+  frameworks — e.g. do NOT replace a FastAPI backend with Flask or Django, or a
+  React frontend with Vue. If the user's wording seems to imply a different
+  stack, ignore that and use the one that is already generated.
+- **Never delete or wholesale-rewrite the generated scaffold.** Do NOT call
+  `delete_file` on any file shown below, and do NOT overwrite a generated file
+  with a from-scratch rewrite in a different design. Edit files in place; add
+  new files only for genuinely new functionality.
+- **Only ADD what the user asked for**, on top of what already exists.
 
 Read the generated code before changing it and keep changes tightly scoped to the user's request.
-Do not rewrite generated files from scratch — make surgical modifications.{primary_banner}
+Make surgical modifications, not from-scratch rewrites.{primary_banner}
 
 ## Plan before you implement
 

@@ -133,17 +133,20 @@ def test_datatype_property_becomes_attribute():
     assert "name" in by_name and by_name["name"].type is StringType
 
 
-def test_multivalued_literal_bumps_multiplicity():
+def test_data_property_is_many_valued_unless_functional():
+    """D11/D36: an owl:DatatypeProperty is many-valued; only
+    owl:FunctionalProperty makes it single-valued.
+
+    The ABox is not consulted — how many literals an individual happens to carry
+    says nothing about what the schema permits, and the preflight report is
+    where ABox/TBox mismatches get surfaced to the user.
+    """
     cr = kg_to_class_diagram(_make_kg())
     person = _classes(cr.domain_model)["Person"]
     name_attr = next(a for a in person.attributes if a.name == "name")
     age_attr = next(a for a in person.attributes if a.name == "age")
-    # alice has two :name literals → bump.
     assert name_attr.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY
-    # age is single-valued in the ABox.
-    assert age_attr.multiplicity.max == 1
-    codes = {w.code for w in cr.warnings}
-    assert "MULTIVALUED_LITERAL" in codes
+    assert age_attr.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY
 
 
 def test_property_without_domain_emits_warning():
@@ -193,3 +196,57 @@ def test_blank_nodes_are_ignored_in_class_pass():
         not (g.specific.name.startswith("blank") or g.general.name.startswith("blank"))
         for g in cr.domain_model.generalizations
     )
+
+
+def test_constraint_targeting_undeclared_class_still_resolves():
+    """A KGNodeConstraint's constraintTargetClass edge pointing at a node
+    that isn't (yet) a KGClass — e.g. a SHACL shape's sh:targetClass on a
+    node nobody declared owl:Class for — must still resolve to the stub
+    class kg_to_class_diagram synthesises for it, not be silently dropped."""
+    from besser.BUML.metamodel.kg import KGIndividual, KGNodeConstraint, KGPropertyConstraint
+    from besser.BUML.metamodel.kg.constants import (
+        CONSTRAINT_TARGET_CLASS,
+        CONSTRAINT_TARGET_PROPERTY,
+        SH_PROPERTY,
+    )
+
+    kg = KnowledgeGraph(name="undeclared_target")
+    person = KGIndividual(id="Person", label="Person", iri=EX + "Person")  # never a KGClass
+    email = KGProperty(id="email", label="email", iri=EX + "email")
+    pc = KGPropertyConstraint(
+        id="pc1", label="min1",
+        metadata={"constraintSpecs": [{"kind": "minCardinality", "value": 1}], "source": "shacl"},
+    )
+    nc = KGNodeConstraint(
+        id="nc1", label="PersonShape",
+        metadata={"constraintSpecs": [], "source": "shacl"},
+    )
+    for n in (person, email, pc, nc):
+        kg.add_node(n)
+    kg.add_edge(KGEdge(id="dom", source=email, target=person, iri=RDFS + "domain"))
+    kg.add_edge(KGEdge(id="e_pc_prop", source=pc, target=email, iri=CONSTRAINT_TARGET_PROPERTY))
+    kg.add_edge(KGEdge(id="e_nc_pc", source=nc, target=pc, iri=SH_PROPERTY))
+    kg.add_edge(KGEdge(id="e_nc_class", source=nc, target=person, iri=CONSTRAINT_TARGET_CLASS))
+
+    cr = kg_to_class_diagram(kg)
+    assert not any(w.code == "ORPHANED_CONSTRAINT" for w in cr.warnings)
+    person_cls = _classes(cr.domain_model)["Person"]
+    assert any(c.context is person_cls and "email" in c.expression for c in cr.domain_model.constraints)
+
+
+def test_constraint_targeting_unresolvable_node_emits_orphaned_warning():
+    """A constraintTargetClass edge whose target can never become a class
+    (e.g. a KGLiteral) must produce a visible ORPHANED_CONSTRAINT warning
+    instead of silently vanishing."""
+    from besser.BUML.metamodel.kg import KGNodeConstraint
+    from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
+
+    kg = KnowledgeGraph(name="unresolvable_target")
+    stray_literal = KGLiteral(id="lit1", value="not-a-class")
+    nc = KGNodeConstraint(id="nc1", label="Bogus", metadata={"constraintSpecs": [], "source": "shacl"})
+    kg.add_node(stray_literal)
+    kg.add_node(nc)
+    kg.add_edge(KGEdge(id="e_nc_class", source=nc, target=stray_literal, iri=CONSTRAINT_TARGET_CLASS))
+
+    cr = kg_to_class_diagram(kg)
+    assert any(w.code == "ORPHANED_CONSTRAINT" and w.node_id == "nc1" for w in cr.warnings)

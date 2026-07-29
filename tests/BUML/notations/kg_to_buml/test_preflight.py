@@ -256,6 +256,28 @@ def test_range_not_type(tmp_path: Path):
     assert issue.recommended_action.key == "treat_as_string"
 
 
+def test_range_not_type_not_raised_for_union_range(tmp_path: Path):
+    """A property whose rdfs:range is a unionOf class expression (e.g.
+    'author' ranging over Person-or-Organization) must NOT be flagged as
+    RANGE_NOT_TYPE and offered the destructive 'treat as string' fix — the
+    converter already resolves it via direct associations to each member
+    class (D29-D32), so it's not an error at all."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Book a owl:Class .
+    :Person a owl:Class .
+    :Organization a owl:Class .
+    :author a owl:ObjectProperty ; rdfs:domain :Book ;
+        rdfs:range [ a owl:Class ; owl:unionOf ( :Person :Organization ) ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "RANGE_NOT_TYPE" not in _codes(report)
+
+
 # --- CYCLIC_SUBCLASS ------------------------------------------------------
 
 
@@ -368,6 +390,59 @@ def test_blank_node_instance(tmp_path: Path):
     assert issue.skip_action.key == "drop_node"
 
 
+def test_blank_node_instance_not_raised_for_list_valued_constructs(tmp_path: Path):
+    """RDF-list spines behind unionOf/oneOf/hasKey/disjointUnionOf must never
+    be recommended for promotion to an individual — the importer sweeps them
+    away entirely (see test_owl_importer_constructs.py), so none should even
+    reach the preflight analyzer as a KGBlank."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+    :name a owl:DatatypeProperty .
+    :Cat a owl:Class .
+    :Dog a owl:Class .
+    :Pet a owl:Class ;
+        owl:equivalentClass [ a owl:Class ; owl:unionOf ( :Cat :Dog ) ] .
+    :Person a owl:Class ; owl:hasKey ( :name ) .
+    :PetKind a owl:Class ; owl:disjointUnionOf ( :Cat :Dog ) .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "BLANK_NODE_INSTANCE" not in _codes(report)
+
+
+def test_blank_node_instance_excludes_pure_list_spine_backstop(tmp_path: Path):
+    """Defense-in-depth: even a hand-authored blank node whose only edges are
+    rdf:first/rdf:rest (bypassing the importer's own sweep entirely) must not
+    be recommended for promotion to an individual — it carries no domain
+    content regardless of how it entered the KG."""
+    from besser.BUML.metamodel.kg import KGBlank, KGClass, KGEdge, KnowledgeGraph
+
+    kg = KnowledgeGraph(name="hand_authored")
+    cat = KGClass(id="cat", label="Cat", iri="http://ex.org/Cat")
+    dog = KGClass(id="dog", label="Dog", iri="http://ex.org/Dog")
+    cell1 = KGBlank(id="_:cell1", label="")
+    cell2 = KGBlank(id="_:cell2", label="")
+    for n in (cat, dog, cell1, cell2):
+        kg.add_node(n)
+    kg.add_edge(KGEdge(
+        id="e1", source=cell1, target=cat,
+        label="first", iri="http://www.w3.org/1999/02/22-rdf-syntax-ns#first",
+    ))
+    kg.add_edge(KGEdge(
+        id="e2", source=cell1, target=cell2,
+        label="rest", iri="http://www.w3.org/1999/02/22-rdf-syntax-ns#rest",
+    ))
+    kg.add_edge(KGEdge(
+        id="e3", source=cell2, target=dog,
+        label="first", iri="http://www.w3.org/1999/02/22-rdf-syntax-ns#first",
+    ))
+
+    report = analyze_kg_for_class_diagram(kg)
+    assert "BLANK_NODE_INSTANCE" not in _codes(report)
+
+
 # --- UNDECLARED_CLASS ------------------------------------------------------
 
 
@@ -386,6 +461,53 @@ def test_undeclared_class_via_type(tmp_path: Path):
     # If KGClass nodes are excluded from the detector, no issue is raised.
     # We just check the detector doesn't crash.
     assert isinstance(report.issues, list)
+
+
+def test_undeclared_class_via_domain_recommends_promotion(tmp_path: Path):
+    """A node referenced only via rdfs:domain (never rdf:type owl:Class)
+    stays a KGIndividual at import time — the recommendation must be to turn
+    it into a class in place, not the old dead 'synthesize_class' no-op."""
+    from besser.BUML.notations.kg_to_buml.resolutions import dispatch_decision
+    from besser.BUML.metamodel.kg import KGClass, KGIndividual
+
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :email a owl:DatatypeProperty ; rdfs:domain :Person .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    person = kg.get_node("http://ex.org/Person")
+    assert isinstance(person, KGIndividual)  # sanity check: not auto-promoted
+
+    report = analyze_kg_for_class_diagram(kg)
+    issue = _issue(report, "UNDECLARED_CLASS")
+    _assert_actions_present(issue)
+    assert issue.recommended_action.key == "promote_individual_to_class"
+    assert issue.recommended_action.parameters == {"node_id": "http://ex.org/Person"}
+
+    new_kg = dispatch_decision(kg, issue, "accept")
+    assert isinstance(new_kg.get_node("http://ex.org/Person"), KGClass)
+
+
+def test_undeclared_class_via_shacl_target_class(tmp_path: Path):
+    """A node referenced *only* through a SHACL shape's sh:targetClass (no
+    rdf:type/domain/range/subClassOf anywhere else) must also surface as
+    UNDECLARED_CLASS — otherwise its constraints silently fail to resolve to
+    a class during conversion (see test_kg_to_class_diagram.py)."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix sh: <http://www.w3.org/ns/shacl#> .
+
+    :PersonShape a sh:NodeShape ;
+        sh:targetClass :Person .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    issue = _issue(report, "UNDECLARED_CLASS")
+    assert issue.affected_node_ids == ["http://ex.org/Person"]
+    assert issue.recommended_action.key == "promote_individual_to_class"
 
 
 # --- MULTIVALUED_LITERAL --------------------------------------------------

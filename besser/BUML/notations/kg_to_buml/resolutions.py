@@ -42,6 +42,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDFS_RANGE,
     RDFS_SUBCLASS_OF,
     RDF_TYPE,
+    looks_like_datatype_iri as _looks_like_datatype_iri,
     normalize_predicate,
 )
 
@@ -428,7 +429,6 @@ def _h_keep_object_property(kg: KnowledgeGraph, res: KGResolution) -> None:
     prop = _find_property_by_iri(kg, prop_iri)
     if prop is None:
         return
-    from besser.BUML.notations.kg_to_buml.kg_to_class_diagram import _looks_like_datatype_iri
     new_edges = {
         e for e in kg.edges
         if not (
@@ -448,7 +448,6 @@ def _h_keep_datatype_property(kg: KnowledgeGraph, res: KGResolution) -> None:
     prop = _find_property_by_iri(kg, prop_iri)
     if prop is None:
         return
-    from besser.BUML.notations.kg_to_buml.kg_to_class_diagram import _looks_like_datatype_iri
     new_edges = {
         e for e in kg.edges
         if not (
@@ -1021,7 +1020,6 @@ _HANDLERS: Dict[str, Any] = {
     "coerce_to_string": _h_noop,            # converter already coerces
     "coerce_to_string_link": _h_noop,       # the link is preserved as raw edge
     "record_as_description": _h_noop,       # writer can read restriction metadata
-    "synthesize_class": _h_noop,            # converter already synthesises
 }
 
 

@@ -28,6 +28,7 @@ from typing import List, Optional
 __all__ = [
     "KGAxiom",
     "EquivalentClassesAxiom",
+    "EquivalentPropertiesAxiom",
     "DisjointClassesAxiom",
     "DisjointUnionAxiom",
     "SubPropertyOfAxiom",
@@ -55,6 +56,17 @@ class EquivalentClassesAxiom(KGAxiom):
     """
 
     class_ids: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EquivalentPropertiesAxiom(KGAxiom):
+    """``owl:equivalentProperty`` between two or more properties.
+
+    All listed property ids are semantically equivalent and canonicalize onto a
+    single B-UML attribute/association during KG → class-diagram conversion.
+    """
+
+    property_ids: List[str] = field(default_factory=list)
 
 
 @dataclass

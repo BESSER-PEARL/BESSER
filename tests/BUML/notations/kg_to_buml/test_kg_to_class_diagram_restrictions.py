@@ -1,16 +1,16 @@
-"""Tests for the OWL restriction → BUML Multiplicity lifting.
+"""Tests for OWL restriction handling in the KG → class-diagram converter.
 
-The KG → class-diagram converter reads structured ``owl:Restriction``
-metadata that the importer attaches to ``KGBlank`` nodes (kind='restriction',
-on_property, restriction_type, value, on_class) and lifts the corresponding
-cardinality into the matching ``Property.multiplicity`` (datatype attributes)
-or association target-end multiplicity (object properties).
+Following rules D22-D25 and O07-O15, every ``owl:Restriction`` materialises a
+dedicated auxiliary class (e.g. ``_min_1_hasName_str``) that the restricted
+class generalizes to, rather than lifting the cardinality onto the property's
+own ``Multiplicity``. An object-property restriction gives the aux class its
+own association carrying the restricted multiplicity; a data-property
+restriction gives it an OCL invariant.
 
-OWL property characteristics on ``KGProperty.metadata.characteristics``
-(currently only ``Functional``) are also lifted into ``max=1``.
-
-ABox-driven multiplicity bumps (Step 5 in the converter) must defer to
-explicit OWL-derived multiplicities rather than overwrite them.
+OWL property characteristics (``owl:FunctionalProperty``) *are* lifted directly
+onto the property's own attribute/association — those aren't restrictions but
+global property-level facts, so they don't get an aux class. A data property
+that is not functional stays many-valued, per D11/D36.
 """
 
 from __future__ import annotations
@@ -38,7 +38,18 @@ def _association(domain_model, name: str):
     return next(a for a in domain_model.associations if a.name == name)
 
 
-def test_min_cardinality_lifted_into_multiplicity(tmp_path: Path):
+def _class(domain_model, name: str):
+    return next(c for c in domain_model.types if getattr(c, "name", None) == name)
+
+
+def _generalizes_to(domain_model, specific_name: str, general_name: str) -> bool:
+    return any(
+        g.specific.name == specific_name and g.general.name == general_name
+        for g in domain_model.generalizations
+    )
+
+
+def test_min_cardinality_materializes_aux_class(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -55,12 +66,19 @@ def test_min_cardinality_lifted_into_multiplicity(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
+    # Person's own "hasName" attribute is unaffected by the restriction; it
+    # stays many-valued because the property is not owl:FunctionalProperty.
     attr = _attribute(result.domain_model, "Person", "hasName")
-    assert attr.multiplicity.min == 1
-    assert attr.is_optional is False
+    assert (attr.multiplicity.min, attr.multiplicity.max) == (0, 9999)
+    # The restriction lives on a dedicated aux class Person generalizes to,
+    # with its own "hasName" attribute and an OCL invariant enforcing >= 1.
+    aux = _class(result.domain_model, "_min_1_hasName_str")
+    assert _generalizes_to(result.domain_model, "Person", "_min_1_hasName_str")
+    bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
+    assert any("self.hasName->asSet()->select(v | v.oclIsKindOf(str))->size() >= 1" in b for b in bodies)
 
 
-def test_max_cardinality_lifted_into_multiplicity(tmp_path: Path):
+def test_max_cardinality_materializes_aux_class(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -77,11 +95,13 @@ def test_max_cardinality_lifted_into_multiplicity(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
-    attr = _attribute(result.domain_model, "Person", "hasNickname")
-    assert attr.multiplicity.max == 3
+    aux = _class(result.domain_model, "_max_3_hasNickname_str")
+    assert _generalizes_to(result.domain_model, "Person", "_max_3_hasNickname_str")
+    bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
+    assert any("self.hasNickname->asSet()->select(v | v.oclIsKindOf(str))->size() <= 3" in b for b in bodies)
 
 
-def test_exact_cardinality_lifted_into_multiplicity(tmp_path: Path):
+def test_exact_cardinality_materializes_aux_class(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -98,12 +118,13 @@ def test_exact_cardinality_lifted_into_multiplicity(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
-    attr = _attribute(result.domain_model, "Person", "ssn")
-    assert attr.multiplicity.min == 1
-    assert attr.multiplicity.max == 1
+    aux = _class(result.domain_model, "_exact_1_ssn_str")
+    assert _generalizes_to(result.domain_model, "Person", "_exact_1_ssn_str")
+    bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
+    assert any("self.ssn->asSet()->select(v | v.oclIsKindOf(str))->size() = 1" in b for b in bodies)
 
 
-def test_some_values_from_lifts_min_to_one(tmp_path: Path):
+def test_some_values_from_materializes_aux_class(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -120,10 +141,24 @@ def test_some_values_from_lifts_min_to_one(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
-    assoc = _association(result.domain_model, "owns")
-    src_end = result.assoc_source_end[id(assoc)]
-    target_end = next(e for e in assoc.ends if e is not src_end)
-    assert target_end.multiplicity.min == 1
+    # The someValuesFrom restriction materialises an aux class that Person
+    # specialises, carrying the association to Pet with target end 1..*.
+    aux = _class(result.domain_model, "_some_owns_Pet")
+    assert _generalizes_to(result.domain_model, "Person", "_some_owns_Pet")
+    aux_assoc = _association(result.domain_model, "owns")
+    aux_src_end = next(e for e in aux_assoc.ends if e.type is aux)
+    aux_target_end = next(e for e in aux_assoc.ends if e is not aux_src_end)
+    assert aux_target_end.type.name == "Pet"
+    assert (aux_target_end.multiplicity.min, aux_target_end.multiplicity.max) == (1, 9999)
+    # Person's own rdfs:domain/range "owns" is subsumed by the aux's: BUML
+    # forbids a class and its ancestor both owning the role name, and the
+    # ancestor's is the one that carries the restriction's tighter bound, so
+    # Person inherits `owns [1..*]` rather than redeclaring `owns [0..*]`.
+    assert sum(1 for a in result.domain_model.associations if a.name == "owns") == 1
+    assert any(
+        w.code == "ASSOC_INHERITED_SHADOWED" and "Person.owns" in w.message
+        for w in result.warnings
+    )
 
 
 def test_functional_property_caps_max_to_one(tmp_path: Path):
@@ -144,10 +179,12 @@ def test_functional_property_caps_max_to_one(tmp_path: Path):
     assert attr.multiplicity.max == 1
 
 
-def test_restriction_overrides_abox_multiplicity_bump(tmp_path: Path):
-    """If a restriction explicitly caps cardinality at 1, ABox multi-valued
-    data must NOT bump the multiplicity to 0..*. The OWL-declared semantics
-    win over inferred-from-data heuristics."""
+def test_abox_bump_and_restriction_aux_are_independent(tmp_path: Path):
+    """A cardinality restriction no longer touches the property's own
+    ``Multiplicity`` at all (it's enforced by an independent OCL invariant on
+    its aux class instead — see test_exact_cardinality_materializes_aux_class),
+    so the ABox multi-valued-literal heuristic is free to bump Person's own
+    plain "name" attribute same as it would for any other property."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -167,15 +204,16 @@ def test_restriction_overrides_abox_multiplicity_bump(tmp_path: Path):
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
     attr = _attribute(result.domain_model, "Person", "name")
-    # cardinality=1 wins; multi-valued ABox does not bump to 0..*.
-    assert attr.multiplicity.min == 1
-    assert attr.multiplicity.max == 1
-    # Ensure no MULTIVALUED_LITERAL warning fired.
-    codes = {w.code for w in result.warnings}
-    assert "MULTIVALUED_LITERAL" not in codes
+    assert attr.multiplicity.max == 9999
+    # The exact-cardinality restriction still independently enforces "= 1" on
+    # its own aux class, regardless of what Person's own attribute allows.
+    aux = _class(result.domain_model, "_exact_1_name_str")
+    assert _generalizes_to(result.domain_model, "Person", "_exact_1_name_str")
+    bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
+    assert any("self.name->asSet()->select(v | v.oclIsKindOf(str))->size() = 1" in b for b in bodies)
 
 
-def test_unsupported_restriction_emits_advisory(tmp_path: Path):
+def test_has_value_data_restriction_materializes_aux_class(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -191,8 +229,12 @@ def test_unsupported_restriction_emits_advisory(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
+    aux = _class(result.domain_model, "_hasValue_country_US")
+    assert _generalizes_to(result.domain_model, "Adult", "_hasValue_country_US")
+    bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
+    assert any('self.country->asSet()->includes("US")' in b for b in bodies)
     codes = {w.code for w in result.warnings}
-    assert "ADV_RESTRICTION_UNSUPPORTED" in codes
+    assert "ADV_RESTRICTION_UNSUPPORTED" not in codes
 
 
 def test_restriction_on_unknown_property_does_not_crash(tmp_path: Path):

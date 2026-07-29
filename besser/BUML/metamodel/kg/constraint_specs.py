@@ -70,6 +70,10 @@ ConstraintKind = Literal[
     "languageIn",
     "uniqueLang",
     "in",
+    # Property-pair comparison (SHACL Core)
+    "equals",
+    "lessThan",
+    "lessThanOrEquals",
     # Logical
     "shaclNot",
     "shaclAnd",
@@ -111,8 +115,12 @@ CONSTRAINT_VOCAB_MAP: Dict[str, List[str]] = {
     "maxQualifiedCardinality": ["owl", "shacl"],
     "exactQualifiedCardinality": ["owl"],
     # Value
-    "someValuesFrom": ["owl", "shacl"],
-    "allValuesFrom": ["owl"],
+    # SHACL has no faithful existential-quantification predicate — sh:class
+    # decodes to allValuesFrom (forall), not someValuesFrom (exists) — so
+    # someValuesFrom is owl-only.
+    "someValuesFrom": ["owl"],
+    # sh:class also decodes to this kind (see owl_to_buml._SHACL_PROPERTY_COMPONENTS).
+    "allValuesFrom": ["owl", "shacl"],
     "hasValue": ["owl", "shacl"],
     "hasSelf": ["owl"],
     # Datatype / literal (SHACL Core)
@@ -129,6 +137,9 @@ CONSTRAINT_VOCAB_MAP: Dict[str, List[str]] = {
     "languageIn": ["shacl"],
     "uniqueLang": ["shacl"],
     "in": ["owl", "shacl"],
+    "equals": ["shacl"],
+    "lessThan": ["shacl"],
+    "lessThanOrEquals": ["shacl"],
     # Logical — SHACL-only on export. OWL has class-level counterparts
     # (owl:complementOf / unionOf / intersectionOf) but they operate over
     # classes rather than arbitrary SHACL shapes; the class-level variants
@@ -178,6 +189,9 @@ CONSTRAINT_CATEGORY: Dict[str, str] = {
     "hasValue": "value",
     "hasSelf": "value",
     "nodeKind": "value",
+    "equals": "value",
+    "lessThan": "value",
+    "lessThanOrEquals": "value",
     # Datatype
     "datatype": "datatype",
     "pattern": "datatype",

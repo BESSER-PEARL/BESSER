@@ -20,11 +20,13 @@ from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
     KGIndividual,
+    KGNodeConstraint,
     KGPropertyConstraint,
     KGProperty,
     PropertyChainAxiom,
     SubPropertyOfAxiom,
 )
+from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 
@@ -272,10 +274,20 @@ def test_restriction_qualified_cardinality(tmp_path: Path):
 # --- Class combinators ----------------------------------------------------
 
 
-def _class_expr_blank(kg) -> KGBlank:
-    blanks = [n for n in kg.nodes if isinstance(n, KGBlank) and n.metadata.get("kind") == "class_expression"]
-    assert len(blanks) == 1
-    return blanks[0]
+def _class_expr_nc(kg, owner_iri: str, kind: str) -> KGNodeConstraint:
+    """Find the KGNodeConstraint carrying a ``kind`` class-expression spec and
+    targeting ``owner_iri`` via a ``constraintTargetClass`` edge."""
+    owner = next(n for n in kg.nodes if isinstance(n, KGClass) and n.iri == owner_iri)
+    ncs = [
+        e.source
+        for e in kg.edges
+        if e.iri == CONSTRAINT_TARGET_CLASS
+        and e.target is owner
+        and isinstance(e.source, KGNodeConstraint)
+    ]
+    matches = [nc for nc in ncs if any(s.get("kind") == kind for s in nc.get_specs())]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def test_unionOf_decoded(tmp_path: Path):
@@ -293,9 +305,10 @@ def test_unionOf_decoded(tmp_path: Path):
         ] .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _class_expr_blank(kg)
-    assert blank.metadata["combinator"] == "unionOf"
-    assert blank.metadata["members"] == ["http://ex.org/Cat", "http://ex.org/Dog"]
+    nc = _class_expr_nc(kg, "http://ex.org/Pet", "unionOf")
+    spec = next(s for s in nc.get_specs() if s["kind"] == "unionOf")
+    assert spec["value"] == ["http://ex.org/Cat", "http://ex.org/Dog"]
+    assert nc.metadata["source"] == "owl"
 
 
 def test_intersectionOf_decoded(tmp_path: Path):
@@ -312,9 +325,9 @@ def test_intersectionOf_decoded(tmp_path: Path):
         ] .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _class_expr_blank(kg)
-    assert blank.metadata["combinator"] == "intersectionOf"
-    assert set(blank.metadata["members"]) == {"http://ex.org/Mammal", "http://ex.org/Pet"}
+    nc = _class_expr_nc(kg, "http://ex.org/PetMammal", "intersectionOf")
+    spec = next(s for s in nc.get_specs() if s["kind"] == "intersectionOf")
+    assert set(spec["value"]) == {"http://ex.org/Mammal", "http://ex.org/Pet"}
 
 
 def test_complementOf_decoded(tmp_path: Path):
@@ -330,9 +343,9 @@ def test_complementOf_decoded(tmp_path: Path):
         ] .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _class_expr_blank(kg)
-    assert blank.metadata["combinator"] == "complementOf"
-    assert blank.metadata["members"] == ["http://ex.org/Adult"]
+    nc = _class_expr_nc(kg, "http://ex.org/Minor", "complementOf")
+    spec = next(s for s in nc.get_specs() if s["kind"] == "complementOf")
+    assert spec["value"] == "http://ex.org/Adult"
 
 
 def test_oneOf_decoded(tmp_path: Path):
@@ -349,9 +362,49 @@ def test_oneOf_decoded(tmp_path: Path):
         ] .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    blank = _class_expr_blank(kg)
-    assert blank.metadata["combinator"] == "oneOf"
-    assert set(blank.metadata["members"]) == {"http://ex.org/red", "http://ex.org/green"}
+    nc = _class_expr_nc(kg, "http://ex.org/Color", "oneOf")
+    spec = next(s for s in nc.get_specs() if s["kind"] == "oneOf")
+    assert set(spec["value"]) == {"http://ex.org/red", "http://ex.org/green"}
+
+
+def test_list_spine_blanks_swept_for_every_list_valued_construct(tmp_path: Path):
+    """RDF-list "cons cell" blanks behind a decoded list-valued construct
+    (unionOf/oneOf member lists, hasKey/disjointUnionOf id lists) must not
+    survive into the KG once their content has been captured as structured
+    metadata/axioms — leaving them behind made the KG-refinement preflight
+    wrongly recommend promoting them to individuals (they carry no domain
+    content, just RDF-list encoding)."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :name a owl:DatatypeProperty .
+    :email a owl:DatatypeProperty .
+    :Cat a owl:Class .
+    :Dog a owl:Class .
+    :red a :Color .
+    :green a :Color .
+
+    :Pet a owl:Class ;
+        owl:equivalentClass [ a owl:Class ; owl:unionOf ( :Cat :Dog ) ] .
+    :Color a owl:Class ;
+        owl:equivalentClass [ a owl:Class ; owl:oneOf ( :red :green ) ] .
+    :Person a owl:Class ;
+        owl:hasKey ( :name :email ) .
+    :PetKind a owl:Class ; owl:disjointUnionOf ( :Cat :Dog ) .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    blanks = [n for n in kg.nodes if isinstance(n, KGBlank)]
+    assert blanks == [], f"list-spine blanks leaked into the KG: {[(b.id, b.metadata) for b in blanks]}"
+    # The decoded content itself must still be intact.
+    nc = _class_expr_nc(kg, "http://ex.org/Pet", "unionOf")
+    spec = next(s for s in nc.get_specs() if s["kind"] == "unionOf")
+    assert spec["value"] == ["http://ex.org/Cat", "http://ex.org/Dog"]
+    key_axioms = _find_axioms(kg, HasKeyAxiom)
+    assert key_axioms[0].property_ids == ["http://ex.org/name", "http://ex.org/email"]
+    union_axioms = _find_axioms(kg, DisjointUnionAxiom)
+    assert union_axioms[0].part_class_ids == ["http://ex.org/Cat", "http://ex.org/Dog"]
 
 
 # --- Axioms ---------------------------------------------------------------
@@ -521,3 +574,77 @@ def test_punning_class_and_individual_both_present(tmp_path: Path):
     # Cross-references via metadata.
     assert eagle_class[0].metadata.get("punned_with") == "http://ex.org/Eagle#individual"
     assert eagle_indiv[0].metadata.get("punned_with") == "http://ex.org/Eagle"
+
+
+def test_punning_class_and_node_shape_both_present(tmp_path: Path):
+    """The standard SHACL idiom ``<C> a sh:NodeShape ; sh:targetClass <C>``.
+
+    Regression: the shape used to *replace* the class node, so an ontology
+    written this way silently lost every class that had a shape — along with
+    their ``rdfs:subClassOf``, ``rdfs:domain`` and ``rdfs:range`` links on TTL
+    re-export. ``test_bibo_regression.py`` covers the same idiom at scale.
+    """
+    from besser.BUML.metamodel.kg import KGNodeConstraint
+    from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
+
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix sh: <http://www.w3.org/ns/shacl#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Agent a owl:Class .
+    :Person a owl:Class ; rdfs:subClassOf :Agent .
+    :name a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+
+    :Person a sh:NodeShape ;
+        sh:targetClass :Person ;
+        sh:property [ sh:path :name ; sh:maxCount 1 ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    nodes = [n for n in kg.nodes if n.iri == "http://ex.org/Person"]
+    classes = [n for n in nodes if isinstance(n, KGClass)]
+    shapes = [n for n in nodes if isinstance(n, KGNodeConstraint)]
+    assert len(classes) == 1, "the class declaration must survive the shape"
+    assert len(shapes) == 1
+    assert classes[0].id != shapes[0].id, "distinct ids keep the JSON round trip unambiguous"
+
+    # The shape targets the surviving class.
+    assert any(
+        e.source is shapes[0] and e.target is classes[0] and e.iri == CONSTRAINT_TARGET_CLASS
+        for e in kg.edges
+    )
+    # ...and the class keeps its own structural links.
+    assert any(
+        e.source is classes[0] and e.target.iri == "http://ex.org/Agent"
+        and e.iri == "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+        for e in kg.edges
+    )
+
+
+def test_punned_class_and_shape_round_trip_through_rdf(tmp_path: Path):
+    """Re-exporting must reproduce both assertions the source made."""
+    from rdflib import Graph, URIRef
+    from rdflib.namespace import OWL, RDF, RDFS
+
+    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+
+    SH = "http://www.w3.org/ns/shacl#"
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix sh: <http://www.w3.org/ns/shacl#> .
+
+    :Agent a owl:Class .
+    :Person a owl:Class ; rdfs:subClassOf :Agent .
+    :Person a sh:NodeShape ; sh:targetClass :Person .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    exported = knowledge_graph_to_rdf(kg, vocab="both")
+    person = URIRef("http://ex.org/Person")
+
+    assert (person, RDF.type, OWL.Class) in exported
+    assert (person, RDFS.subClassOf, URIRef("http://ex.org/Agent")) in exported
+    assert (person, URIRef(SH + "targetClass"), person) in exported

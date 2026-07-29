@@ -75,8 +75,10 @@ def test_class_endpoint_returns_class_diagram(client: TestClient, kg_payload: di
     assert "Class" in types
     assert "ClassAttribute" in types
     rel_types = {r["type"] for r in relationships.values()}
-    assert "ClassBidirectional" in rel_types  # worksFor association
-    assert "ClassInheritance" in rel_types    # Employee → Person
+    # A plain owl:ObjectProperty is navigable domain → range only; the reverse
+    # end becomes navigable when (and only when) owl:inverseOf names it.
+    assert "ClassUnidirectional" in rel_types  # worksFor association
+    assert "ClassInheritance" in rel_types     # Employee → Person
 
 
 def test_object_endpoint_returns_object_diagram_with_reference(client: TestClient, kg_payload: dict):
@@ -113,3 +115,55 @@ def test_blank_skipped_warning_propagates(client: TestClient, kg_payload: dict):
     body = response.json()
     codes = {w["code"] for w in (body.get("warnings") or [])}
     assert "BLANK_SKIPPED" in codes
+
+
+def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client: TestClient):
+    """A KG carrying a properly-linked NodeConstraint/PropertyConstraint pair
+    must come back with a ClassOCLConstraint element — regression test for
+    the OCL-generation pipeline, which previously had no HTTP-level coverage
+    at all (every existing test called kg_to_class_diagram in-process)."""
+    payload = {
+        "title": "OCLEndpointTest",
+        "model": {
+            "type": "KnowledgeGraphDiagram",
+            "version": "1.0.0",
+            "nodes": [
+                {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
+                {"id": "name", "nodeType": "property", "label": "name", "iri": EX + "name"},
+                {"id": "xsd_str", "nodeType": "class", "label": "string", "iri": XSD + "string"},
+                {
+                    "id": "PersonShape", "nodeType": "nodeConstraint", "label": "PersonShape",
+                    "iri": EX + "PersonShape",
+                    "metadata": {"constraintSpecs": [], "source": "shacl"},
+                },
+                {
+                    "id": "pc1", "nodeType": "propertyConstraint", "label": "name_minLength",
+                    "metadata": {"constraintSpecs": [{"kind": "minLength", "value": 2}], "source": "shacl"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "name", "target": "Person", "iri": RDFS + "domain"},
+                {"id": "e2", "source": "name", "target": "xsd_str", "iri": RDFS + "range"},
+                {
+                    "id": "e3", "source": "pc1", "target": "name",
+                    "iri": "http://besser.local/kg#constraintTargetProperty",
+                },
+                {
+                    "id": "e4", "source": "PersonShape", "target": "Person",
+                    "iri": "http://besser.local/kg#constraintTargetClass",
+                },
+                {
+                    "id": "e5", "source": "PersonShape", "target": "pc1",
+                    "iri": "http://www.w3.org/ns/shacl#property",
+                },
+            ],
+        },
+    }
+    response = client.post("/besser_api/kg-to-class-diagram", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    elements = body["model"]["elements"]
+    types = {e["type"] for e in elements.values()}
+    assert "ClassOCLConstraint" in types
+    ocl_texts = [e["constraint"] for e in elements.values() if e["type"] == "ClassOCLConstraint"]
+    assert any("self.name" in c for c in ocl_texts)

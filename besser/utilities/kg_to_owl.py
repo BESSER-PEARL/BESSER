@@ -33,6 +33,7 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KGPropertyConstraint,
     KnowledgeGraph,
+    PropertyChainAxiom,
 )
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
@@ -60,6 +61,18 @@ _INTERNAL_PREDICATES: Set[str] = {
     SH_PROPERTY,
 }
 
+# OWL predicates whose value must be a single rdf:List, never repeated flat
+# triples. The importer represents these in the KG editor as direct
+# subject->member edges (one per member, for visibility/editability — see
+# owl_to_buml._flatten_owl_list_valued_triples), which must NOT be re-emitted
+# as-is here (that would produce invalid multi-object owl:unionOf/hasKey/...
+# triples). Skipped in the generic edge loop below; re-emitted properly as a
+# single rdf:List via the dedicated passes that follow it.
+_OWL_LIST_VALUED_PREDICATES: Set[str] = {
+    str(OWL.unionOf), str(OWL.intersectionOf), str(OWL.oneOf),
+    str(OWL.hasKey), str(OWL.disjointUnionOf), str(OWL.propertyChainAxiom),
+}
+
 
 _OWL_RESTRICTION_KINDS: Dict[str, URIRef] = {
     "minCardinality": OWL.minCardinality,
@@ -80,7 +93,11 @@ _SHACL_PROPERTY_KINDS: Dict[str, URIRef] = {
     "maxCardinality": SH.maxCount,
     "minQualifiedCardinality": SH.qualifiedMinCount,
     "maxQualifiedCardinality": SH.qualifiedMaxCount,
-    "someValuesFrom": SH["class"],
+    # sh:class means "every value must be of this type" (forall) — it pairs
+    # with allValuesFrom, not someValuesFrom (exists). SHACL has no faithful
+    # existential-quantification predicate, so someValuesFrom is deliberately
+    # absent here (owl-only, see CONSTRAINT_VOCAB_MAP) rather than mis-mapped.
+    "allValuesFrom": SH["class"],
     "hasValue": SH.hasValue,
     "datatype": SH.datatype,
     "nodeKind": SH.nodeKind,
@@ -95,6 +112,9 @@ _SHACL_PROPERTY_KINDS: Dict[str, URIRef] = {
     "languageIn": SH.languageIn,
     "uniqueLang": SH.uniqueLang,
     "in": SH["in"],
+    "equals": SH.equals,
+    "lessThan": SH.lessThan,
+    "lessThanOrEquals": SH.lessThanOrEquals,
     "shaclSeverity": SH.severity,
     "shaclMessage": SH.message,
     "shaclName": SH.name,
@@ -372,10 +392,10 @@ def _emit_single_shacl_constraint(
         if lit is not None:
             g.add((shape_subject, pred, lit))
         return
-    if kind == "someValuesFrom" and isinstance(value, str):
-        g.add((shape_subject, pred, URIRef(value)))
-        return
-    if kind in ("datatype", "nodeKind", "shaclSeverity", "shaclGroup") and isinstance(value, str):
+    if kind in (
+        "allValuesFrom", "datatype", "nodeKind", "shaclSeverity", "shaclGroup",
+        "equals", "lessThan", "lessThanOrEquals",
+    ) and isinstance(value, str):
         g.add((shape_subject, pred, URIRef(value)))
         return
     if kind == "hasValue":
@@ -577,6 +597,10 @@ def knowledge_graph_to_rdf(
             continue
         if edge.iri in _INTERNAL_PREDICATES:
             continue
+        if edge.iri in _OWL_LIST_VALUED_PREDICATES:
+            # Never emit as a flat triple — see _OWL_LIST_VALUED_PREDICATES.
+            # Re-emitted properly as a single rdf:List below.
+            continue
         if isinstance(src, (KGNodeConstraint, KGPropertyConstraint)) \
                 or isinstance(tgt, (KGNodeConstraint, KGPropertyConstraint)):
             # Constraint nodes are emitted via the dedicated paths below.
@@ -585,6 +609,39 @@ def knowledge_graph_to_rdf(
         p = _predicate_for_edge(edge, default_namespace)
         o = _term_for_node(tgt, default_namespace)
         g.add((s, p, o))
+
+    # Re-emit owl:unionOf/intersectionOf/oneOf as a proper rdf:List for any
+    # combinator blank that stayed a raw KGBlank (i.e. used directly as a
+    # property's rdfs:domain/rdfs:range value, not reached via
+    # rdfs:subClassOf/owl:equivalentClass from a class — those are lifted
+    # into a KGNodeConstraint and exported via the constraintSpecs-based path
+    # below instead). ``metadata['members']`` preserves list order.
+    for node in kg.nodes:
+        if not isinstance(node, KGBlank):
+            continue
+        if node.metadata.get("kind") != "class_expression":
+            continue
+        combinator = node.metadata.get("combinator")
+        members = node.metadata.get("members") or []
+        if combinator not in ("unionOf", "intersectionOf", "oneOf") or not members:
+            continue
+        subj_term = _term_for_node(node, default_namespace)
+        member_terms = [URIRef(m) for m in members]
+        g.add((subj_term, OWL[combinator], _emit_rdf_list(g, member_terms)))
+
+    # owl:propertyChainAxiom has no dedicated node-based representation in
+    # the KG (unlike unionOf/hasKey/etc., which get a KGNodeConstraint/
+    # KGBlank to hang metadata off) — re-derive it from the authoritative
+    # PropertyChainAxiom record instead of relying on raw graph edges.
+    for axiom in kg.axioms:
+        if not isinstance(axiom, PropertyChainAxiom) or not axiom.chain_property_ids:
+            continue
+        prop_node = nodes_by_id.get(axiom.property_id)
+        if prop_node is None:
+            continue
+        subj_term = _term_for_node(prop_node, default_namespace)
+        chain_terms = [URIRef(p) for p in axiom.chain_property_ids]
+        g.add((subj_term, OWL.propertyChainAxiom, _emit_rdf_list(g, chain_terms)))
 
     # Constraint emission.
     #
@@ -670,3 +727,36 @@ def serialize_knowledge_graph(
     if isinstance(serialized, bytes):  # rdflib < 6 returned bytes
         return serialized.decode("utf-8")
     return serialized
+
+
+# ----------------------------------------------------------------------
+# Public aliases for the leaf emitters
+# ----------------------------------------------------------------------
+# The KG → UML conversion pipeline
+# (:mod:`besser.BUML.notations.kg_to_buml.kg_to_rdf`) builds its own,
+# conversion-oriented RDF projection of a KnowledgeGraph rather than reusing
+# :func:`knowledge_graph_to_rdf` — the exporter deliberately drops every edge
+# touching a constraint node, which is right for a user-facing TTL export but
+# lossy for conversion. It does, however, need the *leaf* emitters and the
+# spec↔vocabulary tables below. Sharing them (instead of forking) keeps the
+# two paths from drifting whenever a ``ConstraintKind`` is added to
+# :mod:`besser.BUML.metamodel.kg.constraint_specs`.
+
+slugify = _slugify
+term_for_node = _term_for_node
+predicate_for_edge = _predicate_for_edge
+spec_to_literal = _spec_to_literal
+emit_rdf_list = _emit_rdf_list
+emit_owl_restriction = _emit_owl_restriction
+emit_inline_shape = _emit_inline_shape
+emit_shacl_constraint = _emit_single_shacl_constraint
+emit_shacl_property_shape_into = _emit_shacl_property_shape_into
+emit_shacl_node_shape_into = _emit_shacl_node_shape_into
+emit_nodeconstraint_owl_axioms = _emit_nodeconstraint_owl_axioms
+
+#: Spec kind → vocabulary predicate tables (see the note above).
+OWL_RESTRICTION_KINDS = _OWL_RESTRICTION_KINDS
+SHACL_PROPERTY_KINDS = _SHACL_PROPERTY_KINDS
+SHACL_NODE_KINDS = _SHACL_NODE_KINDS
+SHACL_LOGICAL_KINDS = _SHACL_LOGICAL_KINDS
+INTERNAL_PREDICATES = _INTERNAL_PREDICATES

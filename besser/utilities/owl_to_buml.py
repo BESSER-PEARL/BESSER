@@ -31,6 +31,7 @@ from besser.BUML.metamodel.kg import (
     DisjointClassesAxiom,
     DisjointUnionAxiom,
     EquivalentClassesAxiom,
+    EquivalentPropertiesAxiom,
     HasKeyAxiom,
     ImportAxiom,
     InversePropertiesAxiom,
@@ -242,6 +243,73 @@ def _decode_lists(g: rdflib.Graph) -> Dict[BNode, List[Any]]:
     return out
 
 
+# OWL list-valued predicates whose members are plain classes/properties (as
+# opposed to the SHACL logical operators below, whose members are shapes
+# already re-exposed through nested constraintSpecs once lifted — see
+# _lift_to_constraint_nodes). Once the rdf:first/rdf:rest spine behind one of
+# these is swept away (_consumed_list_heads), the KG editor canvas would show
+# the subject with no visible link to its members at all unless we replace
+# the spine with direct subject->member edges — see
+# _flatten_owl_list_valued_triples.
+_OWL_LIST_VALUED_PREDICATES = (
+    OWL.unionOf, OWL.intersectionOf, OWL.oneOf,
+    OWL.hasKey, OWL.disjointUnionOf, OWL.propertyChainAxiom,
+)
+
+# Predicates whose object is an rdf:List that this importer decodes into
+# structured data elsewhere (combinator members, hasKey/disjointUnionOf/
+# propertyChainAxiom id lists, SHACL sh:and/sh:or/sh:xone member shapes).
+# ``sh:not`` is excluded: its value is a single shape, not a list.
+_LIST_VALUED_PREDICATES = _OWL_LIST_VALUED_PREDICATES + (SH["and"], SH["or"], SH.xone)
+
+
+def _flatten_owl_list_valued_triples(
+    g: rdflib.Graph, list_resolutions: Dict[BNode, List[Any]]
+) -> List[Tuple[Any, str, List[Any]]]:
+    """For every OWL list-valued triple (see :data:`_OWL_LIST_VALUED_PREDICATES`),
+    return ``(subject, predicate_iri, ordered_members)`` — flattening the
+    rdf:List encoding into a form that can be re-expressed as direct
+    subject->member edges once the list spine itself is swept away.
+    """
+    out: List[Tuple[Any, str, List[Any]]] = []
+    for pred in _OWL_LIST_VALUED_PREDICATES:
+        for s, _, o in g.triples((None, pred, None)):
+            if isinstance(o, BNode):
+                members = list_resolutions.get(o, [])
+                if members:
+                    out.append((s, str(pred), members))
+    for axiom_node, _, _ in g.triples((None, RDF.type, OWL.AllDisjointClasses)):
+        members_head = next(g.objects(axiom_node, OWL.members), None)
+        if isinstance(members_head, BNode):
+            members = list_resolutions.get(members_head, [])
+            if members:
+                out.append((axiom_node, str(OWL.members), members))
+    return out
+
+
+def _consumed_list_heads(g: rdflib.Graph) -> Set[BNode]:
+    """Every ``rdf:List`` head BNode referenced by a predicate this importer
+    already decodes (see :data:`_LIST_VALUED_PREDICATES`), plus
+    ``owl:AllDisjointClasses``' ``owl:members`` list.
+
+    Once such a list's content has been decoded into structured metadata
+    (combinator ``members``, axiom id lists, ...), its RDF-list encoding — the
+    chain of blank ``rdf:first``/``rdf:rest`` "cons cells" — is redundant and
+    must not survive into the KG as bare, untagged ``KGBlank`` nodes (they'd
+    otherwise look like unexplained instances with no domain content).
+    """
+    heads: Set[BNode] = set()
+    for pred in _LIST_VALUED_PREDICATES:
+        for _, _, o in g.triples((None, pred, None)):
+            if isinstance(o, BNode):
+                heads.add(o)
+    for axiom_node, _, _ in g.triples((None, RDF.type, OWL.AllDisjointClasses)):
+        members_head = next(g.objects(axiom_node, OWL.members), None)
+        if isinstance(members_head, BNode):
+            heads.add(members_head)
+    return heads
+
+
 def _decode_restrictions(
     g: rdflib.Graph,
     lists: Dict[BNode, List[Any]],
@@ -355,6 +423,12 @@ def _emit_axioms(g: rdflib.Graph, lists: Dict[BNode, List[Any]]) -> List[Any]:
         b = _term_str(o)
         if a and b:
             axioms.append(EquivalentClassesAxiom(class_ids=[a, b]))
+    # equivalentProperty: pairwise.
+    for s, _, o in g.triples((None, OWL.equivalentProperty, None)):
+        a = _term_str(s)
+        b = _term_str(o)
+        if a and b:
+            axioms.append(EquivalentPropertiesAxiom(property_ids=[a, b]))
     # disjointWith: pairwise.
     for s, _, o in g.triples((None, OWL.disjointWith, None)):
         a = _term_str(s)
@@ -490,8 +564,13 @@ _SHACL_PROPERTY_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
     SH.hasValue: ("hasValue", _shacl_literal_value),
     SH.uniqueLang: ("uniqueLang", _shacl_literal_bool),
     SH.languageIn: ("languageIn", _shacl_literal_list),
-    SH["class"]: ("someValuesFrom", _shacl_iri),  # sh:class maps onto someValuesFrom-of-class
+    # sh:class means "every value must be of this type" (forall), matching the
+    # allValuesFrom kind's OCL translation — NOT someValuesFrom (exists).
+    SH["class"]: ("allValuesFrom", _shacl_iri),
     SH["in"]: ("in", _shacl_literal_list),
+    SH.equals: ("equals", _shacl_iri),
+    SH.lessThan: ("lessThan", _shacl_iri),
+    SH.lessThanOrEquals: ("lessThanOrEquals", _shacl_iri),
     SH.severity: ("shaclSeverity", _shacl_iri),
     SH.message: ("shaclMessage", _shacl_literal_str),
     SH.name: ("shaclName", _shacl_literal_str),
@@ -543,6 +622,26 @@ def _restriction_payload_to_specs(payload: Dict[str, Any]) -> List[Dict[str, Any
     if on_class:
         spec["on_class"] = on_class
     return [spec]
+
+
+def _combinator_payload_to_spec(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Translate a decoded class-expression payload (:func:`_decode_class_combinators`)
+    into a single ``constraintSpecs`` entry.
+
+    ``unionOf``/``intersectionOf``/``oneOf`` carry a list of member IRIs as
+    ``value``; ``complementOf`` carries a single IRI (its one member).
+    """
+    combinator = payload.get("combinator")
+    members = payload.get("members") or []
+    if combinator not in ("unionOf", "intersectionOf", "oneOf", "complementOf"):
+        return None
+    if combinator == "complementOf":
+        if not members:
+            return None
+        return {"kind": combinator, "value": members[0]}
+    if not members:
+        return None
+    return {"kind": combinator, "value": list(members)}
 
 
 def _detect_punning(g: rdflib.Graph, classes: Set[URIRef]) -> Set[URIRef]:
@@ -750,10 +849,28 @@ def _decode_shacl_shapes(
     return out
 
 
+def _could_be_class_target(node: Optional[KGNode]) -> bool:
+    """Whether ``node`` can be the target of a ``constraintTargetClass`` edge.
+
+    Mirrors ``kg_to_class_diagram.py``'s ``_ensure_class_for_node`` exclusion
+    set: anything except a blank/literal/property/constraint node can end up
+    represented as a ``Class`` in the final diagram (declared, or synthesised
+    from an undeclared reference — e.g. a SHACL shape's ``sh:targetClass``
+    pointing at a node nobody ever asserted ``rdf:type owl:Class`` for). Gating
+    this on ``isinstance(node, KGClass)`` instead would silently drop the
+    constraint at import time, before the class-diagram converter ever gets a
+    chance to synthesise the class it belongs to.
+    """
+    return node is not None and not isinstance(
+        node, (KGBlank, KGLiteral, KGProperty, KGNodeConstraint, KGPropertyConstraint)
+    )
+
+
 def _lift_to_constraint_nodes(
     kg: KnowledgeGraph,
     g: rdflib.Graph,
     restriction_terms: Dict[BNode, str],
+    combinator_terms: Dict[BNode, str],
     shacl_payloads: Dict[Any, Dict[str, Any]],
     shacl_term_to_id: Dict[Any, str],
 ) -> None:
@@ -770,6 +887,13 @@ def _lift_to_constraint_nodes(
        and replaced by a wrapping ``KGNodeConstraint`` linked via
        ``constraintTargetClass`` to the class and via ``sh:property`` to each
        associated PropertyConstraint.
+    2b. Each OWL class-expression ``KGBlank`` (``owl:unionOf``/
+        ``intersectionOf``/``oneOf``/``complementOf``, currently only tagged
+        via ``metadata.combinator``) is replaced by a ``KGNodeConstraint``
+        carrying a single ``constraintSpecs`` entry of the matching kind.
+        ``rdfs:subClassOf``/``owl:equivalentClass`` edges from a class to such
+        a node are removed and replaced by a ``constraintTargetClass`` edge
+        from the NodeConstraint to the class, exactly like step 2.
     3. Class-level axioms (``equivalentClass``, ``disjointWith``, ``oneOf``,
        ``hasKey``, ``disjointUnionOf``) materialise as anonymous
        ``KGNodeConstraint`` nodes (in addition to remaining on
@@ -798,6 +922,21 @@ def _lift_to_constraint_nodes(
         kg.add_edge(edge)
         edges_by_id[eid] = edge
         return edge
+
+    def _is_punned_declaration(node: KGNode) -> bool:
+        """True when ``node`` is a domain concept the shape must not consume.
+
+        A class or property *declared* under the same IRI as a shape is a
+        distinct OWL 2 entity (punning), so the shape has to become its own
+        node or the declaration is destroyed.
+
+        Deliberately excludes ``KGIndividual``: that is what ``_classify``
+        falls back to for any IRI with no declaration of its own, which is
+        exactly what a shape IRI looks like (``…/shape-prop-Airline-iataCode``).
+        Those are the shape, not something punned with it, so they keep being
+        replaced in place.
+        """
+        return isinstance(node, (KGClass, KGProperty))
 
     def _replace_node(old: KGNode, new: KGNode) -> None:
         """Swap a node in the KG, preserving all edges pointing at the old node."""
@@ -851,7 +990,7 @@ def _lift_to_constraint_nodes(
         for e in list(kg.edges):
             if e.iri == str(RDFS.subClassOf):
                 tgt_id = e.target.id
-                if tgt_id in blank_to_pc and isinstance(e.source, KGClass):
+                if tgt_id in blank_to_pc and _could_be_class_target(e.source):
                     class_to_pcs.setdefault(e.source.id, []).append(blank_to_pc[tgt_id])
                     edges_to_remove.append(e)
         for e in edges_to_remove:
@@ -871,11 +1010,63 @@ def _lift_to_constraint_nodes(
             for pc in pcs:
                 _add_edge(nc, pc, "property", SH_PROPERTY)
 
+    # 2b. Replace OWL class-expression KGBlank nodes (unionOf/intersectionOf/
+    #     oneOf/complementOf) with KGNodeConstraint, wired via
+    #     constraintTargetClass from any class that rdfs:subClassOf's or
+    #     owl:equivalentClass's them. Without this, `metadata.combinator`
+    #     payloads are dead-end data no converter can ever reach.
+    #
+    #     Scoped to blanks actually reached that way — a combinator blank can
+    #     equally appear as a property's rdfs:domain/rdfs:range value (a
+    #     domain/range union, handled by direct-linking in the class-diagram
+    #     converter, not as a class-level axiom); those must stay KGBlank.
+    if combinator_terms:
+        class_axiom_blank_ids = {
+            e.target.id
+            for e in kg.edges
+            if e.iri in (str(RDFS.subClassOf), str(OWL.equivalentClass))
+            and _could_be_class_target(e.source)
+            and e.target.id in combinator_terms.values()
+        }
+        blank_to_class_nc: Dict[str, KGNodeConstraint] = {}
+        for bnode_term, blank_id in combinator_terms.items():
+            if blank_id not in class_axiom_blank_ids:
+                continue
+            old = nodes_by_id.get(blank_id)
+            if old is None or not isinstance(old, KGBlank):
+                continue
+            spec = _combinator_payload_to_spec(dict(old.metadata))
+            if spec is None:
+                continue  # unrecognised/empty combinator — leave as a blank node
+            nc = KGNodeConstraint(
+                id=old.id,
+                label=old.label or "ClassExpression",
+                iri=None,
+                metadata={"constraintSpecs": [spec], "isAnonymous": True, "source": "owl"},
+            )
+            _replace_node(old, nc)
+            blank_to_class_nc[old.id] = nc
+
+        edges_to_remove = []
+        class_edges: List[Tuple[KGClass, KGNodeConstraint]] = []
+        for e in list(kg.edges):
+            if e.iri not in (str(RDFS.subClassOf), str(OWL.equivalentClass)):
+                continue
+            tgt_id = e.target.id
+            if tgt_id in blank_to_class_nc and _could_be_class_target(e.source):
+                class_edges.append((e.source, blank_to_class_nc[tgt_id]))
+                edges_to_remove.append(e)
+        for e in edges_to_remove:
+            kg.edges.discard(e)
+            edges_by_id.pop(e.id, None)
+        for class_node, nc in class_edges:
+            _add_edge(nc, class_node, "constraintTargetClass", CONSTRAINT_TARGET_CLASS)
+
     # 3. Materialise class-level axioms as NodeConstraints (in addition to the
     #    typed kg.axioms records).
     def _axiom_nc(label: str, target_class_id: str, specs: List[Dict[str, Any]]) -> None:
         target_node = nodes_by_id.get(target_class_id)
-        if not isinstance(target_node, KGClass):
+        if not _could_be_class_target(target_node):
             return
         nid = _next_node_id(f"nc:axiom:{target_class_id}#")
         nc = KGNodeConstraint(
@@ -912,6 +1103,7 @@ def _lift_to_constraint_nodes(
             )
 
     # 4. SHACL shapes.
+    nested_blank_ids: Set[str] = set()
     if shacl_payloads:
         # Decide which shapes are "top-level" (worth materialising as a
         # KGNodeConstraint / KGPropertyConstraint node) vs "nested-only"
@@ -967,14 +1159,25 @@ def _lift_to_constraint_nodes(
                     label = "Shape"
             iri = str(term) if isinstance(term, URIRef) else None
             specs = list(payload["constraint_specs"])
+            # OWL 2 punning: the same IRI may be both a class (or an
+            # individual/property) and a shape — the standard SHACL idiom
+            # `<C> a sh:NodeShape ; sh:targetClass <C>`, and how most published
+            # shapes graphs are written (the BIBO shapes fixture included).
+            # Replacing the node in that case would destroy the class,
+            # so the shape becomes a *separate* node instead. Both keep the
+            # source IRI, which is faithful: the source asserts both types of
+            # it. Their ids differ, so the editor and the JSON round trip stay
+            # unambiguous.
+            reuse = existing is not None and not _is_punned_declaration(existing)
             if payload["shape_kind"] == "nodeShape":
                 nc = KGNodeConstraint(
-                    id=existing.id if existing else (iri or _next_node_id("nc:shacl:")),
+                    id=(existing.id if reuse
+                        else _next_node_id(f"nc:shacl:{iri}#" if iri else "nc:shacl:")),
                     label=label,
                     iri=iri,
                     metadata={"constraintSpecs": specs, "source": "shacl", "isAnonymous": iri is None},
                 )
-                if existing:
+                if reuse:
                     _replace_node(existing, nc)
                 else:
                     kg.add_node(nc)
@@ -984,16 +1187,17 @@ def _lift_to_constraint_nodes(
                 target_class_iri = payload.get("target_class")
                 if target_class_iri and target_class_iri in nodes_by_id:
                     tgt = nodes_by_id[target_class_iri]
-                    if isinstance(tgt, KGClass):
+                    if _could_be_class_target(tgt):
                         _add_edge(nc, tgt, "constraintTargetClass", CONSTRAINT_TARGET_CLASS)
             else:
                 pc = KGPropertyConstraint(
-                    id=existing.id if existing else (iri or _next_node_id("pc:shacl:")),
+                    id=(existing.id if reuse
+                        else _next_node_id(f"pc:shacl:{iri}#" if iri else "pc:shacl:")),
                     label=label,
                     iri=iri,
                     metadata={"constraintSpecs": specs, "source": "shacl", "isAnonymous": iri is None},
                 )
-                if existing:
+                if reuse:
                     _replace_node(existing, pc)
                 else:
                     kg.add_node(pc)
@@ -1065,16 +1269,13 @@ def _lift_to_constraint_nodes(
             meta["constraintSpecs"] = specs
             tnode.metadata = meta
 
-        # Cleanup: nested-only SHACL shapes were materialised as KGBlank
-        # nodes during the first emission pass (every term becomes a node),
-        # and their raw shape predicates (sh:datatype, sh:minLength, …) plus
-        # the rdf:List spine that joined them (rdf:first / rdf:rest blanks)
-        # live on as KGEdges. Now that the contents are folded into a parent
-        # constraint's nested-spec value, the raw blanks + their incident
-        # edges are redundant. Drop them so the exporter doesn't leak the
-        # same constraints twice (once via the nested spec, once as raw
-        # blank-node triples).
-        nested_blank_ids: Set[str] = set()
+        # Nested-only SHACL shapes were materialised as KGBlank nodes during
+        # the first emission pass (every term becomes a node), and their raw
+        # shape predicates (sh:datatype, sh:minLength, …) live on as KGEdges.
+        # Now that the contents are folded into a parent constraint's
+        # nested-spec value, the raw blanks + their incident edges are
+        # redundant. Mark them for removal below, alongside every RDF-list
+        # spine this importer has already decoded elsewhere.
         for term in shacl_payloads:
             if term in top_level_terms:
                 continue
@@ -1082,64 +1283,72 @@ def _lift_to_constraint_nodes(
                 nid = f"_:{str(term)}"
                 if nid in nodes_by_id and isinstance(nodes_by_id[nid], KGBlank):
                     nested_blank_ids.add(nid)
-        # Walk every list head that fed a logical operator, collecting the
-        # list spine blank nodes (the chained rdf:rest cursors). They have
-        # served their decoding purpose and are about to be re-emitted via
-        # _emit_rdf_list on the export side.
-        rdf_first = str(RDF.first)
-        rdf_rest = str(RDF.rest)
-        list_spine_ids: Set[str] = set()
-        for payload in shacl_payloads.values():
-            for kind, terms in (payload.get("logical_terms") or {}).items():
-                if kind == "shaclNot":
-                    continue  # sh:not takes a single shape, no list
-                # `terms` is the flat list of members; we need the list-head
-                # itself, which we recover by scanning the original Turtle
-                # rdflib graph for the head whose first item is terms[0].
-                for t in terms:
-                    nid_t = f"_:{str(t)}" if isinstance(t, BNode) else None
-                    if nid_t:
-                        list_spine_ids.add(nid_t)  # member blanks already in nested_blank_ids
-        # Sweep any blank node whose only incident edges are rdf:first /
-        # rdf:rest to also-doomed nodes. That's the spine.
-        for blank_node in [n for n in kg.nodes if isinstance(n, KGBlank)]:
+
+    # Before sweeping the rdf:first/rdf:rest spine below, replace it with
+    # direct subject->member edges for every OWL list-valued construct (D18-
+    # D21/D38 etc.) — e.g. a unionOf's combinator blank gets one edge per
+    # member class, a hasKey's class gets one edge per key property. Without
+    # this, the spine sweep would leave the KG editor canvas showing e.g. a
+    # unionOf blank with no visible connection to any of its member classes
+    # at all, even though the metadata payload (used by the actual
+    # class-diagram conversion) is unaffected either way.
+    list_resolutions = _decode_lists(g)
+    existing_edge_keys = {(e.source.id, e.target.id, e.iri) for e in kg.edges}
+    for subj_term, pred_iri, member_terms in _flatten_owl_list_valued_triples(g, list_resolutions):
+        subj_id = f"_:{str(subj_term)}" if isinstance(subj_term, BNode) else str(subj_term)
+        subj_node = nodes_by_id.get(subj_id)
+        if subj_node is None:
+            continue
+        for member_term in member_terms:
+            mem_id = f"_:{str(member_term)}" if isinstance(member_term, BNode) else str(member_term)
+            mem_node = nodes_by_id.get(mem_id)
+            if mem_node is None:
+                continue
+            key = (subj_node.id, mem_node.id, pred_iri)
+            if key in existing_edge_keys:
+                continue
+            existing_edge_keys.add(key)
+            _add_edge(subj_node, mem_node, _local_name(pred_iri), pred_iri)
+
+    # Cleanup (unconditional — not gated on shacl_payloads): drop the
+    # rdf:first/rdf:rest "cons cell" blank nodes behind any RDF list this
+    # importer has already decoded into structured metadata elsewhere (OWL
+    # combinator member lists, hasKey/disjointUnionOf/propertyChainAxiom id
+    # lists, SHACL sh:and/sh:or/sh:xone member lists — see
+    # _consumed_list_heads), plus the nested-only SHACL shape blanks
+    # collected above. Their content is already captured; leaving the raw
+    # blanks in the KG would make them look like unexplained "instances" to
+    # the KG editor's blank-node-materialisation preflight check.
+    rdf_first = str(RDF.first)
+    rdf_rest = str(RDF.rest)
+    consumed_head_ids = {f"_:{str(h)}" for h in _consumed_list_heads(g)}
+    prev = -1
+    doomed = nested_blank_ids | consumed_head_ids
+    while len(doomed) != prev:
+        prev = len(doomed)
+        for blank_node in [n for n in kg.nodes if isinstance(n, KGBlank) and n.id not in doomed]:
             edges_in = [e for e in kg.edges if e.source.id == blank_node.id or e.target.id == blank_node.id]
             if not edges_in:
                 continue
             if all(e.iri in (rdf_first, rdf_rest) for e in edges_in):
-                # If at least one neighbour is a doomed nested blank, this
-                # spine node is doomed too.
+                # If at least one neighbour is already doomed (a nested shape
+                # blank or a consumed list head), this spine cell is doomed too.
                 touching = {e.source.id for e in edges_in} | {e.target.id for e in edges_in}
                 touching.discard(blank_node.id)
-                if touching & nested_blank_ids:
-                    list_spine_ids.add(blank_node.id)
-        # Repeat the spine sweep until no further nodes are added, so chains
-        # of rdf:rest blanks get pruned end-to-end.
-        prev = -1
-        doomed = nested_blank_ids | list_spine_ids
-        while len(doomed) != prev:
-            prev = len(doomed)
-            for blank_node in [n for n in kg.nodes if isinstance(n, KGBlank) and n.id not in doomed]:
-                edges_in = [e for e in kg.edges if e.source.id == blank_node.id or e.target.id == blank_node.id]
-                if not edges_in:
-                    continue
-                if all(e.iri in (rdf_first, rdf_rest) for e in edges_in):
-                    touching = {e.source.id for e in edges_in} | {e.target.id for e in edges_in}
-                    touching.discard(blank_node.id)
-                    if touching & doomed:
-                        doomed.add(blank_node.id)
-        if doomed:
-            surviving_edges = {
-                e for e in kg.edges
-                if e.source.id not in doomed and e.target.id not in doomed
-            }
-            kg.edges = surviving_edges
-            for nid in doomed:
-                node = nodes_by_id.pop(nid, None)
-                if node is not None:
-                    kg.nodes.discard(node)
-            edges_by_id.clear()
-            edges_by_id.update({e.id: e for e in kg.edges})
+                if touching & doomed:
+                    doomed.add(blank_node.id)
+    if doomed:
+        surviving_edges = {
+            e for e in kg.edges
+            if e.source.id not in doomed and e.target.id not in doomed
+        }
+        kg.edges = surviving_edges
+        for nid in doomed:
+            node = nodes_by_id.pop(nid, None)
+            if node is not None:
+                kg.nodes.discard(node)
+        edges_by_id.clear()
+        edges_by_id.update({e.id: e for e in kg.edges})
 
 
 def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
@@ -1308,6 +1517,12 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
         if nid in nodes_by_key:
             restriction_terms[bnode_term] = nid
 
+    combinator_terms: Dict[BNode, str] = {}
+    for bnode_term in combinator_payloads:
+        nid = f"_:{str(bnode_term)}"
+        if nid in nodes_by_key:
+            combinator_terms[bnode_term] = nid
+
     shacl_term_to_id: Dict[Any, str] = {}
     for shape_term in shacl_payloads:
         if isinstance(shape_term, URIRef):
@@ -1317,7 +1532,9 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
             if nid in nodes_by_key:
                 shacl_term_to_id[shape_term] = nid
 
-    _lift_to_constraint_nodes(kg, g, restriction_terms, shacl_payloads, shacl_term_to_id)
+    _lift_to_constraint_nodes(
+        kg, g, restriction_terms, combinator_terms, shacl_payloads, shacl_term_to_id
+    )
     return kg
 
 

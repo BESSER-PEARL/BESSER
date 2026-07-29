@@ -6,7 +6,7 @@ import keyword
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 from urllib.parse import urldefrag
 
 from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
@@ -18,16 +18,49 @@ RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain"
 RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range"
 RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 
-# OWL/RDF/RDFS/XSD framework namespaces. IRIs in these namespaces are
+# --- Framework namespaces, used by the datatype-IRI predicates below ---
+XSD_NAMESPACE = "http://www.w3.org/2001/XMLSchema#"
+RDF_NAMESPACE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+RDFS_NAMESPACE = "http://www.w3.org/2000/01/rdf-schema#"
+
+
+def looks_like_datatype_iri(iri: Optional[str]) -> bool:
+    """True when ``iri`` names a literal datatype rather than a class.
+
+    Every ``xsd:*`` term, plus the three RDF/RDFS literal types that behave
+    like datatypes in an ontology (``rdf:langString``, ``rdfs:Literal``,
+    ``rdf:PlainLiteral``).
+    """
+    if not iri:
+        return False
+    return iri.startswith(XSD_NAMESPACE) or iri in {
+        f"{RDF_NAMESPACE}langString",
+        f"{RDFS_NAMESPACE}Literal",
+        f"{RDF_NAMESPACE}PlainLiteral",
+    }
+
+
+def all_datatype_refs(members: List[str]) -> bool:
+    """True when ``members`` is non-empty and every member is a datatype IRI."""
+    return bool(members) and all(looks_like_datatype_iri(m) for m in members)
+
+
+# Private aliases kept for call sites that imported the underscore names.
+_looks_like_datatype_iri = looks_like_datatype_iri
+_all_datatype_refs = all_datatype_refs
+
+# OWL/RDF/RDFS/XSD/SHACL framework namespaces. IRIs in these namespaces are
 # vocabulary terms (``owl:Class``, ``owl:DatatypeProperty``, ``rdfs:Class``,
-# …), not user concepts. They appear as objects of ``rdf:type`` triples in
-# every well-formed ontology, but they should NEVER produce user-facing
-# BUML classes when the converter synthesises classes from references.
+# ``sh:NodeShape``, …), not user concepts. They appear as objects of
+# ``rdf:type`` triples in every well-formed ontology, but they should NEVER
+# produce user-facing BUML classes when the converter synthesises classes from
+# references.
 _META_VOCAB_NAMESPACES = (
     "http://www.w3.org/2002/07/owl#",
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "http://www.w3.org/2000/01/rdf-schema#",
     "http://www.w3.org/2001/XMLSchema#",
+    "http://www.w3.org/ns/shacl#",
 )
 
 
@@ -168,6 +201,11 @@ __all__ = [
     "RDFS_DOMAIN",
     "RDFS_RANGE",
     "RDFS_LABEL",
+    "XSD_NAMESPACE",
+    "RDF_NAMESPACE",
+    "RDFS_NAMESPACE",
+    "looks_like_datatype_iri",
+    "all_datatype_refs",
     "is_meta_vocab",
     "normalize_predicate",
     "local_name",

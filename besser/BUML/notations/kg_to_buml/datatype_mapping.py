@@ -73,6 +73,20 @@ _XSD_TO_PRIMITIVE: dict[str, PrimitiveDataType] = {
 }
 
 
+#: BUML primitive name → the module-level singleton instance.
+#:
+#: ``PrimitiveDataType`` whitelists exactly these nine names and rejects
+#: anything else, and ``DomainModel.types`` auto-injects the whole set — so a
+#: generator must resolve to these singletons rather than constructing its own.
+PRIMITIVE_BY_NAME: dict[str, PrimitiveDataType] = {
+    p.name: p
+    for p in (
+        StringType, IntegerType, FloatType, BooleanType,
+        TimeType, DateType, DateTimeType, TimeDeltaType, AnyType,
+    )
+}
+
+
 def xsd_to_primitive(datatype_iri: Optional[str]) -> Tuple[PrimitiveDataType, bool]:
     """Map an XSD datatype IRI to a BESSER ``PrimitiveDataType``.
 
@@ -169,4 +183,4 @@ def parse_literal(value: str, datatype_iri: Optional[str]) -> Any:
     return value
 
 
-__all__ = ["xsd_to_primitive", "parse_literal"]
+__all__ = ["xsd_to_primitive", "parse_literal", "PRIMITIVE_BY_NAME"]

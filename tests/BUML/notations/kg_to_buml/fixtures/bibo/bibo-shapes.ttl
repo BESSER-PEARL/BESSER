@@ -1,0 +1,394 @@
+#
+# SHACL shapes for the Bibliographic Ontology (BIBO).
+#
+# BIBO is pure OWL — it ships no shapes graph. This file is original work
+# written for the BESSER test suite; it is not part of BIBO and carries no
+# upstream provenance. Its purpose is to give the SHACL -> OCL rules a
+# realistic workout over a real ontology's vocabulary rather than over
+# synthetic Person/Pet fragments.
+#
+# Every sh:path below points at a property BIBO actually declares, on a class
+# that (transitively, or via owl:Thing) owns the UML feature the OWL phase
+# produced for it — otherwise the property shape would be skipped with
+# SHACL_PATH_NOT_MODELLED and the constraint would never reach the model.
+#
+# The `bibosh:datatype-*` / `bibosh:node-*` resources are deliberately *not*
+# typed sh:NodeShape: they are the wrapper indirection real shapes graphs use
+# for sh:or / sh:and / sh:node members, resolved by the engine's
+# `_node_datatype` / `_node_class`. Typing them as node shapes would make each
+# one an implicit class target and materialise a bogus stub class.
+#
+# The last block exercises the constraints that have no OCL equivalent
+# (sh:nodeKind, sh:closed, sh:flags, sh:languageIn, sh:severity, sh:message):
+# they must be silently ignored, not translated and not warned about.
+#
+
+@prefix bibo:   <http://purl.org/ontology/bibo/> .
+@prefix bibosh: <http://purl.org/ontology/bibo/shapes#> .
+@prefix foaf:   <http://xmlns.com/foaf/0.1/> .
+@prefix sh:     <http://www.w3.org/ns/shacl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+
+# ---------------------------------------------------------------------------
+# Wrappers (sh:or / sh:and / sh:node members)
+# ---------------------------------------------------------------------------
+
+bibosh:datatype-xsd-date     sh:datatype xsd:date .
+bibosh:datatype-xsd-dateTime sh:datatype xsd:dateTime .
+
+bibosh:node-bibo-Document    sh:node bibo:Document .
+bibosh:node-foaf-Agent       sh:node foaf:Agent .
+bibosh:node-foaf-Organization sh:node foaf:Organization .
+
+# ---------------------------------------------------------------------------
+# bibo:Document — the hub of the ontology, and the widest rule coverage
+# ---------------------------------------------------------------------------
+
+bibo:Document a sh:NodeShape ;
+    sh:targetClass bibo:Document ;
+    sh:property
+        bibosh:Document-doi,
+        bibosh:Document-isbn10,
+        bibosh:Document-isbn13,
+        bibosh:Document-pageStart,
+        bibosh:Document-pageEnd,
+        bibosh:Document-numPages,
+        bibosh:Document-shortTitle,
+        bibosh:Document-volume,
+        bibosh:Document-status,
+        bibosh:Document-cites,
+        bibosh:Document-citedBy,
+        bibosh:Document-editor,
+        bibosh:Document-reviewOf .
+
+bibosh:Document-doi a sh:PropertyShape ;
+    sh:path bibo:doi ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^10\\.[0-9]{4,9}/[^ ]+$" .
+
+bibosh:Document-isbn10 a sh:PropertyShape ;
+    sh:path bibo:isbn10 ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{9}[0-9X]$" .
+
+bibosh:Document-isbn13 a sh:PropertyShape ;
+    sh:path bibo:isbn13 ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^97[89][0-9]{10}$" .
+
+# sh:lessThanOrEquals: a page range never runs backwards.
+bibosh:Document-pageStart a sh:PropertyShape ;
+    sh:path bibo:pageStart ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:lessThanOrEquals bibo:pageEnd .
+
+bibosh:Document-pageEnd a sh:PropertyShape ;
+    sh:path bibo:pageEnd ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+bibosh:Document-numPages a sh:PropertyShape ;
+    sh:path bibo:numPages ;
+    sh:maxCount 1 ;
+    sh:minInclusive 1 ;
+    sh:maxInclusive 100000 .
+
+bibosh:Document-shortTitle a sh:PropertyShape ;
+    sh:path bibo:shortTitle ;
+    sh:maxLength 40 ;
+    sh:uniqueLang true .
+
+bibosh:Document-volume a sh:PropertyShape ;
+    sh:path bibo:volume ;
+    sh:datatype xsd:string ;
+    sh:minLength 1 .
+
+bibosh:Document-status a sh:PropertyShape ;
+    sh:path bibo:status ;
+    sh:class bibo:DocumentStatus .
+
+bibosh:Document-cites a sh:PropertyShape ;
+    sh:path bibo:cites ;
+    sh:node bibosh:node-bibo-Document .
+
+# sh:not: a citation record is never itself a marginal note.
+bibosh:Document-citedBy a sh:PropertyShape ;
+    sh:path bibo:citedBy ;
+    sh:not [ sh:class bibo:Note ] .
+
+bibosh:Document-editor a sh:PropertyShape ;
+    sh:path bibo:editor ;
+    sh:or ( bibosh:node-foaf-Agent bibosh:node-foaf-Organization ) .
+
+# sh:disjoint: a document is not simultaneously a review and a transcript of
+# the same resource.
+bibosh:Document-reviewOf a sh:PropertyShape ;
+    sh:path bibo:reviewOf ;
+    sh:disjoint bibo:transcriptOf .
+
+# ---------------------------------------------------------------------------
+# bibo:AcademicArticle — inherited paths (doi/pmid live on the union parent)
+# ---------------------------------------------------------------------------
+
+bibo:AcademicArticle a sh:NodeShape ;
+    sh:targetClass bibo:AcademicArticle ;
+    sh:property
+        bibosh:AcademicArticle-doi,
+        bibosh:AcademicArticle-pmid,
+        bibosh:AcademicArticle-status .
+
+bibosh:AcademicArticle-doi a sh:PropertyShape ;
+    sh:path bibo:doi ;
+    sh:minCount 1 .
+
+bibosh:AcademicArticle-pmid a sh:PropertyShape ;
+    sh:path bibo:pmid ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{1,8}$" .
+
+# sh:in over IRIs: the peer-review lifecycle a journal article can be in.
+bibosh:AcademicArticle-status a sh:PropertyShape ;
+    sh:path bibo:status ;
+    sh:in (
+        <http://purl.org/ontology/bibo/status/forthcoming>
+        <http://purl.org/ontology/bibo/status/nonPeerReviewed>
+        <http://purl.org/ontology/bibo/status/peerReviewed>
+        <http://purl.org/ontology/bibo/status/published>
+    ) .
+
+# ---------------------------------------------------------------------------
+# bibo:Collection and its periodical subtree
+# ---------------------------------------------------------------------------
+
+bibo:Collection a sh:NodeShape ;
+    sh:targetClass bibo:Collection ;
+    sh:property
+        bibosh:Collection-issn,
+        bibosh:Collection-eissn,
+        bibosh:Collection-numVolumes .
+
+bibosh:Collection-issn a sh:PropertyShape ;
+    sh:path bibo:issn ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}-[0-9]{3}[0-9X]$" .
+
+bibosh:Collection-eissn a sh:PropertyShape ;
+    sh:path bibo:eissn ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}-[0-9]{3}[0-9X]$" .
+
+bibosh:Collection-numVolumes a sh:PropertyShape ;
+    sh:path bibo:numVolumes ;
+    sh:maxCount 1 ;
+    sh:minInclusive 1 .
+
+bibo:Journal a sh:NodeShape ;
+    sh:targetClass bibo:Journal ;
+    sh:property bibosh:Journal-issn, bibosh:Journal-editor .
+
+bibosh:Journal-issn a sh:PropertyShape ;
+    sh:path bibo:issn ;
+    sh:minCount 1 .
+
+# sh:qualifiedValueShape: however many editors a journal has, at least one of
+# them is a person rather than a corporate body.
+bibosh:Journal-editor a sh:PropertyShape ;
+    sh:path bibo:editor ;
+    sh:qualifiedValueShape [ sh:class foaf:Person ] ;
+    sh:qualifiedMinCount 1 ;
+    sh:qualifiedMaxCount 12 .
+
+# sh:minExclusive: "multi-volume" means strictly more than one.
+bibo:MultiVolumeBook a sh:NodeShape ;
+    sh:targetClass bibo:MultiVolumeBook ;
+    sh:property bibosh:MultiVolumeBook-numVolumes .
+
+bibosh:MultiVolumeBook-numVolumes a sh:PropertyShape ;
+    sh:path bibo:numVolumes ;
+    sh:minExclusive 1 .
+
+bibo:Issue a sh:NodeShape ;
+    sh:targetClass bibo:Issue ;
+    sh:property bibosh:Issue-issue .
+
+bibosh:Issue-issue a sh:PropertyShape ;
+    sh:path bibo:issue ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]+$" .
+
+# ---------------------------------------------------------------------------
+# Legal documents
+# ---------------------------------------------------------------------------
+
+bibo:LegalDocument a sh:NodeShape ;
+    sh:targetClass bibo:LegalDocument ;
+    sh:property bibosh:LegalDocument-argued, bibosh:LegalDocument-court .
+
+# sh:or over datatype wrappers: a hearing date may be given to the day or to
+# the second. Every operand is a datatype, so this retargets the attribute at
+# a composite data range instead of emitting an inline invariant.
+bibosh:LegalDocument-argued a sh:PropertyShape ;
+    sh:path bibo:argued ;
+    sh:or ( bibosh:datatype-xsd-date bibosh:datatype-xsd-dateTime ) .
+
+bibosh:LegalDocument-court a sh:PropertyShape ;
+    sh:path bibo:court ;
+    sh:node bibosh:node-foaf-Organization ;
+    sh:maxCount 1 .
+
+# sh:xone: a decision is superseded by exactly one kind of filing.
+bibo:LegalDecision a sh:NodeShape ;
+    sh:targetClass bibo:LegalDecision ;
+    sh:property bibosh:LegalDecision-subsequent .
+
+bibosh:LegalDecision-subsequent a sh:PropertyShape ;
+    sh:path bibo:subsequentLegalDecision ;
+    sh:xone ( [ sh:class bibo:LegalDecision ] [ sh:class bibo:Brief ] ) .
+
+# ---------------------------------------------------------------------------
+# Smaller shapes, each pinning one remaining rule.
+#
+# Every node shape here carries an explicit sh:targetClass. The engine also
+# accepts an implicit class target (a shape whose own IRI is a class), but the
+# KG metamodel has no way to record one, so importing such a shape reports
+# ORPHANED_CONSTRAINT and loses it — see test_shacl_to_ocl.py.
+# ---------------------------------------------------------------------------
+
+bibo:Note a sh:NodeShape ;
+    sh:targetClass bibo:Note ;
+    sh:property bibosh:Note-annotates .
+
+bibosh:Note-annotates a sh:PropertyShape ;
+    sh:path bibo:annotates ;
+    sh:minCount 1 ;
+    sh:qualifiedValueShape [ sh:class bibo:Document ] ;
+    sh:qualifiedMinCount 1 .
+
+# sh:hasValue: a manuscript carries the draft status.
+bibo:Manuscript a sh:NodeShape ;
+    sh:targetClass bibo:Manuscript ;
+    sh:property bibosh:Manuscript-status .
+
+bibosh:Manuscript-status a sh:PropertyShape ;
+    sh:path bibo:status ;
+    sh:hasValue <http://purl.org/ontology/bibo/status/draft> .
+
+# sh:in over literals: standards move through named drafting stages.
+bibo:Standard a sh:NodeShape ;
+    sh:targetClass bibo:Standard ;
+    sh:property bibosh:Standard-edition, bibosh:Standard-issuer .
+
+bibosh:Standard-edition a sh:PropertyShape ;
+    sh:path bibo:edition ;
+    sh:in ( "committee draft" "draft" "final" ) .
+
+# sh:and: the issuer of a standard is an agent *and* an organization.
+bibosh:Standard-issuer a sh:PropertyShape ;
+    sh:path bibo:issuer ;
+    sh:and ( bibosh:node-foaf-Agent bibosh:node-foaf-Organization ) .
+
+# sh:in over IRIs, plus a bounded association: the three degrees BIBO names.
+bibo:Thesis a sh:NodeShape ;
+    sh:targetClass bibo:Thesis ;
+    sh:property bibosh:Thesis-degree .
+
+bibosh:Thesis-degree a sh:PropertyShape ;
+    sh:path bibo:degree ;
+    sh:class bibo:ThesisDegree ;
+    sh:maxCount 1 ;
+    sh:in (
+        <http://purl.org/ontology/bibo/degrees/ma>
+        <http://purl.org/ontology/bibo/degrees/ms>
+        <http://purl.org/ontology/bibo/degrees/phd>
+    ) .
+
+# sh:lessThan (strict), distinct from the Document-level lessThanOrEquals.
+bibo:Book a sh:NodeShape ;
+    sh:targetClass bibo:Book ;
+    sh:property bibosh:Book-pageStart .
+
+bibosh:Book-pageStart a sh:PropertyShape ;
+    sh:path bibo:pageStart ;
+    sh:lessThan bibo:pageEnd .
+
+bibo:Excerpt a sh:NodeShape ;
+    sh:targetClass bibo:Excerpt ;
+    sh:property bibosh:Excerpt-content .
+
+bibosh:Excerpt-content a sh:PropertyShape ;
+    sh:path bibo:content ;
+    sh:minCount 1 ;
+    sh:minLength 1 .
+
+# foaf:Agent: BIBO's naming affixes, and the label every agent must carry.
+foaf:Agent a sh:NodeShape ;
+    sh:targetClass foaf:Agent ;
+    sh:property
+        bibosh:Agent-name,
+        bibosh:Agent-prefixName,
+        bibosh:Agent-suffixName .
+
+bibosh:Agent-name a sh:PropertyShape ;
+    sh:path foaf:name ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 .
+
+bibosh:Agent-prefixName a sh:PropertyShape ;
+    sh:path bibo:prefixName ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:maxLength 10 .
+
+bibosh:Agent-suffixName a sh:PropertyShape ;
+    sh:path bibo:suffixName ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+# sh:equals: a web page is identified by its own address.
+# xsd:anyURI has no BUML primitive of its own and collapses onto str.
+bibo:Webpage a sh:NodeShape ;
+    sh:targetClass bibo:Webpage ;
+    sh:property bibosh:Webpage-uri .
+
+bibosh:Webpage-uri a sh:PropertyShape ;
+    sh:path bibo:uri ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 ;
+    sh:equals bibo:identifier .
+
+# ---------------------------------------------------------------------------
+# Untranslatable constraints: these must be ignored, not mapped.
+#
+# sh:severity/sh:message/sh:name/sh:description are SHACL reporting metadata;
+# sh:nodeKind, sh:closed, sh:flags and sh:languageIn have no OCL equivalent.
+# The two sh:maxCount constraints below are the only thing this block may
+# contribute to the model.
+# ---------------------------------------------------------------------------
+
+bibo:Report a sh:NodeShape ;
+    sh:targetClass bibo:Report ;
+    sh:closed false ;
+    sh:property bibosh:Report-uri, bibosh:Report-shortDescription .
+
+bibosh:Report-uri a sh:PropertyShape ;
+    sh:path bibo:uri ;
+    sh:name "report URI" ;
+    sh:description "The canonical address of the report." ;
+    sh:nodeKind sh:IRI ;
+    sh:maxCount 1 ;
+    sh:severity sh:Warning ;
+    sh:message "A report should have exactly one canonical URI." .
+
+bibosh:Report-shortDescription a sh:PropertyShape ;
+    sh:path bibo:shortDescription ;
+    sh:maxCount 1 ;
+    sh:languageIn ( "en" "fr" ) ;
+    sh:flags "i" .

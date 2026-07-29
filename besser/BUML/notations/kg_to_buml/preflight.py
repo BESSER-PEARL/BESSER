@@ -35,6 +35,7 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KnowledgeGraph,
 )
+from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
 
 from besser.BUML.notations.kg_to_buml._common import (
     RDFS_DOMAIN,
@@ -52,8 +53,9 @@ from besser.BUML.notations.kg_to_buml.datatype_mapping import (
     parse_literal,
     xsd_to_primitive,
 )
-from besser.BUML.notations.kg_to_buml.kg_to_class_diagram import (
-    _looks_like_datatype_iri,
+from besser.BUML.notations.kg_to_buml._common import (
+    all_datatype_refs as _all_datatype_refs,
+    looks_like_datatype_iri as _looks_like_datatype_iri,
 )
 
 
@@ -68,6 +70,8 @@ __all__ = [
 
 
 _XSD_STRING = "http://www.w3.org/2001/XMLSchema#string"
+_RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
+_RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
 
 ORPHAN_DESCRIPTION_TRUNCATE = 25
 _CLASS_ANCHOR_PREDICATES = frozenset({RDF_TYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUBCLASS_OF})
@@ -575,9 +579,33 @@ def _detect_range_both_datatype_and_class(kg: KnowledgeGraph, indexes) -> List[K
     return out
 
 
+def _is_handled_range_combinator(node: KGNode) -> bool:
+    """Whether a class-expression KGBlank used as an rdfs:range value is one
+    kg_to_class_diagram already resolves (D29-D32 direct-linking for an
+    object-valued unionOf, or O01-O03 composite-datatype materialisation for
+    a datatype-valued unionOf/intersectionOf/complementOf) rather than
+    falling through to a plain string attribute. Mirrors the exact condition
+    kg_to_class_diagram.py's range-resolution loop checks — kept in sync so
+    this detector never contradicts what the converter can actually do.
+    """
+    if not (isinstance(node, KGBlank) and node.metadata.get("kind") == "class_expression"):
+        return False
+    combinator = node.metadata.get("combinator")
+    members = node.metadata.get("members") or []
+    if combinator == "unionOf":
+        return True  # object-valued direct links, or datatype composite below
+    return combinator in ("intersectionOf", "complementOf") and _all_datatype_refs(members)
+
+
 def _detect_range_not_type(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     """Property whose rdfs:range targets an individual or blank node — neither
-    is a valid class for an association nor a datatype for an attribute."""
+    is a valid class for an association nor a datatype for an attribute.
+
+    Blank nodes representing a class expression that kg_to_class_diagram
+    already knows how to resolve (e.g. a unionOf range, materialised as
+    direct associations/attributes to each member per D29-D32/O01-O03) are
+    not flagged — they're not an error, just not a single named class.
+    """
     out: List[KGIssue] = []
     for prop in _properties_in(kg):
         ranges = _range_targets(prop, indexes)
@@ -585,6 +613,7 @@ def _detect_range_not_type(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             r for r in ranges
             if isinstance(r, (KGIndividual, KGBlank))
             and not _looks_like_datatype_iri(getattr(r, "iri", None))
+            and not _is_handled_range_combinator(r)
         ]
         if not bad_ranges:
             continue
@@ -823,6 +852,15 @@ def _detect_blank_node_instance(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     for blank in sorted_by_id([n for n in kg.nodes if isinstance(n, KGBlank)]):
         if blank.metadata.get("kind") in structural_kinds:
             continue
+        # Pure RDF-list plumbing (an rdf:first/rdf:rest "cons cell" with no
+        # other predicate) carries no domain content regardless of whether the
+        # importer recognised and tagged the list it belongs to — never offer
+        # to promote it to an individual. The importer already sweeps these
+        # away for every list construct it decodes; this is a defense-in-depth
+        # backstop for hand-authored blanks that bypass the importer entirely.
+        all_edges = indexes.out_edges.get(blank.id, []) + indexes.in_edges.get(blank.id, [])
+        if all_edges and all(normalize_predicate(e.iri) in (_RDF_FIRST, _RDF_REST) for e in all_edges):
+            continue
         # Is this blank used as an instance (typed via rdf:type)?
         type_edges = indexes.out_with_predicate(blank.id, RDF_TYPE)
         # Or as the subject/object of any instance-level edge?
@@ -853,8 +891,9 @@ def _detect_blank_node_instance(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
 
 
 def _detect_undeclared_class(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
-    """Nodes referenced as classes (via rdf:type, rdfs:domain, rdfs:range, rdfs:subClassOf
-    targets) but not explicitly declared as KGClass.
+    """Nodes referenced as classes (via rdf:type, rdfs:domain, rdfs:range,
+    rdfs:subClassOf, or a SHACL constraint's ``constraintTargetClass`` edge)
+    but not explicitly declared as KGClass.
 
     The detector skips OWL/RDF/RDFS/XSD meta-vocabulary IRIs (e.g. ``owl:Class``,
     ``owl:DatatypeProperty``) — those are framework terms, not user classes,
@@ -879,6 +918,14 @@ def _detect_undeclared_class(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
                 referenced_as_class.add(edge.source.id)
             if not isinstance(edge.target, KGBlank):
                 referenced_as_class.add(edge.target.id)
+        elif edge.iri == CONSTRAINT_TARGET_CLASS:
+            # A SHACL shape's sh:targetClass may be the *only* thing
+            # referencing a node as a class — if it's left undeclared, its
+            # constraints would otherwise silently fail to resolve to a class
+            # during conversion (see kg_to_class_diagram.py Step 2).
+            tgt = edge.target
+            if not isinstance(tgt, (KGBlank, KGLiteral, KGProperty)):
+                referenced_as_class.add(tgt.id)
     undeclared = referenced_as_class - declared_class_ids
     out: List[KGIssue] = []
     for node_id in sorted(undeclared):
@@ -889,18 +936,27 @@ def _detect_undeclared_class(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             continue
         if is_meta_vocab(getattr(node, "iri", None) or node_id):
             continue
+        # The overwhelming common case is a KGIndividual (the importer's
+        # default classification for any untyped URIRef) — promote it to a
+        # KGClass in place with the well-tested handler. Fall back to the
+        # generic reclassifier for the rare node kind that isn't an
+        # individual (e.g. a KGNodeConstraint dangling in class position).
+        action_key = "promote_individual_to_class" if isinstance(node, KGIndividual) else "reclassify_node"
+        action_params: Dict[str, Any] = {"node_id": node_id}
+        if action_key == "reclassify_node":
+            action_params["target_kind"] = "class"
         out.append(KGIssue(
             id=_issue_id("UNDECLARED_CLASS", node_id),
             code="UNDECLARED_CLASS",
             description=(
                 f"Node '{node_id}' is referenced as a class but never declared via "
-                f"`rdf:type owl:Class`. The converter can synthesise a class for it."
+                f"`rdf:type owl:Class`. It can be turned into a class in place."
             ),
             affected_node_ids=[node_id],
             recommended_action=KGAction(
-                key="synthesize_class",
-                parameters={"node_id": node_id},
-                label=f"Synthesise a class for '{node.label or node_id}'",
+                key=action_key,
+                parameters=action_params,
+                label=f"Turn '{node.label or node_id}' into a class",
             ),
             skip_action=KGAction(
                 key="drop_references",

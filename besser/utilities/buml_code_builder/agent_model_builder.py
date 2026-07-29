@@ -45,6 +45,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         f.write("###############\n")
         f.write("# AGENT MODEL #\n")
         f.write("###############\n")
+        f.write("from __future__ import annotations\n")
         f.write("import datetime\n")
         f.write(
             "from besser.BUML.metamodel.state_machine.state_machine import "

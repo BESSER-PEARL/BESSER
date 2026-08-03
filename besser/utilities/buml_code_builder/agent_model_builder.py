@@ -45,6 +45,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         f.write("###############\n")
         f.write("# AGENT MODEL #\n")
         f.write("###############\n")
+        f.write("from __future__ import annotations\n")
         f.write("import datetime\n")
         f.write(
             "from besser.BUML.metamodel.state_machine.state_machine import "
@@ -316,6 +317,21 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             llm_name = getattr(action, 'llm_name', None)
                             if llm_name:
                                 kwargs.append(f"llm_name={repr(llm_name)}")
+                            input_prompt_mode = getattr(action, 'input_prompt_mode', 'last_user_message') or 'last_user_message'
+                            if input_prompt_mode != 'last_user_message':
+                                kwargs.append(f"input_prompt_mode={input_prompt_mode!r}")
+                            custom_input_prompt = getattr(action, 'custom_input_prompt', None) or None
+                            if custom_input_prompt:
+                                kwargs.append(f"custom_input_prompt={custom_input_prompt!r}")
+                            if getattr(action, 'custom_input_prompt_use_session_vars', False):
+                                kwargs.append("custom_input_prompt_use_session_vars=True")
+                            if getattr(action, 'system_prompt_use_session_vars', False):
+                                kwargs.append("system_prompt_use_session_vars=True")
+                            store_in_session = getattr(action, 'store_in_session', None) or None
+                            if store_in_session:
+                                kwargs.append(f"store_in_session={store_in_session!r}")
+                            if not getattr(action, 'send_reply', True):
+                                kwargs.append("send_reply=False")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_body.add_action(LLMReply({args}))\n")
                         elif isinstance(action, LLMChatReply):
@@ -326,15 +342,38 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             llm_name = getattr(action, 'llm_name', None)
                             if llm_name:
                                 kwargs.append(f"llm_name={repr(llm_name)}")
+                            if getattr(action, 'system_prompt_use_session_vars', False):
+                                kwargs.append("system_prompt_use_session_vars=True")
+                            store_in_session = getattr(action, 'store_in_session', None) or None
+                            if store_in_session:
+                                kwargs.append(f"store_in_session={store_in_session!r}")
+                            if not getattr(action, 'send_reply', True):
+                                kwargs.append("send_reply=False")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_body.add_action(LLMChatReply({args}))\n")
                         elif isinstance(action, RAGReply):
                             rag_name = _escape_python_string(action.rag_db_name or '')
+                            rag_kwargs = []
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
-                                f.write(f"{state_var}_body.add_action(RAGReply('{rag_name}', prompt='{_escape_python_string(prompt)}'))\n")
-                            else:
-                                f.write(f"{state_var}_body.add_action(RAGReply('{rag_name}'))\n")
+                                rag_kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            input_prompt_mode = getattr(action, 'input_prompt_mode', 'last_user_message') or 'last_user_message'
+                            if input_prompt_mode != 'last_user_message':
+                                rag_kwargs.append(f"input_prompt_mode={input_prompt_mode!r}")
+                            custom_input_prompt = getattr(action, 'custom_input_prompt', None) or None
+                            if custom_input_prompt:
+                                rag_kwargs.append(f"custom_input_prompt={custom_input_prompt!r}")
+                            if getattr(action, 'custom_input_prompt_use_session_vars', False):
+                                rag_kwargs.append("custom_input_prompt_use_session_vars=True")
+                            if getattr(action, 'prompt_use_session_vars', False):
+                                rag_kwargs.append("prompt_use_session_vars=True")
+                            store_in_session = getattr(action, 'store_in_session', None) or None
+                            if store_in_session:
+                                rag_kwargs.append(f"store_in_session={store_in_session!r}")
+                            if not getattr(action, 'send_reply', True):
+                                rag_kwargs.append("send_reply=False")
+                            rag_args = ", ".join(rag_kwargs)
+                            f.write(f"{state_var}_body.add_action(RAGReply('{rag_name}'{', ' + rag_args if rag_args else ''}))\n")
                         elif isinstance(action, DBReply):
                             db_args = []
                             if getattr(action, 'db_selection_type', 'default') != 'default':
@@ -350,6 +389,19 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             llm_name = getattr(action, 'llm_name', None)
                             if llm_name:
                                 db_args.append(f"llm_name={repr(llm_name)}")
+                            input_prompt_mode = getattr(action, 'input_prompt_mode', 'last_user_message') or 'last_user_message'
+                            if input_prompt_mode != 'last_user_message':
+                                db_args.append(f"input_prompt_mode={input_prompt_mode!r}")
+                            custom_input_prompt = getattr(action, 'custom_input_prompt', None) or None
+                            if custom_input_prompt:
+                                db_args.append(f"custom_input_prompt={custom_input_prompt!r}")
+                            if getattr(action, 'custom_input_prompt_use_session_vars', False):
+                                db_args.append("custom_input_prompt_use_session_vars=True")
+                            store_in_session = getattr(action, 'store_in_session', None) or None
+                            if store_in_session:
+                                db_args.append(f"store_in_session={store_in_session!r}")
+                            if not getattr(action, 'send_reply', True):
+                                db_args.append("send_reply=False")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_body.add_action(DBReply({args}))\n" if args else f"{state_var}_body.add_action(DBReply())\n")
                         elif isinstance(action, WebCrawlLLMReply):
@@ -368,17 +420,32 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 wc_args.append(f"no_crawl_error_message={repr(action.no_crawl_error_message)}")
                             if action.system_message_prefix:
                                 wc_args.append(f"system_message_prefix={repr(action.system_message_prefix)}")
+                            if getattr(action, 'system_message_prefix_use_session_vars', False):
+                                wc_args.append("system_message_prefix_use_session_vars=True")
                             if getattr(action, 'llm_name', None):
                                 wc_args.append(f"llm_name={repr(action.llm_name)}")
+                            wc_sis = getattr(action, 'store_in_session', None)
+                            if wc_sis:
+                                wc_args.append(f"store_in_session={wc_sis!r}")
+                            if not getattr(action, 'send_reply', True):
+                                wc_args.append("send_reply=False")
                             f.write(f"{state_var}_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
                         elif isinstance(action, WebSocketReplyMarkdown):
-                            f.write(f"{state_var}_body.add_action(WebSocketReplyMarkdown(message={repr(action.message)}))\n")
+                            ws_args = f"message={repr(action.message)}"
+                            if getattr(action, 'use_session_vars', False):
+                                ws_args += ", use_session_vars=True"
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyMarkdown({ws_args}))\n")
                         elif isinstance(action, WebSocketReplyHTML):
-                            f.write(f"{state_var}_body.add_action(WebSocketReplyHTML(message={repr(action.message)}))\n")
+                            ws_args = f"message={repr(action.message)}"
+                            if getattr(action, 'use_session_vars', False):
+                                ws_args += ", use_session_vars=True"
+                            f.write(f"{state_var}_body.add_action(WebSocketReplyHTML({ws_args}))\n")
                         elif isinstance(action, WebSocketReplySpeech):
                             args = f"message={repr(action.message)}"
                             if action.audio_speed is not None:
                                 args += f", audio_speed={action.audio_speed!r}"
+                            if getattr(action, 'use_session_vars', False):
+                                args += ", use_session_vars=True"
                             f.write(f"{state_var}_body.add_action(WebSocketReplySpeech({args}))\n")
                         elif isinstance(action, WebSocketReplyOptions):
                             f.write(f"{state_var}_body.add_action(WebSocketReplyOptions(options={action.options!r}))\n")
@@ -393,7 +460,10 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         elif isinstance(action, WebSocketReplyPlotly):
                             f.write(f"{state_var}_body.add_action(WebSocketReplyPlotly())\n")
                         elif isinstance(action, AgentReply):
-                            f.write(f"{state_var}_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
+                            ar_args = f"'{_escape_python_string(action.message)}'"
+                            if getattr(action, 'use_session_vars', False):
+                                ar_args += ", use_session_vars=True"
+                            f.write(f"{state_var}_body.add_action(AgentReply({ar_args}))\n")
                 f.write("\n")
                 f.write(f"{state_var}.set_body({state_var}_body)\n")
 
@@ -424,6 +494,21 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             llm_name = getattr(action, 'llm_name', None)
                             if llm_name:
                                 kwargs.append(f"llm_name={repr(llm_name)}")
+                            ipm = getattr(action, 'input_prompt_mode', 'last_user_message')
+                            if ipm and ipm != 'last_user_message':
+                                kwargs.append(f"input_prompt_mode={ipm!r}")
+                            cip = getattr(action, 'custom_input_prompt', None)
+                            if cip:
+                                kwargs.append(f"custom_input_prompt={cip!r}")
+                            if getattr(action, 'custom_input_prompt_use_session_vars', False):
+                                kwargs.append("custom_input_prompt_use_session_vars=True")
+                            if getattr(action, 'system_prompt_use_session_vars', False):
+                                kwargs.append("system_prompt_use_session_vars=True")
+                            sis = getattr(action, 'store_in_session', None)
+                            if sis:
+                                kwargs.append(f"store_in_session={sis!r}")
+                            if not getattr(action, 'send_reply', True):
+                                kwargs.append("send_reply=False")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_fallback_body.add_action(LLMReply({args}))\n")
                         elif isinstance(action, LLMChatReply):
@@ -434,15 +519,37 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             llm_name = getattr(action, 'llm_name', None)
                             if llm_name:
                                 kwargs.append(f"llm_name={repr(llm_name)}")
+                            if getattr(action, 'system_prompt_use_session_vars', False):
+                                kwargs.append("system_prompt_use_session_vars=True")
+                            sis = getattr(action, 'store_in_session', None)
+                            if sis:
+                                kwargs.append(f"store_in_session={sis!r}")
+                            if not getattr(action, 'send_reply', True):
+                                kwargs.append("send_reply=False")
                             args = ", ".join(kwargs)
                             f.write(f"{state_var}_fallback_body.add_action(LLMChatReply({args}))\n")
                         elif isinstance(action, RAGReply):
                             rag_name = _escape_python_string(action.rag_db_name or '')
+                            rag_kwargs = [f"'{rag_name}'"]
                             prompt = getattr(action, 'prompt', None)
                             if prompt:
-                                f.write(f"{state_var}_fallback_body.add_action(RAGReply('{rag_name}', prompt='{_escape_python_string(prompt)}'))\n")
-                            else:
-                                f.write(f"{state_var}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
+                                rag_kwargs.append(f"prompt='{_escape_python_string(prompt)}'")
+                            ipm = getattr(action, 'input_prompt_mode', 'last_user_message')
+                            if ipm and ipm != 'last_user_message':
+                                rag_kwargs.append(f"input_prompt_mode={ipm!r}")
+                            cip = getattr(action, 'custom_input_prompt', None)
+                            if cip:
+                                rag_kwargs.append(f"custom_input_prompt={cip!r}")
+                            if getattr(action, 'custom_input_prompt_use_session_vars', False):
+                                rag_kwargs.append("custom_input_prompt_use_session_vars=True")
+                            if getattr(action, 'prompt_use_session_vars', False):
+                                rag_kwargs.append("prompt_use_session_vars=True")
+                            sis = getattr(action, 'store_in_session', None)
+                            if sis:
+                                rag_kwargs.append(f"store_in_session={sis!r}")
+                            if not getattr(action, 'send_reply', True):
+                                rag_kwargs.append("send_reply=False")
+                            f.write(f"{state_var}_fallback_body.add_action(RAGReply({', '.join(rag_kwargs)}))\n")
                         elif isinstance(action, DBReply):
                             db_args = []
                             if getattr(action, 'db_selection_type', 'default') != 'default':
@@ -458,6 +565,19 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             llm_name = getattr(action, 'llm_name', None)
                             if llm_name:
                                 db_args.append(f"llm_name={repr(llm_name)}")
+                            ipm = getattr(action, 'input_prompt_mode', 'last_user_message')
+                            if ipm and ipm != 'last_user_message':
+                                db_args.append(f"input_prompt_mode={ipm!r}")
+                            cip = getattr(action, 'custom_input_prompt', None)
+                            if cip:
+                                db_args.append(f"custom_input_prompt={cip!r}")
+                            if getattr(action, 'custom_input_prompt_use_session_vars', False):
+                                db_args.append("custom_input_prompt_use_session_vars=True")
+                            sis = getattr(action, 'store_in_session', None)
+                            if sis:
+                                db_args.append(f"store_in_session={sis!r}")
+                            if not getattr(action, 'send_reply', True):
+                                db_args.append("send_reply=False")
                             args = ", ".join(db_args)
                             f.write(f"{state_var}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state_var}_fallback_body.add_action(DBReply())\n")
                         elif isinstance(action, WebCrawlLLMReply):
@@ -476,17 +596,32 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 wc_args.append(f"no_crawl_error_message={repr(action.no_crawl_error_message)}")
                             if action.system_message_prefix:
                                 wc_args.append(f"system_message_prefix={repr(action.system_message_prefix)}")
+                            if getattr(action, 'system_message_prefix_use_session_vars', False):
+                                wc_args.append("system_message_prefix_use_session_vars=True")
                             if getattr(action, 'llm_name', None):
                                 wc_args.append(f"llm_name={repr(action.llm_name)}")
+                            wc_sis = getattr(action, 'store_in_session', None)
+                            if wc_sis:
+                                wc_args.append(f"store_in_session={wc_sis!r}")
+                            if not getattr(action, 'send_reply', True):
+                                wc_args.append("send_reply=False")
                             f.write(f"{state_var}_fallback_body.add_action(WebCrawlLLMReply({', '.join(wc_args)}))\n")
                         elif isinstance(action, WebSocketReplyMarkdown):
-                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyMarkdown(message={repr(action.message)}))\n")
+                            ws_args = f"message={repr(action.message)}"
+                            if getattr(action, 'use_session_vars', False):
+                                ws_args += ", use_session_vars=True"
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyMarkdown({ws_args}))\n")
                         elif isinstance(action, WebSocketReplyHTML):
-                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyHTML(message={repr(action.message)}))\n")
+                            ws_args = f"message={repr(action.message)}"
+                            if getattr(action, 'use_session_vars', False):
+                                ws_args += ", use_session_vars=True"
+                            f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyHTML({ws_args}))\n")
                         elif isinstance(action, WebSocketReplySpeech):
                             args = f"message={repr(action.message)}"
                             if action.audio_speed is not None:
                                 args += f", audio_speed={action.audio_speed!r}"
+                            if getattr(action, 'use_session_vars', False):
+                                args += ", use_session_vars=True"
                             f.write(f"{state_var}_fallback_body.add_action(WebSocketReplySpeech({args}))\n")
                         elif isinstance(action, WebSocketReplyOptions):
                             f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyOptions(options={action.options!r}))\n")
@@ -501,7 +636,10 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         elif isinstance(action, WebSocketReplyPlotly):
                             f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyPlotly())\n")
                         elif isinstance(action, AgentReply):
-                            f.write(f"{state_var}_fallback_body.add_action(AgentReply('{_escape_python_string(action.message)}'))\n")
+                            ar_args = f"'{_escape_python_string(action.message)}'"
+                            if getattr(action, 'use_session_vars', False):
+                                ar_args += ", use_session_vars=True"
+                            f.write(f"{state_var}_fallback_body.add_action(AgentReply({ar_args}))\n")
                 f.write("\n")
                 f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
 

@@ -37,63 +37,127 @@ class AgentReply(Action):
     """Primitive action that represents sending a reply message.
 
     Args:
-        message (Expression): The message to send (can be Literal, VariableRef, ParameterRef, or any Expression)
+        message (str): The message to send.
+        use_session_vars (bool): When True, ``{key}`` placeholders in *message* are
+            replaced at runtime with ``session.get("key")``. The special placeholder
+            ``{user_message}`` resolves to ``session.event.message``.
 
     Attributes:
-        message (Expression): The message expression
+        message (str): The message text.
+        use_session_vars (bool): Whether session-variable interpolation is enabled.
     """
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, use_session_vars: bool = False):
         self.message: str = message
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"AgentReply(message={self.message!r})"
+        return f"AgentReply(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
 
 
 class LLMReply(Action):
     """Primitive action that represents sending a reply using an LLM.
 
     Args:
-        prompt (str, optional): Additional system prompt injected when calling the LLM.
+        prompt (str, optional): System prompt injected when calling the LLM.
         llm_name (str, optional): Name of the LLM (registered on the agent via
             :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
             the generator fall back to the agent's default LLM.
+        input_prompt_mode (str): How the user-facing message is built.
+            ``'last_user_message'`` (default) passes ``session.event.message``
+            directly. ``'custom'`` uses *custom_input_prompt* instead.
+        custom_input_prompt (str, optional): Template string used as the LLM
+            input when *input_prompt_mode* is ``'custom'``.
+        custom_input_prompt_use_session_vars (bool): When True, ``{key}``
+            placeholders in *custom_input_prompt* are replaced with
+            ``session.get("key")``. ``{user_message}`` resolves to
+            ``session.event.message``.
+        system_prompt_use_session_vars (bool): When True, applies the same
+            ``{key}`` interpolation to *prompt* (the system message).
+        store_in_session (str, optional): When set, the LLM reply is stored in
+            the session under this key via ``session.set(key, message)`` before
+            being sent to the user.
 
     Attributes:
-        prompt (str | None): Optional system prompt that augments the user message.
+        prompt (str | None): Optional system prompt.
         llm_name (str | None): Name of the LLM used for this reply.
+        input_prompt_mode (str): ``'last_user_message'`` or ``'custom'``.
+        custom_input_prompt (str | None): Custom input template.
+        custom_input_prompt_use_session_vars (bool): Session-var interpolation for input.
+        system_prompt_use_session_vars (bool): Session-var interpolation for system prompt.
+        store_in_session (str | None): Session key to persist the result.
     """
 
-    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+    def __init__(
+        self,
+        prompt: Optional[str] = None,
+        llm_name: Optional[str] = None,
+        input_prompt_mode: str = 'last_user_message',
+        custom_input_prompt: Optional[str] = None,
+        custom_input_prompt_use_session_vars: bool = False,
+        system_prompt_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
+    ):
         super().__init__()
         self.prompt: Optional[str] = prompt
         self.llm_name: Optional[str] = llm_name
+        self.input_prompt_mode: str = input_prompt_mode
+        self.custom_input_prompt: Optional[str] = custom_input_prompt
+        self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
+        self.system_prompt_use_session_vars: bool = system_prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
-        return f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
+        return (
+            f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r}, "
+            f"input_prompt_mode={self.input_prompt_mode!r}, "
+            f"store_in_session={self.store_in_session!r})"
+        )
 
 
 class LLMChatReply(Action):
     """Primitive action that represents sending a chat-style reply using an LLM.
 
     Args:
-        prompt (str, optional): Additional system prompt injected in the chat call.
+        prompt (str, optional): System prompt injected in the chat call.
         llm_name (str, optional): Name of the LLM (registered on the agent via
             :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
             the generator fall back to the agent's default LLM.
+        system_prompt_use_session_vars (bool): When True, ``{key}`` placeholders
+            in *prompt* are replaced with ``session.get("key")`` at runtime.
+            ``{user_message}`` resolves to ``session.event.message``.
+        store_in_session (str, optional): When set, the LLM reply is stored in
+            the session under this key before being sent to the user.
 
     Attributes:
         prompt (str | None): Optional system prompt used by ``llm.chat(...)``.
         llm_name (str | None): Name of the LLM used for this reply.
+        system_prompt_use_session_vars (bool): Session-var interpolation for system prompt.
+        store_in_session (str | None): Session key to persist the result.
     """
 
-    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+    def __init__(
+        self,
+        prompt: Optional[str] = None,
+        llm_name: Optional[str] = None,
+        system_prompt_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
+    ):
         super().__init__()
         self.prompt: Optional[str] = prompt
         self.llm_name: Optional[str] = llm_name
+        self.system_prompt_use_session_vars: bool = system_prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
-        return f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
+        return (
+            f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r}, "
+            f"store_in_session={self.store_in_session!r})"
+        )
 
 
 class RAGReply(Action):
@@ -102,19 +166,57 @@ class RAGReply(Action):
     Args:
         rag_db_name (str): The logical name of the RAG database to query.
         prompt (str, optional): Optional instructions passed to the LLM phase of the RAG answer.
+        input_prompt_mode (str): How the retrieval query is built.
+            ``'last_user_message'`` (default) passes ``session.event.message``
+            directly. ``'custom'`` uses *custom_input_prompt* instead.
+        custom_input_prompt (str, optional): Template string used as the retrieval
+            query when *input_prompt_mode* is ``'custom'``.
+        custom_input_prompt_use_session_vars (bool): When True, ``{key}``
+            placeholders in *custom_input_prompt* are replaced with
+            ``session.get("key")``. ``{user_message}`` resolves to
+            ``session.event.message``.
+        prompt_use_session_vars (bool): When True, applies the same ``{key}``
+            interpolation to *prompt* (the LLM hint passed to the RAG pipeline).
+        store_in_session (str, optional): When set, the RAG reply is stored in
+            the session under this key before being sent to the user.
 
     Attributes:
         rag_db_name (str): Identifier of the RAG database that should handle the reply.
         prompt (str | None): Additional instructions for the downstream LLM.
+        input_prompt_mode (str): ``'last_user_message'`` or ``'custom'``.
+        custom_input_prompt (str | None): Custom retrieval query template.
+        custom_input_prompt_use_session_vars (bool): Session-var interpolation for retrieval query.
+        prompt_use_session_vars (bool): Session-var interpolation for the LLM hint.
+        store_in_session (str | None): Session key to persist the result.
     """
 
-    def __init__(self, rag_db_name: str, prompt: Optional[str] = None):
+    def __init__(
+        self,
+        rag_db_name: str,
+        prompt: Optional[str] = None,
+        input_prompt_mode: str = 'last_user_message',
+        custom_input_prompt: Optional[str] = None,
+        custom_input_prompt_use_session_vars: bool = False,
+        prompt_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
+    ):
         super().__init__()
         self.rag_db_name: str = rag_db_name
         self.prompt: Optional[str] = prompt
+        self.input_prompt_mode: str = input_prompt_mode
+        self.custom_input_prompt: Optional[str] = custom_input_prompt
+        self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
+        self.prompt_use_session_vars: bool = prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
-        return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
+        return (
+            f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r}, "
+            f"input_prompt_mode={self.input_prompt_mode!r}, "
+            f"store_in_session={self.store_in_session!r})"
+        )
 
 
 class WebCrawlLLMReply(Action):
@@ -158,7 +260,10 @@ class WebCrawlLLMReply(Action):
         run_crawl: bool = True,
         no_crawl_error_message: str = "No web crawl data is available yet.",
         system_message_prefix: Optional[str] = None,
+        system_message_prefix_use_session_vars: bool = False,
         llm_name: Optional[str] = None,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
     ):
         super().__init__()
         self.initial_url: str = initial_url
@@ -169,7 +274,10 @@ class WebCrawlLLMReply(Action):
         self.run_crawl: bool = run_crawl
         self.no_crawl_error_message: str = no_crawl_error_message
         self.system_message_prefix: Optional[str] = system_message_prefix
+        self.system_message_prefix_use_session_vars: bool = system_message_prefix_use_session_vars
         self.llm_name: Optional[str] = llm_name
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
         return (
@@ -190,35 +298,38 @@ class WebCrawlLLMReply(Action):
 class WebSocketReplyMarkdown(Action):
     """Send a Markdown-formatted text reply via WebSocketPlatform.reply_markdown()."""
 
-    def __init__(self, message: str = ""):
+    def __init__(self, message: str = "", use_session_vars: bool = False):
         super().__init__()
         self.message: str = message
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplyMarkdown(message={self.message!r})"
+        return f"WebSocketReplyMarkdown(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
 
 
 class WebSocketReplyHTML(Action):
     """Send an HTML-formatted text reply via WebSocketPlatform.reply_html()."""
 
-    def __init__(self, message: str = ""):
+    def __init__(self, message: str = "", use_session_vars: bool = False):
         super().__init__()
         self.message: str = message
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplyHTML(message={self.message!r})"
+        return f"WebSocketReplyHTML(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
 
 
 class WebSocketReplySpeech(Action):
     """Convert text to speech and send the audio via WebSocketPlatform.reply_speech()."""
 
-    def __init__(self, message: str = "", audio_speed: Optional[float] = None):
+    def __init__(self, message: str = "", audio_speed: Optional[float] = None, use_session_vars: bool = False):
         super().__init__()
         self.message: str = message
         self.audio_speed: Optional[float] = audio_speed
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r})"
+        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r}, use_session_vars={self.use_session_vars!r})"
 
 
 class WebSocketReplyOptions(Action):
@@ -303,6 +414,11 @@ class DBReply(Action):
             db_operation: str = "any",
             db_sql_query: Optional[str] = None,
             llm_name: Optional[str] = None,
+            input_prompt_mode: str = 'last_user_message',
+            custom_input_prompt: Optional[str] = None,
+            custom_input_prompt_use_session_vars: bool = False,
+            store_in_session: Optional[str] = None,
+            send_reply: bool = True,
     ):
         super().__init__()
 
@@ -335,6 +451,11 @@ class DBReply(Action):
         self.db_operation: str = normalized_operation
         self.db_sql_query: Optional[str] = db_sql_query
         self.llm_name: Optional[str] = llm_name
+        self.input_prompt_mode: str = input_prompt_mode
+        self.custom_input_prompt: Optional[str] = custom_input_prompt
+        self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
         return (
@@ -344,7 +465,8 @@ class DBReply(Action):
             f"db_query_mode={self.db_query_mode!r}, "
             f"db_operation={self.db_operation!r}, "
             f"db_sql_query={self.db_sql_query!r}, "
-            f"llm_name={self.llm_name!r}"
+            f"llm_name={self.llm_name!r}, "
+            f"store_in_session={self.store_in_session!r}"
             ")"
         )
 

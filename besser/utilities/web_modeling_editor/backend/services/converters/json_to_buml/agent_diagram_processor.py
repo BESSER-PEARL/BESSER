@@ -118,7 +118,8 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             msg = sanitize_text(content)
             if language:
                 msg = translate_text(msg, language, source_language)
-            body.add_action(AgentReply(message=msg))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(AgentReply(message=msg, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "LLMReplyAction":
@@ -129,7 +130,22 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             # Support "llmName" (new schema key) and "llm_name" (legacy key)
             llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
             llm_name = sanitize_text(llm_name_raw) or None
-            body.add_action(LLMReply(prompt=prompt, llm_name=llm_name))
+            input_prompt_mode = sanitize_text(element.get("inputPromptMode", "last_user_message")) or "last_user_message"
+            custom_input_prompt = element.get("customInputPrompt") or None
+            custom_input_prompt_use_session_vars = bool(element.get("customInputPromptUseSessionVars", False))
+            system_prompt_use_session_vars = bool(element.get("systemPromptUseSessionVars", False))
+            store_in_session = sanitize_text(element.get("storeInSession", "")) or None
+            send_reply = bool(element.get("sendReply", True))
+            body.add_action(LLMReply(
+                prompt=prompt,
+                llm_name=llm_name,
+                input_prompt_mode=input_prompt_mode,
+                custom_input_prompt=custom_input_prompt,
+                custom_input_prompt_use_session_vars=custom_input_prompt_use_session_vars,
+                system_prompt_use_session_vars=system_prompt_use_session_vars,
+                store_in_session=store_in_session,
+                send_reply=send_reply,
+            ))
             action_added = True
 
         elif action_type == "LLMChatAction":
@@ -138,7 +154,16 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             prompt = sanitize_text(prompt_raw) or None
             llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
             llm_name = sanitize_text(llm_name_raw) or None
-            body.add_action(LLMChatReply(prompt=prompt, llm_name=llm_name))
+            system_prompt_use_session_vars = bool(element.get("systemPromptUseSessionVars", False))
+            store_in_session = sanitize_text(element.get("storeInSession", "")) or None
+            send_reply = bool(element.get("sendReply", True))
+            body.add_action(LLMChatReply(
+                prompt=prompt,
+                llm_name=llm_name,
+                system_prompt_use_session_vars=system_prompt_use_session_vars,
+                store_in_session=store_in_session,
+                send_reply=send_reply,
+            ))
             action_added = True
 
         elif action_type == "RAGReplyAction":
@@ -147,8 +172,23 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                 rag_name = sanitize_text(content)
             rag_prompt_raw = element.get("prompt") or ""
             rag_prompt = sanitize_text(rag_prompt_raw) or None
+            input_prompt_mode = sanitize_text(element.get("inputPromptMode", "last_user_message")) or "last_user_message"
+            custom_input_prompt = element.get("customInputPrompt") or None
+            custom_input_prompt_use_session_vars = bool(element.get("customInputPromptUseSessionVars", False))
+            prompt_use_session_vars = bool(element.get("promptUseSessionVars", False))
+            store_in_session = sanitize_text(element.get("storeInSession", "")) or None
+            send_reply = bool(element.get("sendReply", True))
             if rag_name:
-                body.add_action(RAGReply(rag_db_name=rag_name, prompt=rag_prompt))
+                body.add_action(RAGReply(
+                    rag_db_name=rag_name,
+                    prompt=rag_prompt,
+                    input_prompt_mode=input_prompt_mode,
+                    custom_input_prompt=custom_input_prompt,
+                    custom_input_prompt_use_session_vars=custom_input_prompt_use_session_vars,
+                    prompt_use_session_vars=prompt_use_session_vars,
+                    store_in_session=store_in_session,
+                    send_reply=send_reply,
+                ))
                 action_added = True
 
         elif action_type == "DBAction":
@@ -179,8 +219,12 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             )
             system_message_prefix_raw = element.get("system_message_prefix") or ""
             system_message_prefix = sanitize_text(system_message_prefix_raw) or None
+            system_message_prefix_use_session_vars = bool(element.get("systemMessagePrefixUseSessionVars", False))
             llm_name_raw = element.get("llm_name") or ""
             llm_name = sanitize_text(llm_name_raw) or None
+            store_in_session_raw = element.get("storeInSession") or ""
+            store_in_session = sanitize_text(store_in_session_raw) or None
+            send_reply = bool(element.get("sendReply", True))
             if initial_url:
                 body.add_action(WebCrawlLLMReply(
                     initial_url=initial_url,
@@ -191,18 +235,23 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                     run_crawl=run_crawl,
                     no_crawl_error_message=no_crawl_error_message,
                     system_message_prefix=system_message_prefix,
+                    system_message_prefix_use_session_vars=system_message_prefix_use_session_vars,
                     llm_name=llm_name,
+                    store_in_session=store_in_session,
+                    send_reply=send_reply,
                 ))
                 action_added = True
 
         elif action_type == "WebSocketReplyMarkdownAction":
             msg = sanitize_text(element.get("ws_message", ""))
-            body.add_action(WebSocketReplyMarkdown(message=msg))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(WebSocketReplyMarkdown(message=msg, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "WebSocketReplyHTMLAction":
             msg = sanitize_text(element.get("ws_message", ""))
-            body.add_action(WebSocketReplyHTML(message=msg))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(WebSocketReplyHTML(message=msg, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "WebSocketReplySpeechAction":
@@ -212,7 +261,8 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                 audio_speed = float(speed_raw) if speed_raw not in (None, "") else None
             except (TypeError, ValueError):
                 audio_speed = None
-            body.add_action(WebSocketReplySpeech(message=msg, audio_speed=audio_speed))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(WebSocketReplySpeech(message=msg, audio_speed=audio_speed, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "WebSocketReplyOptionsAction":
@@ -299,6 +349,11 @@ def process_agent_diagram(json_data):
             db_operation=sanitize_text(element.get("dbOperation", "any")) or "any",
             db_sql_query=element.get("dbSqlQuery") or None,
             llm_name=sanitize_text(element.get("llm_name", "")) or None,
+            input_prompt_mode=sanitize_text(element.get("inputPromptMode", "last_user_message")) or "last_user_message",
+            custom_input_prompt=element.get("customInputPrompt") or None,
+            custom_input_prompt_use_session_vars=bool(element.get("customInputPromptUseSessionVars", False)),
+            store_in_session=sanitize_text(element.get("storeInSession", "")) or None,
+            send_reply=bool(element.get("sendReply", True)),
         )
 
     """Process Agent Diagram specific elements and return an Agent model."""

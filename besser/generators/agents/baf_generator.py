@@ -210,6 +210,10 @@ class BAFGenerator(GeneratorInterface):
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        def extract_braced_vars(template: str) -> list:
+            """Return unique ``{identifier}`` names found in *template*, preserving order."""
+            return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
+
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
@@ -218,6 +222,7 @@ class BAFGenerator(GeneratorInterface):
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
+        env.globals['extract_braced_vars'] = extract_braced_vars
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")

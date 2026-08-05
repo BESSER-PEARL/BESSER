@@ -57,3 +57,14 @@ Call ``StateMachine.validate()`` to check structural correctness before generati
 
     result = my_state_machine.validate()
     # result = {"success": True/False, "errors": [...], "warnings": [...]}
+
+The following rules are enforced:
+
+- **Final states with outgoing transitions** (error): a final state marks the end
+  of execution and must not have outgoing transitions.
+- **Unreachable states** (warning): a non-initial state with no incoming transitions
+  can never be visited during execution.
+
+Construction-time constraints (duplicate state names, missing initial state,
+invalid transition targets) are enforced by ``StateMachine.new_state()`` and
+``TransitionBuilder.go_to()`` and raise a ``ValueError`` immediately.

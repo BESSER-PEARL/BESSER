@@ -2,13 +2,14 @@
 Generator configuration and metadata for the BESSER backend.
 """
 
-from typing import Dict, Any, NamedTuple
+from typing import Dict, Any, NamedTuple, Optional
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
+from besser.generators.supabase import SupabaseGenerator
 from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
@@ -19,6 +20,9 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
+from besser.generators.testgen import TestCaseGenerator
+from besser.generators.bpmn import BPMNGenerator
+from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -37,6 +41,12 @@ class GeneratorInfo(NamedTuple):
     file_extension: str
     category: str
     requires_class_diagram: bool = True
+    # Non-class diagram type this generator consumes (e.g. ``NNDiagram``,
+    # ``QuantumCircuitDiagram``, ``AgentDiagram``). ``None`` means the
+    # generator works off the project's active class diagram. Used by the
+    # project endpoint to dispatch to the right diagram without branching
+    # on generator-name string literals.
+    required_diagram_type: Optional[str] = None
 
 
 # Generator configuration mapping
@@ -58,6 +68,14 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "pydantic": GeneratorInfo(
         generator_class=PydanticGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="object_oriented",
+        requires_class_diagram=True
+    ),
+
+    "test_case": GeneratorInfo(
+        generator_class=TestCaseGenerator,
         output_type="file",
         file_extension=".py",
         category="object_oriented",
@@ -102,6 +120,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="database",
         requires_class_diagram=True
     ),
+    "supabase": GeneratorInfo(
+        generator_class=SupabaseGenerator,
+        output_type="file",
+        file_extension=".sql",
+        category="database",
+        requires_class_diagram=True
+    ),
 
     # Data format generators (class diagram based)
     # Note: "Smart Data Models" in the frontend uses this same generator with mode="smart_data".
@@ -136,7 +161,8 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         output_type="file",
         file_extension=".py",
         category="quantum",
-        requires_class_diagram=False
+        requires_class_diagram=False,
+        required_diagram_type="QuantumCircuitDiagram",
     ),
 
     # RDF generator (class diagram based)
@@ -183,6 +209,16 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="deployment",
         requires_class_diagram=False
     ),
+
+    # BPMN generator (vendor-neutral BPMN 2.0 XML; reads BPMNDiagram)
+    "bpmn": GeneratorInfo(
+        generator_class=BPMNGenerator,
+        output_type="file",
+        file_extension=".bpmn",
+        category="business_process",
+        requires_class_diagram=False,
+        required_diagram_type=BPMN_DIAGRAM_TYPE,
+    ),
 }
 
 # Neural network generators are conditionally registered since they
@@ -193,7 +229,8 @@ if PytorchGenerator is not None:
         output_type="file",
         file_extension=".py",
         category="neural_network",
-        requires_class_diagram=False
+        requires_class_diagram=False,
+        required_diagram_type="NNDiagram",
     )
 
 if TFGenerator is not None:
@@ -202,8 +239,28 @@ if TFGenerator is not None:
         output_type="file",
         file_extension=".py",
         category="neural_network",
-        requires_class_diagram=False
+        requires_class_diagram=False,
+        required_diagram_type="NNDiagram",
     )
+
+
+# Filename prefix for NN generator output. The NN generator strips the
+# trailing ".py" from its configured file_name and appends
+# ``_{generation_type}.py``, so the artifact for ``pytorch`` /
+# ``tensorflow`` is e.g. ``pytorch_nn_subclassing.py`` /
+# ``tf_nn_sequential.py``. Centralizing the mapping here keeps the router
+# free of hard-coded string switches.
+_NN_FILENAME_PREFIX: Dict[str, str] = {
+    "pytorch": "pytorch",
+    "tensorflow": "tf",
+}
+
+
+def get_nn_filename(generator_type: str, generation_type: str) -> str:
+    """Return the on-disk filename produced by an NN generator for the given
+    ``generation_type`` variant (``"subclassing"`` or ``"sequential"``)."""
+    prefix = _NN_FILENAME_PREFIX[generator_type]
+    return f"{prefix}_nn_{generation_type}.py"
 
 
 def get_generator_info(generator_type: str) -> GeneratorInfo | None:
@@ -216,9 +273,10 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-
     if generator_type == "python":
         return "classes.py"
+    elif generator_type == "test_case":
+        return "test_hypothesis.py"
     elif generator_type == "pydantic":
         return "pydantic_classes.py"
     elif generator_type == "sqlalchemy":
@@ -245,6 +303,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "pytorch_nn.py"
     elif generator_type == "tensorflow":
         return "tf_nn.py"
+    elif generator_type == "bpmn":
+        return "bpmn_diagram.bpmn"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

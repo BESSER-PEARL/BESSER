@@ -1018,6 +1018,9 @@ class TestGUIModelBuilder:
 # project_builder.py
 # ---------------------------------------------------------------------------
 from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.object import (
+    Object, AttributeLink, DataValue, ObjectModel,
+)
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 
@@ -1199,6 +1202,126 @@ class TestProjectBuilder:
             code = f.read()
 
         assert "Test project" in code
+
+    def test_project_multiple_object_models_are_exported(self, tmp_path):
+        """Regression for WME #161.
+
+        A project with ONE domain model and MULTIPLE object models must export
+        every object model to the generated BUML Python file. Previously the
+        "standalone object models" loop gated on a non-existent
+        ``ObjectModel.domain_model`` attribute, so all object models were
+        silently dropped (JSON export was fine; only the .py export lost them).
+        """
+        # --- Domain model: Library + Book -------------------------------
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        lib_name = Property(name="name", type=StringType)
+        library = Class(name="Library", attributes={lib_name})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        # --- Two distinct object models over that same domain -----------
+        book_one = Object(
+            name="BookOne",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100)),
+            ],
+        )
+        om1 = ObjectModel(name="ObjectModelOne", objects={book_one})
+
+        book_two = Object(
+            name="BookTwo",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200)),
+            ],
+        )
+        om2 = ObjectModel(name="ObjectModelTwo", objects={book_two})
+
+        meta = Metadata(description="Multi object-model project")
+        project = Project(
+            name="MultiObjectProject",
+            models=[dm, om1, om2],
+            owner="tester",
+            metadata=meta,
+        )
+
+        file_path = str(tmp_path / "multi_object.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Both object models must be emitted as ObjectModel(...) definitions...
+        assert code.count("ObjectModel(") == 2
+        # ...and both must be referenced in the final Project(models=[...]) list.
+        assert "object_model_1" in code
+        assert "object_model_2" in code
+
+        # The generated file must be valid, runnable Python that reconstructs a
+        # project holding BOTH object models (i.e. nothing was dropped).
+        compile(code, file_path, "exec")
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        object_models = [m for m in recreated.models if isinstance(m, ObjectModel)]
+        assert len(object_models) == 2
+
+    def test_project_multiple_object_models_roundtrip_no_empty_diagrams(self, tmp_path):
+        """Regression for the WME #161 follow-up (round-trip import).
+
+        Re-importing the exported ``.py`` must yield EXACTLY the object models it
+        contains — not extra empty ones. ``project_builder`` used to emit both a
+        ``# OBJECT MODEL N #`` section header AND the ``# OBJECT MODEL #`` banner
+        per model; the importer's section splitter matched both, so every model
+        produced one real object diagram plus a spurious import-only (empty) one.
+        The builder now writes a single numbered+titled banner per model.
+        """
+        import re
+        from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+            project_to_json,
+        )
+
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        library = Class(name="Library", attributes={Property(name="name", type=StringType)})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        om1 = ObjectModel(name="ObjectModelOne", objects={Object(
+            name="BookOne", classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                   AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100))])})
+        om2 = ObjectModel(name="ObjectModelTwo", objects={Object(
+            name="BookTwo", classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                   AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200))])})
+
+        project = Project(name="MultiObjectProject", models=[dm, om1, om2], owner="tester",
+                          metadata=Metadata(description="roundtrip"))
+
+        file_path = str(tmp_path / "multi_object_roundtrip.py")
+        project_to_code(project, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Exactly one "# OBJECT MODEL ... #" banner per object model (no duplicate).
+        headers = re.findall(r'#\s*OBJECT\s+MODEL[^\n#]*#', code, flags=re.IGNORECASE)
+        assert len(headers) == 2, headers
+
+        result = project_to_json(code)
+        object_diagrams = result["diagrams"].get("ObjectDiagram", [])
+        # Exactly two object diagrams come back — no spurious empty ones.
+        assert len(object_diagrams) == 2
+        # Object-model names survive the round-trip.
+        assert {d["title"] for d in object_diagrams} == {"ObjectModelOne", "ObjectModelTwo"}
+        # Each diagram carries real content, not an empty import-only shell.
+        for d in object_diagrams:
+            assert d["model"]["elements"], f"object diagram {d['title']!r} came back empty"
 
 
 # ---------------------------------------------------------------------------

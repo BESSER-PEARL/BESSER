@@ -19,7 +19,7 @@ def test_dot_navigation_preserves_chain(model):
         "context Employee inv: self.employer.minSalary <= self.salary",
         model,
     )
-    expr = constraint.expression
+    expr = constraint.ast
     # Top-level: comparison with three-arg shape.
     assert isinstance(expr, OperationCallExpression)
     left = expr.arguments[0]
@@ -31,7 +31,7 @@ def test_dot_navigation_preserves_chain(model):
 
 def test_simple_dot_navigation_is_a_one_step_chain(model):
     constraint = parse_ocl("context Employee inv: self.age > 18", model)
-    expr = constraint.expression
+    expr = constraint.ast
     left = expr.arguments[0]
     assert is_chain_from_self(left)
     assert [p.name for p in walk_chain_from_self(left)] == ["age"]
@@ -44,7 +44,7 @@ def test_boolean_literal_is_python_bool(model):
     )
     # Walk the AST to find the BooleanLiteralExpression.
     from besser.BUML.metamodel.ocl import walk
-    bools = [n for n in walk(constraint.expression)
+    bools = [n for n in walk(constraint.ast)
              if isinstance(n, BooleanLiteralExpression)]
     assert len(bools) == 1
     assert bools[0].value is True
@@ -57,7 +57,7 @@ def test_boolean_literal_false(model):
         model,
     )
     from besser.BUML.metamodel.ocl import walk
-    bools = [n for n in walk(constraint.expression)
+    bools = [n for n in walk(constraint.ast)
              if isinstance(n, BooleanLiteralExpression)]
     assert bools[0].value is False
 
@@ -67,7 +67,7 @@ def test_chain_terminus_is_self_variable_expression(model):
         "context Employee inv: self.employer.minSalary <= self.salary",
         model,
     )
-    left = constraint.expression.arguments[0]
+    left = constraint.ast.arguments[0]
     # Walk to the innermost source: should be VariableExp("self").
     cur = left
     while isinstance(cur, PropertyCallExpression):

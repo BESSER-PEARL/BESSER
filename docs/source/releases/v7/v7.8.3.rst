@@ -1,0 +1,53 @@
+Version 7.8.3
+=============
+
+Patch release: **agent transitions no longer collapse to**
+``when_no_intent_matched`` **when a personalized agent project is imported**,
+and free-hand edits to a personalized variant are no longer discarded when
+switching between the base and a variant. This is a **frontend-only** release —
+no metamodel, generator, or backend API changes; the only backend-repo change is
+the web-modeling-editor submodule pointer bump (frontend PR
+`#139 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/139>`_,
+thanks to Aaron).
+
+Fixes
+-----
+
+* **Imported agent base models flattened every transition**: agent transitions
+  exist in two JSON shapes — a legacy *flat* shape (top-level ``condition`` /
+  ``conditionValue``) and the canonical *nested* shape (``transitionType`` plus
+  ``predefined`` / ``custom`` blocks). The Apollon editor upgrades flat to nested
+  whenever a diagram is loaded, but the ``agentBaseModels`` snapshot bundled in an
+  imported project (e.g. the *Personalized Gym Agent* template) was written
+  straight to ``localStorage`` in the flat shape, bypassing that upgrade. The
+  backend agent processor only understands the nested shape, so on Save & Apply it
+  defaulted every flat transition to ``when_no_intent_matched`` — silently
+  destroying the agent's routing. The fix normalizes agent models to the canonical
+  nested shape at the single storage write boundary (reusing the editor's own
+  ``AgentStateTransition`` serializer rather than a second mapper), so the flat
+  shape can no longer be persisted. A one-time ``v3 → v4`` storage migration
+  upgrades snapshots already sitting in users' ``localStorage`` from before the
+  fix, and the legacy flat shape is purged from the bundled project and agent
+  templates at rest.
+
+* **Variant edits lost on base ⇄ variant switch**: switching between the
+  un-personalized base and a personalized variant replaced the live diagram with
+  the stored snapshot without first writing back the current canvas edits, so any
+  unsaved change made while viewing a variant (or the base) was discarded on
+  switch. The switch handler now persists the live model back into its source —
+  the active variant's inline snapshot, or the stored base model — before loading
+  the target.
+
+* **BAF generation now ships the un-personalized base**: generating with
+  "Personalization (all)" previously shipped whichever variant happened to be
+  active in the editor as the primary model, so every other variant was layered on
+  top of that variant instead of the original base. Generation now injects the
+  stored un-personalized base model; "None" mode is unchanged.
+
+Tests
+-----
+
+* Frontend unit tests cover the agent-model normalizer (flat → nested across each
+  predefined condition type, idempotency, geometry preservation,
+  ``AgentStateTransitionInit`` left untouched) and the storage normalization path
+  (``saveAgentBaseModel`` and the ``v4`` migration).

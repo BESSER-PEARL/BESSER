@@ -75,6 +75,8 @@ jobs:
             docker compose pull $SERVICES
             echo "Restarting services..."
             docker compose up -d $SERVICES
+            echo "Pruning dangling images..."
+            docker image prune -f
             echo "Running containers:"
             docker compose ps
           EOF

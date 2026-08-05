@@ -60,7 +60,9 @@ The NN metamodel performs validation when ``NN.validate()`` is called:
 - **Entry point**: the first module of an NN must not declare a
   ``name_module_input``.
 - **Module names**: the NN's name and every module name must be a valid
-  Python identifier and not a Python reserved keyword.
+  Python identifier. Python reserved keywords (``class``, ``return``, ...)
+  surface as warnings rather than errors, matching the warn-not-error
+  stance applied elsewhere in the BUML metamodel.
 - **Sub-NN cycles**: an NN cannot directly or transitively contain itself.
   Sub-NNs are validated recursively and their errors and warnings are
   merged into the parent's.

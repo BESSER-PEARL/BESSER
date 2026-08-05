@@ -1,0 +1,48 @@
+Version 7.5.0
+=============
+
+This release introduces **Neural Network diagrams** as a new diagram type in the
+BESSER Web Modeling Editor, letting users design neural network architectures
+visually and generate PyTorch or TensorFlow code directly from the editor. The
+NN metamodel now has a ``validate()`` method, and the documentation covering
+neural network modeling and code generation has been expanded.
+
+New Features and Improvements
+-----------------------------
+
+**Neural Network Diagram (Web Modeling Editor)**
+
+* Added **NNDiagram** as a first-class diagram type with a dedicated palette covering layers (Conv1D, Conv2D, Conv3D, Pooling, SimpleRNN, LSTM, GRU, Linear, Flatten, Embedding, Dropout, LayerNorm, BatchNorm), tensor operations (concatenate, multiply, matmultiply, reshape, transpose, permute), Configuration, Training Dataset, and Test Dataset.
+* Added the **Generate** menu options for **PyTorch** and **TensorFlow**, each in **Subclassing** or **Sequential** form.
+* Added a backend processor that converts the editor JSON into ``NN`` metamodel instances. The processor calls ``NN.validate()`` before returning, so malformed diagrams surface as structured errors instead of trickling into the generators.
+* Added a BUML-to-JSON converter that lets NN diagrams be re-imported into the editor after a BUML export, with full support for the explicit-default sidecar pattern (``permute_in``, ``padding_type='valid'``, ``start_dim=1`` and similar) so round-tripping a project preserves user intent.
+* Added NN dispatch to the ``/get-json-model`` and ``/generate-output-from-project`` endpoints. The project endpoint resolves the required diagram type from the generator registry rather than branching on generator-name string literals, and PyTorch/TensorFlow share the same dispatch path as Qiskit.
+* Documentation: ``docs/source/web_editor.rst``.
+
+**Neural Network Metamodel**
+
+* Added ``NN.validate()`` covering module-name uniqueness, layer and tensor-op cross-references, the first module being a valid entry point, sub-networks forming a non-cyclic graph (with each sub-network itself validated), Python-identifier safety on names, and numerical bounds on hyperparameters and layer sizes, plus warnings for inconsistencies between training and test datasets and for empty NNs.
+* The validator follows the BESSER metamodel contract: errors are collected and returned in a ``{"success", "errors", "warnings"}`` dict, only raising at the root call when ``raise_exception=True``. Sub-NN recursion is cycle-guarded.
+* Python keywords on module names surface as warnings rather than errors, matching ``NamedElement.name``'s warn-not-error stance.
+* ``Dataset.__init__`` now initializes its optional fields unconditionally, so a ``Dataset`` constructed without ``input_format`` or ``task_type`` no longer raises ``AttributeError`` on the corresponding getter.
+* Documentation expanded with a Core Concepts section, a Validation section, and an Example Usage block.
+* Documentation: ``docs/source/buml_language/model_types/nn.rst``.
+
+**PyTorch and TensorFlow Generators**
+
+* Both generators are conditionally registered: if the optional ``torch`` or ``tensorflow`` dependencies are not installed the corresponding generator is silently dropped from the supported list rather than breaking backend startup.
+* Output filenames are deterministic per ``generation_type`` (``pytorch_nn_subclassing.py`` / ``pytorch_nn_sequential.py`` / ``tf_nn_subclassing.py`` / ``tf_nn_sequential.py``) and centralized in a single helper, so router code no longer hard-codes the prefix.
+* Documentation expanded: each generator page now describes its Parameters, Web Modeling Editor integration, and the structure of the generated file.
+* Documentation: ``docs/source/generators/pytorch.rst``, ``docs/source/generators/tensorflow.rst``.
+
+Code Quality and Hardening
+--------------------------
+
+This release also includes a multi-agent review pass on the NN backend with
+follow-up fixes:
+
+* Sanitized CR/LF in NN comment writes in ``buml_code_builder/nn_model_builder.py`` so user-controlled names (NN, sub-NN, layer titles) cannot break out of the surrounding ``# ...`` line in generated source. The generated file is later ``exec()``\ 'd, so this closes a code-injection vector via newline injection.
+* Centralized JSON↔BUML symmetry: every layer type, tensor operation, and explicit-default sidecar handled in the JSON-to-BUML processor has a matching emitter in the BUML-to-JSON converter, with round-trip coverage in ``test_converter_roundtrip.py``.
+* Replaced the hand-rolled ``_PY_IDENT_RE`` regex with the stdlib ``str.isidentifier()`` check, removing a duplicate of ``buml_code_builder.common``'s identifier helpers.
+* Routed NN endpoint failures through the existing ``ConversionError`` / ``GenerationError`` exception hierarchy and the ``@handle_endpoint_errors`` decorator, in line with the rest of the backend, so error responses are uniform.
+* The ``/get-json-model`` ``is_project`` fallback now surfaces ``NNDiagram`` and ``QuantumCircuitDiagram`` alongside the previously-supported diagram types, so single-NN or single-Quantum project files re-import correctly.

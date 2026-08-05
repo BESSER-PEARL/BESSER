@@ -198,17 +198,34 @@ def process_object_diagram(json_data, domain_model):
                         continue
                 elif attr_type == "UserModelAttribute":
                     operator = attr_element.get("attributeOperator", "==")
-                    if operator and operator in attr_string:
-                        attr_part, value_part = attr_string.split(operator, 1)
-                        attr_name = attr_part.strip()
-                        value = value_part.strip()
+                    # The name string can embed the operator in two forms: the
+                    # stored symbol (e.g. "age == 22", produced by manual edits)
+                    # or the editor's displayed equality symbol (a single '=',
+                    # e.g. "age = 22", produced by the modeling agent). Try the
+                    # stored operator first so "age == 22" is not split on its
+                    # first '=' (which captured "= 22" as the value and broke
+                    # type conversion). Fall back to the displayed '=' for
+                    # equality, so agent-generated criteria are still parsed
+                    # instead of dropped.
+                    candidate_operators = [operator]
+                    if operator == "==":
+                        candidate_operators.append("=")
+                    for candidate in candidate_operators:
+                        if candidate and candidate in attr_string:
+                            attr_part, value_part = attr_string.split(candidate, 1)
+                            attr_name = attr_part.strip()
+                            value = value_part.strip()
+                            break
                     else:
                         attr_name = attr_string.strip()
                         value = attr_element.get("attributeValue")
                 else:
                     continue
 
-                if attr_name and value is not None:
+                # Skip criteria left blank in the editor (e.g. "age = "): an
+                # empty value is "no constraint", not a value to type-convert,
+                # so it must not raise on int/float parsing.
+                if attr_name and value not in (None, ""):
                     # Find the corresponding property in the class or its ancestors
                     property_obj = None
                     all_attrs = get_all_attributes(class_obj, domain_model)

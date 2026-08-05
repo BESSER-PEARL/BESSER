@@ -34,6 +34,54 @@ Beyond the state machine-like elements, the agent metamodel also includes agent 
 
 To read about their meaning and usage, please refer to the `documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_ of the BESSER Agentic Framework.
 
+Actions
+~~~~~~~
+
+Each state body is a sequence of actions.  The following action classes are
+available in ``besser.BUML.metamodel.state_machine.agent``:
+
+**Text and LLM replies**
+
+- ``AgentReply(message)`` — send a plain-text reply.
+- ``LLMReply(prompt, llm_name)`` — generate a reply using an LLM; ``prompt``
+  is an optional system prompt, ``llm_name`` selects a registered LLM (defaults
+  to the agent default).
+- ``LLMChatReply(prompt, llm_name)`` — like ``LLMReply`` but calls
+  ``llm.chat(...)`` with the conversation history, making it suitable for
+  multi-turn dialogue states.
+- ``RAGReply(rag_db_name)`` — answer using a configured RAG database.
+- ``DBReply(query, llm_name)`` — answer from a SQL database using an LLM.
+
+**Web crawling**
+
+- ``WebCrawlLLMReply(initial_url, max_depth, max_pages, crawl_format,
+  base_url_prefix, run_crawl, no_crawl_error_message, system_message_prefix,
+  llm_name)`` — performs a BFS web crawl starting at ``initial_url`` and
+  queries an LLM with the retrieved content.  The crawl result is cached in the
+  session; set ``run_crawl=False`` in subsequent states to reuse the cache
+  without re-fetching.
+
+**WebSocket rich-media replies**
+
+The following actions map to the corresponding ``WebSocketPlatform`` methods and
+require the agent to use a ``WebSocketPlatform``:
+
+- ``WebSocketReplyMarkdown(message)`` — send Markdown-formatted text.
+- ``WebSocketReplyHTML(message)`` — send an HTML-formatted message.
+- ``WebSocketReplySpeech(message, audio_speed)`` — convert text to speech and
+  send the audio.
+- ``WebSocketReplyOptions(options)`` — present a list of selectable options.
+- ``WebSocketReplyLocation(latitude, longitude)`` — send a geographic
+  coordinate.
+- ``WebSocketReplyFile()`` — send a file; the body must supply a ``File``
+  object at runtime.
+- ``WebSocketReplyImage()`` — send an image (NumPy ``ndarray``); body must
+  supply the array at runtime.
+- ``WebSocketReplyDataframe()`` — send a pandas ``DataFrame``; body must supply
+  it at runtime.
+- ``WebSocketReplyPlotly()`` — send a Plotly figure; body must supply a
+  ``plotly.graph_objects.Figure`` at runtime.
+
 RAG (Retrieval-Augmented Generation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -45,6 +93,74 @@ and an LLM name. Use ``RAGReply`` in a state body to trigger a RAG query.
 When generated, a data folder named after the RAG element is created
 (e.g. ``"Knowledge Base"`` produces ``knowledge_base/``). Place your PDF
 documents in this folder before running the agent.
+
+The optional ``llm_prompt`` parameter injects a fixed prefix instruction before
+every RAG query, useful for enforcing domain-specific constraints or tone:
+
+.. code-block:: python
+
+    kb = agent.new_rag(
+        name='Knowledge Base',
+        vector_store=vector_store,
+        splitter=splitter,
+        llm_name='gpt-4o-mini',
+        llm_prompt='Answer only from the provided documents.',
+    )
+
+Multiple LLMs
+~~~~~~~~~~~~~
+
+An agent can register more than one LLM and reference each by name. Add an
+LLM with ``agent.new_llm()``:
+
+.. code-block:: python
+
+    fast = agent.new_llm(name='fast', provider='openai', parameters={'model': 'gpt-4o-mini'})
+    big = agent.new_llm(name='big', provider='openai', parameters={'model': 'gpt-4o'})
+
+``provider`` selects the concrete wrapper: ``openai`` → ``LLMOpenAI``,
+``huggingface`` → ``LLMHuggingFace``, ``huggingface_api`` →
+``LLMHuggingFaceAPI``, ``replicate`` → ``LLMReplicate``. ``parameters`` is a
+free-form dict passed to the wrapper (e.g. the model id). Optional
+``num_previous_messages`` (default 1) and ``global_context`` are also supported.
+
+The first LLM registered becomes the default. Change the default with
+``agent.set_default_llm('big')``. Any consumer — ``LLMReply``, ``DBReply``,
+``RAGReply`` and reasoning states — uses the default unless it specifies its
+own ``llm_name``. Every ``llm_name`` reference must resolve to a registered
+LLM; this is checked by ``agent.validate()``.
+
+Reasoning states
+~~~~~~~~~~~~~~~~
+
+A ``ReasoningState`` is a state whose body is an autonomous reasoning loop
+driven by an LLM (using the agent's tools, skills and workspaces). Create one
+with ``agent.new_reasoning_state()``:
+
+.. code-block:: python
+
+    assistant = agent.new_reasoning_state(
+        name='assistant',
+        llm='big',                  # registered LLM name; omit to use the default
+        max_steps=8,                # max reasoning iterations
+        enable_task_planning=True,
+        stream_steps=True,
+        system_prompt='You are a helpful assistant.',
+        fallback_message='Sorry, I could not complete that.',
+    )
+
+The body of a reasoning state is supplied automatically by the factory; the
+metamodel rejects manual ``set_body`` / ``set_fallback_body`` calls on it.
+
+Tools, skills and workspaces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reasoning states draw on three agent-level primitives, shared by every
+reasoning state:
+
+- **Tools** (``agent.new_tool(name, description, code)``) — callable functions the agent can invoke. ``code`` holds the Python implementation.
+- **Skills** (``agent.new_skill(name, content, description)``) — reusable instruction snippets injected into the reasoning context.
+- **Workspaces** (``agent.new_workspace(name, path, description, writable, max_read_bytes)``) — file-system locations the agent may read from (and write to when ``writable``).
 
 .. image:: ../../img/agent_mm.png
   :width: 1600

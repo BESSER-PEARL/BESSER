@@ -1,0 +1,101 @@
+Version 7.6.0
+=============
+
+This release lands **OCL preconditions and postconditions end-to-end**, from
+the BUML metamodel through the Web Modeling Editor's class-diagram converter,
+validator, and canvas. ``Method.pre`` and ``Method.post`` are now first-class
+list fields on ``Method``, the OCL textbox in the editor speaks the canonical
+BOCL form (``context X (inv|pre|post) [name]: body``), and the validator walks
+every method's pre/post lists in addition to the domain model's invariants —
+so a typo'd pre constraint surfaces with a ``[Class::method kind name]`` label
+that points at the offending box. ``OCLConstraint`` exposes the parsed
+``ast`` separately from the source-text ``expression``, giving downstream tools
+(Lean encoder, SQL CHECK generators, IDE tooling) a stable API surface.
+Alongside, the editor's template library gains a **Full Project tab** with
+multi-diagram bundles, project creation gains **modeling-perspective
+selection**, and a number of OCL hardening and codegen safety fixes land.
+
+New Features and Improvements
+-----------------------------
+
+**OCL Metamodel — Pre/Post and AST/Source Split**
+
+* Added ``Method.pre`` and ``Method.post`` as first-class list fields on ``Method`` with name-uniqueness validated via property setters, plus ``add_pre`` / ``add_post`` helpers. Operation contracts no longer rely on naming-convention scraping to be discovered — they are anchored on the ``Method`` they constrain.
+* Tightened ``Constraint.expression`` from ``Any`` to strict ``str`` (``TypeError`` on non-str) and added ``OCLConstraint.ast`` exposing the parsed ``OCLExpression``. The constructor enforces that ``expression`` arrives parsed; the ``ast`` setter refreshes the source-text expression via the pretty-printer. The split gives walkers and analyzers a stable typed entry point while leaving ``expression`` as the canonical source representation.
+* ``DomainModel._validate_constraints`` now walks every ``Method.pre`` / ``Method.post`` in addition to ``domain_model.constraints``, so a precondition with a stale or external context is flagged the same way an invariant would be.
+* Documentation: ``docs/source/buml_language/model_types/ocl.rst`` adds a worked ``add_pre``/``add_post`` example and a sub-toctree pointing at new ``parsing.rst``, ``ast.rst``, and ``normalization.rst`` sub-pages; ``api_ocl.rst`` expands autodoc to cover ``clone``, ``parse_ocl``, ``pretty_print``, ``normalize``, and ``BOCLSyntaxError``; ``examples/ocl.rst`` is rewritten as a runnable end-to-end example.
+
+**Web Modeling Editor — OCL Pre/Post Wiring**
+
+* Added a ``parse_constraint_text(text, model)`` helper that inspects the BOCL header to extract kind / class / optional method / optional name, resolves the class manually, and delegates lex/parse to ``parse_ocl(...)`` with an explicit ``context_class`` (the upstream auto-detect regex doesn't handle the ``Class::method(params)`` form). ``process_ocl_constraints`` now returns ``(kind, OCLConstraint, class_name, method_name)`` routing tuples.
+* The class-diagram processor routes constraints by their parsed kind: invariants land on ``domain_model.constraints``; preconditions and postconditions land on ``Method.pre`` / ``Method.post``. Method lookup is by the ``(class, method)`` name pair and walks the inheritance chain, so a precondition written as ``context Sub::base_method() pre: ...`` resolves to a method declared on a parent class instead of warn-skipping.
+* The class-diagram converter on the BUML→JSON path emits the full BOCL header on every constraint box (invariant, pre, and post) so editor round-trips preserve kind, target method, name, and description without back-channel metadata. Pre/post emission walks ``Method.pre`` / ``Method.post`` directly.
+* Added a back-compat shim that transparently lifts body-only JSON files (saved during an intermediate iteration) to the canonical full-text shape on first ingest, then ``buml_to_json`` normalizes them on emit. Legacy projects round-trip cleanly without manual editing.
+* Validator (``services/validators/ocl_checker.py``) now walks every class's methods' pre/post lists in addition to ``domain_model.constraints``; error labels include the ``[Class::method kind name]`` triple so messages point at a specific constraint box instead of "constraint #3".
+* Auto-generated invariant names are embedded back into ``constraint.expression`` so the next BUML→JSON→BUML cycle parses out the same name instead of generating a fresh ``counter_blockidx`` suffix.
+* Tests: 17 new tests covering routing, malformed-OCL skip-with-warning, legacy ingest, and full-text round-trip stability.
+
+**Web Modeling Editor — OCL Constraint Box (Frontend)**
+
+* The OCL constraint box renders an italic stereotype badge above the body — ``«inv»``, ``«pre» <method-name>``, ``«post» <method-name>`` — derived from the constraint's BOCL header, giving a visual cue for the kind without introducing a separate metadata field. When the text doesn't match the BOCL header regex (empty or malformed), no badge renders.
+* Added an optional ``description`` field on the constraint popup so users can attach a plain-language explanation that the validator surfaces as the violation reason instead of the raw OCL.
+* The constraint textbox is back to a single full-text field carrying the whole BOCL block (``context X (inv|pre|post) [name]: body``). Routing into ``Method.pre`` / ``Method.post`` happens entirely on the backend by parsing the OCL header tokens — no frontend metadata churn, no risk of body / metadata drift.
+* Added a "Library with OCL" structural-pattern template pre-populated with eleven canonical OCL constraints — invariants on ``Book`` / ``Library`` / ``Author`` plus preconditions and postconditions on common operations — so users get a working pre/post example one click away.
+
+**OCL — Other Improvements**
+
+* Added an optional ``description`` field on ``Constraint`` that threads end-to-end (metamodel, JSON↔BUML converters, validator output, code builder). Inline OCL ``--`` comments per constraint are also accepted on ingest, with the inline comment winning if both are present (#499).
+* De-duplicate constraint names across OCL boxes (whether typed by the user or auto-generated) instead of crashing ``_process_constraints``. The de-dup loop preserves insertion order, keeping the first occurrence and emitting a ``Warning: duplicate constraint name 'X'…`` so users can spot the collision in the validator output. Discovered via a 2000-constraint stress test (5 parallel agents exercising invariants, pre/post, multi-block, evaluator, and adversarial inputs).
+* Consolidated the OCL constraint pipeline around a single contract: ``constraint.expression`` carries the full canonical OCL text from the moment a constraint is parsed through every storage, transport, validation, and evaluation step. Three reconstruction layers and one mutation hack are gone (``_method_signature`` / ``_already_full_text`` / ``_canonical_invariant_text`` / ``_canonical_method_contract_text`` and the swap-and-restore around ``parser.evaluate()``); a narrow ``_ensure_canonical_expression`` legacy fallback remains for old BUML files (deprecated, removal target 2026-Q4).
+
+Hardening and Code Quality
+--------------------------
+
+* **Identifier-injection hardening on BUML codegen**: ``constraint.name`` and ``method.name`` no longer flow straight into Python identifier positions on the LHS of assignments. Names like ``x=1;import os;os.system('id')#`` (no spaces, no hyphens, passes ``NamedElement.name``'s setter) used to land verbatim in code that gets ``exec()``'d. Every identifier emit site now routes through ``buml_code_builder.common.safe_var_name`` via a new ``_method_var_name(method)`` shim, replacing five different copies of ``method.name.split('(')[0]``.
+* Pre/post boxes preserve their ``description`` on JSON↔BUML round-trip; the BUML→JSON converter's invariant emit path is mirrored on the method-contract path so the field is no longer silently dropped.
+* Sorted ``method_contracts`` in ``domain_model_builder`` so the emitted Python is byte-stable across runs (matches how invariants and other emissions sort).
+* Narrowed the residual ``except Exception`` in OCL element processing to ``(BOCLSyntaxError, ValueError)`` so programmer errors propagate instead of being swallowed.
+* Dropped defensive ``getattr`` / ``hasattr`` guards on metamodel attributes that the metamodel now guarantees (``Class.methods``, ``Method.pre``, ``Method.post``).
+* Stress-tested the OCL pipeline with 2000 constraints across 5 parallel agents (invariants, pre/post, multi-block, evaluator, adversarial inputs) — surfaced and fixed the duplicate-name crash and the round-trip ``description``-loss above; the rest of the pipeline survived without regressions.
+
+Web Modeling Editor — Templates and Project Hub
+------------------------------------------------
+
+* Added a **Full Project tab** to the template library carrying multi-diagram project bundles (class diagram + GUI no-code diagram + agent diagram in one click) — a step beyond the existing single-diagram pattern templates.
+* Shipped two full-project templates: **Library Full Stack** (full class diagram + GUI + REST API skeleton) and **Personalized Gym Agent** (an end-to-end agent project demonstrating the multi-diagram model with a configured agent and supporting data model).
+* Project creation now offers a **modeling-perspective selector** so the project starts with the workspace already filtered to the diagram families the user intends to model, reducing the initial-noise problem on a fresh project.
+* Object diagrams: a referenced class can now seed a generated set of objects and links matching that class's structure, so a user editing an object diagram doesn't have to hand-construct every object instance from scratch.
+* Refactored project-import logic into ``shared/services`` so the import pipeline is reusable across the project hub and the GitHub-import path.
+* Workspace: setting up the diagram bridge when loading a project (the editor now wires the diagram-state bridge during project load instead of relying on a downstream component to do it, fixing a class of "diagram opens but feels frozen" bugs).
+* Renamed the **Full Application** perspective preset to **Full Web Application** so the label matches what the perspective actually selects (web frontend + backend + API), with no behavior change.
+* i18n: removed the German locale stub (it was incomplete and being toggled-on in production produced a half-translated UI).
+
+Web Modeling Editor — Backend Fixes
+-----------------------------------
+
+* **Django generator**: re-introduced the ``chdir(temp_dir)`` guard around the ``django-admin startproject`` invocation. The pre-refactor ``backend.py`` wrapped the call in ``chdir/try-finally``; the extracted ``_generate_django`` helper in ``generation_router.py`` had dropped the guard, so the project got scaffolded in the FastAPI process's CWD while the harvester walked an empty ``temp_dir/<project_name>``, surfacing as ``Django project generation failed: Output directory is empty``. The guard is now scoped to the worker thread and restores CWD in ``finally``.
+* **GitHub deploy**: ``deploy_webapp_to_github`` now branches on ``httpx.HTTPStatusError`` and surfaces the actual GitHub API error (``"name already exists on this account"``, expired token, rate limit) instead of letting it fall through to the catch-all 500 handler. ``401`` / ``403`` pass through; ``422`` maps to ``409 Conflict`` so the UI can offer rename / overwrite; other ``4xx`` pass through; ``5xx`` becomes ``502 Bad Gateway``. The frontend's deploy popup now shows something the user can act on.
+
+Modeling Assistant — Natural Language to OCL
+--------------------------------------------
+
+Closes ``BESSER-PEARL/B-OCL-Interpreter#5``. The modeling assistant can now author
+OCL constraints from a plain-language description. When the user explicitly asks
+for an invariant, precondition, or postcondition (``"add a constraint that a
+Library always has at least one Book"``, ``"the precondition of Account::deposit
+is amount > 0"``, ``"after deposit the balance must not be negative"``), the
+agent emits an ``add_ocl_constraint`` modification, and the frontend spawns a
+constraint box on the canvas linked to the target class via a ``ClassOCLLink``.
+
+* **Modeling-agent** (``BESSER-PEARL/modeling-agent``): ``ClassModification`` adds the ``add_ocl_constraint`` action with optional ``changes.constraint`` (full BOCL block) and ``changes.text`` (plain-language description). The class-diagram system prompt gains an OCL section listing the four header shapes (``inv`` / ``pre`` / ``post`` / ``init``) plus five NL→BOCL examples. Emission is gated on the user explicitly asking — the prompt forbids unprompted OCL.
+* **Web Modeling Editor frontend**: ``ClassDiagramModifier.addOclConstraint`` consumes the new action and creates a ``ClassOCLConstraint`` element + ``ClassOCLLink`` to the anchor class, with the BOCL text in the constraint field and the plain-language description in the ``description`` field. The rendered box picks up the canonical stereotype badge (``«inv»`` / ``«pre»`` / ``«post»``) introduced earlier in this release.
+* **Validation**: pre-flight validation (calling ``/validate-diagram`` before writing) is a known follow-up — for now, malformed BOCL surfaces post-hoc through the ``parse_constraint_text`` validator path landed in PR #529.
+* **Deploy alongside**: this feature requires the matching modeling-agent commit (``c0e47e8`` on ``main``) to be live. Use ``./scripts/deploy.sh agent`` to roll the modeling-agent container forward at release time.
+
+Documentation
+-------------
+
+* OCL: new sub-pages under ``buml_language/model_types/ocl/`` cover **parsing**, the **AST**, and **normalization** — the public surface a tool walking the OCL AST needs.
+* OCL: ``ocl_grammar.rst`` clarifies the ``.expression`` (str) / ``.ast`` (``OCLExpression``) split.
+* OCL: ``examples/ocl.rst`` rewritten as a runnable end-to-end example, with the prior invalid-syntax example fixed.
+* OCL: ``api_ocl.rst`` expands autodoc to cover ``clone``, ``parse_ocl``, ``pretty_print``, ``normalize``, ``BOCLSyntaxError``.

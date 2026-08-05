@@ -19,6 +19,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     DataList,
     Link,
     EmbeddedContent,
+    Alert,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
@@ -236,7 +237,8 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write("    GUIModel, Module, Screen,\n")
         f.write("    ViewComponent, ViewContainer,\n")
         f.write("    Button, ButtonType, ButtonActionType,\n")
-        f.write("    Text, Image, Link, InputField, InputFieldType,\n")
+        f.write("    Text, Image, Link, InputField, InputFieldType, SelectOption,\n")
+        f.write("    Alert, AlertSeverity,\n")
         f.write("    Form, Menu, MenuItem, DataList,\n")
         f.write("    DataSource, DataSourceElement, EmbeddedContent,\n")
         f.write("    Styling, Size, Position, Color, Layout, LayoutType,\n")
@@ -421,6 +423,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_data_list(f, comp_var, component, created_vars)
     elif isinstance(component, EmbeddedContent):
         _write_embedded_content(f, comp_var, component)
+    elif isinstance(component, Alert):
+        _write_alert(f, comp_var, component)
     elif isinstance(component, LineChart):
         _write_line_chart(f, comp_var, component, created_vars)
     elif isinstance(component, BarChart):
@@ -642,12 +646,51 @@ def _write_embedded_content(f, var_name, embedded):
     _write_constructor(f, var_name, 'EmbeddedContent', params, embedded)
 
 
+def _write_alert(f, var_name, alert):
+    """Write code for an Alert component."""
+    params = [f'name="{_escape_string(alert.name)}"']
+    params.append(f'description="{_escape_string(alert.description or "")}"')
+    content = getattr(alert, 'content', '') or ''
+    params.append(f'content="{_escape_string(content)}"')
+    severity = getattr(alert, 'severity', None)
+    if severity and hasattr(severity, 'name'):
+        params.append(f'severity=AlertSeverity.{severity.name}')
+    title = getattr(alert, 'title', None)
+    if title:
+        params.append(f'title="{_escape_string(title)}"')
+    if getattr(alert, 'dismissible', False):
+        params.append('dismissible=True')
+    _write_constructor(f, var_name, 'Alert', params, alert)
+
+
 def _write_input_field(f, var_name, input_field):
     """Write code for an InputField component."""
     params = [f'name="{_escape_string(input_field.name)}"']
     params.append(f'description="{_escape_string(input_field.description or "")}"')
     if hasattr(input_field, 'field_type') and input_field.field_type:
         params.append(f'field_type=InputFieldType.{input_field.field_type.name}')
+    if getattr(input_field, 'label', None):
+        params.append(f'label="{_escape_string(input_field.label)}"')
+    if getattr(input_field, 'placeholder', None):
+        params.append(f'placeholder="{_escape_string(input_field.placeholder)}"')
+    if getattr(input_field, 'required', False):
+        params.append('required=True')
+    if getattr(input_field, 'default_value', None) is not None:
+        params.append(f'default_value="{_escape_string(str(input_field.default_value))}"')
+    if getattr(input_field, 'options', None):
+        opts = ", ".join(
+            f'SelectOption(value="{_escape_string(o.value)}", label="{_escape_string(o.label)}")'
+            for o in input_field.options
+        )
+        params.append(f'options=[{opts}]')
+    if getattr(input_field, 'min_value', None) is not None:
+        params.append(f'min_value={input_field.min_value}')
+    if getattr(input_field, 'max_value', None) is not None:
+        params.append(f'max_value={input_field.max_value}')
+    if getattr(input_field, 'step', None) is not None:
+        params.append(f'step={input_field.step}')
+    if getattr(input_field, 'multiple', False):
+        params.append('multiple=True')
     if hasattr(input_field, 'validationRules') and input_field.validationRules:
         params.append(f'validationRules="{_escape_string(input_field.validationRules)}"')
     _write_constructor(f, var_name, 'InputField', params, input_field)

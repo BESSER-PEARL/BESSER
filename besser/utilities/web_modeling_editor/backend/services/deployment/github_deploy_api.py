@@ -234,11 +234,13 @@ async def deploy_webapp_to_github(
                 if not generator_info:
                     raise GenerationError("Agent generator is not configured.")
                 generator_class = generator_info.generator_class
+                raw_yaml = agent_diagram_data.get("configYaml")
                 generator = generator_class(
                     agent_model,
                     output_dir=temp_dir,
                     config=agent_config,
                     openai_api_key=extract_openai_api_key(agent_config),
+                    config_yaml=raw_yaml if isinstance(raw_yaml, str) else None,
                 )
                 generator.generate()
 
@@ -397,11 +399,12 @@ async def deploy_webapp_to_github(
         # Uniqueness enforcement and BUML conversion live in the shared helper.
         agent_models: list = []
         agent_configs: dict = {}
+        agent_config_yamls: dict = {}
         has_agent_components = _has_agent_components(gui_model)
         if has_agent_components:
             settings = body.get("settings", {}) or {}
             settings_config = settings.get("config") or {}
-            agent_models, agent_configs = collect_agents_from_diagrams(
+            agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
                 _get_all("AgentDiagram"),
                 default_config=settings_config,
             )
@@ -430,6 +433,7 @@ async def deploy_webapp_to_github(
                 output_dir=temp_dir,
                 agent_models=agent_models,
                 agent_configs=agent_configs,
+                agent_config_yamls=agent_config_yamls,
             )
             generator.generate()
 
@@ -596,6 +600,26 @@ async def deploy_webapp_to_github(
         # original message so the frontend can surface the cause to the user.
         logger.exception("Generation error in deploy_webapp_to_github")
         raise HTTPException(status_code=500, detail=str(e)) from e
+    except httpx.HTTPStatusError as e:
+        # GitHub API rejected the request (e.g. 422 "name already exists on
+        # this account", 403 rate limit, 401 expired token). Forward a useful
+        # message to the frontend instead of swallowing it as a generic 500.
+        logger.warning("GitHub API error in deploy_webapp_to_github", exc_info=True)
+        upstream_status = e.response.status_code if e.response is not None else 502
+        detail = _extract_github_error_message(e)
+        if upstream_status == 401:
+            raise HTTPException(status_code=401, detail=detail) from e
+        if upstream_status == 403:
+            raise HTTPException(status_code=403, detail=detail) from e
+        if upstream_status == 422:
+            # 409 Conflict is the most accurate mapping for "repository name
+            # already exists on this account" — the frontend can show a
+            # rename / overwrite popup instead of a generic error.
+            raise HTTPException(status_code=409, detail=detail) from e
+        if 400 <= upstream_status < 500:
+            raise HTTPException(status_code=upstream_status, detail=detail) from e
+        # 5xx from GitHub becomes 502 Bad Gateway.
+        raise HTTPException(status_code=502, detail=f"GitHub upstream error: {detail}") from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
@@ -604,6 +628,42 @@ async def deploy_webapp_to_github(
             status_code=500,
             detail="An internal error occurred during GitHub deployment."
         )
+
+
+def _extract_github_error_message(error: httpx.HTTPStatusError) -> str:
+    """Pull the most user-actionable message out of a GitHub API error response.
+
+    GitHub returns a JSON body shaped like:
+        {"message": "Validation Failed",
+         "errors": [{"resource": "Repository", "field": "name",
+                     "message": "name already exists on this account"}]}
+
+    The nested ``errors[*].message`` is what the user actually needs to see;
+    fall back to the top-level ``message`` and finally to the HTTP reason.
+    """
+    response = error.response
+    if response is None:
+        return str(error)
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text or f"GitHub returned HTTP {response.status_code}"
+
+    if isinstance(payload, dict):
+        errors = payload.get("errors")
+        if isinstance(errors, list) and errors:
+            messages = [
+                item.get("message")
+                for item in errors
+                if isinstance(item, dict) and item.get("message")
+            ]
+            if messages:
+                return "; ".join(messages)
+        top_level = payload.get("message")
+        if isinstance(top_level, str) and top_level:
+            return top_level
+
+    return f"GitHub returned HTTP {response.status_code}"
 
 
 def _sanitize_repo_name(name: str) -> str:

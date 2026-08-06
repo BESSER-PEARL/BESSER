@@ -147,10 +147,12 @@ import torch.nn.functional as F
                     {%- set hidden_source_var = module_details[3].hidden_subscript_source if (module_details[3].hidden_subscript_source is defined and module_details[3].hidden_subscript_source) else module_details[4] -%}
                     {%- if hidden_target_var %}
         {{ hidden_target_var }} = {{ hidden_source_var }}[-1]
+                        {%- set return_variable.value = hidden_target_var -%}
                     {%- else %}
                         {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
                         {%- if hidden_output_var and hidden_output_var != module_details[4] %}
         {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                            {%- set return_variable.value = hidden_output_var -%}
                         {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
                         {%- endif %}
@@ -174,10 +176,12 @@ import torch.nn.functional as F
                     {%- set hidden_source_var = module_details[3].hidden_subscript_source if (module_details[3].hidden_subscript_source is defined and module_details[3].hidden_subscript_source) else module_details[4] -%}
                     {%- if hidden_target_var %}
         {{ hidden_target_var }} = {{ hidden_source_var }}[-1]
+                        {%- set return_variable.value = hidden_target_var -%}
                     {%- else %}
                         {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
                         {%- if hidden_output_var and hidden_output_var != module_details[4] %}
         {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                            {%- set return_variable.value = hidden_output_var -%}
                         {%- else %}
         {{ module_details[4] }} = {{ module_details[4] }}[-1]
                         {%- endif %}
@@ -198,10 +202,18 @@ import torch.nn.functional as F
         {%- endif -%}
         {%- endif -%}
     {%- endif -%}
+    {# Update return_variable for non-RNN layers or RNN layers without special subscripting #}
     {%- if module_name.endswith("nn") %}
-    {%- set return_variable.value =  module_details["in_out_variable"] %}
+        {%- set return_variable.value = module_details["in_out_variable"] %}
+    {%- elif module_name.endswith("layer") and module_details|length > 3 and module_details[3] is defined and module_details[3].__class__.mro()[1].__name__ == "RNN" %}
+        {# For RNN layers, only update if no special subscript target was set #}
+        {%- if not (module_details[3].hidden_subscript_target is defined and module_details[3].hidden_subscript_target) %}
+            {%- if not (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var and module_details[3].hidden_state_var != module_details[4]) %}
+                {%- set return_variable.value = module_details[1] %}
+            {%- endif %}
+        {%- endif %}
     {%- else %}
-    {%- set return_variable.value =  module_details[1] %}
+        {%- set return_variable.value = module_details[1] %}
     {%- endif -%}
     {%- endfor %}
     {%- if model and model.return_vars %}

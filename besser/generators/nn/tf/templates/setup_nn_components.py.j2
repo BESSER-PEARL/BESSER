@@ -101,8 +101,9 @@
         {%- set layer_details = modules_details[layer_name + '_layer'] -%}
         {%- if layer_details|length > 3 and layer_details[3] is defined -%}
             {%- set layer_obj = layer_details[3] -%}
-            {%- if layer_obj.hidden_subscript_source is defined and layer_obj.hidden_subscript_target is defined -%}
-                {%- set tuple_var = layer_obj.hidden_subscript_source -%}
+            {%- if layer_obj.hidden_subscript_target is defined and layer_obj.hidden_subscript_target -%}
+                {# Use explicit source if defined, otherwise default to the hidden state variable (module_details[4]) #}
+                {%- set tuple_var = layer_obj.hidden_subscript_source if (layer_obj.hidden_subscript_source is defined and layer_obj.hidden_subscript_source) else layer_details[4] -%}
                 {%- set subscript_var = layer_obj.hidden_subscript_target -%}
                 {%- if tuple_var and subscript_var and tuple_var != subscript_var %}
         {{ subscript_var }} = {{ tuple_var }}
@@ -349,7 +350,16 @@ from datetime import datetime
         {%- set output_var = vars.split('|||')[0] %}
     {%- set return_variable.value =  output_var %}
     {%- else %}
+        {%- if module_details|length > 3 and module_details[3] is defined -%}
+            {%- set layer_obj = module_details[3] -%}
+            {%- if layer_obj.hidden_subscript_target is defined and layer_obj.hidden_subscript_target -%}
+    {%- set return_variable.value = layer_obj.hidden_subscript_target %}
+            {%- else -%}
     {%- set return_variable.value =  module_details[1] %}
+            {%- endif -%}
+        {%- else -%}
+    {%- set return_variable.value =  module_details[1] %}
+        {%- endif -%}
     {%- endif %}
     {%- endfor %}
         {%- if model.return_vars is defined and model.return_vars %}

@@ -1396,8 +1396,26 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         transition_payload["targetValue"] = kw.value.value
                             elif chain_attr == "when_file_received":
                                 condition_name = "when_file_received"
-                                if call_chain.args and isinstance(call_chain.args[0], ast.Constant):
-                                    transition_payload = call_chain.args[0].value
+                                _reverse_mime = {
+                                    "application/pdf": "pdf",
+                                    "text/plain": "txt",
+                                    "application/json": "json",
+                                    "text/csv": "csv",
+                                    "text/xml": "xml",
+                                    "image/png": "png",
+                                    "image/jpeg": "jpg",
+                                    "image/gif": "gif",
+                                    "audio/mpeg": "mp3",
+                                    "video/mp4": "mp4",
+                                }
+                                if call_chain.args:
+                                    arg = call_chain.args[0]
+                                    if isinstance(arg, ast.Constant):
+                                        raw = arg.value
+                                        transition_payload = _reverse_mime.get(raw, raw)
+                                    elif isinstance(arg, ast.List):
+                                        values = [elt.value for elt in arg.elts if isinstance(elt, ast.Constant)]
+                                        transition_payload = ", ".join(_reverse_mime.get(v, v) for v in values)
                             elif chain_attr == "when_event":
                                 condition_name = "custom_transition"
                                 selected_event = "None"

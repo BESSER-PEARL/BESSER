@@ -368,6 +368,9 @@ def process_agent_diagram(json_data):
     model_data = json_data.get('model') or {}
     elements = model_data.get('elements') or {}
     relationships = model_data.get('relationships') or {}
+    # Agent components (LLMs, intents, tools, skills, workspaces, RAGs) are stored
+    # separately from the canvas model to keep the canvas clean.
+    elements = {**elements, **(json_data.get('agentComponents') or {})}
 
     # Track states and bodies for later reference
     states_by_id = {}
@@ -823,26 +826,32 @@ def process_agent_diagram(json_data):
                         transition_count += 1
 
                 elif condition_name == "when_file_received":
-                    mime_types = {
-                        "PDF": "application/pdf",
-                        "TXT": "text/plain",
-                        "JSON": "application/json"
+                    _mime_map = {
+                        "pdf": "application/pdf",
+                        "txt": "text/plain",
+                        "json": "application/json",
+                        "csv": "text/csv",
+                        "xml": "text/xml",
+                        "png": "image/png",
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "gif": "image/gif",
+                        "mp3": "audio/mpeg",
+                        "mp4": "video/mp4",
                     }
-                    if isinstance(transition_payload, str) and "/" in transition_payload:
-                        file_type = transition_payload
+                    if isinstance(transition_payload, str) and transition_payload.strip():
+                        tokens = [t.strip() for t in transition_payload.split(",") if t.strip()]
+                        resolved = [
+                            token if "/" in token else _mime_map.get(token.lower(), token)
+                            for token in tokens
+                        ]
+                        if len(resolved) == 1:
+                            source_state.when_file_received(resolved[0]).go_to(target_state)
+                        else:
+                            source_state.when_file_received(resolved).go_to(target_state)
                     else:
-                        file_type = mime_types.get(transition_payload)
-                    if file_type:
-                        source_state.when_file_received(file_type).go_to(target_state)
-                        transition_count += 1
-                    else:
-                        logger.warning(
-                            "Unknown file type '%s' for when_file_received transition from '%s' to '%s'. "
-                            "Falling back to when_file_received() without type filter.",
-                            transition_payload, source_state.name, target_state.name,
-                        )
                         source_state.when_file_received().go_to(target_state)
-                        transition_count += 1
+                    transition_count += 1
 
                 elif condition_name == "auto":
                     source_state.go_to(target_state)

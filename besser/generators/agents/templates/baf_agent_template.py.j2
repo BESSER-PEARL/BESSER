@@ -1294,7 +1294,7 @@ def {{ fallback_name }}(session: Session):
 {% elif transition_conditions|length == 1 and primary_condition and (not transition.event) and is_class(primary_condition, 'VariableOperationMatcher') %}
 {{ state_name }}.when_variable_matches_operation('{{ primary_condition.var_name }}', operator.{{ primary_condition.operation.__name__ }}, '{{ primary_condition.target }}').go_to({{ dest_name }})
 {% elif transition_conditions|length == 1 and primary_condition and transition.event and is_class(primary_condition, 'FileTypeMatcher') %}
-{{ state_name }}.when_file_received({% if primary_condition.allowed_types %}{% if is_type(primary_condition.allowed_types, 'str') %}'{{ primary_condition.allowed_types }}'{% else %}{{ primary_condition.allowed_types }}{% endif %}{% endif %}).go_to({{ dest_name }})
+{{ state_name }}.when_file_received({% if primary_condition.allowed_types %}{% if is_type(primary_condition.allowed_types, 'list') %}[{% for t in primary_condition.allowed_types %}'{{ t }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% else %}'{{ primary_condition.allowed_types }}'{% endif %}{% endif %}).go_to({{ dest_name }})
 {% elif transition_conditions|length == 1 and primary_condition and (not transition.event) and is_class(primary_condition, 'Auto')%}
 {{ state_name }}.go_to({{ dest_name }})
 {% set auto_ns.found = True %}

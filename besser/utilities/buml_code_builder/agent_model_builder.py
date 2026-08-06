@@ -678,7 +678,11 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     elif event_class == "ReceiveFileEvent" and condition_class == "FileTypeMatcher":
                         file_type = condition.allowed_types
                         if file_type:
-                            f.write(f"{state_var}.when_file_received('{_escape_python_string(str(file_type))}').go_to({dest_var})\n")
+                            if isinstance(file_type, list):
+                                list_literal = "[" + ", ".join(f"'{_escape_python_string(t)}'" for t in file_type) + "]"
+                                f.write(f"{state_var}.when_file_received({list_literal}).go_to({dest_var})\n")
+                            else:
+                                f.write(f"{state_var}.when_file_received('{_escape_python_string(str(file_type))}').go_to({dest_var})\n")
                         else:
                             f.write(f"{state_var}.when_file_received().go_to({dest_var})\n")
 

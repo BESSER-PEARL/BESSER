@@ -590,10 +590,20 @@ def _write_layer_norm(f, layer: LayerNormLayer, var_name: str):
     ]
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
+    if _is_attr_set(layer, 'eps'):
+        params.append(f"eps={layer.eps}")
+    if _is_attr_set(layer, 'affine'):
+        params.append(f"affine={layer.affine}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = LayerNormLayer({', '.join(params)})\n")
 
@@ -607,10 +617,24 @@ def _write_batch_norm(f, layer: BatchNormLayer, var_name: str):
     ]
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
+    if _is_attr_set(layer, 'eps'):
+        params.append(f"eps={layer.eps}")
+    if _is_attr_set(layer, 'momentum'):
+        params.append(f"momentum={layer.momentum}")
+    if _is_attr_set(layer, 'affine'):
+        params.append(f"affine={layer.affine}")
+    if _is_attr_set(layer, 'track_running_stats'):
+        params.append(f"track_running_stats={layer.track_running_stats}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = BatchNormLayer({', '.join(params)})\n")
 

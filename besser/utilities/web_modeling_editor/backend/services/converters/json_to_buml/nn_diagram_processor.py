@@ -1516,6 +1516,31 @@ def create_layer_norm_layer(element, elements):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    eps = get_element_attribute(element, 'EpsAttribute', elements)
+    if eps is not None and str(eps).strip() != '':
+        layer.eps = float(eps)
+        mark_explicit(layer, 'eps')
+
+    affine = get_element_attribute(element, 'AffineAttribute', elements)
+    if affine is not None:
+        layer.affine = parse_bool(affine)
+        mark_explicit(layer, 'affine')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1554,6 +1579,41 @@ def create_batch_norm_layer(element, elements):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    eps = get_element_attribute(element, 'EpsAttribute', elements)
+    if eps is not None and str(eps).strip() != '':
+        layer.eps = float(eps)
+        mark_explicit(layer, 'eps')
+
+    momentum = get_element_attribute(element, 'MomentumAttribute', elements)
+    if momentum is not None and str(momentum).strip() != '':
+        layer.momentum = float(momentum)
+        mark_explicit(layer, 'momentum')
+
+    affine = get_element_attribute(element, 'AffineAttribute', elements)
+    if affine is not None:
+        layer.affine = parse_bool(affine)
+        mark_explicit(layer, 'affine')
+
+    track_running_stats = get_element_attribute(element, 'TrackRunningStatsAttribute', elements)
+    if track_running_stats is not None:
+        layer.track_running_stats = parse_bool(track_running_stats)
+        mark_explicit(layer, 'track_running_stats')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
 
     return layer
 

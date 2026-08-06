@@ -191,7 +191,9 @@ class SetupLayerSyntax:
                 return self._build_layernorm_tf(lyr_name)
         else: # cls_name == "DropoutLayer"
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
-                return f"self.{lyr_name} = layers.SpatialDropout{self.layer.dimension}D(rate={self.layer.rate})"
+                # Strip 'D' suffix if present (e.g., '1D' -> '1', '2D' -> '2')
+                dim_num = self.layer.dimension.rstrip('D')
+                return f"self.{lyr_name} = layers.SpatialDropout{dim_num}D(rate={self.layer.rate})"
             else:
                 return f"self.{lyr_name} = layers.Dropout(rate={self.layer.rate})"
 

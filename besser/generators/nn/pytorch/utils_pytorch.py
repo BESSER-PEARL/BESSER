@@ -126,13 +126,16 @@ class SetupLayerSyntax:
             # Set permute flags for channel order conversion
             self.permute_out = self.layer.permute_out
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
-                self.dim = self.layer.dimension
+                # Strip 'D' suffix if present (e.g., '1D' -> '1', '2D' -> '2')
+                self.dim = self.layer.dimension.rstrip('D')
             else:
                 self.dim = "1"  # Default dimension for regular Dropout
 
             # Use Dropout1d/2d/3d for spatial variants, regular Dropout otherwise
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
-                lyr = f"{lyr}.Dropout{self.layer.dimension}d(p={self.layer.rate})"
+                # Strip 'D' suffix if present (e.g., '1D' -> '1', '2D' -> '2')
+                dim_num = self.layer.dimension.rstrip('D')
+                lyr = f"{lyr}.Dropout{dim_num}d(p={self.layer.rate})"
             else:
                 lyr = f"{lyr}.Dropout(p={self.layer.rate})"
         return lyr

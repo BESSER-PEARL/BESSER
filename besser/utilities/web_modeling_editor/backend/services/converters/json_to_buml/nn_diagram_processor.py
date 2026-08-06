@@ -142,6 +142,10 @@ _ATTR_KEY_TO_NAME = {
     'InputReusedAttribute': 'input_reused',
     'PermuteInAttribute': 'permute_in',
     'PermuteOutAttribute': 'permute_out',
+    'BiasAttribute': 'bias',
+    'IsLayerCallAttribute': 'is_layer_call',
+    'InputVarAttribute': 'input_var',
+    'OutputVarAttribute': 'output_var',
     'PoolingTypeAttribute': 'pooling_type',
     'DimensionAttribute': 'dimension',
     'OutputDimAttribute': 'output_dim',
@@ -151,6 +155,13 @@ _ATTR_KEY_TO_NAME = {
     'BidirectionalAttribute': 'bidirectional',
     'DropoutAttribute': 'dropout',
     'BatchFirstAttribute': 'batch_first',
+    'HxSourceAttribute': 'hx_source',
+    'HiddenStateVarAttribute': 'hidden_state_var',
+    'HiddenUnusedAttribute': 'hidden_unused',
+    'HiddenSubscriptSourceAttribute': 'hidden_subscript_source',
+    'HiddenSubscriptTargetAttribute': 'hidden_subscript_target',
+    'CellStateVarAttribute': 'cell_state_var',
+    'CellUnusedAttribute': 'cell_unused',
     'OutFeaturesAttribute': 'out_features',
     'InFeaturesAttribute': 'in_features',
     'StartDimAttribute': 'start_dim',
@@ -957,6 +968,44 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
         layer.permute_out = parse_bool(permute_out)
         mark_explicit(layer, 'permute_out')
 
+    # New attributes added for Conv layers
+    dilation = get_element_attribute(element, 'DilationAttribute', elements)
+    if dilation is not None:
+        dilation_parsed = parse_list_of_ints(dilation)
+        if dilation_parsed is not None:
+            if expected_dim is not None and len(dilation_parsed) != expected_dim:
+                raise ValueError(
+                    f"{class_name} layer '{name}' dilation has "
+                    f"{len(dilation_parsed)} element(s), expected {expected_dim}."
+                )
+            layer.dilation = dilation_parsed
+            mark_explicit(layer, 'dilation')
+
+    groups = get_element_attribute(element, 'GroupsAttribute', elements)
+    if groups is not None:
+        layer.groups = parse_tuple_or_int(groups)
+        mark_explicit(layer, 'groups')
+
+    bias = get_element_attribute(element, 'BiasAttribute', elements)
+    if bias is not None:
+        layer.bias = parse_bool(bias)
+        mark_explicit(layer, 'bias')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1126,6 +1175,63 @@ def _create_rnn_like_layer(element, elements, rnn_class):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    bias = get_element_attribute(element, 'BiasAttribute', elements)
+    if bias is not None:
+        layer.bias = parse_bool(bias)
+        mark_explicit(layer, 'bias')
+
+    hx_source = get_element_attribute(element, 'HxSourceAttribute', elements)
+    if hx_source is not None and str(hx_source).strip() != '':
+        layer.hx_source = hx_source
+        mark_explicit(layer, 'hx_source')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
+    hidden_state_var = get_element_attribute(element, 'HiddenStateVarAttribute', elements)
+    if hidden_state_var is not None and str(hidden_state_var).strip() != '':
+        layer.hidden_state_var = hidden_state_var
+        mark_explicit(layer, 'hidden_state_var')
+
+    hidden_unused = get_element_attribute(element, 'HiddenUnusedAttribute', elements)
+    if hidden_unused is not None:
+        layer.hidden_unused = parse_bool(hidden_unused)
+        mark_explicit(layer, 'hidden_unused')
+
+    hidden_subscript_source = get_element_attribute(element, 'HiddenSubscriptSourceAttribute', elements)
+    if hidden_subscript_source is not None and str(hidden_subscript_source).strip() != '':
+        layer.hidden_subscript_source = hidden_subscript_source
+        mark_explicit(layer, 'hidden_subscript_source')
+
+    hidden_subscript_target = get_element_attribute(element, 'HiddenSubscriptTargetAttribute', elements)
+    if hidden_subscript_target is not None and str(hidden_subscript_target).strip() != '':
+        layer.hidden_subscript_target = hidden_subscript_target
+        mark_explicit(layer, 'hidden_subscript_target')
+
+    # LSTM-specific attributes
+    if rnn_class.__name__ == 'LSTMLayer':
+        cell_state_var = get_element_attribute(element, 'CellStateVarAttribute', elements)
+        if cell_state_var is not None and str(cell_state_var).strip() != '':
+            layer.cell_state_var = cell_state_var
+            mark_explicit(layer, 'cell_state_var')
+
+        cell_unused = get_element_attribute(element, 'CellUnusedAttribute', elements)
+        if cell_unused is not None:
+            layer.cell_unused = parse_bool(cell_unused)
+            mark_explicit(layer, 'cell_unused')
 
     return layer
 

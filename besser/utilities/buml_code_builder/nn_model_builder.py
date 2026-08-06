@@ -380,6 +380,14 @@ def _write_conv(f, layer, var_name: str):
         params.append(f"permute_in={layer.permute_in}")
     if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
+    if _is_attr_set(layer, 'bias'):
+        params.append(f"bias={layer.bias}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
 
@@ -440,6 +448,30 @@ def _write_rnn_like(f, layer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'bias'):
+        params.append(f"bias={layer.bias}")
+    if _is_attr_set(layer, 'hx_source') and layer.hx_source:
+        params.append(f"hx_source='{_esc(layer.hx_source)}'")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
+    if _is_attr_set(layer, 'hidden_state_var') and layer.hidden_state_var:
+        params.append(f"hidden_state_var='{_esc(layer.hidden_state_var)}'")
+    if _is_attr_set(layer, 'hidden_unused'):
+        params.append(f"hidden_unused={layer.hidden_unused}")
+    if _is_attr_set(layer, 'hidden_subscript_source') and layer.hidden_subscript_source:
+        params.append(f"hidden_subscript_source='{_esc(layer.hidden_subscript_source)}'")
+    if _is_attr_set(layer, 'hidden_subscript_target') and layer.hidden_subscript_target:
+        params.append(f"hidden_subscript_target='{_esc(layer.hidden_subscript_target)}'")
+    # LSTM-specific attributes
+    if class_name == 'LSTMLayer':
+        if _is_attr_set(layer, 'cell_state_var') and layer.cell_state_var:
+            params.append(f"cell_state_var='{_esc(layer.cell_state_var)}'")
+        if _is_attr_set(layer, 'cell_unused'):
+            params.append(f"cell_unused={layer.cell_unused}")
 
     f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
 

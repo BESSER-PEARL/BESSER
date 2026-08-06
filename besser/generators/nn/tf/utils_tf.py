@@ -165,18 +165,12 @@ class SetupLayerSyntax:
         center = "True" if self.layer.affine else "False"
         scale = "True" if self.layer.affine else "False"
 
-        if isinstance(norm_shape, list):
-            num_axes = len(norm_shape)
-            axis_indices = list(range(-num_axes, 0))
-            return (
-                f"self.{lyr_name} = layers.LayerNormalization(axis={axis_indices}, "
-                f"epsilon={epsilon}, center={center}, scale={scale})"
-            )
-        else:
-            return (
-                f"self.{lyr_name} = layers.LayerNormalization(axis=-1, epsilon={epsilon}, "
-                f"center={center}, scale={scale})"
-            )
+        num_axes = len(norm_shape)
+        axis_indices = list(range(-num_axes, 0))
+        return (
+            f"self.{lyr_name} = layers.LayerNormalization(axis={axis_indices}, "
+            f"epsilon={epsilon}, center={center}, scale={scale})"
+        )
 
     def setup_layer_modifier(self):
         """It defines the syntax of layers' modifiers."""

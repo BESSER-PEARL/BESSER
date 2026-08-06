@@ -1883,9 +1883,10 @@ class LayerNormLayer(NormalizationLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        normalized_shape (List[int]): A list refering to the dimensions
-            or axis indices over which layer normalization is applied,
-            specifying which parts of the tensor are normalized.
+        normalized_shape (List[int]): A list of integers specifying 
+            the shape of the trailing dimensions over which layer 
+            normalization is applied. These correspond to the last N 
+            dimensions of the input tensor.
         eps (float): Epsilon for numerical stability (default: 1e-5).
         affine (bool): Whether to learn affine parameters gamma/beta (default: True).
         name_module_input (str): The name of the layer from which the
@@ -1902,9 +1903,10 @@ class LayerNormLayer(NormalizationLayer):
             the layer.
         actv_func (str): Inherited from Layer. It represents the type of
             the activation function.
-        normalized_shape (List[int]): A list refering to the dimensions
-            or axis indices over which layer normalization is applied,
-            specifying which parts of the tensor are normalized.
+        normalized_shape (List[int]): A list of integers specifying 
+            the shape of the trailing dimensions over which layer 
+            normalization is applied. These correspond to the last N 
+            dimensions of the input tensor.
         eps (float): Inherited from NormalizationLayer. Epsilon value for numerical stability.
         affine (bool): Inherited from NormalizationLayer. Whether to learn affine parameters (gamma/beta).
         name_module_input (str): Inherited from Layer. The name of the

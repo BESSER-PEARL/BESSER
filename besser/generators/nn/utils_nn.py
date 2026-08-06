@@ -68,11 +68,17 @@ def get_previous_out_var(modules_details: dict, prev_module: str):
                 # Use hidden variable (element [4]) instead of output variable (element [1])
                 return module_data[4]
             # Check if there's a __hidden subscript that created a different output variable
-            # For example: x = h[-1] creates rnn__hidden entry with output var 'x'
+            # For example: xx6 = xx5[-1] creates rnn layer with hidden_subscript_target='xx6'
             if (hasattr(layer_obj, 'return_type') and
                 layer_obj.return_type == "hidden" and
                 hasattr(layer_obj, 'hidden_state_var') and layer_obj.hidden_state_var):
-                # Use the hidden_state_var from layer object
+                # Priority: hidden_subscript_target > hidden_state_var
+                # If hidden_subscript_target is defined, that's the actual output (e.g., xx6 from xx6 = xx5[-1])
+                # The next layer should use xx6 as input, not xx5
+                # Note: get_input_var() will override this if the next layer has explicit input_var
+                if (hasattr(layer_obj, 'hidden_subscript_target') and layer_obj.hidden_subscript_target):
+                    return layer_obj.hidden_subscript_target
+                # Otherwise, use the hidden_state_var from layer object
                 return layer_obj.hidden_state_var
         return module_data[1]
 

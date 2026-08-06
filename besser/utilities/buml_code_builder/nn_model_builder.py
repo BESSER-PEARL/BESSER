@@ -544,10 +544,18 @@ def _write_embedding(f, layer: EmbeddingLayer, var_name: str):
     ]
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
+    if _is_attr_set(layer, 'padding_idx'):
+        params.append(f"padding_idx={layer.padding_idx}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = EmbeddingLayer({', '.join(params)})\n")
 
@@ -558,10 +566,18 @@ def _write_dropout(f, layer: DropoutLayer, var_name: str):
         f"name='{_esc(layer.name)}'",
         f"rate={layer.rate}",
     ]
+    if _is_attr_set(layer, 'dimension'):
+        params.append(f"dimension='{_esc(layer.dimension)}'")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = DropoutLayer({', '.join(params)})\n")
 

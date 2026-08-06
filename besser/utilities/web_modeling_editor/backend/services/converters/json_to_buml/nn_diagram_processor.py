@@ -168,6 +168,7 @@ _ATTR_KEY_TO_NAME = {
     'EndDimAttribute': 'end_dim',
     'NumEmbeddingsAttribute': 'num_embeddings',
     'EmbeddingDimAttribute': 'embedding_dim',
+    'PaddingIdxAttribute': 'padding_idx',
     'RateAttribute': 'rate',
     'NormalizedShapeAttribute': 'normalized_shape',
     'NumFeaturesAttribute': 'num_features',
@@ -1413,6 +1414,26 @@ def create_embedding_layer(element, elements):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    padding_idx = get_element_attribute(element, 'PaddingIdxAttribute', elements)
+    if padding_idx is not None and str(padding_idx).strip() != '':
+        layer.padding_idx = parse_tuple_or_int(padding_idx)
+        mark_explicit(layer, 'padding_idx')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1441,6 +1462,26 @@ def create_dropout_layer(element, elements):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    dimension = get_element_attribute(element, 'DimensionAttribute', elements)
+    if dimension is not None and str(dimension).strip() != '':
+        layer.dimension = dimension
+        mark_explicit(layer, 'dimension')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
 
     return layer
 

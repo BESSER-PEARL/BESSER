@@ -1113,6 +1113,21 @@ def create_pooling_layer(element, elements):
         layer.permute_out = parse_bool(permute_out)
         mark_explicit(layer, 'permute_out')
 
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1285,6 +1300,26 @@ def create_linear_layer(element, elements):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    bias = get_element_attribute(element, 'BiasAttribute', elements)
+    if bias is not None:
+        layer.bias = parse_bool(bias)
+        mark_explicit(layer, 'bias')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1323,6 +1358,21 @@ def create_flatten_layer(element, elements):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
 
     return layer
 

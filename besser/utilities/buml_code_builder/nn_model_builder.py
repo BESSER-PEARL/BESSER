@@ -421,6 +421,12 @@ def _write_pooling(f, layer: PoolingLayer, var_name: str):
         params.append(f"permute_in={layer.permute_in}")
     if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = PoolingLayer({', '.join(params)})\n")
 
@@ -490,6 +496,14 @@ def _write_linear(f, layer: LinearLayer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'bias'):
+        params.append(f"bias={layer.bias}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = LinearLayer({', '.join(params)})\n")
 
@@ -511,6 +525,12 @@ def _write_flatten(f, layer: FlattenLayer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = FlattenLayer({', '.join(params)})\n")
 

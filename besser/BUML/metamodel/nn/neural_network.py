@@ -1429,8 +1429,6 @@ class PoolingLayer(CNN):
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
         pooling_type (str): The type of pooling. Either average or max.
-        dimension (str): The dimensionality of the pooling. Either 1D, 2D
-            or 3D.
         output_dim (List[int]): The output dimensions of the adaptive
             pooling operation. Only relevant for adaptive pooling.
         permute_in (bool): Whether the dimensions of the input need
@@ -1445,6 +1443,8 @@ class PoolingLayer(CNN):
             input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the
@@ -1464,8 +1464,6 @@ class PoolingLayer(CNN):
         padding_type (str): Inherited from CNN. It represents the type of
             padding applied to the input.
         pooling_type (str): The type of pooling. Either average or max.
-        dimension (str): The dimensionality of the pooling. Either 1D, 2D
-            or 3D.
         output_dim (List[int]): The output dimensions of the adaptive
             pooling operation. Only relevant for adaptive pooling.
         permute_in (bool): Inherited from CNN. Whether the dimensions of
@@ -1639,6 +1637,8 @@ class LayerModifier(Layer):
             input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the
@@ -1679,6 +1679,8 @@ class NormalizationLayer(LayerModifier):
             input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1765,6 +1767,8 @@ class BatchNormLayer(NormalizationLayer):
             input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1890,6 +1894,8 @@ class LayerNormLayer(NormalizationLayer):
             as input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -1963,6 +1969,8 @@ class DropoutLayer(LayerModifier):
             input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2570,6 +2578,8 @@ class GeneralLayer(Layer):
             as input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2610,6 +2620,8 @@ class LinearLayer(GeneralLayer):
             as input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2693,6 +2705,8 @@ class FlattenLayer(GeneralLayer):
             reused as input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2766,6 +2780,8 @@ class EmbeddingLayer(GeneralLayer):
             as input to another layer.
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of

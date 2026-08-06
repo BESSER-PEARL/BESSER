@@ -2053,9 +2053,11 @@ class RNN(Layer):
         hidden_state_var (str): Variable name for hidden state output.
         cell_state_var (str): Variable name for cell state output (LSTM only).
         hidden_unused (bool): Whether hidden state output is unused by subsequent layers.
-        cell_unused (bool): Whether cell state output is unused by subsequent layers.
+        cell_unused (bool): Whether cell state output is unused by subsequent layers (LSTM only).
         hidden_subscript_source (str): Source variable for hidden subscript assignment (e.g., 'h' in 'x = h').
         hidden_subscript_target (str): Target variable for hidden subscript assignment (e.g., 'x' in 'x = h').
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2088,7 +2090,7 @@ class RNN(Layer):
         hidden_state_var (str): Variable name for hidden state output.
         cell_state_var (str): Variable name for cell state output (LSTM only).
         hidden_unused (bool): Whether hidden state output is unused by subsequent layers.
-        cell_unused (bool): Whether cell state output is unused by subsequent layers.
+        cell_unused (bool): Whether cell state output is unused by subsequent layers (LSTM only).
         hidden_subscript_source (str): Source variable for hidden subscript assignment (e.g., 'h' in 'x = h').
         hidden_subscript_target (str): Target variable for hidden subscript assignment (e.g., 'x' in 'x = h').
     """
@@ -2253,12 +2255,12 @@ class RNN(Layer):
 
     @property
     def cell_unused(self) -> bool:
-        """bool: Get whether cell state output is unused by subsequent layers."""
+        """bool: Get whether cell state output is unused by subsequent layers (LSTM only)."""
         return self.__cell_unused
 
     @cell_unused.setter
     def cell_unused(self, cell_unused: bool):
-        """bool: Set whether cell state output is unused by subsequent layers."""
+        """bool: Set whether cell state output is unused by subsequent layers (LSTM only)."""
         self.__cell_unused = cell_unused
 
     @property
@@ -2289,7 +2291,8 @@ class RNN(Layer):
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
             f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
             f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
-            f'{self.cell_unused})'
+            f'{self.cell_unused}, {self.hidden_subscript_source}, '
+            f'{self.hidden_subscript_target})'
         )
 
 class SimpleRNNLayer(RNN):
@@ -2322,6 +2325,12 @@ class SimpleRNNLayer(RNN):
             (used in encoder-decoder architectures).
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
+        hidden_state_var (str): Variable name for hidden state output.
+        hidden_unused (bool): Whether hidden state output is unused.
+        hidden_subscript_source (str): Source variable for hidden subscript assignment.
+        hidden_subscript_target (str): Target variable for hidden subscript assignment.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2355,9 +2364,7 @@ class SimpleRNNLayer(RNN):
         input_var (str): Inherited from Layer. Input variable name for this layer.
         output_var (str): Inherited from Layer. Output variable name for this layer.
         hidden_state_var (str): Inherited from RNN. Variable name for hidden state output.
-        cell_state_var (str): Inherited from RNN. Variable name for cell state output (LSTM only).
         hidden_unused (bool): Inherited from RNN. Whether hidden state output is unused.
-        cell_unused (bool): Inherited from RNN. Whether cell state output is unused.
         hidden_subscript_source (str): Inherited from RNN. Source variable for hidden subscript assignment.
         hidden_subscript_target (str): Inherited from RNN. Target variable for hidden subscript assignment.
     """
@@ -2369,8 +2376,8 @@ class SimpleRNNLayer(RNN):
             f'{self.dropout}, {self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
             f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
-            f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
-            f'{self.cell_unused}, {self.hidden_subscript_source}, '
+            f'{self.hidden_state_var}, {None}, {self.hidden_unused}, '
+            f'{None}, {self.hidden_subscript_source}, '
             f'{self.hidden_subscript_target})'
         )
 
@@ -2403,6 +2410,14 @@ class LSTMLayer(RNN):
             (used in encoder-decoder architectures).
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
+        hidden_state_var (str): Variable name for hidden state output.
+        cell_state_var (str): Variable name for cell state output (LSTM only).
+        hidden_unused (bool): Whether hidden state output is unused.
+        cell_unused (bool): Whether cell state output is unused (LSTM only).
+        hidden_subscript_source (str): Source variable for hidden subscript assignment.
+        hidden_subscript_target (str): Target variable for hidden subscript assignment.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2436,7 +2451,7 @@ class LSTMLayer(RNN):
         input_var (str): Inherited from Layer. Input variable name for this layer.
         output_var (str): Inherited from Layer. Output variable name for this layer.
         hidden_state_var (str): Inherited from RNN. Variable name for hidden state output.
-        cell_state_var (str): Inherited from RNN. Variable name for cell state output (LSTM only).
+        cell_state_var (str): Inherited from RNN. Variable name for cell state output.
         hidden_unused (bool): Inherited from RNN. Whether hidden state output is unused.
         cell_unused (bool): Inherited from RNN. Whether cell state output is unused.
         hidden_subscript_source (str): Inherited from RNN. Source variable for hidden subscript assignment.
@@ -2484,6 +2499,13 @@ class GRULayer(RNN):
             (used in encoder-decoder architectures).
         is_layer_call (bool): True if this represents a call to an already-defined
             layer (layer reuse).
+        input_var (str): Input variable name for this layer.
+        output_var (str): Output variable name for this layer.
+        hidden_state_var (str): Variable name for hidden state output.
+        hidden_unused (bool): Whether hidden state output is unused.
+        hidden_subscript_source (str): Source variable for hidden subscript assignment.
+        hidden_subscript_target (str): Target variable for hidden subscript assignment.
+        
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of
@@ -2517,9 +2539,7 @@ class GRULayer(RNN):
         input_var (str): Inherited from Layer. Input variable name for this layer.
         output_var (str): Inherited from Layer. Output variable name for this layer.
         hidden_state_var (str): Inherited from RNN. Variable name for hidden state output.
-        cell_state_var (str): Inherited from RNN. Variable name for cell state output (LSTM only).
         hidden_unused (bool): Inherited from RNN. Whether hidden state output is unused.
-        cell_unused (bool): Inherited from RNN. Whether cell state output is unused.
         hidden_subscript_source (str): Inherited from RNN. Source variable for hidden subscript assignment.
         hidden_subscript_target (str): Inherited from RNN. Target variable for hidden subscript assignment.
     """
@@ -2531,8 +2551,8 @@ class GRULayer(RNN):
             f'{self.batch_first}, {self.bias}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, {self.hx_source}, '
             f'{self.is_layer_call}, {self.input_var}, {self.output_var}, '
-            f'{self.hidden_state_var}, {self.cell_state_var}, {self.hidden_unused}, '
-            f'{self.cell_unused}, {self.hidden_subscript_source}, '
+            f'{self.hidden_state_var}, {None}, {self.hidden_unused}, '
+            f'{None}, {self.hidden_subscript_source}, '
             f'{self.hidden_subscript_target})'
         )
 

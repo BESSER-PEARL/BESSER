@@ -77,7 +77,7 @@ class SetupLayerSyntax:
                 remap_lyr = (
                     f"self.{lyr_name}_remap = layers.Lambda("
                     f"lambda x: tf.where(x == {padding_idx}, 0, "
-                    f"tf.where(x == 0, {padding_idx}, x)))#"
+                    f"tf.where(x == 0, {padding_idx}, x))),\n    "
                 )
                 lyr = (
                     f"{remap_lyr}{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "

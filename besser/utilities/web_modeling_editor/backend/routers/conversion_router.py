@@ -75,6 +75,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
 )
+from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
+    fit_svg_viewbox_to_content,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -656,6 +659,11 @@ async def get_svg(buml_file: UploadFile = File(...)):
     svg = render_response.json().get("svg")
     if not svg:
         raise HTTPException(status_code=502, detail="SVG render service returned no SVG content")
+
+    # Safety net: the renderer sizes the canvas to node/edge geometry but omits
+    # association-end labels, so self-referential associations clip on the left.
+    # Expand the viewport to fit all content before returning.
+    svg = fit_svg_viewbox_to_content(svg)
 
     return Response(
         content=svg,

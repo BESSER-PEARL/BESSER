@@ -62,9 +62,17 @@ If you want to try examples, check out the [BESSER-examples](https://github.com/
 
 ## AI Agent Skills
 
-Working with BESSER through an AI coding agent (Claude Code, Cursor, Cline, Copilot, …)? The [BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) repository packages BESSER's metamodel, generators, and troubleshooting knowledge as [Agent Skills](https://agentskills.io) so your agent builds *correct, validated* B-UML models — and viewable diagrams — without loading the whole codebase into context.
+Working with BESSER through an AI coding agent (Claude Code, Cursor, Cline, Copilot, …)? Two companion repositories package BESSER as [Agent Skills](https://agentskills.io), so your agent gets the right knowledge on demand instead of loading the whole codebase into context.
+
+[BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) covers BESSER's metamodel, generators, and troubleshooting, so your agent builds *correct, validated* B-UML models — and viewable diagrams — without guesswork.
 
     npx skills add BESSER-PEARL/besser-skills --all
+
+[UML Drawing](https://github.com/BESSER-PEARL/uml-drawing) is the diagrams-for-docs front door to BESSER: it turns a description or existing code into a correct UML class diagram, rendered as a real SVG/PNG straight into your README or docs.
+
+    npx skills add BESSER-PEARL/uml-drawing --all
+
+Both follow the open Agent Skills standard, so they work with any spec-compatible coding agent.
 
 ## Contributing
 

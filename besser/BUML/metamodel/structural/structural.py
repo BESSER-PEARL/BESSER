@@ -1,7 +1,7 @@
 from abc import ABC
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Union, List, TYPE_CHECKING
+from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
 import logging
 import time
@@ -500,16 +500,16 @@ class Multiplicity(Element):
 
     Args:
         min_multiplicity (int): The minimum multiplicity.
-        max_multiplicity (int): The maximum multiplicity. Use "*" for unlimited.
+        max_multiplicity (int | Literal["*"]): The maximum multiplicity. Use "*" for unlimited.
         is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         min (int): The minimum multiplicity.
-        max (int): The maximum multiplicity. Use "*" for unlimited.
+        max (int): The maximum multiplicity.
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False, uncertainty: float = 0.0):
+    def __init__(self, min_multiplicity: int, max_multiplicity: int | Literal["*"], is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(is_derived=is_derived, uncertainty=uncertainty)
         self.min: int = min_multiplicity
         self.max: int = max_multiplicity
@@ -537,7 +537,7 @@ class Multiplicity(Element):
         return self.__max
 
     @max.setter
-    def max(self, max_multiplicity: int):
+    def max(self, max_multiplicity: int | Literal["*"]):
         """
         int: Set the maximum multiplicity.
 
@@ -848,7 +848,7 @@ class Method(TypedElement):
                  pre: list["Constraint"] = None, post: list["Constraint"] = None):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
-        self.parameters: list[Parameter] = parameters if parameters is not None else list()
+        self.parameters: list[Parameter] = parameters if parameters is not None else []
         self.owner: Type = owner
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
@@ -905,7 +905,7 @@ class Method(TypedElement):
 
             self.__parameters = parameters
         else:
-            self.__parameters = list()
+            self.__parameters = []
 
     def add_parameter(self, parameter: Parameter):
         """
@@ -933,7 +933,7 @@ class Method(TypedElement):
             ValueError: if two preconditions have the same name.
         """
         if pre is None:
-            self.__pre = list()
+            self.__pre = []
             return
         names_seen = set()
         duplicates = set()
@@ -959,7 +959,7 @@ class Method(TypedElement):
             ValueError: if two postconditions have the same name.
         """
         if post is None:
-            self.__post = list()
+            self.__post = []
             return
         names_seen = set()
         duplicates = set()

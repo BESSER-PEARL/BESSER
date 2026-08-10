@@ -84,7 +84,7 @@ def _resolve_action_type(element: dict) -> str:
 
 def _build_body_from_action_elements(body_name, action_element_ids, elements,
                                      language, source_language, translate_text,
-                                     build_db_reply_fn=None):
+                                     build_db_reply_fn=None, gui_defs_by_id=None):
     """
     Build a Body object from an ordered list of action element IDs using per-element dispatch.
 
@@ -305,9 +305,13 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
 
         elif action_type == "GUIReplyAction":
             gui_id = sanitize_text(element.get("guiId", "") or element.get("gui_id", "")) or None
-            persist = bool(element.get("persist", True))
-            width = sanitize_text(element.get("width", "")) or None
-            is_form = bool(element.get("is_form", False))
+            # width/persist/is_form live on the AgentGUI component definition, not on the
+            # action element itself (the action only carries guiId). Look up the definition
+            # and fall back to element-level values for backward compatibility.
+            gui_def = (gui_defs_by_id or {}).get(gui_id, {}) if gui_id else {}
+            persist = gui_def.get("persist", bool(element.get("persist", True)))
+            width = gui_def.get("width") or sanitize_text(element.get("width", "")) or None
+            is_form = gui_def.get("is_form", bool(element.get("is_form", False)))
             if gui_id:
                 body.add_action(GUIReplyAction(
                     gui_id=gui_id,
@@ -647,6 +651,7 @@ def process_agent_diagram(json_data):
             f"{state_name}_body", action_ids, elements,
             language, source_language, translate_text,
             build_db_reply_fn=build_db_reply,
+            gui_defs_by_id=gui_defs_by_id,
         )
         if body:
             agent_state.set_body(body)
@@ -659,6 +664,7 @@ def process_agent_diagram(json_data):
                 f"{state_name}_fallback_body", fallback_ids, elements,
                 language, source_language, translate_text,
                 build_db_reply_fn=build_db_reply,
+                gui_defs_by_id=gui_defs_by_id,
             )
             if fallback_body:
                 agent_state.set_fallback_body(fallback_body)

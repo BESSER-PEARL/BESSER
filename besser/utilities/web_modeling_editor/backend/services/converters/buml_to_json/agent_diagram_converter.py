@@ -161,6 +161,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "height": 30,
                     },
                     "actionType": "TextReplyAction",
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "llm":
@@ -180,6 +181,12 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "replyType": "llm",
                     "system_message": action.get("prompt") or "",
                     "llm_name": action.get("llm_name", "") or "",
+                    "inputPromptMode": action.get("inputPromptMode", "last_user_message") or "last_user_message",
+                    "customInputPrompt": action.get("customInputPrompt", "") or "",
+                    "customInputPromptUseSessionVars": bool(action.get("customInputPromptUseSessionVars", False)),
+                    "systemPromptUseSessionVars": bool(action.get("systemPromptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "llm_chat":
@@ -199,6 +206,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "replyType": "llm_chat",
                     "system_message": action.get("prompt") or "",
                     "llm_name": action.get("llm_name", "") or "",
+                    "systemPromptUseSessionVars": bool(action.get("systemPromptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "rag":
@@ -224,6 +234,12 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "actionType": "RAGReplyAction",
                     "ragDatabaseName": rag_db_name,
                     "prompt": rag_prompt,
+                    "inputPromptMode": action.get("inputPromptMode", "last_user_message") or "last_user_message",
+                    "customInputPrompt": action.get("customInputPrompt", "") or "",
+                    "customInputPromptUseSessionVars": bool(action.get("customInputPromptUseSessionVars", False)),
+                    "promptUseSessionVars": bool(action.get("promptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "db_reply":
@@ -254,6 +270,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "dbOperation": db_operation,
                     "dbSqlQuery": db_sql_query,
                     "llm_name": action.get("llm_name", "") or "",
+                    "inputPromptMode": action.get("inputPromptMode", "last_user_message") or "last_user_message",
+                    "customInputPrompt": action.get("customInputPrompt", "") or "",
+                    "customInputPromptUseSessionVars": bool(action.get("customInputPromptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "web_crawl_llm":
@@ -281,7 +302,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "run_crawl": action.get("run_crawl", True),
                     "no_crawl_error_message": action.get("no_crawl_error_message", "No web crawl data is available yet."),
                     "system_message_prefix": action.get("system_message_prefix", ""),
+                    "systemMessagePrefixUseSessionVars": bool(action.get("systemMessagePrefixUseSessionVars", False)),
                     "llm_name": action.get("llm_name", "") or "",
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_markdown":
@@ -291,6 +315,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
                     "actionType": "WebSocketReplyMarkdownAction", "replyType": "ws_markdown",
                     "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_html":
@@ -300,6 +325,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
                     "actionType": "WebSocketReplyHTMLAction", "replyType": "ws_html",
                     "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_speech":
@@ -310,6 +336,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "actionType": "WebSocketReplySpeechAction", "replyType": "ws_speech",
                     "ws_message": action.get("ws_message") or action.get("message") or "",
                     "ws_audio_speed": action.get("ws_audio_speed"),
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_options":
@@ -368,6 +395,26 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 elements[state_id][state_key].append(body_id)
 
     try:
+        # Pre-pass: collect RAGVectorStore variable bindings (var_name → {embedding_provider, ...})
+        # so they can be emitted back onto AgentRagElement when found in new_rag() calls.
+        rag_vector_store_vars: Dict[str, Dict] = {}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "RAGVectorStore"
+            ):
+                vs_info: Dict = {}
+                for kw in node.value.keywords:
+                    try:
+                        vs_info[kw.arg] = ast.literal_eval(kw.value)
+                    except (ValueError, SyntaxError):
+                        pass
+                rag_vector_store_vars[node.targets[0].id] = vs_info
+
         # First pass: collect all intents and Agent metadata
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
@@ -456,6 +503,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         rag_llm_prompt = ""
                         rag_k = 4
                         rag_num_previous_messages = 0
+                        rag_vector_store_var = None
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
@@ -485,6 +533,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             elif kw.arg == "num_previous_messages":
                                 if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
                                     rag_num_previous_messages = kw.value.value
+                            elif kw.arg == "vector_store" and isinstance(kw.value, ast.Name):
+                                rag_vector_store_var = kw.value.id
+
+                        vs_info = rag_vector_store_vars.get(rag_vector_store_var or "", {})
+                        rag_embedding_provider = vs_info.get("embedding_provider", "openai")
+                        rag_embedding_params = vs_info.get("embedding_parameters") or {}
+                        rag_embedding_base_url = rag_embedding_params.get("base_url", "")
+                        rag_embedding_model = rag_embedding_params.get("model", "")
 
                         if isinstance(rag_name, str) and rag_name.strip():
                             rag_id = str(uuid.uuid4())
@@ -505,6 +561,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 "k": rag_k,
                                 "num_previous_messages": rag_num_previous_messages,
                                         "numPreviousMessages": rag_num_previous_messages,
+                                "embedding_provider": rag_embedding_provider,
+                                "embedding_base_url": rag_embedding_base_url,
+                                "embedding_model": rag_embedding_model,
                             }
                             if states_x < 200:
                                 states_x += 300
@@ -664,28 +723,73 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         isinstance(node.value.args[0].args[0], ast.Constant) and
                         isinstance(node.value.args[0].args[0].value, str)
                         ):
-                        if body_var not in actions:
-                            actions[body_var] = [{"type": "text", "message": node.value.args[0].args[0].value}]
-                        else:
-                            actions[body_var].append({"type": "text", "message": node.value.args[0].args[0].value})
-                    elif node.value.args[0].func.id == 'LLMReply':
-                        llm_action: Dict[str, Any] = {"type": "llm"}
+                        text_action: Dict[str, Any] = {
+                            "type": "text",
+                            "message": node.value.args[0].args[0].value,
+                            "useSessionVars": False,
+                        }
                         for kw in node.value.args[0].keywords:
-                            if kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_action["llm_name"] = kw.value.value
-                            elif kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_action["prompt"] = kw.value.value
+                            if kw.arg == 'use_session_vars' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
+                                text_action["useSessionVars"] = kw.value.value
+                        if body_var not in actions:
+                            actions[body_var] = [text_action]
+                        else:
+                            actions[body_var].append(text_action)
+                    elif node.value.args[0].func.id == 'LLMReply':
+                        llm_action: Dict[str, Any] = {
+                            "type": "llm",
+                            "inputPromptMode": "last_user_message",
+                            "customInputPrompt": "",
+                            "customInputPromptUseSessionVars": False,
+                            "systemPromptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'llm_name' and isinstance(val, str):
+                                llm_action["llm_name"] = val
+                            elif kw.arg == 'prompt' and isinstance(val, str):
+                                llm_action["prompt"] = val
+                            elif kw.arg == 'input_prompt_mode' and isinstance(val, str):
+                                llm_action["inputPromptMode"] = val
+                            elif kw.arg == 'custom_input_prompt' and isinstance(val, str):
+                                llm_action["customInputPrompt"] = val
+                            elif kw.arg == 'custom_input_prompt_use_session_vars' and isinstance(val, bool):
+                                llm_action["customInputPromptUseSessionVars"] = val
+                            elif kw.arg == 'system_prompt_use_session_vars' and isinstance(val, bool):
+                                llm_action["systemPromptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                llm_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                llm_action["sendReply"] = val
                         if body_var not in actions:
                             actions[body_var] = [llm_action]
                         else:
                             actions[body_var].append(llm_action)
                     elif node.value.args[0].func.id == 'LLMChatReply':
-                        llm_chat_action: Dict[str, Any] = {"type": "llm_chat"}
+                        llm_chat_action: Dict[str, Any] = {
+                            "type": "llm_chat",
+                            "systemPromptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
+                        }
                         for kw in node.value.args[0].keywords:
-                            if kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_chat_action["llm_name"] = kw.value.value
-                            elif kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_chat_action["prompt"] = kw.value.value
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'llm_name' and isinstance(val, str):
+                                llm_chat_action["llm_name"] = val
+                            elif kw.arg == 'prompt' and isinstance(val, str):
+                                llm_chat_action["prompt"] = val
+                            elif kw.arg == 'system_prompt_use_session_vars' and isinstance(val, bool):
+                                llm_chat_action["systemPromptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                llm_chat_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                llm_chat_action["sendReply"] = val
                         if body_var not in actions:
                             actions[body_var] = [llm_chat_action]
                         else:
@@ -699,32 +803,41 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             and isinstance(node.value.args[0].args[0].value, str)
                         ):
                             rag_db_name = node.value.args[0].args[0].value
+                        rag_action: Dict[str, Any] = {
+                            "type": "rag",
+                            "inputPromptMode": "last_user_message",
+                            "customInputPrompt": "",
+                            "customInputPromptUseSessionVars": False,
+                            "promptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
+                        }
                         for kw in node.value.args[0].keywords:
-                            if (
-                                kw.arg == 'rag_db_name'
-                                and isinstance(kw.value, ast.Constant)
-                                and isinstance(kw.value.value, str)
-                            ):
-                                rag_db_name = kw.value.value
-                            elif (
-                                kw.arg == 'prompt'
-                                and isinstance(kw.value, ast.Constant)
-                                and isinstance(kw.value.value, str)
-                            ):
-                                rag_prompt = kw.value.value
-
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'rag_db_name' and isinstance(val, str):
+                                rag_db_name = val
+                            elif kw.arg == 'prompt' and isinstance(val, str):
+                                rag_prompt = val
+                            elif kw.arg == 'input_prompt_mode' and isinstance(val, str):
+                                rag_action["inputPromptMode"] = val
+                            elif kw.arg == 'custom_input_prompt' and isinstance(val, str):
+                                rag_action["customInputPrompt"] = val
+                            elif kw.arg == 'custom_input_prompt_use_session_vars' and isinstance(val, bool):
+                                rag_action["customInputPromptUseSessionVars"] = val
+                            elif kw.arg == 'prompt_use_session_vars' and isinstance(val, bool):
+                                rag_action["promptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                rag_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                rag_action["sendReply"] = val
+                        rag_action["ragDatabaseName"] = rag_db_name
+                        rag_action["prompt"] = rag_prompt
                         if body_var not in actions:
-                            actions[body_var] = [{
-                                "type": "rag",
-                                "ragDatabaseName": rag_db_name,
-                                "prompt": rag_prompt,
-                            }]
+                            actions[body_var] = [rag_action]
                         else:
-                            actions[body_var].append({
-                                "type": "rag",
-                                "ragDatabaseName": rag_db_name,
-                                "prompt": rag_prompt,
-                            })
+                            actions[body_var].append(rag_action)
                     elif node.value.args[0].func.id == 'DBReply':
                         db_action = {
                             "type": "db_reply",
@@ -734,21 +847,38 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "dbOperation": "any",
                             "dbSqlQuery": "",
                             "llm_name": "",
+                            "inputPromptMode": "last_user_message",
+                            "customInputPrompt": "",
+                            "customInputPromptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
                         }
                         for kw in node.value.args[0].keywords:
-                            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                if kw.arg == 'db_selection_type':
-                                    db_action["dbSelectionType"] = kw.value.value
-                                elif kw.arg == 'db_custom_name':
-                                    db_action["dbCustomName"] = kw.value.value
-                                elif kw.arg == 'db_query_mode':
-                                    db_action["dbQueryMode"] = kw.value.value
-                                elif kw.arg == 'db_operation':
-                                    db_action["dbOperation"] = kw.value.value
-                                elif kw.arg == 'db_sql_query':
-                                    db_action["dbSqlQuery"] = kw.value.value
-                                elif kw.arg == 'llm_name':
-                                    db_action["llm_name"] = kw.value.value
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'db_selection_type' and isinstance(val, str):
+                                db_action["dbSelectionType"] = val
+                            elif kw.arg == 'db_custom_name' and isinstance(val, str):
+                                db_action["dbCustomName"] = val
+                            elif kw.arg == 'db_query_mode' and isinstance(val, str):
+                                db_action["dbQueryMode"] = val
+                            elif kw.arg == 'db_operation' and isinstance(val, str):
+                                db_action["dbOperation"] = val
+                            elif kw.arg == 'db_sql_query' and isinstance(val, str):
+                                db_action["dbSqlQuery"] = val
+                            elif kw.arg == 'llm_name' and isinstance(val, str):
+                                db_action["llm_name"] = val
+                            elif kw.arg == 'input_prompt_mode' and isinstance(val, str):
+                                db_action["inputPromptMode"] = val
+                            elif kw.arg == 'custom_input_prompt' and isinstance(val, str):
+                                db_action["customInputPrompt"] = val
+                            elif kw.arg == 'custom_input_prompt_use_session_vars' and isinstance(val, bool):
+                                db_action["customInputPromptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                db_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                db_action["sendReply"] = val
 
                         if body_var not in actions:
                             actions[body_var] = [db_action]
@@ -765,7 +895,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "run_crawl": True,
                             "no_crawl_error_message": "No web crawl data is available yet.",
                             "system_message_prefix": "",
+                            "systemMessagePrefixUseSessionVars": False,
                             "llm_name": "",
+                            "storeInSession": "",
+                            "sendReply": True,
                         }
                         for kw in node.value.args[0].keywords:
                             if not isinstance(kw.value, ast.Constant):
@@ -787,8 +920,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 web_crawl_action["no_crawl_error_message"] = val
                             elif kw.arg == 'system_message_prefix':
                                 web_crawl_action["system_message_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'system_message_prefix_use_session_vars' and isinstance(val, bool):
+                                web_crawl_action["systemMessagePrefixUseSessionVars"] = val
                             elif kw.arg == 'llm_name' and isinstance(val, str):
                                 web_crawl_action["llm_name"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                web_crawl_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                web_crawl_action["sendReply"] = val
                         if body_var not in actions:
                             actions[body_var] = [web_crawl_action]
                         else:
@@ -811,7 +950,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             'WebSocketReplyDataframe': 'ws_dataframe',
                             'WebSocketReplyPlotly': 'ws_plotly',
                         }
-                        ws_action: Dict[str, Any] = {"type": type_map[cls_name]}
+                        ws_action: Dict[str, Any] = {"type": type_map[cls_name], "useSessionVars": False}
                         for kw in node.value.args[0].keywords:
                             if kw.arg == 'options' and isinstance(kw.value, ast.List):
                                 opts = [elt.value for elt in kw.value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)]
@@ -828,6 +967,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 ws_action["ws_latitude"] = float(val)
                             elif kw.arg == 'longitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
                                 ws_action["ws_longitude"] = float(val)
+                            elif kw.arg == 'use_session_vars' and isinstance(val, bool):
+                                ws_action["useSessionVars"] = val
                         if body_var not in actions:
                             actions[body_var] = [ws_action]
                         else:
@@ -870,6 +1011,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "LLMHuggingFace": "huggingface",
             "LLMHuggingFaceAPI": "huggingface_api",
             "LLMReplicate": "replicate",
+            "LLMOllama": "ollama",
         }
 
         def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:
@@ -1033,7 +1175,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     elements[state_id] = {
                         "id": state_id,
                         "name": state_name,
-                        "type": "AgentReasoningState",
+                        # Reasoning states are modelled as an AgentState with
+                        # stateType "reasoning" (the editor no longer registers a
+                        # separate AgentReasoningState element type, so emitting the
+                        # legacy type would fail to deserialize on import).
+                        "type": "AgentState",
                         "stateType": "reasoning",
                         "owner": None,
                         "bounds": {
@@ -1283,8 +1429,26 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         transition_payload["targetValue"] = kw.value.value
                             elif chain_attr == "when_file_received":
                                 condition_name = "when_file_received"
-                                if call_chain.args and isinstance(call_chain.args[0], ast.Constant):
-                                    transition_payload = call_chain.args[0].value
+                                _reverse_mime = {
+                                    "application/pdf": "pdf",
+                                    "text/plain": "txt",
+                                    "application/json": "json",
+                                    "text/csv": "csv",
+                                    "text/xml": "xml",
+                                    "image/png": "png",
+                                    "image/jpeg": "jpg",
+                                    "image/gif": "gif",
+                                    "audio/mpeg": "mp3",
+                                    "video/mp4": "mp4",
+                                }
+                                if call_chain.args:
+                                    arg = call_chain.args[0]
+                                    if isinstance(arg, ast.Constant):
+                                        raw = arg.value
+                                        transition_payload = _reverse_mime.get(raw, raw)
+                                    elif isinstance(arg, ast.List):
+                                        values = [elt.value for elt in arg.elts if isinstance(elt, ast.Constant)]
+                                        transition_payload = ", ".join(_reverse_mime.get(v, v) for v in values)
                             elif chain_attr == "when_event":
                                 condition_name = "custom_transition"
                                 selected_event = "None"

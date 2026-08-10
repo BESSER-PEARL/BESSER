@@ -23,9 +23,13 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -168,6 +172,16 @@ async def validate_diagram(input_data: DiagramInput):
                     nn_validation = nn_model.validate(raise_exception=False)
                     validation_errors.extend(nn_validation["errors"])
                     validation_warnings.extend(nn_validation["warnings"])
+
+        elif diagram_type == BPMN_DIAGRAM_TYPE:
+            try:
+                bpmn_model = process_bpmn_diagram(input_data.model_dump())
+            except (ConversionError, ValueError) as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                bpmn_validation = bpmn_model.validate(raise_exception=False)
+                validation_errors.extend(bpmn_validation["errors"])
+                validation_warnings.extend(bpmn_validation["warnings"])
 
         elif diagram_type == "QuantumCircuitDiagram":
             return {

@@ -29,6 +29,22 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 )
 
 
+def _format_multiplicity_label(multiplicity):
+    """Render a ``Multiplicity`` as its UML association-end label.
+
+    Collapses an exact multiplicity (``min == max``) to a single value, matching
+    UML convention (``1..1`` -> ``1``, ``5..5`` -> ``5``). An unbounded upper bound
+    renders as ``*`` (``0..*``, ``1..*``). The result round-trips through
+    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
+    """
+    min_val = multiplicity.min
+    if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
+        return f"{min_val}..*"
+    if min_val == multiplicity.max:
+        return f"{min_val}"
+    return f"{min_val}..{multiplicity.max}"
+
+
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
@@ -84,11 +100,21 @@ def parse_buml_content(content: str) -> DomainModel:
             "DateTimeType": PrimitiveDataType("datetime"),
             "TimeDeltaType": PrimitiveDataType("timedelta"),
             "AnyType": PrimitiveDataType("any"),
+            # No-op stub: project-exported files often end with a
+            # `project = Project(name=..., models=[domain_model], ...)` tail.
+            # The class converter only cares about the DomainModel; swallowing
+            # the Project(...) call with a stub keeps the sandbox import-tolerant.
+            "Project": lambda *args, **kwargs: None,
         }
 
         # Ensure we have a string before preprocessing
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
+
+        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
+        # "invalid non-printable character U+FEFF" for files saved with a BOM.
+        if content.startswith("﻿"):
+            content = content[1:]
 
         # Pre-process the content to remove import and generator-related lines.
         # All required types are already provided in safe_globals, so import
@@ -218,8 +244,18 @@ def class_buml_to_json(domain_model):
             attribute_ids = []
             method_ids = []
 
+            # Header height must mirror the editor's UMLClassifier renderer
+            # (stereotypeHeaderHeight=50, nonStereotypeHeaderHeight=40) so ELK
+            # auto-layout and the headless SVG renderer agree on box geometry.
+            # Enumerations and abstract classes carry a «stereotype» line, so
+            # their header is one row taller and members start lower.
+            is_stereotyped = isinstance(type_obj, Enumeration) or (
+                isinstance(type_obj, Class) and getattr(type_obj, "is_abstract", False)
+            )
+            header_height = 50 if is_stereotyped else 40
+
             # Process attributes/literals
-            y_offset = y + 40  # Starting position for attributes
+            y_offset = y + header_height  # Members start below the header
             if isinstance(type_obj, Class):
                 for attr in sorted(type_obj.attributes, key=lambda a: a.name):
                     attr_id = str(uuid.uuid4())
@@ -246,7 +282,14 @@ def class_buml_to_json(domain_model):
                         "isDerived": attr.is_derived,
                     }
                     if attr.default_value is not None:
-                        attr_element["defaultValue"] = attr.default_value
+                        # default_value may be an EnumerationLiteral (or other
+                        # metamodel object); coerce it to a JSON-serialisable
+                        # value — its name, else its string form — so the diagram
+                        # JSON can be serialised when sent to the render service.
+                        default_value = attr.default_value
+                        if not isinstance(default_value, (str, int, float, bool)):
+                            default_value = getattr(default_value, "name", None) or str(default_value)
+                        attr_element["defaultValue"] = default_value
                     elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30
@@ -377,8 +420,14 @@ def class_buml_to_json(domain_model):
                     attribute_ids.append(literal_id)
                     y_offset += 30
 
-            # Create the element
-            computed_height = max(100, 30 * (len(attribute_ids) + len(method_ids) + 1))
+            # Create the element. Box height mirrors the renderer: header plus
+            # one 30px row per attribute/method (see UMLClassifier.render). OCL
+            # constraint boxes are not classifiers, so keep their legacy sizing.
+            member_count = len(attribute_ids) + len(method_ids)
+            if isinstance(type_obj, Constraint):
+                computed_height = max(100, 30 * (member_count + 1))
+            else:
+                computed_height = header_height + 30 * member_count
             element_data = {
                 "id": element_id,
                 "name": type_obj.name,
@@ -525,14 +574,14 @@ def class_buml_to_json(domain_model):
                         "type": rel_type,
                         "source": {
                             "element": class_id_map[source_class],
-                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else source_prop.multiplicity.max}",
+                            "multiplicity": _format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
                             "direction": source_dir,
                             "bounds": source_bounds,
                         },
                         "target": {
                             "element": class_id_map[target_class],
-                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else target_prop.multiplicity.max}",
+                            "multiplicity": _format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
                             "direction": target_dir,
                             "bounds": target_bounds,

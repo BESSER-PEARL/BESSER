@@ -10,6 +10,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.gui import (
+    Alert,
+    AlertSeverity,
     Button,
     ButtonActionType,
     ButtonType,
@@ -25,6 +27,7 @@ from besser.BUML.metamodel.gui import (
     MenuItem,
     Module,
     Screen,
+    SelectOption,
     Text,
     ViewComponent,
     ViewContainer,
@@ -135,6 +138,9 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "Image": Image,
         "Link": Link,
         "InputField": InputField,
+        "SelectOption": SelectOption,
+        "Alert": Alert,
+        "AlertSeverity": AlertSeverity,
         "Form": Form,
         "Menu": Menu,
         "MenuItem": MenuItem,
@@ -347,6 +353,8 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
         _apply_metric_card_attributes(element, attrs)
     elif isinstance(element, AgentComponent):
         _apply_agent_component_attributes(element, attrs)
+    elif isinstance(element, Alert):
+        _apply_alert_attributes(element, attrs)
     elif isinstance(element, InputField):
         _apply_input_field_attributes(element, attrs)
     elif isinstance(element, Form):
@@ -527,14 +535,86 @@ def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> No
 def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("agent-name", getattr(agent, "agent_name", None) or "")
     attrs.setdefault("agent-title", getattr(agent, "agent_title", None) or "BESSER Agent")
+def _apply_alert_attributes(alert: Alert, attrs: Dict[str, Any]) -> None:
+    """Expose Alert traits so parse_alert can rebuild them on re-import.
+
+    Mirrors the JSON keys read by
+    ``json_to_buml/gui_processors/component_parsers.parse_alert`` (data-severity,
+    data-title, data-content, data-dismissible) and tags the block with
+    ``data-gui-type`` so the processor dispatches it back to the Alert parser.
+    """
+    attrs.setdefault("data-gui-type", "Alert")
+    severity = _enum_value(getattr(alert, "severity", None))
+    if severity:
+        attrs.setdefault("data-severity", severity)
+    if getattr(alert, "title", None):
+        attrs.setdefault("data-title", alert.title)
+    content = getattr(alert, "content", None)
+    if content:
+        attrs.setdefault("data-content", content)
+    attrs.setdefault("data-dismissible", "true" if getattr(alert, "dismissible", False) else "false")
 def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> None:
+    """Expose InputField traits so parse_input_field can rebuild them on re-import.
+
+    Emits the ``data-*`` keys read by
+    ``json_to_buml/gui_processors/component_parsers.parse_input_field`` (data-gui-type,
+    data-label, data-placeholder, data-required, data-default-checked, data-options,
+    data-min, data-max, data-step, data-multiple). Only non-empty values are emitted.
+    """
     attrs.setdefault("placeholder", field.description or "")
     field_type = getattr(field, "field_type", None)
-    if field_type:
-        attrs.setdefault("type", _enum_value(field_type) or "text")
+    field_type_value = _enum_value(field_type)
+    if field_type_value:
+        attrs.setdefault("type", field_type_value or "text")
+        # data-gui-type is the primary key parse_input_field reads to resolve the
+        # InputFieldType, and it routes the component back to the input parser.
+        attrs.setdefault("data-gui-type", field_type_value)
+    if getattr(field, "label", None):
+        attrs.setdefault("data-label", field.label)
+    if getattr(field, "placeholder", None):
+        attrs.setdefault("data-placeholder", field.placeholder)
+    if getattr(field, "required", False):
+        attrs.setdefault("data-required", "true")
+    default_value = getattr(field, "default_value", None)
+    if default_value is not None:
+        # parse_input_field reads the boolean default from data-default-checked.
+        attrs.setdefault("data-default-checked", default_value)
+    option_labels = [
+        str(getattr(opt, "label", None) or getattr(opt, "value", ""))
+        for opt in (getattr(field, "options", None) or [])
+    ]
+    option_labels = [label for label in option_labels if label]
+    if option_labels:
+        attrs.setdefault("data-options", ",".join(option_labels))
+    if getattr(field, "min_value", None) is not None:
+        attrs.setdefault("data-min", field.min_value)
+    if getattr(field, "max_value", None) is not None:
+        attrs.setdefault("data-max", field.max_value)
+    if getattr(field, "step", None) is not None:
+        attrs.setdefault("data-step", field.step)
+    if getattr(field, "multiple", False):
+        attrs.setdefault("data-multiple", "true")
 def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
+    """Expose Form traits in the exported JSON.
+
+    ``form-title``/``method`` are kept for backward compatibility. The new PR #563
+    Form attributes are emitted with the ``data-*`` convention used by the other GUI
+    blocks. Note: ``parse_form`` does not currently read these back (parse-side gap
+    beyond this fix's scope), but emitting them keeps the exported JSON complete.
+    """
     attrs.setdefault("form-title", form.name or "Form")
     attrs.setdefault("method", getattr(form, "method", "post"))
+    attrs.setdefault("data-gui-type", "Form")
+    if getattr(form, "title", None):
+        attrs.setdefault("data-title", form.title)
+    if getattr(form, "submit_label", None):
+        attrs.setdefault("data-submit-label", form.submit_label)
+    if getattr(form, "show_cancel", False):
+        attrs.setdefault("data-show-cancel", "true")
+    if getattr(form, "cancel_label", None):
+        attrs.setdefault("data-cancel-label", form.cancel_label)
+    if getattr(form, "columns", None) is not None:
+        attrs.setdefault("data-columns", form.columns)
 def _apply_image_attributes(image: Image, attrs: Dict[str, Any]) -> None:
     if getattr(image, "source", None):
         attrs.setdefault("src", image.source)
@@ -716,6 +796,7 @@ def _infer_component_type(element: ViewComponent) -> Optional[str]:
         Image: "image",
         Link: "link",
         Button: "action-button",
+        Alert: "gui-alert",
         InputField: "input",
         Form: "form",
         Menu: "menu",

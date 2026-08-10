@@ -504,10 +504,36 @@ class StateMachine(Model):
         errors: list[str] = []
         warnings: list[str] = []
 
+        self._validate_unreachable_states(warnings)
+        self._validate_final_states_with_transitions(errors)
+
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
             raise ValueError("\n".join(errors))
         return result
+
+    def _validate_unreachable_states(self, warnings: list[str]):
+        """Validate that all non-initial states have at least one incoming transition."""
+
+        reachable = {transition.dest for state in self.states for transition in state.transitions}
+        for state in self.states:
+            if not state.initial and state not in reachable:
+                # Warning: unreachable states don't break execution but indicate a design issue
+                warnings.append(
+                    f"State '{state.name}' in state machine '{self.name}' is unreachable: "
+                    f"it has no incoming transitions and is not the initial state."
+                )
+
+    def _validate_final_states_with_transitions(self, errors: list[str]):
+        """Validate that final states have no outgoing transitions."""
+
+        for state in self.states:
+            if state.final and state.transitions:
+                # Error: final states with outgoing transitions violate the UML specification
+                errors.append(
+                    f"Final state '{state.name}' in state machine '{self.name}' "
+                    f"has outgoing transitions, which is not allowed."
+                )
 
     def __repr__(self):
         states_str = ', '.join([str(state) for state in self.states])

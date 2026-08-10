@@ -17,7 +17,9 @@ from besser.generators.agents.agent_personalization import configure_agent, flat
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.common import safe_var_name
+from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import process_gui_diagram
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +232,10 @@ class BAFGenerator(GeneratorInterface):
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        def extract_braced_vars(template: str) -> list:
+            """Return unique ``{identifier}`` names found in *template*, preserving order."""
+            return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
+
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
@@ -238,6 +244,7 @@ class BAFGenerator(GeneratorInterface):
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
+        env.globals['extract_braced_vars'] = extract_braced_vars
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
@@ -313,7 +320,7 @@ class BAFGenerator(GeneratorInterface):
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                    f.write(config_template.render(properties=properties))
+                    f.write(config_template.render(properties=properties, agent=self.model))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')
@@ -375,3 +382,45 @@ class BAFGenerator(GeneratorInterface):
                                 "Place your PDF documents for this RAG database inside this "
                                 "folder before running the agent.\n"
                             )
+
+            # Generate guis/ directory — one .py file per unique GUIReplyAction
+            gui_models = getattr(self.model, 'gui_models', {}) or {}
+            # Collect all unique GUIReplyAction instances from all state bodies.
+            seen_gui_ids: set = set()
+            unique_gui_actions = []
+            for state in self.model.states:
+                for body in (state.body, getattr(state, 'fallback_body', None)):
+                    if body is None:
+                        continue
+                    for action in (body.actions or []):
+                        if action.__class__.__name__ == 'GUIReplyAction':
+                            if action.gui_id not in seen_gui_ids:
+                                seen_gui_ids.add(action.gui_id)
+                                unique_gui_actions.append(action)
+            if unique_gui_actions:
+                guis_dir = os.path.join(self.build_generation_dir(), "guis")
+                os.makedirs(guis_dir, exist_ok=True)
+                for gui_action in unique_gui_actions:
+                    gui_var = safe_var_name(gui_action.gui_id)
+                    gui_model_data = gui_models.get(gui_action.gui_id)
+                    gui_file_path = os.path.join(guis_dir, f"{gui_var}.py")
+                    if gui_model_data is not None:
+                        try:
+                            buml_gui_model = process_gui_diagram(gui_model_data, class_model=None, domain_model=None)
+                            gui_model_to_code(buml_gui_model, gui_file_path, domain_model=None, model_var_name="gui_model")
+                        except Exception as exc:
+                            logger.warning("Could not convert GUI model for '%s' to BUML: %s", gui_action.gui_id, exc)
+                            gui_model_data = None
+                    if gui_model_data is None:
+                        with open(gui_file_path, mode="w", encoding="utf-8") as gf:
+                            gf.write("# No GUI design available yet.\ngui_model = None\n")
+                    with open(gui_file_path, mode="a", encoding="utf-8") as gf:
+                        gf.write("\nfrom baf.core.gui.agent_gui import AgentGUI\n\n")
+                        gf.write("gui = AgentGUI(\n")
+                        gf.write(f"    model=gui_model,\n")
+                        gf.write(f"    gui_id={json.dumps(gui_action.gui_id)},\n")
+                        gf.write(f"    persist={gui_action.persist},\n")
+                        if gui_action.width:
+                            gf.write(f"    width={json.dumps(gui_action.width)},\n")
+                        gf.write(")\n")
+                logger.info("GUIs directory generated at %s", guis_dir)

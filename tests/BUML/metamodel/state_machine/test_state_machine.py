@@ -1,6 +1,6 @@
 import pytest
 
-from besser.BUML.metamodel.state_machine.state_machine import ConfigProperty, StateMachine
+from besser.BUML.metamodel.state_machine.state_machine import ConfigProperty, Event, StateMachine
 
 
 def test_new_state():
@@ -42,3 +42,26 @@ def test_new_property():
         # This should not work
         parameter3 = sm1.new_property('section1', 'property2', 3)
     assert "Duplicated property in StateMachine (section1, property2)" in str(excinfo.value)
+
+
+def test_validate_unreachable_states():
+    sm1 = StateMachine('sm1')
+    state1 = sm1.new_state('state1', initial=True)
+    state2 = sm1.new_state('state2')
+    # This should raise a warning
+    result = sm1.validate(raise_exception=False)
+    assert any(
+        "State 'state2' in state machine 'sm1' is unreachable" in w for w in result["warnings"]
+    )
+
+
+def test_validate_final_state_with_transitions():
+    sm1 = StateMachine('sm1')
+    state1 = sm1.new_state('state1', initial=True)
+    state2 = sm1.new_state('state2', final=True)
+    event = Event('e1')
+    state2.when_event(event).go_to(state1)
+    with pytest.raises(ValueError) as excinfo:
+        # This should not work
+        sm1.validate(raise_exception=True)
+    assert "Final state 'state2' in state machine 'sm1' has outgoing transitions, which is not allowed." in str(excinfo.value)

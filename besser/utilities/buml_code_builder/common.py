@@ -19,6 +19,16 @@ def _escape_python_string(value: str) -> str:
             .replace('\r', '\\r'))
 
 
+def _comment_safe(name: str) -> str:
+    """Sanitise a name for safe embedding in a ``#`` comment line.
+
+    Replaces newline / carriage-return characters with a space so that a
+    user-supplied name cannot break out of the comment into executable code when
+    the generated source is later processed with ``exec()``.
+    """
+    return (name or '').replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+
+
 PRIMITIVE_TYPE_MAPPING = {
     'str': 'StringType',
     'string': 'StringType',

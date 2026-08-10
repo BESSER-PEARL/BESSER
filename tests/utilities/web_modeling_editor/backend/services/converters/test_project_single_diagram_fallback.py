@@ -95,6 +95,69 @@ def test_project_to_json_unknown_file_raises():
         project_to_json("x = 1\ny = 2\n")
 
 
+PROJECT_WITHOUT_SECTION_HEADERS = '''\
+from besser.BUML.metamodel.structural import (
+    Class, Property, BinaryAssociation, DomainModel, Multiplicity,
+    StringType, IntegerType,
+)
+
+book = Class(name="Book")
+book_title = Property(name="title", type=StringType)
+book.attributes = {book_title}
+
+author = Class(name="Author")
+author_name = Property(name="name", type=StringType)
+author.attributes = {author_name}
+
+book_author = BinaryAssociation(
+    name="book_author",
+    ends={
+        Property(name="book", type=book, multiplicity=Multiplicity(1, 1)),
+        Property(name="author", type=author, multiplicity=Multiplicity(1, 9999)),
+    },
+)
+
+library_model = DomainModel(
+    name="Library",
+    types={book, author},
+    associations={book_author},
+)
+
+from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.structural.structural import Metadata
+
+metadata = Metadata(description="A small library project.")
+project = Project(
+    name="Library_Project",
+    models=[library_model],
+    owner="Tester",
+    metadata=metadata,
+)
+'''
+
+
+def test_project_to_json_handles_missing_section_headers():
+    """Projects with `models=[...]` but no `# STRUCTURAL MODEL #` headers
+    must still extract the embedded DomainModel — previously this returned
+    a project where every diagram was empty because the section extractor
+    found no headers to anchor on."""
+    project = project_to_json(PROJECT_WITHOUT_SECTION_HEADERS)
+
+    # Project metadata from the Project(...) wrapper is preserved.
+    assert project["name"] == "Library_Project"
+    assert project["owner"] == "Tester"
+    assert project["description"] == "A small library project."
+
+    class_entry = project["diagrams"]["ClassDiagram"][0]
+    elements = class_entry["model"]["elements"]
+    relationships = class_entry["model"]["relationships"]
+
+    class_names = {el["name"] for el in elements.values() if el.get("type") == "Class"}
+    assert class_names == {"Book", "Author"}
+    # The BinaryAssociation should round-trip into the relationships map.
+    assert len(relationships) == 1
+
+
 def test_project_to_json_handles_main_guard():
     """Files with an ``if __name__ == '__main__':`` block should still import.
 

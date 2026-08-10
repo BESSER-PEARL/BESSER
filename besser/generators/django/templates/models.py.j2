@@ -1,6 +1,9 @@
 {#- Django model template generator #}
 {%- import "django_fields.py.j2" as django_fields -%}
 from django.db import models
+{% if constraints_map %}
+from django.core.exceptions import ValidationError
+{% endif %}
 
 {# Enumeration definition -#}
 {%- for enum in model.get_enumerations() %}
@@ -93,6 +96,33 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         """
         return str(self.{{ first_attr.name }})
 
+    {%- endif %}
+
+    {# OCL Constraint Validators #}
+    {%- if constraints_map and class_obj.name in constraints_map %}
+
+    def clean(self):
+        """
+        Validates the OCL constraints defined on {{ class_obj.name }}.
+        Called by full_clean() (and therefore by ModelForm/admin validation);
+        does not run automatically on save() unless the caller invokes
+        full_clean() first.
+        """
+        super().clean()
+        errors = {}
+        {% for constraint in constraints_map[class_obj.name] %}
+        {% if constraint.python_expression is defined %}
+        v = self.{{ constraint.property }}
+        if not ({{ constraint.python_expression }}):
+            errors.setdefault('{{ constraint.property }}', []).append('{{ constraint.message }}')
+        {% else %}
+        if not (self.{{ constraint.property }} {{ constraint.python_operator }} {{ constraint.value_repr }}):
+            errors.setdefault('{{ constraint.property }}', []).append(
+                '{{ constraint.property }} must be {{ constraint.python_operator }} {{ constraint.value_repr }}')
+        {% endif %}
+        {%- endfor %}
+        if errors:
+            raise ValidationError(errors)
     {%- endif %}
 
     {#- Generate methods with code #}

@@ -267,6 +267,33 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endfor %}
 {% endif %}
 
+{% set agent_guis_ns = namespace(items=[]) %}
+{% for state in agent.states %}
+{% for action in (state.body.actions if state.body and state.body.actions else []) %}
+{% if is_class(action, 'GUIReplyAction') %}
+{% set already = namespace(found=false) %}
+{% for g in agent_guis_ns.items %}{% if g.gui_id == action.gui_id %}{% set already.found = true %}{% endif %}{% endfor %}
+{% if not already.found %}{% set agent_guis_ns.items = agent_guis_ns.items + [action] %}{% endif %}
+{% endif %}
+{% endfor %}
+{% for action in (state.fallback_body.actions if state.fallback_body and state.fallback_body.actions else []) %}
+{% if is_class(action, 'GUIReplyAction') %}
+{% set already = namespace(found=false) %}
+{% for g in agent_guis_ns.items %}{% if g.gui_id == action.gui_id %}{% set already.found = true %}{% endif %}{% endfor %}
+{% if not already.found %}{% set agent_guis_ns.items = agent_guis_ns.items + [action] %}{% endif %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% if agent_guis_ns.items|length > 0 %}
+##############################
+# GUI IMPORTS
+##############################
+
+{% for gui_action in agent_guis_ns.items %}
+from guis.{{ safe_var_name(gui_action.gui_id) }} import gui as {{ safe_var_name(gui_action.gui_id) }}
+{% endfor %}
+{% endif %}
+
 {% macro write_ic_config(ic_config) %}
 {% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') %}SimpleIntentClassifierConfiguration(
         num_words={{ ic_config.num_words }},
@@ -976,6 +1003,8 @@ def {{ body_name }}(session: Session):
     {% elif is_class(action, 'WebSocketReplyPlotly') %}
     # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
     platform.reply_plotly(session, reply_plot)
+    {% elif is_class(action, 'GUIReplyAction') %}
+    platform.reply_gui(session, {{ safe_var_name(action.gui_id) }})
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}
@@ -1262,6 +1291,8 @@ def {{ fallback_name }}(session: Session):
     {% elif is_class(action, 'WebSocketReplyPlotly') %}
     # TODO: Assign a plotly.graph_objs.Figure to `reply_plot` before this state is reached
     platform.reply_plotly(session, reply_plot)
+    {% elif is_class(action, 'GUIReplyAction') %}
+    platform.reply_gui(session, {{ safe_var_name(action.gui_id) }})
     {% endif %}
     {% endfor %}
     {% if speech_enabled %}
@@ -1295,12 +1326,18 @@ def {{ fallback_name }}(session: Session):
 {{ state_name }}.when_variable_matches_operation('{{ primary_condition.var_name }}', operator.{{ primary_condition.operation.__name__ }}, '{{ primary_condition.target }}').go_to({{ dest_name }})
 {% elif transition_conditions|length == 1 and primary_condition and transition.event and is_class(primary_condition, 'FileTypeMatcher') %}
 {{ state_name }}.when_file_received({% if primary_condition.allowed_types %}{% if is_type(primary_condition.allowed_types, 'list') %}[{% for t in primary_condition.allowed_types %}'{{ t }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% else %}'{{ primary_condition.allowed_types }}'{% endif %}{% endif %}).go_to({{ dest_name }})
+{% elif transition_conditions|length == 1 and primary_condition and transition.event and is_class(primary_condition, 'FormSubmitMatcher') %}
+{{ state_name }}.when_form_submitted({% if primary_condition.form_id %}form_id='{{ primary_condition.form_id }}'{% endif %}).go_to({{ dest_name }})
 {% elif transition_conditions|length == 1 and primary_condition and (not transition.event) and is_class(primary_condition, 'Auto')%}
 {{ state_name }}.go_to({{ dest_name }})
 {% set auto_ns.found = True %}
 {% else %}
 {% if transition.event %}
+{% if is_class(transition.event, 'GUIEvent') and transition.event.message_id %}
+{% set event_ns = namespace(chain=state_name ~ ".when_event(GUIEvent(message_id='" ~ transition.event.message_id ~ "'))") %}
+{% else %}
 {% set event_ns = namespace(chain=state_name ~ '.when_event(' ~ transition.event.__class__.__name__ ~ '())') %}
+{% endif %}
 {% for custom_condition in transition_conditions %}
 {% if custom_condition %}
 {% set condition_name = custom_condition.name ~ suffix_part %}

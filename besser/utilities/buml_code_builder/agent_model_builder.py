@@ -12,6 +12,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech,
     WebSocketReplyOptions, WebSocketReplyLocation,
     WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly,
+    GUIReplyAction,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
@@ -54,7 +55,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "
             "Agent, AgentReply, LLMReply, LLMChatReply, RAGReply, DBReply, "
-            "WebCrawlLLMReply, "
+            "WebCrawlLLMReply, GUIReplyAction, "
             "WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech, "
             "WebSocketReplyOptions, WebSocketReplyLocation, "
             "WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly, "
@@ -253,6 +254,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "IntentMatcher",
             "VariableOperationMatcher",
             "FileTypeMatcher",
+            "FormSubmitMatcher",
             "Auto",
         }
         written_custom_conditions = set()
@@ -459,6 +461,15 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             f.write(f"{state_var}_body.add_action(WebSocketReplyDataframe())\n")
                         elif isinstance(action, WebSocketReplyPlotly):
                             f.write(f"{state_var}_body.add_action(WebSocketReplyPlotly())\n")
+                        elif isinstance(action, GUIReplyAction):
+                            gui_args = [repr(action.gui_id)]
+                            if not action.persist:
+                                gui_args.append("persist=False")
+                            if action.width:
+                                gui_args.append(f"width={action.width!r}")
+                            if action.is_form:
+                                gui_args.append("is_form=True")
+                            f.write(f"{state_var}_body.add_action(GUIReplyAction({', '.join(gui_args)}))\n")
                         elif isinstance(action, AgentReply):
                             ar_args = f"'{_escape_python_string(action.message)}'"
                             if getattr(action, 'use_session_vars', False):
@@ -635,6 +646,15 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                             f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyDataframe())\n")
                         elif isinstance(action, WebSocketReplyPlotly):
                             f.write(f"{state_var}_fallback_body.add_action(WebSocketReplyPlotly())\n")
+                        elif isinstance(action, GUIReplyAction):
+                            gui_args = [repr(action.gui_id)]
+                            if not action.persist:
+                                gui_args.append("persist=False")
+                            if action.width:
+                                gui_args.append(f"width={action.width!r}")
+                            if action.is_form:
+                                gui_args.append("is_form=True")
+                            f.write(f"{state_var}_fallback_body.add_action(GUIReplyAction({', '.join(gui_args)}))\n")
                         elif isinstance(action, AgentReply):
                             ar_args = f"'{_escape_python_string(action.message)}'"
                             if getattr(action, 'use_session_vars', False):
@@ -685,6 +705,13 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 f.write(f"{state_var}.when_file_received('{_escape_python_string(str(file_type))}').go_to({dest_var})\n")
                         else:
                             f.write(f"{state_var}.when_file_received().go_to({dest_var})\n")
+
+                    elif event_class == "GUIEvent" and condition_class == "FormSubmitMatcher":
+                        form_id = getattr(condition, "form_id", None)
+                        if form_id:
+                            f.write(f"{state_var}.when_form_submitted(form_id={form_id!r}).go_to({dest_var})\n")
+                        else:
+                            f.write(f"{state_var}.when_form_submitted().go_to({dest_var})\n")
 
                     elif event is None and condition_class == "Auto":
                         f.write(f"{state_var}.go_to({dest_var})\n")

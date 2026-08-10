@@ -383,6 +383,39 @@ class WebSocketReplyPlotly(Action):
         return "WebSocketReplyPlotly()"
 
 
+class GUIReplyAction(Action):
+    """Action that sends a GUI (defined by the BESSER GUI metamodel) as a chat message reply.
+
+    Args:
+        gui_id (str): The gui_id (message id) for the GUI instance.
+        persist (bool): Whether to persist GUI input values in the session.
+        width (str, optional): CSS width for the GUI bubble.
+        is_form (bool): Whether this GUI is a form.
+
+    Attributes:
+        gui_id (str): The unique message id for the GUI.
+        persist (bool): Whether to persist form inputs in session.
+        width (str | None): CSS width for the GUI bubble.
+        is_form (bool): Whether this GUI is a form.
+    """
+
+    def __init__(
+            self,
+            gui_id: str,
+            persist: bool = True,
+            width: Optional[str] = None,
+            is_form: bool = False,
+    ):
+        super().__init__()
+        self.gui_id: str = gui_id
+        self.persist: bool = persist
+        self.width: Optional[str] = width
+        self.is_form: bool = is_form
+
+    def __repr__(self):
+        return f"GUIReplyAction(gui_id={self.gui_id!r})"
+
+
 class DBReply(Action):
     """Primitive action that represents fetching information from a database.
 
@@ -1464,6 +1497,38 @@ class ReceiveFileEvent(Event):
         self.file: File = file
 
 
+class GUIEvent(Event):
+    """Event triggered by user interaction with a GUI component (e.g. button click, form submit).
+
+    Args:
+        message_id (str, optional): The id of the AgentGUI chat message that originated this event.
+            When set, only interactions from the GUI with that id trigger this event.
+
+    Attributes:
+        message_id (str | None): The AgentGUI message id filter.
+    """
+
+    def __init__(self, message_id: Optional[str] = None):
+        super().__init__(name='gui_event')
+        self.message_id: Optional[str] = message_id
+
+
+class FormSubmitMatcher(Condition):
+    """Condition that matches a GUI form submission event, optionally filtered to a specific form.
+
+    Args:
+        form_id (str, optional): The gui_id of the AgentGUI form whose submissions should trigger
+            this transition. If None, any form submission matches.
+
+    Attributes:
+        form_id (str | None): The form GUI id filter.
+    """
+
+    def __init__(self, form_id: Optional[str] = None):
+        super().__init__('form_submitted', None)
+        self.form_id: Optional[str] = form_id
+
+
 class IntentMatcher(Condition):
     """This event checks if 2 intents are the same (returning True, and False otherwise), used for intent matching
     checking.
@@ -1672,6 +1737,23 @@ class AgentState(State):
         transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[FileTypeMatcher(allowed_types)])
         return transition_builder
 
+    def when_form_submitted(self, form_id: Optional[str] = None) -> TransitionBuilder:
+        """Start the definition of a "form submitted" transition on this state.
+
+        Triggered when the user submits a GUI form. If ``form_id`` is provided, only submissions
+        from the GUI with that id will trigger the transition.
+
+        Args:
+            form_id (str, optional): The gui_id of the AgentGUI form whose submissions should trigger
+                this transition. If None, any form submission triggers this transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        event: GUIEvent = GUIEvent(message_id=form_id)
+        condition: FormSubmitMatcher = FormSubmitMatcher(form_id)
+        return TransitionBuilder(source=self, event=event, conditions=[condition])
+
     def when_event(self, event: Event) -> TransitionBuilder:
         """Start the definition of a transition triggered by a custom event.
 
@@ -1814,6 +1896,9 @@ class Agent(StateMachine):
         self.tools: list[Tool] = []
         self.skills: list[Skill] = []
         self.workspaces: list[Workspace] = []
+        # Mapping from gui_id → raw GrapesJS gui_model dict.  Populated by the
+        # diagram processor and consumed by the BAF generator to emit guis/*.py.
+        self.gui_models: dict[str, dict] = {}
 
     def validate(self, raise_exception: bool = True) -> dict:
         """

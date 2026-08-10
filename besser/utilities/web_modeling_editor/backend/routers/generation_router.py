@@ -337,6 +337,10 @@ def generate_agent_files(
 
             # Use the BAFGenerator with the agent model from the module
             if hasattr(agent_module, 'agent'):
+                # gui_models is not serialized to the .py file; copy it from the
+                # original agent (populated by process_agent_diagram) so the BAF
+                # generator can emit the guis/ folder.
+                agent_module.agent.gui_models = getattr(agent_model, 'gui_models', {}) or {}
                 generator = generator_class(
                     agent_module.agent,
                     output_dir=generator_output_dir,

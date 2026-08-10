@@ -40,6 +40,9 @@ from besser.BUML.metamodel.state_machine.agent import (
     WebSocketReplyPlotly,
     RAGVectorStore,
     RAGTextSplitter,
+    GUIReplyAction,
+    GUIEvent,
+    FormSubmitMatcher,
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
@@ -63,6 +66,7 @@ _REPLY_TYPE_TO_ACTION_TYPE = {
     "ws_image": "WebSocketReplyImageAction",
     "ws_dataframe": "WebSocketReplyDataframeAction",
     "ws_plotly": "WebSocketReplyPlotlyAction",
+    "gui_reply": "GUIReplyAction",
 }
 
 
@@ -299,6 +303,20 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             body.add_action(WebSocketReplyPlotly())
             action_added = True
 
+        elif action_type == "GUIReplyAction":
+            gui_id = sanitize_text(element.get("guiId", "") or element.get("gui_id", "")) or None
+            persist = bool(element.get("persist", True))
+            width = sanitize_text(element.get("width", "")) or None
+            is_form = bool(element.get("is_form", False))
+            if gui_id:
+                body.add_action(GUIReplyAction(
+                    gui_id=gui_id,
+                    persist=persist,
+                    width=width,
+                    is_form=is_form,
+                ))
+                action_added = True
+
         elif action_type == "CustomCodeAction":
             # Raw source code must not be sanitized — sanitize_text escapes single quotes
             # which would corrupt string literals inside the user's Python function.
@@ -377,6 +395,7 @@ def process_agent_diagram(json_data):
     intents_by_id = {}
     rag_dbs_by_id = {}
     rag_dbs_by_name = {}
+    gui_defs_by_id = {}  # gui_id → {gui_id, persist, width, is_form, gui_model}
 
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
@@ -480,6 +499,23 @@ def process_agent_diagram(json_data):
             agent.add_intent(intent)
             intents_by_id[element_id] = intent
             intent_count += 1
+        elif element_type == "AgentGUI":
+            resolved_gui_id = sanitize_text(element.get("gui_id", "").strip())
+            if not resolved_gui_id:
+                continue
+            gui_defs_by_id[resolved_gui_id] = {
+                "gui_id": resolved_gui_id,
+                "persist": bool(element.get("persist", True)),
+                "width": sanitize_text(element.get("width", "")) or None,
+                "is_form": bool(element.get("is_form", False)),
+                "gui_model": element.get("guiModel") or None,
+            }
+            # Store the raw gui_model on the Agent so the generator can emit
+            # a guis/<gui_id>.py file without the GUIReplyAction carrying it.
+            gui_model_data = element.get("guiModel") or None
+            if gui_model_data is not None:
+                agent.gui_models[resolved_gui_id] = gui_model_data
+            continue
         elif element_type == "AgentRagElement":
             rag_name = sanitize_text((element.get("name") or "").strip())
             if not rag_name:
@@ -825,6 +861,16 @@ def process_agent_diagram(json_data):
                         source_state.when_no_intent_matched().go_to(target_state)
                         transition_count += 1
 
+                elif condition_name == "when_form_submitted":
+                    form_gui_id = (
+                        predefined_block.get("formGuiId")
+                        or relationship.get("formGuiId")
+                        or ""
+                    )
+                    form_id = form_gui_id if form_gui_id else None
+                    source_state.when_form_submitted(form_id=form_id).go_to(target_state)
+                    transition_count += 1
+
                 elif condition_name == "when_file_received":
                     _mime_map = {
                         "pdf": "application/pdf",
@@ -881,6 +927,10 @@ def process_agent_diagram(json_data):
                             event_instance = DummyEvent()
                         elif selected_event == "WildcardEvent":
                             event_instance = WildcardEvent()
+                        elif selected_event == "GUIEvent":
+                            gui_event_gui_id = transition_payload.get("guiEventGuiId", "")
+                            message_id = gui_event_gui_id if gui_event_gui_id else None
+                            event_instance = GUIEvent(message_id=message_id)
                         elif selected_event == "None":
                             event_instance = None
 

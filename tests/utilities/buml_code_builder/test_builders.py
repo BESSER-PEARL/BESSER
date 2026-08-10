@@ -1018,6 +1018,9 @@ class TestGUIModelBuilder:
 # project_builder.py
 # ---------------------------------------------------------------------------
 from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.object import (
+    Object, AttributeLink, DataValue, ObjectModel,
+)
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 
@@ -1200,6 +1203,126 @@ class TestProjectBuilder:
 
         assert "Test project" in code
 
+    def test_project_multiple_object_models_are_exported(self, tmp_path):
+        """Regression for WME #161.
+
+        A project with ONE domain model and MULTIPLE object models must export
+        every object model to the generated BUML Python file. Previously the
+        "standalone object models" loop gated on a non-existent
+        ``ObjectModel.domain_model`` attribute, so all object models were
+        silently dropped (JSON export was fine; only the .py export lost them).
+        """
+        # --- Domain model: Library + Book -------------------------------
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        lib_name = Property(name="name", type=StringType)
+        library = Class(name="Library", attributes={lib_name})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        # --- Two distinct object models over that same domain -----------
+        book_one = Object(
+            name="BookOne",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100)),
+            ],
+        )
+        om1 = ObjectModel(name="ObjectModelOne", objects={book_one})
+
+        book_two = Object(
+            name="BookTwo",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200)),
+            ],
+        )
+        om2 = ObjectModel(name="ObjectModelTwo", objects={book_two})
+
+        meta = Metadata(description="Multi object-model project")
+        project = Project(
+            name="MultiObjectProject",
+            models=[dm, om1, om2],
+            owner="tester",
+            metadata=meta,
+        )
+
+        file_path = str(tmp_path / "multi_object.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Both object models must be emitted as ObjectModel(...) definitions...
+        assert code.count("ObjectModel(") == 2
+        # ...and both must be referenced in the final Project(models=[...]) list.
+        assert "object_model_1" in code
+        assert "object_model_2" in code
+
+        # The generated file must be valid, runnable Python that reconstructs a
+        # project holding BOTH object models (i.e. nothing was dropped).
+        compile(code, file_path, "exec")
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        object_models = [m for m in recreated.models if isinstance(m, ObjectModel)]
+        assert len(object_models) == 2
+
+    def test_project_multiple_object_models_roundtrip_no_empty_diagrams(self, tmp_path):
+        """Regression for the WME #161 follow-up (round-trip import).
+
+        Re-importing the exported ``.py`` must yield EXACTLY the object models it
+        contains — not extra empty ones. ``project_builder`` used to emit both a
+        ``# OBJECT MODEL N #`` section header AND the ``# OBJECT MODEL #`` banner
+        per model; the importer's section splitter matched both, so every model
+        produced one real object diagram plus a spurious import-only (empty) one.
+        The builder now writes a single numbered+titled banner per model.
+        """
+        import re
+        from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+            project_to_json,
+        )
+
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        library = Class(name="Library", attributes={Property(name="name", type=StringType)})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        om1 = ObjectModel(name="ObjectModelOne", objects={Object(
+            name="BookOne", classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                   AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100))])})
+        om2 = ObjectModel(name="ObjectModelTwo", objects={Object(
+            name="BookTwo", classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                   AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200))])})
+
+        project = Project(name="MultiObjectProject", models=[dm, om1, om2], owner="tester",
+                          metadata=Metadata(description="roundtrip"))
+
+        file_path = str(tmp_path / "multi_object_roundtrip.py")
+        project_to_code(project, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Exactly one "# OBJECT MODEL ... #" banner per object model (no duplicate).
+        headers = re.findall(r'#\s*OBJECT\s+MODEL[^\n#]*#', code, flags=re.IGNORECASE)
+        assert len(headers) == 2, headers
+
+        result = project_to_json(code)
+        object_diagrams = result["diagrams"].get("ObjectDiagram", [])
+        # Exactly two object diagrams come back — no spurious empty ones.
+        assert len(object_diagrams) == 2
+        # Object-model names survive the round-trip.
+        assert {d["title"] for d in object_diagrams} == {"ObjectModelOne", "ObjectModelTwo"}
+        # Each diagram carries real content, not an empty import-only shell.
+        for d in object_diagrams:
+            assert d["model"]["elements"], f"object diagram {d['title']!r} came back empty"
+
 
 # ---------------------------------------------------------------------------
 # domain_model_builder: advanced scenarios
@@ -1381,3 +1504,217 @@ class TestDomainModelBuilderAdvanced:
 
         assert "MethodImplementationType.CODE" in code
         assert "return 42" in code
+
+
+# ---------------------------------------------------------------------------
+# nn_model_builder.py
+# ---------------------------------------------------------------------------
+from besser.BUML.metamodel.nn import (
+    NN, Conv1D, Conv2D, Conv3D, PoolingLayer,
+    SimpleRNNLayer, LSTMLayer, GRULayer,
+    LinearLayer, FlattenLayer, EmbeddingLayer,
+    DropoutLayer, LayerNormLayer, BatchNormLayer,
+    TensorOp, Configuration, Dataset, Image,
+)
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+
+
+class TestNNModelBuilder:
+    """Tests for nn_model_to_code."""
+
+    @staticmethod
+    def _build_simple_nn():
+        nn = NN(name="SimpleNet")
+        nn.add_layer(Conv2D(name="c1", kernel_dim=[3, 3], out_channels=16, actv_func="relu"))
+        nn.add_layer(FlattenLayer(name="f1"))
+        nn.add_layer(LinearLayer(name="l1", out_features=10))
+        return nn
+
+    def test_generates_valid_python(self, tmp_path):
+        """Generated NN code compiles."""
+        nn = self._build_simple_nn()
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        compile(code, file_path, "exec")
+
+    def test_roundtrip_exec(self, tmp_path):
+        """Generated code produces an NN when executed."""
+        nn = self._build_simple_nn()
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        namespace = {}
+        exec(code, namespace)
+        recreated = namespace["simplenet"]
+        assert isinstance(recreated, NN)
+        assert recreated.name == "SimpleNet"
+        assert len(recreated.modules) == 3
+
+    def test_configuration_emitted(self, tmp_path):
+        """Configuration is written and attached via add_configuration."""
+        nn = self._build_simple_nn()
+        nn.add_configuration(Configuration(
+            batch_size=32, epochs=10, learning_rate=0.001,
+            optimizer="adam", loss_function="crossentropy", metrics=["accuracy"],
+        ))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "Configuration(" in code
+        assert "add_configuration(config)" in code
+
+    def test_train_dataset_emitted(self, tmp_path):
+        """Training dataset with an Image is written and attached via add_train_data."""
+        nn = self._build_simple_nn()
+        image = Image(shape=[32, 32, 3], normalize=False)
+        nn.add_train_data(Dataset(
+            name="train", path_data="/data/train",
+            task_type="multi_class", input_format="images", image=image,
+        ))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "Image(shape=[32, 32, 3]" in code
+        assert "Dataset(" in code
+        assert "add_train_data(train_data)" in code
+
+    def test_test_dataset_emitted(self, tmp_path):
+        """Minimal test dataset (no image) is written and attached via add_test_data."""
+        nn = self._build_simple_nn()
+        nn.add_test_data(Dataset(name="test", path_data="/data/test"))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "Dataset(name='test'" in code
+        assert "add_test_data(test_data)" in code
+        assert "image=image" not in code
+
+    @staticmethod
+    def _nn_imports_block(code: str) -> str:
+        """Return the body of the first `from besser.BUML.metamodel.nn import (...)` block."""
+        marker = "from besser.BUML.metamodel.nn import ("
+        start = code.index(marker) + len(marker)
+        end = code.index(")", start)
+        return code[start:end]
+
+    def test_dataset_imports_emitted(self, tmp_path):
+        """Dataset and Image are present in the generated imports when needed."""
+        nn = self._build_simple_nn()
+        nn.add_train_data(Dataset(
+            name="t", path_data="/d", input_format="images",
+            image=Image(shape=[8, 8, 3], normalize=True),
+        ))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        imports = self._nn_imports_block(code)
+        assert "Dataset" in imports
+        assert "Image" in imports
+
+    def test_no_dataset_no_dataset_import(self, tmp_path):
+        """When NN has no datasets, Dataset/Image are not imported."""
+        nn = self._build_simple_nn()
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        imports = self._nn_imports_block(code)
+        assert "Dataset" not in imports
+        assert "Image" not in imports
+
+    # ------------------------------------------------------------------ #
+    # Exec-round-trip coverage per layer class                            #
+    # ------------------------------------------------------------------ #
+    # Each test constructs an NN with one instance of the layer, serializes
+    # via nn_model_to_code, then exec()'s the output and asserts the layer
+    # survived. Regression guard against any future emitter change that
+    # drops required kwargs or generates syntactically invalid Python for
+    # a specific class.
+
+    @staticmethod
+    def _exec_and_get_nn(tmp_path, nn):
+        path = str(tmp_path / f"nn_{nn.name}.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        ns: dict = {}
+        exec(code, ns)
+        # The main NN binding matches _name_to_var(nn.name); with safe_var_name
+        # this is the lowercase identifier form of nn.name.
+        candidates = [v for v in ns.values() if isinstance(v, NN) and v.name == nn.name]
+        assert candidates, f"No NN named {nn.name!r} in exec namespace"
+        return candidates[0]
+
+    def test_conv1d_exec_roundtrip(self, tmp_path):
+        nn = NN(name="Conv1DNet")
+        nn.add_layer(Conv1D(name="c", kernel_dim=[3], out_channels=8))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert any(type(m).__name__ == "Conv1D" for m in out.modules)
+
+    def test_conv3d_exec_roundtrip(self, tmp_path):
+        nn = NN(name="Conv3DNet")
+        nn.add_layer(Conv3D(name="c", kernel_dim=[3, 3, 3], out_channels=4))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert any(type(m).__name__ == "Conv3D" for m in out.modules)
+
+    def test_pooling_exec_roundtrip(self, tmp_path):
+        nn = NN(name="PoolNet")
+        nn.add_layer(PoolingLayer(
+            name="p", pooling_type="max", dimension="2D", kernel_dim=[2, 2],
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert any(type(m).__name__ == "PoolingLayer" for m in out.modules)
+
+    def test_rnn_variants_exec_roundtrip(self, tmp_path):
+        nn = NN(name="RNNs")
+        nn.add_layer(SimpleRNNLayer(name="r", hidden_size=8))
+        nn.add_layer(LSTMLayer(name="l", hidden_size=16))
+        nn.add_layer(GRULayer(name="g", hidden_size=32))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        names = {type(m).__name__ for m in out.modules}
+        assert {"SimpleRNNLayer", "LSTMLayer", "GRULayer"} <= names
+
+    def test_embedding_dropout_exec_roundtrip(self, tmp_path):
+        nn = NN(name="EmbDrop")
+        nn.add_layer(EmbeddingLayer(name="emb", num_embeddings=1000, embedding_dim=64))
+        nn.add_layer(DropoutLayer(name="drop", rate=0.5))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        names = {type(m).__name__ for m in out.modules}
+        assert "EmbeddingLayer" in names and "DropoutLayer" in names
+
+    def test_norm_layers_exec_roundtrip(self, tmp_path):
+        nn = NN(name="Norms")
+        nn.add_layer(LayerNormLayer(name="ln", normalized_shape=[32]))
+        nn.add_layer(BatchNormLayer(name="bn", num_features=32, dimension="2D"))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        names = {type(m).__name__ for m in out.modules}
+        assert {"LayerNormLayer", "BatchNormLayer"} <= names
+
+    def test_tensor_op_exec_roundtrip_for_every_tns_type(self, tmp_path):
+        """Build one NN per tns_type and assert exec() produces a TensorOp
+        with the right type. Regression guard against the per-branch emit
+        logic in _write_tensor_op."""
+        cases = [
+            ("concatenate", {"concatenate_dim": 1, "layers_of_tensors": ["a", "b"]}),
+            ("multiply",    {"layers_of_tensors": ["a", "b"]}),
+            ("matmultiply", {"layers_of_tensors": ["a", "b"]}),
+            ("reshape",     {"reshape_dim": [1, -1]}),
+            ("transpose",   {"transpose_dim": [0, 2, 1]}),
+            ("permute",     {"permute_dim": [0, 3, 1, 2]}),
+        ]
+        for tns_type, kwargs in cases:
+            nn = NN(name=f"OP_{tns_type}")
+            nn.add_tensor_op(TensorOp(name=f"op_{tns_type}", tns_type=tns_type, **kwargs))
+            out = self._exec_and_get_nn(tmp_path, nn)
+            ops = [m for m in out.modules if type(m).__name__ == "TensorOp"]
+            assert ops, f"No TensorOp exec'd for {tns_type}"
+            assert ops[0].tns_type == tns_type, (
+                f"tns_type mismatch: expected {tns_type}, got {ops[0].tns_type}"
+            )

@@ -10,6 +10,8 @@ from .json_to_buml import (
     json_to_buml_project,
     process_gui_diagram,
     process_quantum_diagram,
+    process_nn_diagram,
+    process_bpmn_diagram,
     process_kg_diagram,
 )
 from .buml_to_json import (
@@ -25,6 +27,10 @@ from .buml_to_json import (
     parse_gui_buml_content,
     project_to_json,
     empty_model,
+    nn_model_to_json,
+    nn_buml_to_json,
+    bpmn_object_to_json,
+    bpmn_buml_to_json,
     kg_to_json,
     kg_buml_to_json,
 )
@@ -37,6 +43,8 @@ __all__ = [
     "json_to_buml_project",
     "process_gui_diagram",
     "process_quantum_diagram",
+    "process_nn_diagram",
+    "process_bpmn_diagram",
     "process_kg_diagram",
     "class_buml_to_json",
     "parse_buml_content",
@@ -50,6 +58,10 @@ __all__ = [
     "parse_gui_buml_content",
     "project_to_json",
     "empty_model",
+    "nn_model_to_json",
+    "nn_buml_to_json",
+    "bpmn_object_to_json",
+    "bpmn_buml_to_json",
     "kg_to_json",
     "kg_buml_to_json",
 ]

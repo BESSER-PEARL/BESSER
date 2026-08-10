@@ -22,9 +22,14 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
+    process_nn_diagram,
+    process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -35,6 +40,9 @@ from besser.utilities.web_modeling_editor.backend.services.validators import (
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,7 +59,7 @@ async def validate_diagram(input_data: DiagramInput):
     This is the unified validation endpoint that:
     1. Converts JSON to BUML (construction validation)
     2. Calls .validate() method on the model for structured metamodel validation
-    3. For ClassDiagram/ObjectDiagram: runs OCL constraint checks if conversion succeeded
+    3. For ClassDiagram/ObjectDiagram/UserDiagram: runs OCL constraint checks if conversion succeeded
     4. Returns unified validation results with errors, warnings, and OCL results
     """
     diagram_type = input_data.model.get("type") if input_data.model else None
@@ -160,6 +168,36 @@ async def validate_diagram(input_data: DiagramInput):
                 "errors": [],
                 "warnings": []
             }
+
+        elif diagram_type == "NNDiagram":
+            try:
+                nn_model = process_nn_diagram(input_data.model_dump())
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                if nn_model is not None:
+                    nn_validation = nn_model.validate(raise_exception=False)
+                    validation_errors.extend(nn_validation["errors"])
+                    validation_warnings.extend(nn_validation["warnings"])
+
+        elif diagram_type == BPMN_DIAGRAM_TYPE:
+            try:
+                bpmn_model = process_bpmn_diagram(input_data.model_dump())
+            except (ConversionError, ValueError) as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                bpmn_validation = bpmn_model.validate(raise_exception=False)
+                validation_errors.extend(bpmn_validation["errors"])
+                validation_warnings.extend(bpmn_validation["warnings"])
+
+        elif diagram_type == "QuantumCircuitDiagram":
+            return {
+                "isValid": True,
+                "message": "\u2705 Quantum Circuit diagram is valid",
+                "errors": [],
+                "warnings": []
+            }
+
         else:
             return {
                 "isValid": False,
@@ -168,6 +206,11 @@ async def validate_diagram(input_data: DiagramInput):
                 "message": "\u274c Validation failed"
             }
 
+    except ConversionError as e:
+        # Structured conversion errors (e.g. malformed multiplicity strings).
+        # These are expected user-input problems, not server bugs.
+        logger.warning("Conversion error during validation: %s", e)
+        validation_errors.extend(str(e).splitlines())
     except ValueError as e:
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)
@@ -179,9 +222,9 @@ async def validate_diagram(input_data: DiagramInput):
 
     # Step 2: If BUML model created successfully AND it's a diagram with OCL support
     ocl_results = None
-    if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram"] and len(validation_errors) == 0:
+    if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram", "UserDiagram"] and len(validation_errors) == 0:
         try:
-            if diagram_type == "ObjectDiagram" and object_model:
+            if diagram_type in ["ObjectDiagram", "UserDiagram"] and object_model:
                 ocl_results = check_ocl_constraint(buml_model, object_model)
             else:
                 ocl_results = check_ocl_constraint(buml_model)

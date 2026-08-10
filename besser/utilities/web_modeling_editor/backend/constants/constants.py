@@ -19,6 +19,7 @@ DEFAULT_QISKIT_BACKEND = "aer_simulator"
 DEFAULT_QISKIT_SHOTS = 1024
 DEFAULT_DJANGO_PROJECT_NAME = "myproject"
 DEFAULT_DJANGO_APP_NAME = "myapp"
+DEFAULT_SUPABASE_USER_ROOT = "User"
 
 # CORS defaults
 DEFAULT_CORS_ORIGINS = [
@@ -58,3 +59,13 @@ RELATIONSHIP_TYPES = {
     "aggregation": "ClassAggregation",
     "inheritance": "ClassInheritance"
 }
+
+# ---------------------------------------------------------------------------
+# BPMN — WME ↔ B-UML BPMN metamodel constants
+# Single source of truth for the BPMN converter pair (json_to_buml /
+# buml_to_json). Diagram-type discriminator: "BPMNDiagram" (uniform with
+# "ClassDiagram", "StateMachineDiagram", …).
+# ---------------------------------------------------------------------------
+BPMN_DIAGRAM_TYPE = "BPMNDiagram"
+BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
+

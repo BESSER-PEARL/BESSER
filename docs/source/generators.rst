@@ -44,6 +44,10 @@ Choosing a Generator
      - Structural
      - .py
      - You need Pydantic validation models with OCL constraints
+   * - **Test Cases**
+     - Structural
+     - .py (pytest + Hypothesis)
+     - You want an auto-generated pytest + Hypothesis test suite for your model
    * - **Java**
      - Structural
      - .java files
@@ -92,6 +96,20 @@ Choosing a Generator
      - Agent
      - ZIP
      - You need a BESSER Agentic Framework conversational agent
+   * - **BAF Agent (personalized)**
+     - Agent + UserDiagram
+     - ZIP
+     - You want a BAF agent adapted to an end-user profile (language, style,
+       accessibility, modality); see :doc:`generators/agent_personalization`
+   * - **BPMN**
+     - BPMN
+     - .bpmn (XML)
+     - You need vendor-neutral BPMN 2.0 XML readable by every BPMN-aware tool
+   * - **Docker Compose**
+     - Deployment
+     - .yml
+     - You need a docker-compose.yml to run a swarm (``deploy.replicas: N``
+       from the diagram multiplicity)
 
 
 Web Application
@@ -117,6 +135,7 @@ Generate code for various frameworks and programming languages:
    generators/rest_api
    generators/python
    generators/pydantic
+   generators/test_case
    generators/java
    generators/flutter
    generators/react
@@ -165,6 +184,17 @@ Generate conversational agents:
    :maxdepth: 1
 
    generators/baf
+   generators/agent_personalization
+
+Business Process
+----------------
+
+Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/bpmn
 
 Build Your Own
 --------------

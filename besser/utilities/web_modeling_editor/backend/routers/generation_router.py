@@ -8,6 +8,7 @@ import ast
 import logging
 import os
 import io
+import re
 import uuid
 import zipfile
 import shutil
@@ -15,17 +16,20 @@ import tempfile
 import importlib.util
 import asyncio
 import json
-import re
-from collections import defaultdict
-from copy import deepcopy
-from typing import Any, Dict, List, Optional, Set
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.responses import StreamingResponse, Response
+
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+    get_user_token,
+)
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.generators.agents.baf_generator import GenerationMode
+from besser.generators.agents.agent_personalization import call_openai_chat
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -40,6 +44,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     process_gui_diagram,
     process_quantum_diagram,
+    process_nn_diagram,
+    process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -55,12 +61,31 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     handle_configuration_variants,
     handle_personalized_agent,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_recommendation_utils import (
+    RECOMMENDATION_ALLOWED_VALUES,
+    load_default_agent_recommendation_config,
+    extract_json_object,
+    normalize_recommended_agent_config,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_manual_mapping_utils import (
+    get_manual_agent_config_mapping,
+    build_manual_mapping_recommendation,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    generate_user_profile_document as _generate_user_profile_document,
+    normalize_user_model_output as _normalize_user_model_output,
+    safe_path as _safe_path,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
+    personalize_gui_page as run_gui_personalization,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
     SUPPORTED_GENERATORS,
     get_generator_info,
     get_filename_for_generator,
+    get_nn_filename,
     is_generator_supported,
 )
 
@@ -78,27 +103,22 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_QISKIT_SHOTS,
     DEFAULT_DJANGO_PROJECT_NAME,
     DEFAULT_DJANGO_APP_NAME,
+    DEFAULT_SUPABASE_USER_ROOT,
 )
-
-# Backend exceptions
 
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+    GenerationError,
+    ValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
 SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
-
-
-def _safe_path(base_dir: str, user_filename: str) -> str:
-    """Resolve a user-provided filename safely within base_dir."""
-    safe_name = os.path.basename(user_filename)
-    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
-    if not full_path.startswith(os.path.realpath(base_dir)):
-        raise ValueError("Invalid path")
-    return full_path
 
 
 def sanitize_config(config: dict) -> dict:
@@ -109,10 +129,205 @@ def sanitize_config(config: dict) -> dict:
 router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
+def _require_github_session(github_session: Optional[str]) -> None:
+    """Verify a GitHub OAuth session is present and active.
+
+    Raises HTTPException(401) when the session header is missing or expired.
+    Mirrors the auth gate used by the deploy endpoints in github_deploy_api.py.
+    """
+    if not github_session:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub authentication required. Please sign in with GitHub first.",
+        )
+    if not get_user_token(github_session):
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub session expired. Please sign in again.",
+        )
+
+
+def _utc_now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/recommend-agent-config-llm")
+@handle_endpoint_errors("recommend_agent_config_llm")
+async def recommend_agent_config_llm(
+    payload: Dict[str, Any] = Body(...),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Recommend a structured agent configuration from a user profile using an LLM.
+
+    Requires authenticated GitHub session.
+    """
+    _require_github_session(github_session)
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise ValidationError("userProfileModel is required and must be a JSON object")
+
+    user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
+    current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
+    requested_model = payload.get("model")
+    llm_model = (
+        requested_model
+        if isinstance(requested_model, str) and requested_model.strip()
+        else "gpt-5.5"
+    )
+
+    profile_document = _generate_user_profile_document(user_profile_model)
+    default_config = load_default_agent_recommendation_config()
+
+    allowed_values_payload = {
+        key: value
+        for key, value in RECOMMENDATION_ALLOWED_VALUES.items()
+        if key not in {"llmProvider", "openaiModels"}
+    }
+
+    system_prompt = (
+        "You are an assistant that recommends a valid agent configuration JSON for a user profile. "
+        "Return ONLY a JSON object with this exact shape: "
+        "{presentation:{...}, modality:{...}, behavior:{...}, content:{...}, system:{...}}. "
+        "Use only allowed values and keep output concise and deterministic. "
+        "Do not include markdown, comments, or explanatory text."
+    )
+    user_prompt = (
+        "Create a recommended configuration adapted to this user profile.\n\n"
+        f"Selected profile name: {user_profile_name or 'N/A'}\n\n"
+        f"Default config baseline:\n{json.dumps(default_config, ensure_ascii=False, indent=2)}\n\n"
+        f"Allowed values:\n{json.dumps(allowed_values_payload, ensure_ascii=False, indent=2)}\n\n"
+        f"Current config context (optional):\n{json.dumps(current_config, ensure_ascii=False, indent=2)}\n\n"
+        f"User profile document:\n{json.dumps(profile_document, ensure_ascii=False, indent=2)}\n\n"
+        "Return only the JSON object."
+    )
+
+    try:
+        recommendation_text = await asyncio.to_thread(
+            call_openai_chat,
+            system_prompt,
+            user_prompt,
+            model=llm_model,
+            openai_api_key=extract_openai_api_key(payload if isinstance(payload, dict) else {}),
+            config=payload,
+        )
+        parsed_recommendation = extract_json_object(recommendation_text)
+        normalized_config = normalize_recommended_agent_config(parsed_recommendation, user_profile_name)
+
+        return {
+            "config": normalized_config,
+            "source": "openai",
+            "model": llm_model,
+            "generatedAt": _utc_now_iso(),
+        }
+    except RuntimeError as runtime_error:
+        raise ValidationError(str(runtime_error)) from runtime_error
+    except ValueError as parse_error:
+        logger.exception("Failed to parse LLM recommendation response")
+        raise GenerationError("Failed to parse LLM recommendation response") from parse_error
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate LLM recommendation")
+        raise GenerationError("Failed to generate LLM recommendation") from exc
+
+
+@router.post("/personalize-gui-page")
+@handle_endpoint_errors("personalize_gui_page")
+async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
+    """Personalize a GUI page (GrapesJS) for a user profile using an LLM.
+
+    Open endpoint (no GitHub session required). The OpenAI API key is resolved
+    from the payload or the server's ``OPENAI_API_KEY`` environment variable.
+
+    Request body:
+        guiPage: {"components": [...], "css": [...]}  -- a GrapesJS page snapshot
+        userProfileModel: <UserDiagram UML model JSON>
+        pageName: str (optional)
+        model: str (optional OpenAI model id)
+
+    Returns the same ``{components, css}`` shape adapted in style and content,
+    ready to be imported back into the editor as a page variant.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object")
+
+    # All validation, prompt building, the LLM call and response parsing live in
+    # gui_personalization_utils (mirroring agent_personalization). The router
+    # only resolves the API key, delegates off the event loop, and shapes the
+    # HTTP response; @handle_endpoint_errors maps ValidationError/GenerationError.
+    result = await asyncio.to_thread(
+        run_gui_personalization,
+        payload.get("guiPage"),
+        payload.get("userProfileModel"),
+        page_name=payload.get("pageName"),
+        model=payload.get("model"),
+        openai_api_key=extract_openai_api_key(payload),
+    )
+    return {
+        "guiPage": {"components": result["components"], "css": result["css"]},
+        "source": "openai",
+        "model": result["model"],
+        "generatedAt": _utc_now_iso(),
+    }
+
+
+@router.get("/agent-config-manual-mapping")
+@handle_endpoint_errors("get_agent_config_manual_mapping")
+async def get_agent_config_manual_mapping(
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Return the complete rule mapping used for deterministic recommendations.
+
+    Requires authenticated GitHub session.
+    """
+    _require_github_session(github_session)
+    return {
+        "mapping": get_manual_agent_config_mapping(),
+        "source": "manual_mapping",
+        "generatedAt": _utc_now_iso(),
+    }
+
+
+@router.post("/recommend-agent-config-mapping")
+@handle_endpoint_errors("recommend_agent_config_mapping")
+async def recommend_agent_config_mapping(
+    payload: Dict[str, Any] = Body(...),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Recommend a structured agent configuration using deterministic mapping rules.
+
+    Requires authenticated GitHub session.
+    """
+    _require_github_session(github_session)
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise ValidationError("userProfileModel is required and must be a JSON object")
+
+    user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
+    current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
+
+    profile_document = _generate_user_profile_document(user_profile_model)
+    recommendation = build_manual_mapping_recommendation(
+        user_profile_document=profile_document,
+        user_profile_name=user_profile_name,
+        current_config=current_config,
+    )
+
+    return {
+        "config": recommendation["config"],
+        "matchedRules": recommendation.get("matchedRules", []),
+        "signals": recommendation.get("signals", {}),
+        "source": "manual_mapping",
+        "generatedAt": _utc_now_iso(),
+    }
+
+
 def generate_agent_files(
     agent_model,
     config,
     generation_mode: GenerationMode = GenerationMode.FULL,
+    config_yaml: Optional[str] = None,
 ):
     """
     Generate agent files from an agent model.
@@ -171,6 +386,7 @@ def generate_agent_files(
                     config=config,
                     openai_api_key=openai_api_key,
                     generation_mode=generation_mode,
+                    config_yaml=config_yaml,
                 )
             else:
                 # Fall back to the original agent model
@@ -180,6 +396,7 @@ def generate_agent_files(
                     config=config,
                     openai_api_key=openai_api_key,
                     generation_mode=generation_mode,
+                    config_yaml=config_yaml,
                 )
 
             generator.generate()
@@ -262,23 +479,30 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
-    # Handle Qiskit generator (requires QuantumCircuitDiagram)
-    if generator_type == "qiskit":
-        quantum_diagram = input_data.get_active_diagram("QuantumCircuitDiagram")
-        if not quantum_diagram:
+    # Handle generators that consume a non-class diagram (Qiskit → quantum,
+    # PyTorch/TensorFlow → neural network). The required diagram type comes
+    # from the registry, so this branch covers every such generator without
+    # name-literal switches.
+    required_diagram_type = generator_info.required_diagram_type
+    if required_diagram_type:
+        diagram = input_data.get_active_diagram(required_diagram_type)
+        if not diagram:
             raise HTTPException(
                 status_code=400,
-                detail="QuantumCircuitDiagram is required for Qiskit generator"
+                detail=(
+                    f"{required_diagram_type} is required for "
+                    f"'{generator_type}' generator"
+                ),
             )
-        # Convert to DiagramInput with the quantum diagram data
         diagram_input = DiagramInput(
-            id=quantum_diagram.id,
-            title=quantum_diagram.title,
-            model=quantum_diagram.model,
-            lastUpdate=quantum_diagram.lastUpdate,
+            id=diagram.id,
+            title=diagram.title,
+            model=diagram.model,
+            lastUpdate=diagram.lastUpdate,
             generator=generator_type,
             config=config,
-            referenceDiagramData=quantum_diagram.referenceDiagramData if hasattr(quantum_diagram, 'referenceDiagramData') else None
+            configYaml=diagram.configYaml,
+            referenceDiagramData=getattr(diagram, "referenceDiagramData", None),
         )
         return await generate_code_output(diagram_input)
 
@@ -298,6 +522,7 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         lastUpdate=current_diagram.lastUpdate,
         generator=generator_type,
         config=config,
+        configYaml=current_diagram.configYaml,
         referenceDiagramData=current_diagram.referenceDiagramData
     )
 
@@ -339,6 +564,14 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle quantum generators
         if generator_info.category == "quantum":
             return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
+
+        # Handle neural network generators
+        if generator_info.category == "neural_network":
+            return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
+
+        # Handle BPMN generators (reads BPMNDiagram via process_bpmn_diagram)
+        if generator_info.category == "business_process":
+            return await _generate_bpmn(json_data, generator_type, generator_info.generator_class, temp_dir)
 
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
@@ -385,43 +618,67 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             detail="ClassDiagram is required for Web App generator"
         )
 
+    # Personalization versions (optional). When present, the frontend has
+    # pre-assembled one COMPLETE GUI model per version (base + each user
+    # profile), each already resolved page-by-page. When absent, we generate a
+    # single app from the GUI diagram's own model (unchanged behavior).
+    web_app_versions = config.get("webAppVersions") if isinstance(config, dict) else None
+    if web_app_versions:
+        version_specs = [
+            (str(v.get("slug") or f"version-{i + 1}"), v.get("guiModel"))
+            for i, v in enumerate(web_app_versions)
+        ]
+    else:
+        version_specs = [(None, gui_diagram.model)]
+
+    multi = len(version_specs) > 1
+    generator_class = generator_info.generator_class
+
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
-        # Process class diagram to BUML
-        buml_model = process_class_diagram(class_diagram.model_dump())
+        for slug, gui_json in version_specs:
+            # Re-derive the class BUML per version so the generator can't leak
+            # mutations from one version into the next.
+            buml_model = process_class_diagram(class_diagram.model_dump())
+            gui_model = process_gui_diagram(gui_json, class_diagram.model, buml_model)
 
-        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
-
-        # Collect every AgentDiagram in the project if the GUI uses agent components.
-        # The frontend dropdown enumerates all agents, so the generator must
-        # satisfy any binding — we don't filter to the active reference here.
-        agent_models = []
-        agent_configs = {}
-        has_agent_components = _check_for_agent_components(gui_model)
-
-        if has_agent_components:
-            project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
-            default_cfg = project_agent_config or config
-            agent_models, agent_configs = collect_agents_from_diagrams(
-                input_data.diagrams.get("AgentDiagram", []),
-                default_config=default_cfg,
-            )
-            for name, cfg in agent_configs.items():
-                logger.debug("[WebApp agent] resolved config for %s: %s",
-                             name,
-                             json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
-            if not agent_models:
-                logger.warning(
-                    "GUI contains agent components but no AgentDiagram was found. "
-                    "Agent components will not be functional."
+            # Collect every AgentDiagram in the project if this version's GUI uses
+            # agent components. The frontend dropdown enumerates all agents, so the
+            # generator must satisfy any binding — we don't filter to the active
+            # reference here.
+            agent_models = []
+            agent_configs = {}
+            agent_config_yamls: dict = {}
+            if _check_for_agent_components(gui_model):
+                project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                default_cfg = project_agent_config or config
+                agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
+                    input_data.diagrams.get("AgentDiagram", []),
+                    default_config=default_cfg,
                 )
+                for name, cfg in agent_configs.items():
+                    logger.debug("[WebApp agent] resolved config for %s: %s",
+                                 name,
+                                 json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
+                if not agent_models:
+                    logger.warning(
+                        "GUI contains agent components but no AgentDiagram was found. "
+                        "Agent components will not be functional."
+                    )
 
-        # Generate Web App TypeScript project
-        generator_class = generator_info.generator_class
+            # Single version → generate at the zip root (current layout).
+            # Multiple versions → one profile-named subfolder each.
+            out_dir = temp_dir
+            if multi:
+                out_dir = _safe_path(temp_dir, os.path.basename(slug))
+                os.makedirs(out_dir, exist_ok=True)
 
-        return await _generate_web_app(
-            buml_model, gui_model, generator_class, config, temp_dir,
-            agent_models=agent_models, agent_configs=agent_configs,
-        )
+            await _run_web_app_generator(
+                buml_model, gui_model, generator_class, out_dir,
+                agent_models=agent_models, agent_configs=agent_configs,
+                agent_config_yamls=agent_config_yamls,
+            )
+
+        return _create_zip_response(temp_dir, "web_app")
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -437,11 +694,17 @@ def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
     config = json_data.get('config', {})
-    logger.debug("[Agent generation] config: %s", json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None')
+    config_yaml: Optional[str] = json_data.get('configYaml') if isinstance(json_data.get('configYaml'), str) else None
+    sanitized_config_log = (
+        json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None'
+    )
+    logger.debug("[Agent generation] config: %s", sanitized_config_log)
 
     if config is None:
         agent_model = process_agent_diagram(json_data)
-        zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
+        zip_buffer, file_name = await asyncio.to_thread(
+            generate_agent_files, agent_model, config, config_yaml=config_yaml
+        )
         return _streaming_zip(zip_buffer, file_name)
 
     is_config_dict = isinstance(config, dict)
@@ -464,22 +727,26 @@ async def _handle_agent_generation(json_data: dict):
     if base_model_snapshot is not None and isinstance(variation_entries, list):
         buf, name = handle_variation_generation(
             json_data, config, base_model_snapshot, variation_entries, generate_agent_files,
+            config_yaml=config_yaml,
         )
         return _streaming_zip(buf, name)
 
     if configuration_variants and isinstance(configuration_variants, list):
         buf, name = handle_configuration_variants(
             json_data, configuration_variants, generate_agent_files,
+            config_yaml=config_yaml,
         )
         return _streaming_zip(buf, name)
 
     if is_config_dict and 'personalizationMapping' in config:
-        buf, name = handle_personalized_agent(json_data, config, generate_agent_files)
+        buf, name = handle_personalized_agent(json_data, config, generate_agent_files, config_yaml=config_yaml)
         return _streaming_zip(buf, name)
 
     # Single agent fallback
     agent_model = process_agent_diagram(json_data)
-    zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
+    zip_buffer, file_name = await asyncio.to_thread(
+        generate_agent_files, agent_model, config, config_yaml=config_yaml
+    )
     return _streaming_zip(zip_buffer, file_name)
 
 
@@ -501,6 +768,8 @@ async def _handle_class_diagram_generation(
         return await _generate_django(buml_model, generator_class, config, temp_dir)
     if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
+    if generator_type == "supabase":
+        return await _generate_supabase(buml_model, generator_class, config, temp_dir)
     if generator_type == "sqlalchemy":
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
     if generator_type == "jsonschema":
@@ -558,172 +827,6 @@ async def _handle_user_diagram_generation(
     _normalize_user_model_output(object_model, temp_dir)
 
     return _create_file_response(temp_dir, generator_type)
-
-
-def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate the normalized JSON document for a stored user profile diagram."""
-    if not isinstance(user_profile_model, dict):
-        raise HTTPException(status_code=400, detail="userProfileModel must contain a serialized UserDiagram")
-
-    diagram_title = (
-        user_profile_model.get("title")
-        or user_profile_model.get("name")
-        or user_profile_model.get("id")
-        or "UserProfile"
-    )
-    prepared_payload = {
-        "title": diagram_title,
-        "diagramType": "UserDiagram",
-        "model": deepcopy(user_profile_model),
-        "generator": "jsonobject",
-    }
-
-    model_section = prepared_payload["model"]
-    if isinstance(model_section, dict):
-        model_section.setdefault("type", "UserDiagram")
-
-    try:
-        with tempfile.TemporaryDirectory(prefix=f"user_profile_{uuid.uuid4().hex}_") as temp_dir:
-            object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
-            generator_info = get_generator_info("jsonobject")
-            if not generator_info:
-                raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
-            generator_class = generator_info.generator_class
-            generator_instance = generator_class(object_model, output_dir=temp_dir)
-            generator_instance.generate()
-
-            _normalize_user_model_output(object_model, temp_dir)
-
-            file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-            json_path = _safe_path(temp_dir, f"{file_name}.json")
-            if not os.path.isfile(json_path):
-                raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
-
-            with open(json_path, "r", encoding="utf-8") as handle:
-                return json.load(handle)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to convert user profile model")
-        raise HTTPException(status_code=400, detail="Failed to convert user profile model. Please check the input data.") from exc
-
-
-def _normalize_user_model_output(object_model, temp_dir: str) -> None:
-    file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-    json_path = _safe_path(temp_dir, f"{file_name}.json")
-    if not os.path.isfile(json_path):
-        return
-
-    try:
-        with open(json_path, "r", encoding="utf-8") as source:
-            document = json.load(source)
-    except (OSError, json.JSONDecodeError):
-        return
-
-    normalized_document = _build_user_model_hierarchy(document)
-    if not normalized_document:
-        return
-
-    with open(json_path, "w", encoding="utf-8") as target:
-        json.dump(normalized_document, target, indent=2, ensure_ascii=False)
-
-
-def _build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    objects = document.get("objects")
-    if not isinstance(objects, list):
-        return None
-
-    objects_by_id: Dict[str, Dict[str, Any]] = {}
-    for obj in objects:
-        if not isinstance(obj, dict):
-            continue
-        object_id = obj.get("id")
-        if object_id:
-            objects_by_id[object_id] = obj
-
-    if not objects_by_id:
-        return None
-
-    root_id = next(
-        (obj_id for obj_id, obj in objects_by_id.items() if obj.get("class") == "User"),
-        None,
-    )
-    if not root_id:
-        return None
-
-    root_model = _build_user_model_node(root_id, objects_by_id, include_identity=True, path=set())
-    if root_model is None:
-        return None
-
-    normalized_document = {key: value for key, value in document.items() if key != "objects"}
-    normalized_document["model"] = root_model
-    return normalized_document
-
-
-def _build_user_model_node(
-    object_id: str,
-    objects_by_id: Dict[str, Dict[str, Any]],
-    include_identity: bool,
-    path: Set[str],
-) -> Optional[Dict[str, Any]]:
-    if object_id in path:
-        return None
-
-    obj = objects_by_id.get(object_id)
-    if not obj:
-        return None
-
-    path.add(object_id)
-    try:
-        node: Dict[str, Any] = {}
-        if include_identity:
-            node["id"] = obj.get("id")
-            node["class"] = obj.get("class")
-
-        attributes = obj.get("attributes")
-        if isinstance(attributes, dict):
-            node.update(attributes)
-
-        child_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-
-        relationships = obj.get("relationships")
-        if isinstance(relationships, dict):
-            for target_ids in relationships.values():
-                if not isinstance(target_ids, list):
-                    continue
-                for target_id in target_ids:
-                    child_obj = objects_by_id.get(target_id)
-                    if not child_obj:
-                        continue
-                    child_node = _build_user_model_node(
-                        target_id,
-                        objects_by_id,
-                        include_identity=False,
-                        path=path,
-                    )
-                    if child_node is None:
-                        continue
-                    key = child_obj.get("class") or child_obj.get("id")
-                    if not key:
-                        continue
-                    child_groups[key].append(child_node)
-
-        for child_key, children in child_groups.items():
-            if not children:
-                continue
-            if len(children) == 1:
-                node[child_key] = children[0]
-            else:
-                node[child_key] = children
-
-        return node
-    finally:
-        path.remove(object_id)
-
-
-def _sanitize_object_model_filename(name: Optional[str]) -> str:
-    cleaned = re.sub(r'[^a-zA-Z0-9_-]', '_', (name or "object_model").strip())
-    return cleaned or "object_model"
 
 
 def _extract_reference_class_diagram(json_data: dict):
@@ -791,7 +894,21 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         containerization=containerization,
         output_dir=temp_dir,
     )
-    await asyncio.to_thread(generator_instance.generate)
+
+    # DjangoGenerator.generate() shells out to `django-admin startproject`
+    # without a cwd, and several internal paths are derived from os.getcwd().
+    # The caller therefore has to chdir into temp_dir for the duration of the
+    # generation; otherwise the project gets scaffolded in the FastAPI
+    # process's cwd and the harvester below finds an empty temp_dir/<project>.
+    def _run_generate_in_temp_dir():
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(temp_dir)
+            generator_instance.generate()
+        finally:
+            os.chdir(original_cwd)
+
+    await asyncio.to_thread(_run_generate_in_temp_dir)
 
     # Validate generation
     if not os.path.exists(project_dir) or not os.listdir(project_dir):
@@ -828,6 +945,36 @@ async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str
     await asyncio.to_thread(generator_instance.generate)
 
     return _create_file_response(temp_dir, "sql")
+
+
+_SUPABASE_USER_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+
+async def _generate_supabase(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate Supabase Postgres DDL."""
+    user_root = DEFAULT_SUPABASE_USER_ROOT
+    if config and "user_root" in config:
+        raw = config["user_root"]
+        if raw == "" or raw is None:
+            # Empty / None means "skip auth integration entirely"
+            user_root = None
+        else:
+            if not isinstance(raw, str) or not _SUPABASE_USER_ROOT_RE.match(raw):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Invalid user_root: must be a class name matching "
+                        "[A-Za-z_][A-Za-z0-9_]{0,62} (or empty to skip auth integration)."
+                    ),
+                )
+            user_root = raw
+
+    generator_instance = generator_class(
+        buml_model, output_dir=temp_dir, user_root=user_root
+    )
+    await asyncio.to_thread(generator_instance.generate)
+
+    return _create_file_response(temp_dir, "supabase")
 
 
 async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_dir: str):
@@ -871,6 +1018,75 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
     else:
         return _create_file_response(temp_dir, "jsonschema")
 
+
+async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):
+    """Generate neural network code (PyTorch or TensorFlow)."""
+    if generator_class is None:
+        raise ConversionError(
+            f"Generator '{generator_type}' is not available. "
+            f"Please install the required dependencies."
+        )
+    try:
+        nn_model = process_nn_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        # Malformed NN payload (dangling element id, non-dict element,
+        # non-string attribute value). Surface as a structured 400 via the
+        # decorator instead of letting it leak as a 500.
+        raise ConversionError(f"Malformed NN diagram payload: {exc}") from exc
+    # ValueError from process_nn_diagram (missing mandatory attributes,
+    # cycles, unresolved NNReferences, ...) is caught and mapped to 400 by
+    # @handle_endpoint_errors — no explicit re-raise needed here.
+
+    generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
+    if generator_type == "tensorflow":
+        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
+    else:
+        channel_last = config.get("channel_last", False) if config else False
+        generator_instance = generator_class(
+            nn_model, output_dir=temp_dir,
+            generation_type=generation_type, channel_last=channel_last,
+        )
+    await asyncio.to_thread(generator_instance.generate)
+
+    download_filename = get_nn_filename(generator_type, generation_type)
+
+    # Read the known-named file emitted by the generator. Scanning the
+    # directory and picking "the first file" is fragile — if the generator
+    # drops helpers alongside the main artifact we'd ship the wrong one.
+    output_file_path = _safe_path(temp_dir, download_filename)
+    if not os.path.isfile(output_file_path):
+        raise GenerationError(
+            f"{generator_type} generation failed: expected output "
+            f"{download_filename!r} was not produced."
+        )
+    with open(output_file_path, "rb") as f:
+        file_content = f.read()
+
+    return Response(
+        content=file_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
+    )
+
+
+async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
+    """Generate vendor-neutral BPMN 2.0 XML.
+
+    Processes the BPMN diagram JSON via ``process_bpmn_diagram`` (re-wrapping
+    malformed-payload exceptions as ``ConversionError`` so they surface as 400),
+    then runs the BPMNGenerator and returns the emitted ``.bpmn`` file.
+    """
+    try:
+        bpmn_model = process_bpmn_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
+
+    generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    return _create_file_response(temp_dir, generator_type)
+
+
 async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):
     """Generate Qiskit code."""
     # Validate that this is a quantum diagram (has 'cols' in model)
@@ -878,10 +1094,14 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     if not isinstance(model_data, dict) or 'cols' not in model_data:
         # Check if this looks like a ClassDiagram or other diagram type
         diagram_type = model_data.get('type', 'unknown') if isinstance(model_data, dict) else 'unknown'
+        detail_message = (
+            f"Invalid diagram type for Qiskit generator. Expected QuantumCircuitDiagram "
+            f"but received '{diagram_type}'. Please use the 'generate-output-from-project' "
+            f"endpoint or select the Quantum Circuit diagram."
+        )
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid diagram type for Qiskit generator. Expected QuantumCircuitDiagram but received '{diagram_type}'. "
-                   f"Please use the 'generate-output-from-project' endpoint or select the Quantum Circuit diagram."
+            detail=detail_message,
         )
 
     quantum_model = process_quantum_diagram(json_data)
@@ -939,18 +1159,33 @@ def _check_container_for_agent_components(container):
                 return True
     return False
 
+async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir: str,
+                                 agent_models=None, agent_configs=None, agent_config_yamls=None):
+    """Run the web app generator into ``out_dir`` WITHOUT zipping.
+
+    Split out from ``_generate_web_app`` so multiple personalization versions can
+    each be generated into their own subdirectory before a single zip is built.
+    """
+    generator_instance = generator_class(
+        buml_model, gui_model, output_dir=out_dir,
+        agent_models=agent_models, agent_configs=agent_configs,
+        agent_config_yamls=agent_config_yamls,
+    )
+    await asyncio.to_thread(generator_instance.generate)
+
+
 async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
-                            agent_models=None, agent_configs=None):
-    """Generate web application files.
+                            agent_models=None, agent_configs=None, agent_config_yamls=None):
+    """Generate web application files (single version) and return a ZIP response.
 
     Supports multi-agent projects: ``agent_models`` is a list and each is emitted
     under ``agents/<slug>/`` in the generated output.
     """
-    generator_instance = generator_class(
-        buml_model, gui_model, output_dir=temp_dir,
+    await _run_web_app_generator(
+        buml_model, gui_model, generator_class, temp_dir,
         agent_models=agent_models, agent_configs=agent_configs,
+        agent_config_yamls=agent_config_yamls,
     )
-    await asyncio.to_thread(generator_instance.generate)
     return _create_zip_response(temp_dir, "web_app")
 
 @handle_endpoint_errors("_generate_standard")

@@ -9,7 +9,7 @@ that must work across both repositories:
 
 Use this when you need **new elements, new rendering, and new backend processing**.
 If you only need to expose an existing UML diagram type in the webapp, follow the WME
-checklist in ``packages/webapp2/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md``.
+checklist in ``packages/webapp/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md``.
 
 Decision Tree
 -------------
@@ -82,7 +82,7 @@ Step 3: Wire the Diagram into the Webapp (WME repo)
 Once the editor package can render the diagram, expose it in the webapp.
 Follow the checklist in:
 
-``packages/webapp2/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md``
+``packages/webapp/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md``
 
 That checklist covers:
 

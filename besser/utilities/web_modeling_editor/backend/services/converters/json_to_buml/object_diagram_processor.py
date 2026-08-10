@@ -198,17 +198,34 @@ def process_object_diagram(json_data, domain_model):
                         continue
                 elif attr_type == "UserModelAttribute":
                     operator = attr_element.get("attributeOperator", "==")
-                    if operator and operator in attr_string:
-                        attr_part, value_part = attr_string.split(operator, 1)
-                        attr_name = attr_part.strip()
-                        value = value_part.strip()
+                    # The name string can embed the operator in two forms: the
+                    # stored symbol (e.g. "age == 22", produced by manual edits)
+                    # or the editor's displayed equality symbol (a single '=',
+                    # e.g. "age = 22", produced by the modeling agent). Try the
+                    # stored operator first so "age == 22" is not split on its
+                    # first '=' (which captured "= 22" as the value and broke
+                    # type conversion). Fall back to the displayed '=' for
+                    # equality, so agent-generated criteria are still parsed
+                    # instead of dropped.
+                    candidate_operators = [operator]
+                    if operator == "==":
+                        candidate_operators.append("=")
+                    for candidate in candidate_operators:
+                        if candidate and candidate in attr_string:
+                            attr_part, value_part = attr_string.split(candidate, 1)
+                            attr_name = attr_part.strip()
+                            value = value_part.strip()
+                            break
                     else:
                         attr_name = attr_string.strip()
                         value = attr_element.get("attributeValue")
                 else:
                     continue
 
-                if attr_name and value is not None:
+                # Skip criteria left blank in the editor (e.g. "age = "): an
+                # empty value is "no constraint", not a value to type-convert,
+                # so it must not raise on int/float parsing.
+                if attr_name and value not in (None, ""):
                     # Find the corresponding property in the class or its ancestors
                     property_obj = None
                     all_attrs = get_all_attributes(class_obj, domain_model)
@@ -238,13 +255,21 @@ def process_object_diagram(json_data, domain_model):
                             if type_name in ['int', 'IntegerType']:
                                 try:
                                     converted_value = int(value)
-                                except ValueError:
-                                    converted_value = value
+                                except (TypeError, ValueError) as exc:
+                                    raise ConversionError(
+                                        f"Object '{object_name}' (class '{class_obj.name}'): "
+                                        f"attribute '{attr_name}' expects an integer, "
+                                        f"but received {value!r}."
+                                    ) from exc
                             elif type_name in ['float', 'FloatType']:
                                 try:
                                     converted_value = float(value)
-                                except ValueError:
-                                    converted_value = value
+                                except (TypeError, ValueError) as exc:
+                                    raise ConversionError(
+                                        f"Object '{object_name}' (class '{class_obj.name}'): "
+                                        f"attribute '{attr_name}' expects a number, "
+                                        f"but received {value!r}."
+                                    ) from exc
                             elif type_name in ['bool', 'BooleanType']:
                                 converted_value = value.lower() in ['true', '1', 'yes']
                             elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
@@ -256,8 +281,17 @@ def process_object_diagram(json_data, domain_model):
             if attributes_dict:
                 builder = builder.attributes(**attributes_dict)
 
-            # Build the object
-            obj = builder.build()
+            # Build the object. Translate metamodel TypeError/ValueError (e.g. a
+            # datetime/enum value the upstream conversion let through and the
+            # metamodel rejected) into a ConversionError carrying the object
+            # context, so the user sees a 400 with a clear message instead of a
+            # 500 internal error.
+            try:
+                obj = builder.build()
+            except (TypeError, ValueError) as exc:
+                raise ConversionError(
+                    f"Object '{object_name}' (class '{class_obj.name}'): {exc}"
+                ) from exc
             logger.debug("Created object '%s' of class '%s'", object_name, class_obj.name)
 
             # Add the object to the model and track it

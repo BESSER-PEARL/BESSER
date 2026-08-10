@@ -12,6 +12,7 @@ from . import (
     process_object_diagram,
     process_agent_diagram,
     process_state_machine,
+    process_bpmn_diagram,
 )
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -64,6 +65,8 @@ def _collect_valid_diagrams(project):
         "QuantumCircuitDiagram",
         "KnowledgeGraphDiagram",
         "UserDiagram",
+        "NNDiagram",
+        "BPMN",
     ]
 
     result = {}
@@ -200,16 +203,29 @@ def json_to_buml_project(project):
                 getattr(kg_diag, "title", "unknown"), e,
             )
 
-    # ── Process ALL StateMachineDiagrams ────────────────────────────────
+    # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):
-        try:
-            sm_model = process_state_machine(sm_diag.model_dump())
-            model_list.append(sm_model)
-        except Exception as e:
-            logger.warning(
-                "StateMachineDiagram '%s' could not be processed: %s",
-                getattr(sm_diag, "title", "unknown"), e,
-            )
+        sm_model = process_state_machine(sm_diag.model_dump())
+        model_list.append(sm_model)
+
+    # ── Process ALL NNDiagrams ────────────────────────────────────────
+    from .nn_diagram_processor import process_nn_diagram
+
+    nn_titles: dict = {}
+    for nn_diag in diagrams.get("NNDiagram", []):
+        nn_model = process_nn_diagram(nn_diag.model_dump())
+        model_list.append(nn_model)
+        # Preserve the diagram's user-facing title so project_to_code can
+        # emit it in the section header — the NN metamodel only stores a
+        # sanitized name, so without this the title is lost on round-trip.
+        nn_title = getattr(nn_diag, "title", None)
+        if nn_title:
+            nn_titles[id(nn_model)] = nn_title
+
+    # ── Process ALL BPMNDiagrams ──────────────────────────────────────
+    for bpmn_diag in diagrams.get("BPMN", []):
+        bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
+        model_list.append(bpmn_model)
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the
@@ -226,5 +242,10 @@ def json_to_buml_project(project):
         owner=project.owner or "",
         metadata=metadata
     )
+
+    # Attach NN titles as an attribute on the project so project_to_code
+    # can read them without changing this function's return type (the
+    # public API stays a single Project instance).
+    project_instance._nn_diagram_titles = nn_titles
 
     return project_instance

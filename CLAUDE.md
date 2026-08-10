@@ -54,7 +54,7 @@ make html  # Windows: make.bat html
 ### Local Stack Deployment
 ```bash
 # Run full stack with Docker Compose
-docker-compose up --build
+docker compose up --build
 ```
 
 ## Architecture Overview
@@ -289,6 +289,18 @@ git add besser/utilities/web_modeling_editor/frontend
 - Additional domain-specific fixtures in `tests/generators/conftest.py`
 - Validate both structure (class names, endpoints) and content (business logic)
 - `pyproject.toml` configures `--import-mode=importlib` to prevent namespace collisions between test and source packages
+
+Optional test dependencies (not in `requirements.txt`; CI installs them but local machines may not):
+- `tests/generators/nn/` imports `torch` (PyTorch) and `tensorflow`.
+- `tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py` imports `openpyxl`.
+
+When running pytest locally without those installed, pytest stops at collection with `ModuleNotFoundError` *before* any unrelated test runs. The pragmatic workaround for a quick sweep is to skip them:
+```bash
+python -m pytest tests/ \
+  --ignore=tests/generators/nn \
+  --ignore=tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py
+```
+Don't mistake these for failures introduced by your change — the errors are always collection errors, never test failures.
 
 ## CI/CD Pipelines
 

@@ -13,6 +13,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers.at
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.method_parser import parse_method
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import parse_multiplicity
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.text_parser import sanitize_text
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 from besser.BUML.metamodel.structural import Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Enumeration, Class, DomainModel
 
@@ -413,13 +414,22 @@ class TestParseMultiplicity:
         assert m.min == expected_min
         assert m.max == expected_max
 
-    # --- Invalid / unparsable input defaults to 1..1 (parametrized) -----------
+    # --- Invalid / unparsable input raises ConversionError --------------------
 
-    @pytest.mark.parametrize("mult_str", ["abc", "a..b"], ids=["non-numeric", "range-non-numeric"])
-    def test_invalid_input_defaults_to_1_1(self, mult_str):
-        m = parse_multiplicity(mult_str)
-        assert m.min == 1
-        assert m.max == 1
+    @pytest.mark.parametrize("mult_str", [
+        "abc",
+        "a..b",
+        "6dsfdsfsdf..1",
+        "1..b",
+        "1..2..3",
+    ], ids=["non-numeric", "range-non-numeric", "garbage-min", "garbage-max", "too-many-dots"])
+    def test_invalid_input_raises(self, mult_str):
+        with pytest.raises(ConversionError):
+            parse_multiplicity(mult_str)
+
+    def test_min_greater_than_max_raises(self):
+        with pytest.raises(ConversionError):
+            parse_multiplicity("5..1")
 
     # --- Return type is Multiplicity ------------------------------------------
 

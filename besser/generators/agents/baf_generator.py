@@ -400,6 +400,7 @@ class BAFGenerator(GeneratorInterface):
             if unique_gui_actions:
                 guis_dir = os.path.join(self.build_generation_dir(), "guis")
                 os.makedirs(guis_dir, exist_ok=True)
+                open(os.path.join(guis_dir, "__init__.py"), "w").close()
                 for gui_action in unique_gui_actions:
                     gui_var = safe_var_name(gui_action.gui_id)
                     gui_model_data = gui_models.get(gui_action.gui_id)

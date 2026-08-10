@@ -12,6 +12,7 @@ COPY requirements.txt .
 # that also depends on torch (e.g. besser-agentic-framework[extras]).
 RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-deps besser
 
 # Preload NLTK tokenizer data used by BAF so simulation subprocesses do not
 # download corpora at runtime (which can leave partial/corrupted zip files).
@@ -34,7 +35,7 @@ COPY . .
 RUN mkdir -p /tmp/sessions
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 EXPOSE 8001
 

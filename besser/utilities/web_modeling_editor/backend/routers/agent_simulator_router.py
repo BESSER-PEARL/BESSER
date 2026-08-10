@@ -202,6 +202,16 @@ async def _generate_agent_code_and_config(
                 with open(skill_path, encoding="utf-8") as f:
                     support_files[rel_path] = f.read()
 
+        guis_dir = os.path.join(output_dir, "guis")
+        if os.path.isdir(guis_dir):
+            for gui_name in sorted(os.listdir(guis_dir)):
+                gui_path = os.path.join(guis_dir, gui_name)
+                if not os.path.isfile(gui_path):
+                    continue
+                rel_path = os.path.join("guis", gui_name).replace("\\", "/")
+                with open(gui_path, encoding="utf-8") as f:
+                    support_files[rel_path] = f.read()
+
         return support_files
 
     agent_model = process_agent_diagram(diagram_data)
@@ -216,6 +226,7 @@ async def _generate_agent_code_and_config(
         agent_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(agent_module)
         the_agent = getattr(agent_module, "agent", agent_model)
+        the_agent.gui_models = getattr(agent_model, "gui_models", {}) or {}
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class

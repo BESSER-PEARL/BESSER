@@ -850,6 +850,8 @@ class RAG(NamedElement):
             llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
+            use_hybrid_rag: bool = False,
+            bm25_weight: float = 0.6,
     ):
         super().__init__(name)
         self.agent: 'Agent' = agent
@@ -859,6 +861,8 @@ class RAG(NamedElement):
         self.llm_prompt: Optional[str] = llm_prompt
         self.k: int = k
         self.num_previous_messages: int = num_previous_messages
+        self.use_hybrid_rag: bool = use_hybrid_rag
+        self.bm25_weight: float = bm25_weight
 
 
 # --- Reasoning extension primitives -------------------------------------- #
@@ -2005,6 +2009,8 @@ class Agent(StateMachine):
             llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
+            use_hybrid_rag: bool = False,
+            bm25_weight: float = 0.6,
     ) -> RAG:
         """Register a Retrieval-Augmented Generation configuration on the agent."""
 
@@ -2019,6 +2025,8 @@ class Agent(StateMachine):
             llm_prompt=llm_prompt,
             k=k,
             num_previous_messages=num_previous_messages,
+            use_hybrid_rag=use_hybrid_rag,
+            bm25_weight=bm25_weight,
         )
         self.rags.append(rag)
         return rag

@@ -21,8 +21,10 @@ from baf.nlp.text2speech.openai_text2speech import OpenAIText2Speech
 {% if agent.rags and agent.rags|length > 0 %}
 {% set has_openai_rag_ns = namespace(value=false) %}
 {% set has_ollama_rag_ns = namespace(value=false) %}
+{% set has_hybrid_rag_ns = namespace(value=false) %}
 {% for rag in agent.rags %}
 {% if rag.vector_store and rag.vector_store.embedding_provider == 'ollama' %}{% set has_ollama_rag_ns.value = true %}{% else %}{% set has_openai_rag_ns.value = true %}{% endif %}
+{% if rag.use_hybrid_rag %}{% set has_hybrid_rag_ns.value = true %}{% endif %}
 {% endfor %}
 {% if has_openai_rag_ns.value %}from langchain_community.embeddings import OpenAIEmbeddings
 {% endif %}
@@ -31,7 +33,9 @@ from baf.nlp.text2speech.openai_text2speech import OpenAIText2Speech
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from baf import nlp
-from baf.nlp.rag.rag import RAG
+{% if has_hybrid_rag_ns.value %}from baf.nlp.rag.rag import RAG, HybridRAG
+{% else %}from baf.nlp.rag.rag import RAG
+{% endif %}
 {% endif %}
 {% set reasoning_states_ns = namespace(items=[]) %}
 {% for state in agent.states %}
@@ -271,14 +275,15 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 )
 {% endif %}
 {{ splitter_var }} = RecursiveCharacterTextSplitter(chunk_size={{ chunk_size }}, chunk_overlap={{ chunk_overlap }})
-{{ rag_var }} = RAG(
+{{ rag_var }} = {{ 'HybridRAG' if rag.use_hybrid_rag else 'RAG' }}(
     agent=agent,
     vector_store={{ vector_var }},
     splitter={{ splitter_var }},
     llm_name='{{ ((rag.llm_name if rag.llm_name else (agent.default_llm_name if agent.default_llm_name else '')) | string) | replace('\\', '\\\\') | replace("'", "\\'") }}',
     llm_prompt={% if rag.llm_prompt %}'{{ rag.llm_prompt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% else %}None{% endif %},
     k={{ rag.k if rag.k is not none else 4 }},
-    num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
+    num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}{% if rag.use_hybrid_rag %},
+    bm25_weight={{ rag.bm25_weight if rag.bm25_weight is not none else 0.6 }}{% endif %}
 )
 {{ rag_var }}.load_pdfs('./{{ rag_slug }}')
 

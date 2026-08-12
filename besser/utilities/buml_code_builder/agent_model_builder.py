@@ -201,9 +201,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     f.write(f"    global_context={repr(global_ctx)},\n")
                 f.write(")\n")
             default_llm_name = getattr(model, 'default_llm_name', None)
-            # Only emit set_default_llm when the chosen default differs from
-            # the auto-default (which is the first LLM registered).
-            if default_llm_name and default_llm_name != llms[0].name:
+            if default_llm_name:
                 f.write(f"{model_var_name}.set_default_llm({repr(default_llm_name)})\n")
             f.write("\n")
 

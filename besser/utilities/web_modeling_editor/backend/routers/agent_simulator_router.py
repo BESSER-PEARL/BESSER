@@ -214,7 +214,11 @@ async def _generate_agent_code_and_config(
 
         return support_files
 
-    agent_model = process_agent_diagram(diagram_data)
+    # Merge config into diagram_data so process_agent_diagram can read
+    # default_llm_name (and other config fields) and call agent.set_default_llm().
+    # Without this, the agent object is built with no default LLM set, and the
+    # BAF template falls back to the first registered LLM regardless of the user's choice.
+    agent_model = process_agent_diagram({**diagram_data, "config": config or {}})
 
     with tempfile.TemporaryDirectory(prefix=f"{AGENT_TEMP_DIR_PREFIX}simulation_") as temp_dir:
         agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)

@@ -63,7 +63,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "RAGVectorStore, RAGTextSplitter, "
             "Tool, Skill, Workspace, ReasoningState, "
             "ReceiveTextEvent, ReceiveFileEvent, ReceiveJSONEvent, "
-            "ReceiveMessageEvent, WildcardEvent, DummyEvent\n"
+            "ReceiveMessageEvent, WildcardEvent, DummyEvent, GUIEvent\n"
         )
         f.write("from besser.BUML.metamodel.structural import Metadata\n")
         f.write("import operator\n\n")

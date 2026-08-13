@@ -30,9 +30,11 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
 )
+from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import get_user_token
 from besser.utilities.web_modeling_editor.backend.services.exceptions import GenerationError
+from besser.utilities.web_modeling_editor.backend.services.validators.python_code_validator import validate_custom_code_action
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +225,17 @@ async def _generate_agent_code_and_config(
     with tempfile.TemporaryDirectory(prefix=f"{AGENT_TEMP_DIR_PREFIX}simulation_") as temp_dir:
         agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
         agent_model_to_code(agent_model, agent_file)
+
+        # Belt-and-suspenders: re-validate every CustomCodeAction on the in-memory
+        # agent model before exec_module() runs in the backend process.
+        # The primary validation gate is in agent_diagram_processor.py; this guard
+        # catches any code path that bypasses JSON parsing (e.g. direct API calls).
+        for _state in getattr(agent_model, "states", []):
+            _body = getattr(_state, "body", None)
+            if _body:
+                for _action in getattr(_body, "actions", []):
+                    if isinstance(_action, CustomCodeAction):
+                        validate_custom_code_action(_action.code, simulation=True)
 
         spec = importlib.util.spec_from_file_location("_simulation_agent_model", agent_file)
         if spec is None or spec.loader is None:

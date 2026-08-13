@@ -5,6 +5,7 @@ Agent diagram processing for converting JSON to BUML format.
 import logging
 import operator
 from deep_translator import GoogleTranslator
+from besser.utilities.web_modeling_editor.backend.services.validators.python_code_validator import validate_custom_code_action
 
 logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.state_machine.state_machine import (
@@ -324,6 +325,8 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
         elif action_type == "CustomCodeAction":
             # Raw source code must not be sanitized — sanitize_text escapes single quotes
             # which would corrupt string literals inside the user's Python function.
+            # Structural and semantic validation is enforced by validate_custom_code_action().
+            validate_custom_code_action(content)
             body.add_action(CustomCodeAction(source=content))
             action_added = True
 

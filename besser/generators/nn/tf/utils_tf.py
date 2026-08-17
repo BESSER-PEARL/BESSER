@@ -387,30 +387,51 @@ def _get_prev_out_var_for_simple_ops(in_var, modules_details):
 def _handle_interpolate(tensorop, modules_details, in_var):
     """Handle interpolate tensorop syntax."""
     prev_out_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
-    size = tensorop.interpolate_size
-    scale = tensorop.interpolate_scale
-    mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'nearest'
+    size = tensorop.interpolate_size if hasattr(tensorop, 'interpolate_size') else None
+    scale = tensorop.interpolate_scale if hasattr(tensorop, 'interpolate_scale') else None
+    mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'bilinear'
 
-    if scale is not None:
+    # TensorFlow supported modes
+    tf_modes = {'bilinear', 'nearest', 'bicubic', 'area', 'lanczos3', 'lanczos5', 'gaussian', 'mitchellcubic'}
+
+    # Warn if mode not supported in TensorFlow
+    if mode not in tf_modes:
+        print(f"Warning: interpolate mode '{mode}' not supported in TensorFlow, using 'bilinear' instead")
+        mode = 'bilinear'
+
+    if size is not None:
+        return f"tf.image.resize({prev_out_var}, size={list(size)}, method='{mode}')"
+    elif scale is not None:
         size_expr = (f"[tf.shape({prev_out_var})[1] * {scale}, "
                      f"tf.shape({prev_out_var})[2] * {scale}]")
         return f"tf.image.resize({prev_out_var}, size={size_expr}, method='{mode}')"
-    elif size is not None:
-        return f"tf.image.resize({prev_out_var}, size={list(size)}, method='{mode}')"
     else:
-        return f"tf.image.resize({prev_out_var}, size=tf.shape({prev_out_var})[1:3], method='{mode}')"
+        raise ValueError("interpolate tensorop requires either interpolate_size or interpolate_scale")
 
 
 def _handle_pad(tensorop, modules_details, in_var):
     """Handle pad tensorop syntax."""
     prev_out_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
     pad_amount = (tensorop.pad_amount if hasattr(tensorop, 'pad_amount')
-                  and tensorop.pad_amount else (0, 0, 0, 0))
+                  and tensorop.pad_amount else [[0, 0]])
     mode = tensorop.pad_mode if hasattr(tensorop, 'pad_mode') else 'constant'
+    pad_value = tensorop.pad_value if hasattr(tensorop, 'pad_value') and tensorop.pad_value is not None else 0
 
-    if len(pad_amount) == 4:
-        left, right, top, bottom = pad_amount
-        paddings = f"[[0, 0], [{top}, {bottom}], [{left}, {right}], [0, 0]]"
+    # pad_amount is nested list: [[left, right], [top, bottom], ...]
+    # PyTorch F.pad order: (left, right, top, bottom) -> last dims first
+    # TensorFlow expects NHWC: [[N], [H], [W], [C]]
+    # Need to map PyTorch reversed order back to spatial dimensions
+    if pad_amount and isinstance(pad_amount, list) and len(pad_amount) >= 2:
+        # pad_amount from PyTorch migrator: [[left, right], [top, bottom]]
+        # Reconstruct as NHWC format: [[N], [H], [W], [C]]
+        if len(pad_amount) == 2:
+            # 2D padding: [[left, right], [top, bottom]]
+            left_right = pad_amount[0]
+            top_bottom = pad_amount[1]
+            paddings = f"[[0, 0], {top_bottom}, {left_right}, [0, 0]]"
+        else:
+            # More dimensions - use as-is
+            paddings = str(pad_amount)
     else:
         paddings = "[[0, 0], [0, 0], [0, 0], [0, 0]]"
 
@@ -420,7 +441,12 @@ def _handle_pad(tensorop, modules_details, in_var):
         'replicate': 'SYMMETRIC'
     }
     tf_mode = mode_map.get(mode, 'CONSTANT')
-    return f"tf.pad({prev_out_var}, {paddings}, mode='{tf_mode}')"
+
+    # Only include constant_values parameter for CONSTANT mode
+    if tf_mode == 'CONSTANT' and pad_value != 0:
+        return f"tf.pad({prev_out_var}, {paddings}, mode='{tf_mode}', constant_values={pad_value})"
+    else:
+        return f"tf.pad({prev_out_var}, {paddings}, mode='{tf_mode}')"
 
 
 def _handle_dropout_syntax(tensorop, modules_details, in_var):
@@ -432,12 +458,12 @@ def _handle_dropout_syntax(tensorop, modules_details, in_var):
     if training_aware:
         return f"tf.keras.layers.Dropout({rate})({prev_out_var}, training=training)"
     else:
-        return f"tf.nn.dropout({prev_out_var}, rate={rate})"
+        return f"tf.keras.layers.Dropout({rate})({prev_out_var}, training=True)"
 
 
 def _handle_reshape_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle reshape tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.reshape({prev_out_var}, [{params}])"
 
@@ -548,7 +574,7 @@ def _determine_concat_axis_for_conv(modules_details):
 
 def _handle_concatenate_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle concatenate tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     axis = tensorop.concatenate_dim
@@ -615,7 +641,7 @@ def _infer_tensor_dimensionality(tensorop, modules_details):
 
 def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle transpose tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     transpose_dims = tensorop.transpose_dim
@@ -633,7 +659,7 @@ def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var, pa
 
 def _handle_permute_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle permute tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.transpose({prev_out_var}, perm=[{params}])"
 
@@ -645,7 +671,7 @@ def _handle_multiply_syntax(tensorop, modules_details, in_var, prev_out_var, par
 
 def _handle_mean_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle mean tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     axis = tensorop.reduce_dim
     return f"tf.reduce_mean({prev_out_var}, axis={axis})"
@@ -653,7 +679,7 @@ def _handle_mean_syntax(tensorop, modules_details, in_var, prev_out_var, params)
 
 def _handle_max_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle max tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     axis = tensorop.reduce_dim
     return f"tf.reduce_max({prev_out_var}, axis={axis})"
@@ -722,7 +748,7 @@ def _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis):
 
 def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle squeeze tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     if _is_rnn_hidden_squeeze(tensorop, modules_details, prev_out_var):
@@ -738,7 +764,7 @@ def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var, para
 
 def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle unsqueeze tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     axis = tensorop.reduce_dim
@@ -750,7 +776,7 @@ def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, pa
 
 def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle zeros_like tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.zeros_like({prev_out_var})"
 
@@ -761,14 +787,14 @@ def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var, params
     TensorFlow's tf.split returns a list of tensors.
     The outputs will be unpacked in the template based on the assignment.
     """
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     split_dim = tensorop.split_dim if hasattr(tensorop, 'split_dim') else 0
     split_sizes = tensorop.split_sizes if hasattr(tensorop, 'split_sizes') else None
 
     if split_sizes is None:
-        # If no split size specified, return the input unchanged (shouldn't happen)
+        # If no split size specified, return the input unchanged
         return prev_out_var
 
     # tf.split expects num_or_size_splits and axis
@@ -787,7 +813,7 @@ def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var, params
 
 def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle normalize tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     axis = tensorop.reduce_dim
     return f"tf.nn.l2_normalize({prev_out_var}, axis={axis})"
@@ -795,7 +821,7 @@ def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var, pa
 
 def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle repeat tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.tile({prev_out_var}, [{params}])"
 
@@ -831,37 +857,33 @@ def _handle_binop_floor_divide_syntax(tensorop, modules_details, in_var, prev_ou
             else f"tf.math.floordiv({params})")
 
 
-def _remap_subscript_for_conv(tensorop, modules_details, subscript_pattern):
+def _remap_subscript_for_conv(tensorop, modules_details, subscript_indices):
     """Remap subscript indices for Conv layers (PyTorch to TF axis conversion)."""
     if not (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors):
-        return subscript_pattern
+        return subscript_indices
 
     source_layer = tensorop.layers_of_tensors[0]
     if not isinstance(source_layer, str):
-        return subscript_pattern
+        return subscript_indices
 
     if source_layer + "_layer" not in modules_details:
-        return subscript_pattern
+        return subscript_indices
 
     layer_obj = (modules_details[source_layer + "_layer"][3]
                  if len(modules_details[source_layer + "_layer"]) > 3 else None)
     if not (layer_obj and hasattr(layer_obj, '__class__')):
-        return subscript_pattern
+        return subscript_indices
 
     layer_class = layer_obj.__class__.__name__
 
     # Conv1D: PyTorch [B,C,L] → TF [B,L,C], remap dims 1↔2
-    if layer_class == 'Conv1D' and subscript_pattern.count(',') == 2:
-        parts = subscript_pattern.strip('[]').split(',')
-        if len(parts) == 3:
-            subscript_pattern = f"[{parts[0]},{parts[2]},{parts[1]}]"
+    if layer_class == 'Conv1D' and len(subscript_indices) == 3:
+        return [subscript_indices[0], subscript_indices[2], subscript_indices[1]]
     # Conv2D: PyTorch [B,C,H,W] → TF [B,H,W,C], remap dims
-    elif layer_class == 'Conv2D' and subscript_pattern.count(',') == 3:
-        parts = subscript_pattern.strip('[]').split(',')
-        if len(parts) == 4:
-            subscript_pattern = f"[{parts[0]},{parts[2]},{parts[3]},{parts[1]}]"
+    elif layer_class == 'Conv2D' and len(subscript_indices) == 4:
+        return [subscript_indices[0], subscript_indices[2], subscript_indices[3], subscript_indices[1]]
 
-    return subscript_pattern
+    return subscript_indices
 
 
 def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, params):
@@ -872,15 +894,36 @@ def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, pa
         # Fallback: use prev_out_var or in_var
         source_var = in_var if in_var is not None else prev_out_var
 
-    subscript_pattern = tensorop.subscript_indices
-    subscript_pattern = _remap_subscript_for_conv(tensorop, modules_details, subscript_pattern)
-    return f"{source_var}{subscript_pattern}"
+    subscript_indices = tensorop.subscript_indices
+    subscript_indices = _remap_subscript_for_conv(tensorop, modules_details, subscript_indices)
+
+    # Build subscript string from structured list
+    def build_subscript_string(indices):
+        elements = []
+        for elem in indices:
+            if elem["type"] == "slice":
+                start = str(elem["start"]) if elem["start"] is not None else ""
+                stop = str(elem["stop"]) if elem["stop"] is not None else ""
+                step = str(elem["step"]) if elem["step"] is not None else ""
+                if step:
+                    elements.append(f"{start}:{stop}:{step}")
+                else:
+                    elements.append(f"{start}:{stop}" if start or stop else ":")
+            elif elem["type"] == "index":
+                elements.append(str(elem["value"]))
+        return "[" + ", ".join(elements) + "]"
+
+    subscript_str = build_subscript_string(subscript_indices)
+    return f"{source_var}{subscript_str}"
 
 
 def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params):
     """Handle shape_dim tensorop syntax."""
-    if tensorop.input_var is not None:
+    if prev_out_var is None and tensorop.input_var is not None:
         source_var = tensorop.input_var
+    elif prev_out_var is not None:
+        # Use prev_out_var resolved from layers_of_tensors
+        source_var = prev_out_var
     else:
         # Fallback: check layers_of_tensors
         tensors = tensorop.layers_of_tensors
@@ -891,7 +934,9 @@ def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, pa
             else:
                 source_var = tensors[0]
         else:
-            source_var = tensors[0]
+            # Scalar value - render as int if whole number
+            scalar = tensors[0]
+            source_var = str(int(scalar)) if scalar.is_integer() else str(scalar)
 
     dim_index = tensorop.reduce_dim
     return f"tf.shape({source_var})[{dim_index}]"
@@ -901,7 +946,7 @@ def _handle_identity_syntax(tensorop, modules_details, in_var, prev_out_var, par
     """Handle identity operation to preserve variable assignments."""
     # Identity just assigns the input variable to the output variable
     # Return the input variable directly (e.g., "x_1") so the template generates: output_var = x_1
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         return in_var
     return prev_out_var
 

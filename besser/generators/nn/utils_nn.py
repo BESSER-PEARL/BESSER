@@ -584,17 +584,15 @@ def initialize_tensorop_var(tensorop: TensorOp):
 def _collect_used_x_numbers(modules_details):
     """Collect all used x_N variable numbers from modules_details."""
     used_nums = set()
-    for module_details in modules_details.values():
-        if isinstance(module_details, list):
-            for idx in [1, 2]:  # Check both output (1) and input (2) variables
-                if len(module_details) > idx:
-                    var = module_details[idx]
-                    if isinstance(var, str) and var.startswith('x_'):
-                        try:
-                            num = int(var.split('_')[1])
-                            used_nums.add(num)
-                        except (ValueError, IndexError):
-                            pass
+    for key, module_details in modules_details.items():
+        if isinstance(module_details, list) and len(module_details) > 1:
+            var = module_details[1]  # Index 1 is the output variable
+            if isinstance(var, str) and var.startswith('x_'):
+                try:
+                    num = int(var.split('_')[1])
+                    used_nums.add(num)
+                except (ValueError, IndexError):
+                    pass
     return used_nums
 
 
@@ -1177,6 +1175,9 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
         prev_out_var = _resolve_prev_out_var_from_module_input(
             module_input, modules_details, get_rnn_hidden_var_fn, tensorop
         )
+    elif tensorop.input_var is not None:
+        # Use input_var when layers_of_tensors is not set
+        prev_out_var = tensorop.input_var
 
     return prev_out_var
 
@@ -1264,11 +1265,19 @@ def _handle_repeat_params(tensorop, modules_details):
         tensorop, modules_details, None
     )
 
-    # Resolve operation names in repeat_dim (similar to reshape_dim)
+    # Resolve operation/layer names in repeat_dim (similar to reshape_dim)
     resolved_multiples = []
     for mult in tensorop.repeat_dim:
-        if isinstance(mult, str) and f"{mult}_op" in modules_details:
-            resolved_multiples.append(modules_details[f"{mult}_op"][1])
+        if isinstance(mult, str):
+            # Check for tensorop output first
+            if f"{mult}_op" in modules_details:
+                resolved_multiples.append(modules_details[f"{mult}_op"][1])
+            # Check for layer output
+            elif f"{mult}_layer" in modules_details:
+                resolved_multiples.append(modules_details[f"{mult}_layer"][1])
+            else:
+                # Fallback: use the string as-is
+                resolved_multiples.append(mult)
         else:
             resolved_multiples.append(str(mult))
 
@@ -1279,11 +1288,11 @@ def _handle_repeat_params(tensorop, modules_details):
 def _handle_generic_params(tensorop, modules_details):
     """Handle generic tensorop parameters using layers_of_tensors."""
     tensors = tensorop.layers_of_tensors
-    if any(isinstance(t, str) for t in tensors):
+    if tensors and any(isinstance(t, str) for t in tensors):
         actual_vars = getattr(tensorop, 'actual_vars', None)
         tensors = get_layers_output_for_tensorops(tensors, modules_details, actual_vars)
 
-    params = ', '.join([str(i) for i in tensors])
+    params = ', '.join([str(i) for i in tensors]) if tensors else ''
     return None, params
 
 
@@ -1357,13 +1366,8 @@ def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str, modules_details:
     if tensorop.input_reused is True:
         out_var  = get_out_var_input_reused(prev_out_var, modules_details)
     else:
-        # If prev_out_var doesn't follow the standard x or x_N pattern (e.g., it's 'b', 't', 'last'),
-        # don't reuse it - generate a new x_N variable instead
-        if prev_out_var != "x" and not (prev_out_var.startswith("x_") and prev_out_var.split('_')[-1].isdigit()):
-            # Non-standard variable, generate new x_N
-            out_var = get_out_var_input_reused(prev_out_var, modules_details)
-        else:
-            out_var = prev_out_var
+        # Always generate a new x_N variable to avoid collisions
+        out_var = get_out_var_input_reused(prev_out_var, modules_details)
     return out_var
 
 def _determine_tensorop_out_var(tensorop, modules_details, out_var, referenced_tensorops):

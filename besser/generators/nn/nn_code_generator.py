@@ -71,7 +71,16 @@ class NNCodeGenerator(GeneratorInterface):
             self.template_name = f"template_{template_dir}_sequential.py.j2"
 
         self.modules_details: dict = self.get_modules_details()
+        self.has_training_aware_dropout: bool = self._check_training_aware_dropout()
 
+    def _check_training_aware_dropout(self):
+        """Check if model has any dropout tensorop with training_aware=True."""
+        for module in self.model.modules:
+            if module.__class__.__name__ == "TensorOp":
+                if (hasattr(module, 'tns_type') and module.tns_type == 'dropout' and
+                    getattr(module, 'dropout_training_aware', False)):
+                    return True
+        return False
 
     def _detect_module_reuse(self):
         """First pass: detect tensor value reuse (branching) by counting module usage."""
@@ -242,7 +251,8 @@ class NNCodeGenerator(GeneratorInterface):
         generated_code = template.render(
             model=self.model, modules_details=self.modules_details,
             generation_type=self.generation_type,
-            strip_layer_counter_suffix=self.strip_layer_counter_suffix)
+            strip_layer_counter_suffix=self.strip_layer_counter_suffix,
+            has_training_aware_dropout=self.has_training_aware_dropout)
 
         # Post-process: clean blank lines from forward/call methods
         generated_code = self._clean_forward_call_methods(generated_code)

@@ -444,7 +444,7 @@ def _handle_normalize_pytorch(tensorop, modules_details, in_var, prev_out_var, p
     if in_var is not None:
         prev_out_var = in_var
     dim = tensorop.reduce_dim
-    return f"F.normalize({prev_out_var}, p=2, dim={dim})"
+    return f"F.normalize({prev_out_var}, dim={dim})"
 
 
 def _handle_repeat_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
@@ -461,35 +461,23 @@ def _handle_pad_pytorch(tensorop, modules_details, in_var, prev_out_var, params)
 
     pad_amount = tensorop.pad_amount
     pad_mode = tensorop.pad_mode.lower() if hasattr(tensorop, 'pad_mode') else 'constant'
+    pad_value = tensorop.pad_value if hasattr(tensorop, 'pad_value') and tensorop.pad_value is not None else 0
 
-    if pad_amount and isinstance(pad_amount, list):
-        # TensorFlow padding is in NHWC format: [[N], [H], [W], [C]]
-        # After permute to NCHW, we need to reorder to: [[N], [C], [H], [W]]
-        # PyTorch F.pad expects padding in reverse dimension order: (W, H, C, N)
-        # So we need indices: [2, 1, 3, 0] from original NHWC padding
+    # pad_amount is nested list: [[left, right], [top, bottom], ...]
+    # PyTorch F.pad expects flat tuple in reverse dimension order
+    # For 2D: [[left, right], [top, bottom]] -> (left, right, top, bottom)
+    pt_pad = []
+    for dim_pad in pad_amount:
+        if isinstance(dim_pad, list) and len(dim_pad) == 2:
+            pt_pad.extend(dim_pad)
 
-        # Extract padding for each dimension (ensure we have 4 dimensions)
-        padding_nhwc = pad_amount + [[0, 0]] * (4 - len(pad_amount))  # Pad with [0,0] if needed
+    pad_tuple = tuple(pt_pad)
 
-        # Reorder from NHWC to W, H, C, N (reverse of NCHW)
-        pt_pad = []
-        # W (index 2 in NHWC)
-        if isinstance(padding_nhwc[2], list) and len(padding_nhwc[2]) == 2:
-            pt_pad.extend(padding_nhwc[2])
-        # H (index 1 in NHWC)
-        if isinstance(padding_nhwc[1], list) and len(padding_nhwc[1]) == 2:
-            pt_pad.extend(padding_nhwc[1])
-        # C (index 3 in NHWC)
-        if isinstance(padding_nhwc[3], list) and len(padding_nhwc[3]) == 2:
-            pt_pad.extend(padding_nhwc[3])
-        # N (index 0 in NHWC)
-        if isinstance(padding_nhwc[0], list) and len(padding_nhwc[0]) == 2:
-            pt_pad.extend(padding_nhwc[0])
-
-        pad_tuple = tuple(pt_pad)
-        return f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}')"
+    # Only include value parameter for constant mode
+    if pad_mode == 'constant' and pad_value != 0:
+        return f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}', value={pad_value})"
     else:
-        return f"F.pad({prev_out_var}, {pad_amount})"
+        return f"F.pad({prev_out_var}, {pad_tuple}, mode='{pad_mode}')"
 
 
 def _handle_dropout_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
@@ -506,12 +494,23 @@ def _handle_interpolate_pytorch(tensorop, modules_details, in_var, prev_out_var,
         prev_out_var = in_var
 
     size = tensorop.interpolate_size if hasattr(tensorop, 'interpolate_size') else None
+    scale = tensorop.interpolate_scale if hasattr(tensorop, 'interpolate_scale') else None
     mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'bilinear'
 
-    if size:
+    # PyTorch supported modes
+    pytorch_modes = {'nearest', 'linear', 'bilinear', 'bicubic', 'trilinear', 'area', 'nearest-exact'}
+
+    # Warn if mode not supported in PyTorch
+    if mode not in pytorch_modes:
+        print(f"Warning: interpolate mode '{mode}' not supported in PyTorch, using 'bilinear' instead")
+        mode = 'bilinear'
+
+    if size is not None:
         return f"F.interpolate({prev_out_var}, size={size}, mode='{mode}')"
+    elif scale is not None:
+        return f"F.interpolate({prev_out_var}, scale_factor={scale}, mode='{mode}')"
     else:
-        return f"F.interpolate({prev_out_var}, mode='{mode}')"
+        raise ValueError("interpolate tensorop requires either interpolate_size or interpolate_scale")
 
 
 def _handle_binop_add_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
@@ -548,7 +547,25 @@ def _handle_subscript_pytorch(tensorop, modules_details, in_var, prev_out_var, p
     """Handle subscript tensorop syntax."""
     if in_var is not None:
         prev_out_var = in_var
-    return f"{prev_out_var}{tensorop.subscript_indices}"
+
+    # Build subscript string from structured list
+    def build_subscript_string(indices):
+        elements = []
+        for elem in indices:
+            if elem["type"] == "slice":
+                start = str(elem["start"]) if elem["start"] is not None else ""
+                stop = str(elem["stop"]) if elem["stop"] is not None else ""
+                step = str(elem["step"]) if elem["step"] is not None else ""
+                if step:
+                    elements.append(f"{start}:{stop}:{step}")
+                else:
+                    elements.append(f"{start}:{stop}" if start or stop else ":")
+            elif elem["type"] == "index":
+                elements.append(str(elem["value"]))
+        return "[" + ", ".join(elements) + "]"
+
+    subscript_str = build_subscript_string(tensorop.subscript_indices)
+    return f"{prev_out_var}{subscript_str}"
 
 
 def _handle_shape_dim_pytorch(tensorop, modules_details, in_var, prev_out_var, params):
@@ -564,7 +581,9 @@ def _handle_shape_dim_pytorch(tensorop, modules_details, in_var, prev_out_var, p
             else:
                 source_var = tensors[0]
     else:
-        source_var = tensors[0]
+        # Scalar value - render as int if whole number
+        scalar = tensors[0]
+        source_var = str(int(scalar)) if scalar.is_integer() else str(scalar)
 
     dim_index = tensorop.reduce_dim
     return f"{source_var}.size({dim_index})"

@@ -640,47 +640,97 @@ def _write_batch_norm(f, layer: BatchNormLayer, var_name: str):
 
 
 def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
-    """Write TensorOp definition.
-
-    Only outputs attributes relevant to the specific tns_type:
-    - 'reshape': reshape_dim
-    - 'concatenate': concatenate_dim + layers_of_tensors
-    - 'multiply': layers_of_tensors
-    - 'matmultiply': layers_of_tensors
-    - 'permute': permute_dim
-    - 'transpose': transpose_dim
-    - input_reused is optional for all types
-    """
+    """Write TensorOp definition with all attributes based on tns_type."""
     params = [
         f"name='{_esc(tensor_op.name)}'",
         f"tns_type='{_esc(tensor_op.tns_type)}'",
     ]
 
     tns_type = tensor_op.tns_type
+    binops = ['binop_add', 'binop_subtract', 'binop_multiply',
+              'binop_divide', 'binop_floor_divide']
 
-    # Only output attributes relevant to the specific tns_type. Use
-    # ``is not None`` rather than truthiness so an explicit empty list or
-    # ``0`` survives round-trip — the metamodel setters validate content
-    # themselves, so we don't want to silently drop values here.
-    if tns_type == 'concatenate':
+    # Type-specific attributes (use is not None to preserve explicit 0/[])
+    if tns_type == 'reshape':
+        if tensor_op.reshape_dim is not None:
+            params.append(f"reshape_dim={tensor_op.reshape_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+    elif tns_type == 'concatenate':
         if tensor_op.concatenate_dim is not None:
             params.append(f"concatenate_dim={tensor_op.concatenate_dim}")
         if tensor_op.layers_of_tensors is not None:
             params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
-    elif tns_type in ('multiply', 'matmultiply'):
-        if tensor_op.layers_of_tensors is not None:
-            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
-    elif tns_type == 'reshape':
-        if tensor_op.reshape_dim is not None:
-            params.append(f"reshape_dim={tensor_op.reshape_dim}")
+        if tensor_op.actual_vars is not None:
+            params.append(f"actual_vars={tensor_op.actual_vars}")
     elif tns_type == 'transpose':
         if tensor_op.transpose_dim is not None:
             params.append(f"transpose_dim={tensor_op.transpose_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type == 'permute':
         if tensor_op.permute_dim is not None:
             params.append(f"permute_dim={tensor_op.permute_dim}")
+    elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
+        if tensor_op.reduce_dim is not None:
+            params.append(f"reduce_dim={tensor_op.reduce_dim}")
+        if tns_type == 'max' and tensor_op.reduce_keepdims is not None:
+            params.append(f"reduce_keepdims={tensor_op.reduce_keepdims}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+    elif tns_type == 'subscript':
+        if tensor_op.subscript_indices is not None:
+            params.append(f"subscript_indices={tensor_op.subscript_indices}")
+    elif tns_type == 'repeat':
+        if tensor_op.repeat_dim is not None:
+            params.append(f"repeat_dim={tensor_op.repeat_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+    elif tns_type == 'interpolate':
+        if tensor_op.interpolate_size is not None:
+            params.append(f"interpolate_size={tensor_op.interpolate_size}")
+        if tensor_op.interpolate_scale is not None:
+            params.append(f"interpolate_scale={tensor_op.interpolate_scale}")
+        if tensor_op.interpolate_mode is not None:
+            params.append(f"interpolate_mode='{_esc(tensor_op.interpolate_mode)}'")
+    elif tns_type == 'pad':
+        if tensor_op.pad_amount is not None:
+            params.append(f"pad_amount={tensor_op.pad_amount}")
+        if tensor_op.pad_mode is not None:
+            params.append(f"pad_mode='{_esc(tensor_op.pad_mode)}'")
+        if tensor_op.pad_value is not None:
+            params.append(f"pad_value={tensor_op.pad_value}")
+    elif tns_type == 'dropout':
+        if tensor_op.dropout_rate is not None:
+            params.append(f"dropout_rate={tensor_op.dropout_rate}")
+        if tensor_op.dropout_training_aware is not None:
+            params.append(f"dropout_training_aware={tensor_op.dropout_training_aware}")
+    elif tns_type == 'split':
+        if tensor_op.split_dim is not None:
+            params.append(f"split_dim={tensor_op.split_dim}")
+        if tensor_op.split_sizes is not None:
+            params.append(f"split_sizes={tensor_op.split_sizes}")
+        if tensor_op.output_vars is not None:
+            params.append(f"output_vars={tensor_op.output_vars}")
+    elif tns_type in binops:
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+        if tensor_op.actual_vars is not None:
+            params.append(f"actual_vars={tensor_op.actual_vars}")
+    elif tns_type in ('multiply', 'matmultiply', 'zeros_like', 'identity'):
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
 
-    # input_reused is optional for all types - only output when explicitly set
+    # Common optional attributes
+    if _is_attr_set(tensor_op, 'permute_in'):
+        params.append(f"permute_in={tensor_op.permute_in}")
+    if _is_attr_set(tensor_op, 'permute_out'):
+        params.append(f"permute_out={tensor_op.permute_out}")
+    if _is_attr_set(tensor_op, 'input_var'):
+        params.append(f"input_var='{_esc(tensor_op.input_var)}'")
+    # output_var is NOT for split type (split uses output_vars instead)
+    if tns_type != 'split' and _is_attr_set(tensor_op, 'output_var'):
+        params.append(f"output_var='{_esc(tensor_op.output_var)}'")
     if _is_attr_set(tensor_op, 'input_reused'):
         params.append(f"input_reused={tensor_op.input_reused}")
 

@@ -45,7 +45,12 @@ _ALLOWED_OPTIMIZERS = ('sgd', 'adam', 'adamW', 'adagrad')
 _ALLOWED_LOSS_FUNCTIONS = ('crossentropy', 'binary_crossentropy', 'mse')
 _ALLOWED_METRICS = ('accuracy', 'precision', 'recall', 'f1-score', 'mae')
 _ALLOWED_TNS_TYPES = (
-    'concatenate', 'multiply', 'matmultiply', 'reshape', 'transpose', 'permute',
+    'reshape', 'concatenate', 'multiply', 'matmultiply', 'permute',
+    'transpose', 'mean', 'max', 'squeeze', 'unsqueeze', 'binop_add',
+    'binop_subtract', 'binop_multiply', 'binop_divide',
+    'binop_floor_divide', 'subscript', 'shape_dim', 'normalize',
+    'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like',
+    'split', 'identity',
 )
 _ALLOWED_PADDING_TYPES = ('same', 'valid')
 _CONV_EXPECTED_DIMS = {'Conv1D': 1, 'Conv2D': 2, 'Conv3D': 3}
@@ -178,6 +183,28 @@ _ATTR_KEY_TO_NAME = {
     'ReshapeDimAttribute': 'reshape_dim',
     'TransposeDimAttribute': 'transpose_dim',
     'PermuteDimAttribute': 'permute_dim',
+    'ReduceDimAttribute': 'reduce_dim',
+    'ReduceKeepdimAttribute': 'reduce_keepdims',
+    'ShapeDimAttribute': 'shape_dim',
+    'ActualVarsAttribute': 'actual_vars',
+    'SubscriptIndicesAttribute': 'subscript_indices',
+    'RepeatDimAttribute': 'repeat_dim',
+    'InterpolateSizeAttribute': 'interpolate_size',
+    'InterpolateScaleAttribute': 'interpolate_scale',
+    'InterpolateModeAttribute': 'interpolate_mode',
+    'PadAmountAttribute': 'pad_amount',
+    'PadModeAttribute': 'pad_mode',
+    'PadValueAttribute': 'pad_value',
+    'DropoutRateAttribute': 'dropout_rate',
+    'DropoutTrainingAwareAttribute': 'dropout_training_aware',
+    'SplitDimAttribute': 'split_dim',
+    'SplitSizesAttribute': 'split_sizes',
+    'OutputVarsAttribute': 'output_vars',
+    'InputVarAttributeTensorOp': 'input_var',
+    'OutputVarAttributeTensorOp': 'output_var',
+    'PermuteInAttributeTensorOp': 'permute_in',
+    'PermuteOutAttributeTensorOp': 'permute_out',
+    'LayersOfTensorsAttributeTensorOp': 'layers_of_tensors',
     'BatchSizeAttribute': 'batch_size',
     'EpochsAttribute': 'epochs',
     'LearningRateAttribute': 'learning_rate',
@@ -1640,6 +1667,7 @@ def create_tensor_op(element, elements):
         concatenate_dim = parse_tuple_or_int(concatenate_dim)
 
     layers_of_tensors_raw = get_element_attribute(element, 'LayersOfTensorsAttribute', elements)
+    print(f"[DEBUG] TensorOp '{name}' ({tns_type}): layers_of_tensors_raw = {layers_of_tensors_raw}")
     layers_of_tensors = None
     if layers_of_tensors_raw:
         # The metamodel declares this as List[Union[str, float]]. Preserve
@@ -1676,6 +1704,125 @@ def create_tensor_op(element, elements):
     if permute_dim is not None:
         permute_dim = parse_list_of_ints(permute_dim)
 
+    reduce_dim = get_element_attribute(element, 'ReduceDimAttribute', elements)
+    if reduce_dim is not None:
+        reduce_dim = parse_tuple_or_int(reduce_dim)
+
+    reduce_keepdims = get_element_attribute(element, 'ReduceKeepdimAttribute', elements)
+    if reduce_keepdims is not None:
+        reduce_keepdims = parse_bool(reduce_keepdims)
+
+    shape_dim = get_element_attribute(element, 'ShapeDimAttribute', elements)
+    if shape_dim is not None:
+        shape_dim = parse_tuple_or_int(shape_dim)
+
+    actual_vars_raw = get_element_attribute(element, 'ActualVarsAttribute', elements)
+    actual_vars = None
+    if actual_vars_raw:
+        if isinstance(actual_vars_raw, str):
+            val = actual_vars_raw.strip()
+            if val.startswith('[') and val.endswith(']'):
+                val = val[1:-1]
+            actual_vars = [v.strip().strip("'\"") for v in val.split(',') if v.strip()]
+        elif isinstance(actual_vars_raw, list):
+            actual_vars = [str(v).strip("'\"") for v in actual_vars_raw]
+
+    subscript_indices_raw = get_element_attribute(element, 'SubscriptIndicesAttribute', elements)
+    subscript_indices = None
+    if subscript_indices_raw:
+        try:
+            import ast
+            if isinstance(subscript_indices_raw, str):
+                subscript_indices = ast.literal_eval(subscript_indices_raw)
+            else:
+                subscript_indices = subscript_indices_raw
+        except:
+            subscript_indices = None
+
+    repeat_dim = get_element_attribute(element, 'RepeatDimAttribute', elements)
+    if repeat_dim is not None:
+        repeat_dim = parse_list_of_ints(repeat_dim)
+
+    interpolate_size_raw = get_element_attribute(element, 'InterpolateSizeAttribute', elements)
+    interpolate_size = None
+    if interpolate_size_raw:
+        parsed = parse_list_of_ints(interpolate_size_raw)
+        if parsed:
+            interpolate_size = tuple(parsed)
+
+    interpolate_scale = get_element_attribute(element, 'InterpolateScaleAttribute', elements)
+    if interpolate_scale is not None:
+        interpolate_scale = parse_float(interpolate_scale)
+
+    interpolate_mode = get_element_attribute(element, 'InterpolateModeAttribute', elements)
+
+    pad_amount_raw = get_element_attribute(element, 'PadAmountAttribute', elements)
+    pad_amount = None
+    if pad_amount_raw:
+        try:
+            import ast
+            if isinstance(pad_amount_raw, str):
+                pad_amount = ast.literal_eval(pad_amount_raw)
+            else:
+                pad_amount = pad_amount_raw
+        except:
+            pad_amount = None
+
+    pad_mode = get_element_attribute(element, 'PadModeAttribute', elements)
+
+    pad_value = get_element_attribute(element, 'PadValueAttribute', elements)
+    if pad_value is not None:
+        pad_value = parse_float(pad_value)
+
+    dropout_rate = get_element_attribute(element, 'DropoutRateAttribute', elements)
+    if dropout_rate is not None:
+        dropout_rate = parse_float(dropout_rate)
+
+    dropout_training_aware = get_element_attribute(element, 'DropoutTrainingAwareAttribute', elements)
+    if dropout_training_aware is not None:
+        dropout_training_aware = parse_bool(dropout_training_aware)
+
+    split_dim = get_element_attribute(element, 'SplitDimAttribute', elements)
+    if split_dim is not None:
+        split_dim = parse_tuple_or_int(split_dim)
+
+    split_sizes_raw = get_element_attribute(element, 'SplitSizesAttribute', elements)
+    split_sizes = None
+    if split_sizes_raw:
+        try:
+            parsed = parse_list_of_ints(split_sizes_raw)
+            if parsed and len(parsed) == 1:
+                split_sizes = parsed[0]
+            else:
+                split_sizes = parsed
+        except:
+            try:
+                split_sizes = parse_tuple_or_int(split_sizes_raw)
+            except:
+                split_sizes = None
+
+    output_vars_raw = get_element_attribute(element, 'OutputVarsAttribute', elements)
+    output_vars = None
+    if output_vars_raw:
+        if isinstance(output_vars_raw, str):
+            val = output_vars_raw.strip()
+            if val.startswith('[') and val.endswith(']'):
+                val = val[1:-1]
+            output_vars = [v.strip().strip("'\"") for v in val.split(',') if v.strip()]
+        elif isinstance(output_vars_raw, list):
+            output_vars = [str(v).strip("'\"") for v in output_vars_raw]
+
+    permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
+    if permute_in is not None:
+        permute_in = parse_bool(permute_in)
+
+    permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
+    if permute_out is not None:
+        permute_out = parse_bool(permute_out)
+
+    input_var = get_element_attribute(element, 'InputVarAttribute', elements)
+    output_var = get_element_attribute(element, 'OutputVarAttribute', elements)
+
     # Validate required attributes based on tns_type
     types_requiring_layers = ['multiply', 'matmultiply', 'concatenate']
     if tns_type in types_requiring_layers and not layers_of_tensors:
@@ -1708,31 +1855,102 @@ def create_tensor_op(element, elements):
             f"Please specify the target shape."
         )
 
-    # Create TensorOp with only relevant attributes based on tns_type
-    # This prevents unnecessary attributes from being stored in the object
+    # Create TensorOp with attributes based on tns_type
     tensor_op_params = {
         'name': sanitize_name(name),
         'tns_type': tns_type,
     }
 
-    # Only include attributes relevant to the specific tns_type
-    if tns_type == 'concatenate':
+    binops = ['binop_add', 'binop_subtract', 'binop_multiply',
+              'binop_divide', 'binop_floor_divide']
+
+    # Type-specific required attributes
+    if tns_type == 'reshape':
+        tensor_op_params['reshape_dim'] = reshape_dim
+        tensor_op_params['layers_of_tensors'] = layers_of_tensors
+    elif tns_type == 'concatenate':
         tensor_op_params['concatenate_dim'] = concatenate_dim
         tensor_op_params['layers_of_tensors'] = layers_of_tensors
-    elif tns_type in ('multiply', 'matmultiply'):
-        tensor_op_params['layers_of_tensors'] = layers_of_tensors
-    elif tns_type == 'reshape':
-        tensor_op_params['reshape_dim'] = reshape_dim
+        if actual_vars is not None:
+            tensor_op_params['actual_vars'] = actual_vars
     elif tns_type == 'transpose':
         tensor_op_params['transpose_dim'] = transpose_dim
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
     elif tns_type == 'permute':
         tensor_op_params['permute_dim'] = permute_dim
+    elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
+        if reduce_dim is not None:
+            tensor_op_params['reduce_dim'] = reduce_dim
+        if tns_type == 'max' and reduce_keepdims is not None:
+            tensor_op_params['reduce_keepdims'] = reduce_keepdims
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+    elif tns_type == 'subscript':
+        if subscript_indices is not None:
+            tensor_op_params['subscript_indices'] = subscript_indices
+    elif tns_type == 'repeat':
+        if repeat_dim is not None:
+            tensor_op_params['repeat_dim'] = repeat_dim
+        tensor_op_params['layers_of_tensors'] = layers_of_tensors
+    elif tns_type == 'interpolate':
+        if interpolate_size is not None:
+            tensor_op_params['interpolate_size'] = interpolate_size
+        if interpolate_scale is not None:
+            tensor_op_params['interpolate_scale'] = interpolate_scale
+        if interpolate_mode is not None:
+            tensor_op_params['interpolate_mode'] = interpolate_mode
+    elif tns_type == 'pad':
+        if pad_amount is not None:
+            tensor_op_params['pad_amount'] = pad_amount
+        if pad_mode is not None:
+            tensor_op_params['pad_mode'] = pad_mode
+        if pad_value is not None:
+            tensor_op_params['pad_value'] = pad_value
+    elif tns_type == 'dropout':
+        if dropout_rate is not None:
+            tensor_op_params['dropout_rate'] = dropout_rate
+        if dropout_training_aware is not None:
+            tensor_op_params['dropout_training_aware'] = dropout_training_aware
+    elif tns_type == 'split':
+        if split_dim is not None:
+            tensor_op_params['split_dim'] = split_dim
+        if split_sizes is not None:
+            tensor_op_params['split_sizes'] = split_sizes
+        if output_vars is not None:
+            tensor_op_params['output_vars'] = output_vars
+    elif tns_type in binops:
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if actual_vars is not None:
+            tensor_op_params['actual_vars'] = actual_vars
+    elif tns_type in ('multiply', 'matmultiply', 'zeros_like', 'identity'):
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
 
+    print(f"[DEBUG] Creating TensorOp '{name}' with params: {tensor_op_params}")
     tensor_op = TensorOp(**tensor_op_params)
+    print(f"[DEBUG] After creation, tensor_op.layers_of_tensors = {getattr(tensor_op, 'layers_of_tensors', 'ATTR_NOT_FOUND')}")
 
-    input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
-    if input_reused is not None:
-        tensor_op.input_reused = parse_bool(input_reused)
+    # Common optional attributes - set and mark explicit if present (not None)
+    # Unlike regular layers, we don't filter empty strings - if the attribute
+    # node exists in the JSON, we mark it explicit so it round-trips
+    if permute_in is not None:
+        tensor_op.permute_in = permute_in
+        mark_explicit(tensor_op, 'permute_in')
+    if permute_out is not None:
+        tensor_op.permute_out = permute_out
+        mark_explicit(tensor_op, 'permute_out')
+    if input_var is not None:
+        tensor_op.input_var = input_var
+        mark_explicit(tensor_op, 'input_var')
+    if output_var is not None:
+        tensor_op.output_var = output_var
+        mark_explicit(tensor_op, 'output_var')
+
+    input_reused_attr = get_element_attribute(element, 'InputReusedAttribute', elements)
+    if input_reused_attr is not None:
+        tensor_op.input_reused = parse_bool(input_reused_attr)
         mark_explicit(tensor_op, 'input_reused')
 
     return tensor_op

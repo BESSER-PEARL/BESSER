@@ -298,12 +298,20 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type in ('multiply', 'matmultiply') and module.layers_of_tensors is not None:
             fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
-        elif tns_type == 'reshape' and module.reshape_dim is not None:
-            fields.append(('reshape_dim', module.reshape_dim, 'List', False))
+        elif tns_type == 'reshape':
+            if module.reshape_dim is not None:
+                fields.append(('reshape_dim', module.reshape_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type == 'transpose' and module.transpose_dim is not None:
             fields.append(('transpose_dim', module.transpose_dim, 'List', False))
         elif tns_type == 'permute' and module.permute_dim is not None:
             fields.append(('permute_dim', module.permute_dim, 'List', False))
+        elif tns_type == 'repeat':
+            if module.repeat_dim is not None:
+                fields.append(('repeat_dim', module.repeat_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
 

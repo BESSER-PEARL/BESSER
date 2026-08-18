@@ -1163,21 +1163,22 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
 
     prev_out_var = get_previous_out_var(modules_details, prev_module)
 
-    # Override with layers_of_tensors if available
-    module_input = None
-    if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
-        if len(tensorop.layers_of_tensors) == 1:
-            module_input = tensorop.layers_of_tensors[0]
-        elif 'INPUT' in tensorop.layers_of_tensors:
-            module_input = 'INPUT'
-
-    if module_input is not None:
-        prev_out_var = _resolve_prev_out_var_from_module_input(
-            module_input, modules_details, get_rnn_hidden_var_fn, tensorop
-        )
-    elif tensorop.input_var is not None:
-        # Use input_var when layers_of_tensors is not set
+    # Check input_var first (takes precedence)
+    if tensorop.input_var is not None:
         prev_out_var = tensorop.input_var
+    else:
+        # Fall back to layers_of_tensors if input_var not set
+        module_input = None
+        if hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+            if len(tensorop.layers_of_tensors) == 1:
+                module_input = tensorop.layers_of_tensors[0]
+            elif 'INPUT' in tensorop.layers_of_tensors:
+                module_input = 'INPUT'
+
+        if module_input is not None:
+            prev_out_var = _resolve_prev_out_var_from_module_input(
+                module_input, modules_details, get_rnn_hidden_var_fn, tensorop
+            )
 
     return prev_out_var
 
@@ -1185,7 +1186,12 @@ def _get_initial_prev_out_var(modules_details, tensorop, get_rnn_hidden_var_fn):
 def _override_prev_out_var_if_needed(
     tensorop, modules_details, current_prev_out_var
 ):
-    """Override prev_out_var from layers_of_tensors if present."""
+    """Override prev_out_var: check input_var first, then layers_of_tensors."""
+    # Check input_var first (takes precedence)
+    if hasattr(tensorop, 'input_var') and tensorop.input_var is not None:
+        return tensorop.input_var
+
+    # Fall back to layers_of_tensors if input_var not set
     if (hasattr(tensorop, 'layers_of_tensors') and
         tensorop.layers_of_tensors and
         isinstance(tensorop.layers_of_tensors[0], str)):
@@ -1199,10 +1205,13 @@ def _handle_reshape_params(tensorop, modules_details):
     """Handle reshape tensorop parameters."""
     prev_out_var = None
 
-    # Override prev_out_var if layers_of_tensors is set and not INPUT
-    if (hasattr(tensorop, 'layers_of_tensors') and
-        tensorop.layers_of_tensors and
-        tensorop.layers_of_tensors[0] != 'INPUT'):
+    # Check input_var first (takes precedence)
+    if hasattr(tensorop, 'input_var') and tensorop.input_var is not None:
+        prev_out_var = tensorop.input_var
+    # Fall back to layers_of_tensors if input_var not set
+    elif (hasattr(tensorop, 'layers_of_tensors') and
+          tensorop.layers_of_tensors and
+          tensorop.layers_of_tensors[0] != 'INPUT'):
         source_layer = tensorop.layers_of_tensors[0]
         prev_out_var = _resolve_source_layer_var(source_layer, modules_details)
 
@@ -1220,10 +1229,11 @@ def _handle_reshape_params(tensorop, modules_details):
 
 def _handle_concatenate_params(tensorop, modules_details):
     """Handle concatenate tensorop parameters."""
-    # Use original variable names from tensorop.input_var if available (comma-separated)
-    if tensorop.input_var and ',' in tensorop.input_var:
+    # Check input_var first (takes precedence, comma-separated for concatenate)
+    if hasattr(tensorop, 'input_var') and tensorop.input_var and ',' in tensorop.input_var:
         params = tensorop.input_var  # Already comma-separated: "last_output,last_hidden"
-    else:
+    # Fall back to layers_of_tensors if input_var not set
+    elif hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
         actual_vars = getattr(tensorop, 'actual_vars', None)
         tensors = get_layers_output_for_tensorops(
             tensorop.layers_of_tensors, modules_details, actual_vars
@@ -1233,6 +1243,8 @@ def _handle_concatenate_params(tensorop, modules_details):
         if not tensors:
             raise ValueError(f"Concatenate operation '{tensorop.name}' has no valid input tensors")
         params = ', '.join(tensors)
+    else:
+        raise ValueError(f"Concatenate operation '{tensorop.name}' has no input_var or layers_of_tensors")
     return None, params
 
 
@@ -1411,13 +1423,13 @@ def _handle_skip_syntax(ts_op_synt, out_var, tensorop):
 
 
 def _handle_split_tuple(tensorop, out_var):
-    """Generate tuple variable names for split operations."""
+    """Generate tuple variable names for split operations (framework-agnostic)."""
     if tensorop.tns_type == "split" and hasattr(tensorop, 'split_sizes'):
         # NEW: Prefer tensorop attribute (list of variables)
         if tensorop.output_vars is not None and len(tensorop.output_vars) > 0:
             return ", ".join(tensorop.output_vars)
         # Fallback to auto-generated names
-        num_splits = tensorop.split_sizes
+        num_splits = len(tensorop.split_sizes) if isinstance(tensorop.split_sizes, list) else tensorop.split_sizes
         split_vars = [f"{out_var}_{i}" for i in range(num_splits)]
         return ", ".join(split_vars)
     return out_var

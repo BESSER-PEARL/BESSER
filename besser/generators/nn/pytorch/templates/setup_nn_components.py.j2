@@ -118,7 +118,17 @@ import torch.nn.functional as F
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
+        {%- set tensorop = module_details[2] if module_details|length > 2 else None -%}
+        {%- if tensorop and tensorop.tns_type == 'split' and tensorop.split_sizes is defined %}
+            {%- set num_splits = tensorop.split_sizes|length if tensorop.split_sizes is iterable and tensorop.split_sizes is not string else tensorop.split_sizes -%}
+            {%- if num_splits == 1 %}
+        ({{ module_details[1] }},) = {{ module_details[0] }}
+            {%- else %}
         {{ module_details[1] }} = {{ module_details[0] }}
+            {%- endif -%}
+        {%- else %}
+        {{ module_details[1] }} = {{ module_details[0] }}
+        {%- endif %}
     {% elif module_name.endswith("nn") %}
         {% if "subnn_input" in module_details and "subnn_output" in module_details -%}
         {{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }})

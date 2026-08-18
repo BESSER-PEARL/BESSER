@@ -209,6 +209,8 @@ from datetime import datetime
         {%- else %}
     {{ module_details[0].split('=', 1)[1].strip() }},
         {%- endif -%}
+        {%- else %}
+    {{ module_details[0] }},
         {%- endif -%}
     {%- endfor %}
 ])
@@ -268,7 +270,17 @@ from datetime import datetime
         {%- if split_outputs %}
         {{ split_outputs }} = {{ module_details[0] }}
         {%- elif not module_details[0].startswith("SKIP:") and module_details[1] != module_details[0] %}
+            {%- set tensorop = module_details[2] if module_details|length > 2 else None -%}
+            {%- if tensorop and tensorop.tns_type == 'split' and tensorop.split_sizes is defined %}
+                {%- set num_splits = tensorop.split_sizes|length if tensorop.split_sizes is iterable and tensorop.split_sizes is not string else tensorop.split_sizes -%}
+                {%- if num_splits == 1 %}
+        [{{ module_details[1] }}] = {{ module_details[0] }}
+                {%- else %}
         {{ module_details[1] }} = {{ module_details[0] }}
+                {%- endif -%}
+            {%- else %}
+        {{ module_details[1] }} = {{ module_details[0] }}
+            {%- endif -%}
         {%- endif %}
     {%- elif module_name.endswith("nn") %}
         {%- set vars = get_sequential_vars(module_name, module_details["in_out_variable"], module_details) -%}

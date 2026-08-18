@@ -2372,13 +2372,12 @@ class Agent(StateMachine):
     ) -> 'LLMWrapper':
         """Register an LLM on the agent and return the :class:`LLMWrapper` instance.
 
-        ``provider`` selects the concrete subclass: ``openai`` →
-        :class:`LLMOpenAI`, ``huggingface`` → :class:`LLMHuggingFace`,
-        ``huggingface_api`` → :class:`LLMHuggingFaceAPI`,
-        ``replicate`` → :class:`LLMReplicate`,
-        ``ollama`` → :class:`LLMOllama`. Names must be unique on the
-        agent so other elements (reasoning states, RAG, replies, intent
-        classifiers) can reference the LLM by ``llm_name``.
+        ``provider`` selects the concrete :class:`LLMWrapper` subclass via
+        :attr:`Agent._LLM_PROVIDERS`; ``sorted(Agent._LLM_PROVIDERS)`` is the
+        authoritative list of accepted keys (the :class:`ValueError` raised below
+        reports it). Names must be unique on the agent so other elements
+        (reasoning states, RAG, replies, intent classifiers) can reference the
+        LLM by ``llm_name``.
         """
         if any(existing.name == name for existing in self.llms):
             raise ValueError(

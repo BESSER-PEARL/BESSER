@@ -194,6 +194,13 @@ def test_new_provider_roundtrip_preserves_provider_key(provider, tmp_path):
     llm = next(iter(restored.llms))
     assert llm.name == "main_llm"
 
+    # The restored object must be the *correct* LLMWrapper subclass. Without this,
+    # a wrong entry in _direct_llm_class_to_provider (e.g. LLMMistral -> "deepseek")
+    # would still satisfy the name/parameter assertions below and pass silently.
+    assert type(llm).__name__ == expected_class, (
+        f"provider '{provider}' round-tripped to {type(llm).__name__}, expected {expected_class}"
+    )
+
     # The model parameter must be preserved through the round-trip.
     assert llm.parameters.get("model") == model, (
         f"model parameter lost for provider '{provider}': "

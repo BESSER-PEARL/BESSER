@@ -30,6 +30,9 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "responseTiming": ["instant", "delayed"],
     "agentPlatform": ["websocket", "streamlit", "telegram"],
     "intentRecognitionTechnology": ["classical", "llm-based"],
+    # "huggingfaceapi" (no underscore) is the legacy spelling still emitted by saved
+    # frontend configs; it is kept alongside the canonical "huggingface_api" so that
+    # normalize_recommended_agent_config() does not silently drop an existing provider.
     "llmProvider": [
         "openai", "huggingface", "huggingface_api", "huggingfaceapi", "replicate", "ollama",
         "mistral", "deepseek", "google", "meta", "anthropic",

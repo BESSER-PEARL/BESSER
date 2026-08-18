@@ -175,6 +175,7 @@ rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''
 
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
+# Set use_ui=True to launch the built-in Streamlit chat interface automatically on startup.
 platform = agent.use_websocket_platform(use_ui=False)
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
@@ -285,6 +286,7 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}{% if rag.use_hybrid_rag %},
     bm25_weight={{ rag.bm25_weight if rag.bm25_weight is not none else 0.6 }}{% endif %}
 )
+# Place your documents (PDF, TXT, etc.) in the './{{ rag_slug }}' folder before running.
 {{ rag_var }}.load_pdfs('./{{ rag_slug }}')
 
 {% endfor %}

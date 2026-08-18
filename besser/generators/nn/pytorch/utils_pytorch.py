@@ -362,7 +362,7 @@ def _handle_split_pytorch(tensorop, modules_details, in_var, prev_out_var, param
         return f"torch.chunk({prev_out_var}, {split_sizes}, dim={split_dim})"
     else:
         # If split_sizes is a list, use torch.split with list of sizes
-        return f"torch.split({prev_out_var}, {split_sizes}, dim={split_dim})"
+        return f"torch.split({prev_out_var}, split_size_or_sections={split_sizes}, dim={split_dim})"
 
 
 def _handle_concatenate_pytorch(tensorop, modules_details, in_var, prev_out_var, params):

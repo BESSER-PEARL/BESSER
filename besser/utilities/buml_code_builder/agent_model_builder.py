@@ -171,6 +171,8 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 f.write(f"    llm_prompt={repr(getattr(rag, 'llm_prompt', None))},\n")
                 f.write(f"    k={rag.k},\n")
                 f.write(f"    num_previous_messages={rag.num_previous_messages},\n")
+                f.write(f"    use_hybrid_rag={getattr(rag, 'use_hybrid_rag', False)},\n")
+                f.write(f"    bm25_weight={getattr(rag, 'bm25_weight', 0.6)},\n")
                 f.write(")\n\n")
 
         # Emit explicit LLM definitions via Agent.new_llm — every consumer

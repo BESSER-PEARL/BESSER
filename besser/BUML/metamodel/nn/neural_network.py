@@ -679,8 +679,6 @@ class TensorOp(NamedElement):
                 raise TypeError(
                     f"output_vars must be a list, got {type(output_vars).__name__}"
                 )
-            if not output_vars:
-                raise ValueError("output_vars must not be empty")
             for var in output_vars:
                 if not isinstance(var, str):
                     raise TypeError(
@@ -692,6 +690,12 @@ class TensorOp(NamedElement):
                         f"'{var}' is not valid, each output_var must be a "
                         f"valid identifier starting with an alphabetic character"
                     )
+            if len(output_vars) != self.__split_sizes:
+                raise ValueError(
+                    f"Length of output_vars ({len(output_vars)}) must match "
+                    f"the number of splits specified in split_sizes "
+                    f"({self.__split_sizes})"
+                )
         self.__output_vars = output_vars
 
     @property
@@ -757,11 +761,10 @@ class TensorOp(NamedElement):
             'split', 'squeeze', 'transpose', 'unsqueeze', 'zeros_like', 
             'multiply', 'matmultiply'
         ]:
-            if self.layers_of_tensors is None:
-                raise ValueError(f"layers_of_tensors parameter cannot \
-                                    be None for {self.tns_type} operations")
-
-
+            if self.layers_of_tensors is None and self.input_var is None:
+                raise ValueError(
+                    f"Either layers_of_tensors or input_var parameter should "
+                    f"be provided for {self.tns_type} operations")
 
     def __repr__(self):
         return (
@@ -3749,6 +3752,7 @@ class NN(BehaviorImplementation):
             NN training and evaluation.
         train_data (Dataset): The dataset used to train the NN model.
         test_data (Dataset): The dataset used to evaluate the NN model.
+        input_var (str): Input variable name for the network.
         return_vars (str): Comma-separated string of variable names returned
             by the forward/call method (e.g., "rep, recon").
 
@@ -3758,12 +3762,13 @@ class NN(BehaviorImplementation):
             NN training and evaluation.
         train_data (Dataset): The dataset used to train the NN model.
         test_data (Dataset): The dataset used to evaluate the NN model.
+        input_var (str): Input variable name for the network.
         return_vars (str): Comma-separated string of variable names returned
             by the forward/call method (e.g., "rep, recon").
     """
     def __init__(self, name: str, configuration: Configuration = None,
                  train_data: Dataset = None, test_data: Dataset = None,
-                 return_vars: str = None):
+                 input_var: str = None, return_vars: str = None):
         super().__init__(name)
         self.configuration: Configuration = configuration
         self.__sub_nns: List[NN] = []
@@ -3772,6 +3777,7 @@ class NN(BehaviorImplementation):
         self.__modules: List[Union[NN, Layer, TensorOp]] = []
         self.train_data: Dataset = train_data
         self.test_data: Dataset = test_data
+        self.input_var: str = input_var
         self.return_vars: str = return_vars
 
     @property
@@ -3884,6 +3890,16 @@ class NN(BehaviorImplementation):
         self.__test_data = test_data
 
     @property
+    def input_var(self) -> str:
+        """str: Get the input variable name for this NN."""
+        return self.__input_var
+
+    @input_var.setter
+    def input_var(self, input_var: str):
+        """str: Set the input variable name for this NN."""
+        self.__input_var = input_var
+
+    @property
     def return_vars(self) -> str:
         """str: Get the comma-separated string of variable names 
            returned by forward/call method."""
@@ -3913,7 +3929,8 @@ class NN(BehaviorImplementation):
     def __repr__(self):
         return (
             f'NN({self.name}, {self.configuration}, {self.modules}, '
-            f'{self.train_data}, {self.test_data})'
+            f'{self.train_data}, {self.test_data}, {self.return_vars}, '
+            f'{self.input_var})'
             )
 
     def validate(self, raise_exception: bool = True, _visited: set = None) -> dict:

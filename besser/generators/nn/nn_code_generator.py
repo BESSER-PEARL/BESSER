@@ -69,9 +69,127 @@ class NNCodeGenerator(GeneratorInterface):
             self.template_name = f"template_{template_dir}_subclassing.py.j2"
         else:
             self.template_name = f"template_{template_dir}_sequential.py.j2"
+            self._validate_sequential_flow()
 
         self.modules_details: dict = self.get_modules_details()
         self.has_training_aware_dropout: bool = self._check_training_aware_dropout()
+
+    def _validate_sequential_flow(self):
+        """Validate that model has linear flow suitable for sequential generation."""
+        if not self.model.modules:
+            return
+
+        module_names = [mod.name for mod in self.model.modules]
+        output_map = {}
+
+        # Build output variable map for input_var resolution
+        for i, module in enumerate(self.model.modules):
+            if hasattr(module, 'output_var') and module.output_var:
+                output_map[module.output_var] = module.name
+            else:
+                # Default output variable pattern
+                default_var = f"x_{i}" if i > 0 else "x"
+                output_map[default_var] = module.name
+
+        errors = []
+
+        # Validate each module consumes from exactly the previous one
+        for i in range(1, len(self.model.modules)):
+            module = self.model.modules[i]
+            prev_name = module_names[i - 1]
+            module_type = module.__class__.__name__
+
+            if module_type == "TensorOp":
+                # Check TensorOp input sources
+                if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
+                    # Filter to string refs only (exclude scalars)
+                    string_refs = [x for x in module.layers_of_tensors if isinstance(x, str)]
+
+                    # Validate all string refs are real module names
+                    invalid = [x for x in string_refs if x not in module_names]
+                    if invalid:
+                        raise ValueError(
+                            f"TensorOp '{module.name}' references non-existent modules: {invalid}"
+                        )
+
+                    # Check sequential constraint
+                    if len(string_refs) == 0:
+                        errors.append(
+                            f"TensorOp '{module.name}' at position {i} has no module inputs "
+                            f"(only scalars or empty), breaks sequential flow"
+                        )
+                    elif len(string_refs) > 1:
+                        errors.append(
+                            f"TensorOp '{module.name}' at position {i} consumes from multiple modules "
+                            f"{string_refs}, breaks sequential flow"
+                        )
+                    elif string_refs[0] != prev_name:
+                        errors.append(
+                            f"TensorOp '{module.name}' at position {i} consumes from non-adjacent module "
+                            f"'{string_refs[0]}', breaks sequential flow"
+                        )
+                elif hasattr(module, 'input_var') and module.input_var:
+                    # Resolve input_var to module name
+                    source = output_map.get(module.input_var)
+                    if source != prev_name:
+                        errors.append(
+                            f"TensorOp '{module.name}' at position {i} consumes from non-adjacent "
+                            f"module '{source}' (via input_var), breaks sequential flow"
+                        )
+                # Else: auto-consumes previous (sequential)
+
+            else:
+                # Layer validation
+                if hasattr(module, 'name_module_input') and module.name_module_input:
+                    if module.name_module_input != prev_name:
+                        errors.append(
+                            f"Layer '{module.name}' at position {i} consumes from non-adjacent "
+                            f"module '{module.name_module_input}', breaks sequential flow"
+                        )
+                elif hasattr(module, 'input_var') and module.input_var:
+                    source = output_map.get(module.input_var)
+                    if source != prev_name:
+                        errors.append(
+                            f"Layer '{module.name}' at position {i} consumes from non-adjacent "
+                            f"module '{source}' (via input_var), breaks sequential flow"
+                        )
+                # Else: auto-consumes previous (sequential)
+
+        if errors:
+            raise ValueError(
+                f"Sequential generation requires linear flow. Violations:\n" +
+                "\n".join(f"  - {e}" for e in errors)
+            )
+
+    def _validate_multi_input_var(self):
+        """Validate that modules don't use multi-variable input_var unless they support it."""
+        multi_input_allowed = {'concatenate', 'binop_add', 'binop_subtract', 'binop_divide',
+                               'binop_multiply', 'binop_floor_divide', 'multiply', 'matmultiply'}
+
+        errors = []
+        for module in self.model.modules:
+            module_type = module.__class__.__name__
+            current_input_var = getattr(module, 'input_var', None) if hasattr(module, 'input_var') else None
+
+            if current_input_var and ', ' in current_input_var:
+                if module_type == "TensorOp":
+                    tns_type = getattr(module, 'tns_type', None)
+                    if tns_type not in multi_input_allowed:
+                        errors.append(
+                            f"TensorOp '{module.name}' (type: {tns_type}) has input_var '{current_input_var}' "
+                            f"with multiple variables, not supported for this operation. Specify a single variable."
+                        )
+                else:
+                    errors.append(
+                        f"{module_type} '{module.name}' has input_var '{current_input_var}' with multiple variables, "
+                        f"which is not supported. Specify a single variable."
+                    )
+
+        if errors:
+            raise ValueError(
+                "Invalid multi-variable input_var:\n" +
+                "\n".join(f"  - {e}" for e in errors)
+            )
 
     def _check_training_aware_dropout(self):
         """Check if model has any dropout tensorop with training_aware=True."""
@@ -175,6 +293,7 @@ class NNCodeGenerator(GeneratorInterface):
 
         module_usage_count, referenced_tensorops = self._detect_module_reuse()
         self._mark_tensorops_with_reused_inputs(module_usage_count)
+        self._validate_multi_input_var()
 
         counter_subnn = 0
         for module in self.model.modules:

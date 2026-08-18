@@ -86,10 +86,12 @@ The full list of allowed values is defined in
 - ``responseTiming``: ``instant``, ``delayed``
 - ``agentPlatform``: ``websocket``, ``streamlit``, ``telegram``
 - ``intentRecognitionTechnology``: ``classical``, ``llm-based``
-- ``llmProvider``: ``openai``, ``huggingface``, ``huggingface_api``, ``replicate``,
+- ``llmProvider``: ``openai``, ``huggingface``, ``huggingface_api``, ``huggingfaceapi``
+  (legacy spelling, still accepted), ``replicate``, ``ollama``,
   ``mistral``, ``deepseek``, ``google``, ``meta``, ``anthropic``,
   ``qwen``, ``xai``, ``groq``, ``together``, ``openrouter``
 - ``openaiModels``: ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``
+- ``ollamaModels``: ``llama3``, ``llama3.1``, ``mistral``, ``qwen2.5``, ``gemma3``, ``phi4``, ``gemma3n:e2b``
 - ``mistralModels``: ``mistral-small-latest``, ``mistral-large-latest``, ``open-mistral-nemo``
 - ``deepseekModels``: ``deepseek-chat``, ``deepseek-reasoner``
 - ``googleModels``: ``gemini-2.5-pro``, ``gemini-2.5-flash``, ``gemini-2.0-flash``
@@ -100,6 +102,12 @@ The full list of allowed values is defined in
 - ``groqModels``: ``llama-3.3-70b-versatile``, ``gemma2-9b-it``, ``mixtral-8x7b-32768``
 - ``togetherModels``: ``meta-llama/Llama-3.3-70B-Instruct-Turbo``, ``Qwen/Qwen2.5-72B-Instruct-Turbo``
 - ``openrouterModels``: ``anthropic/claude-opus-4``, ``google/gemini-2.5-pro``, ``openai/gpt-4o``
+
+The ``ollama`` provider targets a locally hosted `Ollama <https://ollama.com>`_
+server: set the ``model`` and optionally the ``base_url`` (default
+``http://localhost:11434``) in the LLM parameters. Ollama can also be selected as
+the embedding provider for RAG vector stores, with its own ``base_url`` and
+embedding ``model`` (e.g. ``nomic-embed-text``).
 
 .. note::
 

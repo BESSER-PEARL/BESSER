@@ -431,9 +431,17 @@ def process_agent_diagram(json_data):
                 continue
 
             sanitized_slug = rag_name.lower().replace(' ', '_') or "default"
+            embedding_provider = (element.get("embedding_provider") or "openai").lower()
+            if embedding_provider == "ollama":
+                embedding_parameters = {
+                    "base_url": element.get("embedding_base_url") or "http://localhost:11434",
+                    "model": element.get("embedding_model") or "nomic-embed-text",
+                }
+            else:
+                embedding_parameters = {"api_key_property": "nlp.OPENAI_API_KEY"}
             vector_store = RAGVectorStore(
-                embedding_provider="openai",
-                embedding_parameters={"api_key_property": "nlp.OPENAI_API_KEY"},
+                embedding_provider=embedding_provider,
+                embedding_parameters=embedding_parameters,
                 persist_directory=f"vector_store/{sanitized_slug}",
             )
             splitter = RAGTextSplitter(

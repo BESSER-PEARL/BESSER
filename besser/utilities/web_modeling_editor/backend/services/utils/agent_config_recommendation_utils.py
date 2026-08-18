@@ -31,11 +31,12 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "agentPlatform": ["websocket", "streamlit", "telegram"],
     "intentRecognitionTechnology": ["classical", "llm-based"],
     "llmProvider": [
-        "openai", "huggingface", "huggingface_api", "replicate",
+        "openai", "huggingface", "huggingface_api", "huggingfaceapi", "replicate", "ollama",
         "mistral", "deepseek", "google", "meta", "anthropic",
         "qwen", "xai", "groq", "together", "openrouter",
     ],
     "openaiModels": ["gpt-5.5", "gpt-5", "gpt-5-mini", "gpt-5-nano"],
+    "ollamaModels": ["llama3", "llama3.1", "mistral", "qwen2.5", "gemma3", "phi4", "gemma3n:e2b"],
     "mistralModels": ["mistral-small-latest", "mistral-large-latest", "open-mistral-nemo"],
     "deepseekModels": ["deepseek-chat", "deepseek-reasoner"],
     "googleModels": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],

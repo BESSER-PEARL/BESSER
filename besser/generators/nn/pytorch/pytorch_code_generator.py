@@ -5,6 +5,9 @@ PyTorch code for neural networks based on the B-UML model.
 
 from typing import Callable
 from besser.BUML.metamodel.nn import NN
+from besser.BUML.metamodel.nn.neural_network import (
+    LinearLayer, Conv1D, Conv2D, Conv3D, SimpleRNNLayer, LSTMLayer, GRULayer
+)
 from besser.generators.nn.pytorch.utils_pytorch import SetupLayerSyntax, \
     get_tensorop_syntax
 from besser.generators.nn.nn_code_generator import NNCodeGenerator
@@ -36,6 +39,8 @@ class PytorchGenerator(NNCodeGenerator):
                  generation_type: str = "subclassing",
                  channel_last: bool = False,
                  strip_layer_counter_suffix: bool = False):
+
+        self._validate_required_layer_attributes(model)
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax
         setup_tensorop: Callable = get_tensorop_syntax
@@ -93,3 +98,28 @@ class PytorchGenerator(NNCodeGenerator):
     def _wrap_in_lambda(self, syntax):
         """PyTorch uses Lambda module wrapper instead of raw lambda in sequential."""
         return f"Lambda(lambda x: {syntax})"
+
+    @staticmethod
+    def _validate_required_layer_attributes(model):
+        """Validate that critical layer attributes are set for PyTorch generation."""
+        for module in model.modules:
+            if isinstance(module, LinearLayer):
+                if module.in_features is None:
+                    raise ValueError(
+                        f"PyTorch Linear layer '{module.name}' requires 'in_features' to be set. "
+                        f"Cannot generate code with in_features=None."
+                    )
+
+            elif isinstance(module, (Conv1D, Conv2D, Conv3D)):
+                if module.in_channels is None:
+                    raise ValueError(
+                        f"PyTorch Conv layer '{module.name}' requires 'in_channels' to be set. "
+                        f"Cannot generate code with in_channels=None."
+                    )
+
+            elif isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+                if module.input_size is None:
+                    raise ValueError(
+                        f"PyTorch RNN layer '{module.name}' requires 'input_size' to be set. "
+                        f"Cannot generate code with input_size=None."
+                    )

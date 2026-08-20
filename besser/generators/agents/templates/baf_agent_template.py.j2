@@ -11,6 +11,7 @@ from baf.core.agent import Agent
 from baf.library.transition.events.base_events import *
 from baf.nlp.llm.llm_huggingface import LLMHuggingFace
 from baf.nlp.llm.llm_huggingface_api import LLMHuggingFaceAPI
+from baf.nlp.llm.llm_ollama import LLMOllama
 from baf.nlp.llm.llm_openai_api import LLMOpenAI
 from baf.nlp.llm.llm_replicate_api import LLMReplicate
 from baf.core.session import Session
@@ -18,7 +19,15 @@ from baf.nlp.intent_classifier.intent_classifier_configuration import LLMIntentC
 from baf.nlp.speech2text.openai_speech2text import OpenAISpeech2Text
 from baf.nlp.text2speech.openai_text2speech import OpenAIText2Speech
 {% if agent.rags and agent.rags|length > 0 %}
-from langchain_community.embeddings import OpenAIEmbeddings
+{% set has_openai_rag_ns = namespace(value=false) %}
+{% set has_ollama_rag_ns = namespace(value=false) %}
+{% for rag in agent.rags %}
+{% if rag.vector_store and rag.vector_store.embedding_provider == 'ollama' %}{% set has_ollama_rag_ns.value = true %}{% else %}{% set has_openai_rag_ns.value = true %}{% endif %}
+{% endfor %}
+{% if has_openai_rag_ns.value %}from langchain_community.embeddings import OpenAIEmbeddings
+{% endif %}
+{% if has_ollama_rag_ns.value %}from langchain_community.embeddings import OllamaEmbeddings
+{% endif %}
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from baf import nlp
@@ -248,10 +257,19 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     {% else %}
         {% set chunk_overlap = 100 %}
     {% endif %}
+{% if rag.vector_store and rag.vector_store.embedding_provider == 'ollama' %}
+{% set _ollama_base_url = (rag.vector_store.embedding_parameters or {}).get('base_url', 'http://localhost:11434') %}
+{% set _ollama_emb_model = (rag.vector_store.embedding_parameters or {}).get('model', 'nomic-embed-text') %}
+{{ vector_var }} = Chroma(
+    embedding_function=OllamaEmbeddings(base_url='{{ _ollama_base_url }}', model='{{ _ollama_emb_model }}'),
+    persist_directory='{{ persist_dir }}'
+)
+{% else %}
 {{ vector_var }} = Chroma(
     embedding_function=OpenAIEmbeddings(openai_api_key=agent.get_property(nlp.OPENAI_API_KEY)),
     persist_directory='{{ persist_dir }}'
 )
+{% endif %}
 {{ splitter_var }} = RecursiveCharacterTextSplitter(chunk_size={{ chunk_size }}, chunk_overlap={{ chunk_overlap }})
 {{ rag_var }} = RAG(
     agent=agent,

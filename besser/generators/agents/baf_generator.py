@@ -292,7 +292,7 @@ class BAFGenerator(GeneratorInterface):
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                    f.write(config_template.render(properties=properties))
+                    f.write(config_template.render(properties=properties, agent=self.model))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')

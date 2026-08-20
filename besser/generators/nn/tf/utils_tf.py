@@ -12,25 +12,26 @@ from besser.generators.nn import utils_nn as utils
 
 class SetupLayerSyntax:
     """
-    This class is used to get TensorFlow layer syntax from BUML layer object.
-    It processes the layers based on their type.
+    This class is used to get TensorFlow layer syntax from BUML layer
+    object. It processes the layers based on their type.
 
     Attributes:
         layer (Layer): the BUML layer object.
-        modules_details (dict): A dict storing the NN modules syntax and
-            attributes.
-        permute_out (bool | None): Whether to add a permute tensorop after
-            the layer. It is only relevant for PyTorch and used here just to
-            facilitate shared processing logic.
-        permute_in (bool | None): Whether to add a permute tensorop before
-            the layer. It is only relevant for PyTorch and used here just to
-            facilitate shared processing logic.
+        modules_details (dict): A dict storing the NN modules syntax
+            and attributes.
+        permute_out (bool | None): Whether to add a permute tensorop 
+            after the layer. It is only relevant for PyTorch and used
+            here just to facilitate shared processing logic.
+        permute_in (bool | None): Whether to add a permute tensorop
+            before the layer. It is only relevant for PyTorch and used
+            here just to facilitate shared processing logic.
 
     Returns:
         None, but stores the layers and their attributes in the
         modules_details dictionary.
     """
-    def __init__(self, layer: Layer, modules_details: dict, is_subnn: bool = False):
+    def __init__(self, layer: Layer, modules_details: dict,
+                 is_subnn: bool = False):
         self.layer: Layer = layer
         self.modules_details: dict = modules_details
         self.is_subnn: bool = is_subnn
@@ -43,8 +44,10 @@ class SetupLayerSyntax:
     @staticmethod
     def _strip_counter_suffix(layer_name):
         """
-        Strip the counter suffix (_N) added by the parser to ensure unique keys.
-        Example: 'dropout_1' -> 'dropout', 'lstm_layer_2' -> 'lstm_layer'
+        Strip the counter suffix (_N) added by the parser to ensure
+        unique keys.
+        Example: 'dropout_1' -> 'dropout',
+        'lstm_layer_2' -> 'lstm_layer'
         """
         import re
         # Remove trailing _N where N is one or more digits
@@ -58,7 +61,9 @@ class SetupLayerSyntax:
         lyr = f"self.{lyr_name} = layers"
         if cls_name == "LinearLayer":
             use_bias = "True" if self.layer.bias else "False"
-            activation_param = f", activation={actv_func}" if actv_func is not None else ""
+            activation_param = (
+                f", activation={actv_func}" if actv_func is not None else ""
+            )
             lyr = (
                 f"{lyr}.Dense(units={self.layer.out_features}, "
                 f"use_bias={use_bias}{activation_param})"
@@ -67,11 +72,13 @@ class SetupLayerSyntax:
             lyr = f"{lyr}.Flatten()"
         elif cls_name == "GeneralLayer":
             # GeneralLayer with only actv_func (standalone activation)
-            lyr = f"self.{lyr_name} = layers.Activation('{self.layer.actv_func}')"
+            actv = self.layer.actv_func
+            lyr = f"self.{lyr_name} = layers.Activation('{actv}')"
         else: #cls_name == "EmbeddingLayer"
             padding_idx = self.layer.padding_idx
             mask_zero = "True" if padding_idx is not None else "False"
-
+            n_emb = self.layer.num_embeddings
+            e_dim = self.layer.embedding_dim
             # If padding_idx != 0, add remapping layer
             if padding_idx is not None and padding_idx != 0:
                 remap_lyr = (
@@ -80,30 +87,33 @@ class SetupLayerSyntax:
                     f"tf.where(x == 0, {padding_idx}, x))),\n    "
                 )
                 lyr = (
-                    f"{remap_lyr}{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "
-                    f"output_dim={self.layer.embedding_dim}, mask_zero={mask_zero})"
+                    f"{remap_lyr}{lyr}.Embedding(input_dim={n_emb}, "
+                    f"output_dim={e_dim}, mask_zero={mask_zero})"
                 )
             else:
                 lyr = (
-                    f"{lyr}.Embedding(input_dim={self.layer.num_embeddings}, "
-                    f"output_dim={self.layer.embedding_dim}, mask_zero={mask_zero})"
+                    f"{lyr}.Embedding(input_dim={n_emb}, "
+                    f"output_dim={e_dim}, mask_zero={mask_zero})"
                 )
         return lyr
 
-    def setup_standalone_activation(self, out_var, in_var, original_layer_name=None):
+    def setup_standalone_activation(self, out_var, in_var,
+                                    original_layer_name=None):
         """It defines the syntax for standalone activation layer."""
         actv_func = self.layer.actv_func
         lyr_name = self.layer.name
 
-        # Use the actual layer name to preserve original PyTorch names
         syntax = f"self.{lyr_name} = layers.Activation('{actv_func}')"
 
-        # Use original_layer_name (with counter suffix) for modules_details key
+        # Use original_layer_name (with counter suffix)
+        # for modules_details key
         key_name = original_layer_name if original_layer_name else lyr_name
 
-        # Store in modules_details with _activ suffix so it's recognized as activation
+        # Store in modules_details with _activ suffix so it's
+        # recognized as activation
         # Include layer object so template can check is_layer_call
-        self.modules_details[key_name + "_activ"] = [syntax, out_var, in_var, self.layer]
+        name_ac  = key_name + "_activ"
+        self.modules_details[name_ac] = [syntax, out_var, in_var, self.layer]
 
         # Return None to signal handle_layer not to add _layer entry
         return None
@@ -121,14 +131,19 @@ class SetupLayerSyntax:
                     permute_in: bool = True, sequential: bool = False,
                     is_subnn: bool = False):
         """
-        It adds transpose operation for CNN layers that need permutation.
+        It adds transpose operation for CNN layers that need
+        permutation.
 
         Args:
             lyr_name (str): the name of the layer.
-            dim (str): the dimensionality of the layer ('1', '2' or '3').
-            in_var_layer (str): the input variable notation of the layer.
-            permute_in (bool): Whether to permute the input of the layer.
-            sequential (bool): Whether the layer is in a seq architecture.
+            dim (str): the dimensionality of the layer
+                ('1', '2' or '3').
+            in_var_layer (str): the input variable notation of
+                the layer.
+            permute_in (bool): Whether to permute the input of
+                the layer.
+            sequential (bool): Whether the layer is in a seq
+                architecture.
             is_subnn (bool): Whether the layer is in a subnn model.
 
         Returns:
@@ -141,7 +156,8 @@ class SetupLayerSyntax:
         self.modules_details[perm_name] = [transpose_syntax, in_var_layer]
 
     def _build_batchnorm_tf(self, lyr_name: str):
-        """Build BatchNormalization syntax with PyTorch to TF param conversion."""
+        """Build BatchNormalization syntax with PyTorch to TF param
+        conversion."""
         epsilon = self.layer.eps
         momentum = 1 - self.layer.momentum  # INVERT: PyTorch 0.1 -> TF 0.9
         center = "True" if self.layer.affine else "False"
@@ -149,26 +165,29 @@ class SetupLayerSyntax:
 
         # Warn if track_running_stats=False (TF always tracks)
         if not self.layer.track_running_stats:
-            print(f"Warning: BatchNorm '{lyr_name}' has track_running_stats=False. "
-                  f"TensorFlow will use running statistics during inference, "
-                  f"which differs from PyTorch behavior (batch stats).")
-
+            print(
+                f"Warning: BatchNorm '{lyr_name}' has "
+                "track_running_stats=False. TensorFlow will use running "
+                "statistics during inference, which differs from PyTorch "
+                "behavior (batch stats)."
+            )
         return (
             f"self.{lyr_name} = layers.BatchNormalization(epsilon={epsilon}, "
             f"momentum={momentum}, center={center}, scale={scale})"
         )
 
     def _build_layernorm_tf(self, lyr_name: str):
-        """Build LayerNormalization syntax with PyTorch to TF axis conversion."""
+        """Build LayerNormalization syntax with PyTorch to TF axis
+        conversion."""
         norm_shape = self.layer.normalized_shape
         epsilon = self.layer.eps
         center = "True" if self.layer.affine else "False"
         scale = "True" if self.layer.affine else "False"
 
         num_axes = len(norm_shape)
-        axis_indices = list(range(-num_axes, 0))
+        ax_indices = list(range(-num_axes, 0))
         return (
-            f"self.{lyr_name} = layers.LayerNormalization(axis={axis_indices}, "
+            f"self.{lyr_name} = layers.LayerNormalization(axis={ax_indices}, "
             f"epsilon={epsilon}, center={center}, scale={scale})"
         )
 
@@ -185,20 +204,31 @@ class SetupLayerSyntax:
                 return self._build_layernorm_tf(lyr_name)
         else: # cls_name == "DropoutLayer"
             if hasattr(self.layer, 'dimension') and self.layer.dimension:
-                # Strip 'D' suffix if present (e.g., '1D' -> '1', '2D' -> '2')
+                # Strip 'D' suffix if present
+                # (e.g., '1D' -> '1', '2D' -> '2')
                 dim_num = self.layer.dimension.rstrip('D')
-                return f"self.{lyr_name} = layers.SpatialDropout{dim_num}D(rate={self.layer.rate})"
+                return (
+                    f"self.{lyr_name} = "
+                    f"layers.SpatialDropout{dim_num}D(rate={self.layer.rate})"
+                )
             else:
-                return f"self.{lyr_name} = layers.Dropout(rate={self.layer.rate})"
+                return (
+                    f"self.{lyr_name} = "
+                    f"layers.Dropout(rate={self.layer.rate})"
+                )
 
     def add_separate_activation_if_needed(self, out_var, in_var):
-        """Add separate activation for layers that don't support activation param."""
+        """Add separate activation for layers that don't support
+        activation param."""
         cls_name = self.layer.__class__.__name__
         parent_cls = self.layer.__class__.mro()[1].__name__
 
-        # BatchNorm, LayerNorm, Dropout, Embedding, Pooling don't support activation
-        unsupported = parent_cls in ["NormalizationLayer", "LayerModifier"] or \
-                     cls_name in ["EmbeddingLayer", "PoolingLayer", "FlattenLayer"]
+        # BatchNorm, LayerNorm, Dropout, Embedding, Pooling 
+        # don't support activation
+        unsupported = (
+            parent_cls in ["NormalizationLayer", "LayerModifier"]
+            or cls_name in ["EmbeddingLayer", "PoolingLayer", "FlattenLayer"]
+        )
 
         if unsupported and self.layer.actv_func:
             actv_func = self.layer.actv_func
@@ -207,16 +237,22 @@ class SetupLayerSyntax:
             if actv_func not in SetupLayerSyntax._shared_activations:
                 shared_name = f"activation_{actv_func}"
                 SetupLayerSyntax._shared_activations[actv_func] = shared_name
-                # Add shared activation definition (DEF: to skip forward generation)
-                syntax = f"self.{shared_name} = layers.Activation('{actv_func}')"
-                self.modules_details[shared_name + "_activ"] = [f"DEF:{syntax}", None, None]
+                # Add shared activation definition (DEF: to skip
+                # forward generation)
+                syntax = (
+                    f"self.{shared_name} = layers.Activation('{actv_func}')"
+                )
+                name_ac = shared_name + "_activ"
+                self.modules_details[name_ac] = [f"DEF:{syntax}", None, None]
 
             # Add call reference for this layer
             shared_name = SetupLayerSyntax._shared_activations[actv_func]
             lyr_name = self.layer.name
             actv_call_key = f"{lyr_name}_activ"
-            # Use CALL: prefix to indicate this is a call to shared activation
-            self.modules_details[actv_call_key] = [f"CALL:{shared_name}", out_var, out_var]
+            # Use CALL: prefix to indicate this is a call
+            # to shared activation
+            module_elem = [f"CALL:{shared_name}", out_var, out_var]
+            self.modules_details[actv_call_key] = module_elem
 
     def setup_rnn(self):
         """It defines the syntax of rnn layers."""
@@ -224,10 +260,13 @@ class SetupLayerSyntax:
         cls_name = self.layer.__class__.__name__
         lyr_name = self.layer.name
         layer_type = cls_name[:-5]
+        h_size = self.layer.hidden_size
         use_bias_str = "True" if self.layer.bias else "False"
-        activation_param = f", activation={actv_func}" if actv_func is not None else ""
+        activation_param = (
+            f", activation={actv_func}" if actv_func is not None else ""
+        )
         lyr = (
-            f"layers.{layer_type}(units={self.layer.hidden_size}{activation_param}, "
+            f"layers.{layer_type}(units={h_size}{activation_param}, "
             f"use_bias={use_bias_str}, dropout={self.layer.dropout}"
         )
 
@@ -253,7 +292,8 @@ class SetupLayerSyntax:
         """
         if hasattr(self.layer, 'actv_func'):
             activ = self.layer.actv_func
-            list_func = ["relu", "tanh", "sigmoid", "softmax", "leaky_relu", "gelu"]
+            list_func = ["relu", "tanh", "sigmoid", "softmax",
+                         "leaky_relu", "gelu"]
             if activ is not None:
                 if activ in list_func:
                     return f"'{self.layer.actv_func}'"
@@ -261,8 +301,10 @@ class SetupLayerSyntax:
                     return f"{self.layer.actv_func}"
             else:
                 # Set default activation for RNN layers
-                # PyTorch RNN defaults to tanh, LSTM/GRU also use tanh for cell state
-                if self.layer.__class__.__name__ in ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer']:
+                # PyTorch RNN defaults to tanh, LSTM/GRU
+                # also use tanh for cell state
+                rnns = ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer']
+                if self.layer.__class__.__name__ in rnns:
                     return "'tanh'"
                 return None
 
@@ -296,16 +338,19 @@ class SetupLayerSyntax:
                 f"self.{lyr_name}_pad = layers.ZeroPadding{dim}D("
                 f"padding={pad_amount})#"
             )
-        activation_param = f", activation={actv_func}" if actv_func is not None else ""
+        activation_param = (
+            f", activation={actv_func}" if actv_func is not None else ""
+        )
         lyr = (
             f"{lyr}self.{lyr_name} = layers.Conv{dim}D(filters={filters}, "
             f"kernel_size={kernel}, strides={stride}, "
-            f"padding='{pad_type}', dilation_rate={dilation}, groups={groups}, "
-            f"use_bias={use_bias}{activation_param})"
+            f"padding='{pad_type}', dilation_rate={dilation}, "
+            f"groups={groups}, use_bias={use_bias}{activation_param})"
         )
         return lyr
 
-    def _build_standard_pooling_tf(self, lyr_name: str, pl_type: str, dim: str):
+    def _build_standard_pooling_tf(self, lyr_name: str, pl_type: str,
+                                   dim: str):
         """Build syntax for standard max or average pooling."""
         pl = "MaxPool" if pl_type == "max" else "AveragePooling"
         kernel = utils.format_value(self.layer.kernel_dim)
@@ -313,10 +358,17 @@ class SetupLayerSyntax:
         pad_type = self.layer.padding_type
 
         # Handle explicit padding with ZeroPadding layer
-        pad_amount = self.layer.padding_amount if hasattr(self.layer, 'padding_amount') else 0
+        pad_amount = (
+            self.layer.padding_amount
+            if hasattr(self.layer, 'padding_amount')
+            else 0
+        )
         lyr = ""
         if pad_amount != 0:
-            lyr = f"self.{lyr_name}_pad = layers.ZeroPadding{dim}D(padding={pad_amount})#"
+            lyr = (
+                f"self.{lyr_name}_pad = "
+                f"layers.ZeroPadding{dim}D(padding={pad_amount})#"
+            )
             pad_type = 'valid'
 
         lyr += (
@@ -325,15 +377,21 @@ class SetupLayerSyntax:
         )
         return lyr
 
-    def _build_global_pooling_tf(self, lyr_name: str, pl_type: str, dim: str):
+    def _build_global_pooling_tf(self, lyr_name: str, pl_type: str,
+                                 dim: str):
         """Build syntax for global pooling."""
         typ = pl_type.split("_")[1]
         pl = f"Global{typ[0].upper()}{typ[1:]}Pooling"
         return f"self.{lyr_name} = layers.{pl}{dim}D()"
 
-    def _build_adaptive_pooling_tf(self, lyr_name: str, pl_type: str, dim: str):
+    def _build_adaptive_pooling_tf(self, lyr_name: str, pl_type: str,
+                                   dim: str):
         """Build syntax for adaptive pooling."""
-        pl = "AdaptiveAveragePooling" if pl_type == "adaptive_average" else "AdaptiveMaxPooling"
+        pl = (
+            "AdaptiveAveragePooling"
+            if pl_type == "adaptive_average"
+            else "AdaptiveMaxPooling"
+        )
         size = utils.format_value(self.layer.output_dim)
         return f"self.{lyr_name} = tfa.layers.{pl}{dim}D(output_size={size})"
 
@@ -374,7 +432,8 @@ class SetupLayerSyntax:
 
 
 def _get_prev_out_var_for_simple_ops(in_var, modules_details):
-    """Get previous output variable for operations that don't use layers_of_tensors."""
+    """Get previous output variable for operations that don't use
+    layers_of_tensors."""
     if in_var is not None:
         return in_var
     elif len(list(modules_details.keys())) == 0:
@@ -387,27 +446,38 @@ def _get_prev_out_var_for_simple_ops(in_var, modules_details):
 def _handle_interpolate(tensorop, modules_details, in_var):
     """Handle interpolate tensorop syntax."""
     prev_out_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
-    size = tensorop.interpolate_size if hasattr(tensorop, 'interpolate_size') else None
-    scale = tensorop.interpolate_scale if hasattr(tensorop, 'interpolate_scale') else None
-    mode = tensorop.interpolate_mode if hasattr(tensorop, 'interpolate_mode') else 'bilinear'
-
+    size  = getattr(tensorop, 'interpolate_size', None)
+    scale = getattr(tensorop, 'interpolate_scale', None)
+    mode  = getattr(tensorop, 'interpolate_mode', 'bilinear')
     # TensorFlow supported modes
-    tf_modes = {'bilinear', 'nearest', 'bicubic', 'area', 'lanczos3', 'lanczos5', 'gaussian', 'mitchellcubic'}
+    tf_modes = {'bilinear', 'nearest', 'bicubic', 'area', 'lanczos3',
+                'lanczos5', 'gaussian', 'mitchellcubic'}
 
     # Warn if mode not supported in TensorFlow
     if mode not in tf_modes:
-        print(f"Warning: interpolate mode '{mode}' not supported in TensorFlow, using 'bilinear' instead")
+        print(
+            f"Warning: interpolate mode '{mode}' not supported in "
+            "TensorFlow, using 'bilinear' instead"
+        )
         mode = 'bilinear'
 
     if size is not None:
-        return f"tf.image.resize({prev_out_var}, size={list(size)}, method='{mode}')"
+        return (
+            f"tf.image.resize({prev_out_var}, size={list(size)}, "
+            f"method='{mode}')"
+        )
     elif scale is not None:
         size_expr = (f"[tf.shape({prev_out_var})[1] * {scale}, "
                      f"tf.shape({prev_out_var})[2] * {scale}]")
-        return f"tf.image.resize({prev_out_var}, size={size_expr}, method='{mode}')"
+        return (
+            f"tf.image.resize({prev_out_var}, size={size_expr}, "
+            f"method='{mode}')"
+        )
     else:
-        raise ValueError("interpolate tensorop requires either interpolate_size or interpolate_scale")
-
+        raise ValueError(
+            "interpolate tensorop requires either interpolate_size "
+            "or interpolate_scale"
+        )
 
 def _handle_pad(tensorop, modules_details, in_var):
     """Handle pad tensorop syntax."""
@@ -415,10 +485,15 @@ def _handle_pad(tensorop, modules_details, in_var):
     pad_amount = (tensorop.pad_amount if hasattr(tensorop, 'pad_amount')
                   and tensorop.pad_amount else [[0, 0]])
     mode = tensorop.pad_mode if hasattr(tensorop, 'pad_mode') else 'constant'
-    pad_value = tensorop.pad_value if hasattr(tensorop, 'pad_value') and tensorop.pad_value is not None else 0
+    pad_value = (
+        tensorop.pad_value
+        if hasattr(tensorop, 'pad_value') and tensorop.pad_value is not None
+        else 0
+    )
 
     # pad_amount is nested list: [[left, right], [top, bottom], ...]
-    # PyTorch F.pad order: (left, right, top, bottom) -> last dims first
+    # PyTorch F.pad order: 
+    # (left, right, top, bottom) -> last dims first
     # TensorFlow expects NHWC: [[N], [H], [W], [C]]
     # Need to map PyTorch reversed order back to spatial dimensions
     if pad_amount and isinstance(pad_amount, list) and len(pad_amount) >= 2:
@@ -444,7 +519,10 @@ def _handle_pad(tensorop, modules_details, in_var):
 
     # Only include constant_values parameter for CONSTANT mode
     if tf_mode == 'CONSTANT' and pad_value != 0:
-        return f"tf.pad({prev_out_var}, {paddings}, mode='{tf_mode}', constant_values={pad_value})"
+        return (
+            f"tf.pad({prev_out_var}, {paddings}, mode='{tf_mode}', "
+            f"constant_values={pad_value})"
+        )
     else:
         return f"tf.pad({prev_out_var}, {paddings}, mode='{tf_mode}')"
 
@@ -456,12 +534,18 @@ def _handle_dropout_syntax(tensorop, modules_details, in_var):
     training_aware = getattr(tensorop, 'dropout_training_aware', False)
 
     if training_aware:
-        return f"tf.keras.layers.Dropout({rate})({prev_out_var}, training=training)"
+        return (
+            f"tf.keras.layers.Dropout({rate})({prev_out_var}, "
+            f"training=training)"
+        )
     else:
-        return f"tf.keras.layers.Dropout({rate})({prev_out_var}, training=True)"
+        return (
+            f"tf.keras.layers.Dropout({rate})({prev_out_var}, training=True)"
+        )
 
 
-def _handle_reshape_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_reshape_syntax(tensorop, modules_details, in_var, prev_out_var,
+                           params):
     """Handle reshape tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
@@ -471,13 +555,18 @@ def _handle_reshape_syntax(tensorop, modules_details, in_var, prev_out_var, para
 def _check_all_2d_layers(tensorop, modules_details):
     """Check if all source layers produce 2D output."""
     for source_layer in tensorop.layers_of_tensors:
-        if isinstance(source_layer, str) and source_layer + "_layer" in modules_details:
+        if (
+            isinstance(source_layer, str) 
+            and source_layer + "_layer" in modules_details
+        ):
             layer_details = modules_details[source_layer + "_layer"]
             if len(layer_details) > 3 and layer_details[3]:
                 layer_obj = layer_details[3]
                 class_name = (layer_obj.__class__.__name__
                               if hasattr(layer_obj, '__class__') else '')
-                if not any(name in class_name for name in ['Linear', 'Flatten']):
+                if not any(
+                    name in class_name for name in ['Linear', 'Flatten']
+                ):
                     return False
         else:
             return False
@@ -494,7 +583,8 @@ def _check_2d_tensor_sources(tensorop, modules_details):
         if source_layer + "_op" in modules_details:
             op_syntax = (modules_details[source_layer + "_op"][0]
                          if modules_details[source_layer + "_op"] else "")
-            patterns = ['squeeze', 'flatten', 'reduce_max', 'reduce_mean', 'amax']
+            patterns = ['squeeze', 'flatten', 'reduce_max', 'reduce_mean',
+                        'amax']
             if any(pattern in op_syntax.lower() for pattern in patterns):
                 return True
             if '_subscript_' in source_layer:
@@ -526,7 +616,8 @@ def _check_2d_tensor_sources(tensorop, modules_details):
 
 def _check_linear_input_2d(layer_obj, modules_details):
     """Check if LinearLayer input is 2D."""
-    if not hasattr(layer_obj, 'name_module_input') or not layer_obj.name_module_input:
+    if (not hasattr(layer_obj, 'name_module_input') 
+        or not layer_obj.name_module_input):
         return False
 
     input_source = layer_obj.name_module_input
@@ -547,9 +638,13 @@ def _check_linear_input_2d(layer_obj, modules_details):
         input_layer_details = modules_details[input_source + "_layer"]
         if len(input_layer_details) > 3 and input_layer_details[3]:
             input_layer_obj = input_layer_details[3]
-            input_class_name = (input_layer_obj.__class__.__name__
-                                if hasattr(input_layer_obj, '__class__') else '')
-            if any(name in input_class_name for name in ['Linear', 'Flatten']):
+            input_class_name = (
+                input_layer_obj.__class__.__name__
+                if hasattr(input_layer_obj, '__class__') else ''
+            )
+            if any(
+                name in input_class_name for name in ['Linear', 'Flatten']
+            ):
                 return True
 
     return False
@@ -572,14 +667,19 @@ def _determine_concat_axis_for_conv(modules_details):
     return None
 
 
-def _handle_concatenate_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_concatenate_syntax(tensorop, modules_details, in_var,
+                               prev_out_var, params):
     """Handle concatenate tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     axis = tensorop.concatenate_dim
 
-    if axis == 1 and hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors:
+    if (
+        axis == 1
+        and hasattr(tensorop, 'layers_of_tensors')
+        and tensorop.layers_of_tensors
+    ):
         if _check_all_2d_layers(tensorop, modules_details):
             return f"tf.concat([{params}], axis=1)"
 
@@ -595,7 +695,10 @@ def _handle_concatenate_syntax(tensorop, modules_details, in_var, prev_out_var, 
 def _infer_tensor_dimensionality(tensorop, modules_details):
     """Infer tensor dimensionality from source layer."""
     num_dims = 3  # default fallback
-    if not (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors):
+    if (
+        not (hasattr(tensorop, 'layers_of_tensors')
+        and tensorop.layers_of_tensors)
+    ):
         return num_dims
 
     source_layer = tensorop.layers_of_tensors[0]
@@ -604,8 +707,10 @@ def _infer_tensor_dimensionality(tensorop, modules_details):
 
     # Check if source is a layer
     if source_layer + '_layer' in modules_details:
-        layer_obj = (modules_details[source_layer + '_layer'][3]
-                     if len(modules_details[source_layer + '_layer']) > 3 else None)
+        layer_obj = (
+            modules_details[source_layer + '_layer'][3]
+            if len(modules_details[source_layer + '_layer']) > 3 else None
+        )
         if layer_obj and hasattr(layer_obj, '__class__'):
             layer_class = layer_obj.__class__.__name__
             # Determine dimensionality based on layer type
@@ -617,7 +722,7 @@ def _infer_tensor_dimensionality(tensorop, modules_details):
                     if k.endswith('_layer') and isinstance(v, list)
                 )
                 num_dims = 3 if has_rnn else 2
-            elif 'RNN' in layer_class or 'LSTM' in layer_class or 'GRU' in layer_class:
+            elif any(x in layer_class for x in ['RNN', 'LSTM', 'GRU']):
                 num_dims = 3 if (hasattr(layer_obj, 'return_sequences') and
                                  layer_obj.return_sequences) else 2
             elif 'Conv1D' in layer_class or 'Embedding' in layer_class:
@@ -633,13 +738,17 @@ def _infer_tensor_dimensionality(tensorop, modules_details):
                      if modules_details[source_layer + '_op'] else "")
         if 'squeeze' in op_syntax.lower():
             num_dims = 2
-        elif 'expand_dims' in op_syntax.lower() or 'unsqueeze' in op_syntax.lower():
+        elif (
+            'expand_dims' in op_syntax.lower()
+            or 'unsqueeze' in op_syntax.lower()
+        ):
             num_dims = 3
 
     return num_dims
 
 
-def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var,
+                             params):
     """Handle transpose tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
@@ -657,19 +766,22 @@ def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var, pa
         return f"tf.transpose({prev_out_var}, perm=[{params}])"
 
 
-def _handle_permute_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_permute_syntax(tensorop, modules_details, in_var, prev_out_var,
+                           params):
     """Handle permute tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.transpose({prev_out_var}, perm=[{params}])"
 
 
-def _handle_multiply_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_multiply_syntax(tensorop, modules_details, in_var, prev_out_var,
+                            params):
     """Handle multiply tensorop syntax."""
     return f"tf.math.multiply({params})"
 
 
-def _handle_mean_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_mean_syntax(tensorop, modules_details, in_var, prev_out_var,
+                        params):
     """Handle mean tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
@@ -677,7 +789,8 @@ def _handle_mean_syntax(tensorop, modules_details, in_var, prev_out_var, params)
     return f"tf.reduce_mean({prev_out_var}, axis={axis})"
 
 
-def _handle_max_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_max_syntax(tensorop, modules_details, in_var, prev_out_var,
+                       params):
     """Handle max tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
@@ -689,7 +802,10 @@ def _is_rnn_hidden_squeeze(tensorop, modules_details, prev_out_var):
     """Check if this is squeeze(0) on an RNN hidden state."""
     if tensorop.reduce_dim != 0:
         return False
-    if not (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors):
+    if (
+        not (hasattr(tensorop, 'layers_of_tensors')
+        and tensorop.layers_of_tensors)
+    ):
         return False
 
     source_layer = tensorop.layers_of_tensors[0]
@@ -707,9 +823,9 @@ def _is_rnn_hidden_squeeze(tensorop, modules_details, prev_out_var):
 
     layer_obj = layer_details[3] if len(layer_details) > 3 else None
     hidden_var = layer_details[4]
-
+    rnns = ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer']
     if (layer_obj and hasattr(layer_obj, '__class__') and
-            layer_obj.__class__.__name__ in ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer'] and
+            layer_obj.__class__.__name__ in rnns and
             prev_out_var == hidden_var):
         return True
 
@@ -720,7 +836,10 @@ def _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis):
     """Adjust squeeze axis for 1D pooling layers."""
     if axis != -1:
         return axis
-    if not (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors):
+    if (
+        not (hasattr(tensorop, 'layers_of_tensors')
+        and tensorop.layers_of_tensors)
+    ):
         return axis
 
     source_layer = tensorop.layers_of_tensors[0]
@@ -729,11 +848,14 @@ def _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis):
 
     # Check if source is a 1D pooling layer
     if source_layer + "_layer" in modules_details:
-        layer_obj = (modules_details[source_layer + "_layer"][3]
-                     if len(modules_details[source_layer + "_layer"]) > 3 else None)
+        layer_obj = (
+            modules_details[source_layer + "_layer"][3]
+            if len(modules_details[source_layer + "_layer"]) > 3 else None
+        )
         if (layer_obj and hasattr(layer_obj, '__class__') and
                 'Pooling' in layer_obj.__class__.__name__):
-            if hasattr(layer_obj, 'dimension') and layer_obj.dimension == '1D':
+            dim = layer_obj.dimension
+            if hasattr(layer_obj, 'dimension') and dim == '1D':
                 return 1
 
     # Check if source is a concat op from 1D pooling
@@ -746,7 +868,8 @@ def _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis):
     return axis
 
 
-def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var,
+                           params):
     """Handle squeeze tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
@@ -756,42 +879,51 @@ def _handle_squeeze_syntax(tensorop, modules_details, in_var, prev_out_var, para
 
     if tensorop.reduce_dim is not None:
         axis = tensorop.reduce_dim
-        axis = _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis)
+        axis = _adjust_squeeze_axis_for_pooling(tensorop, modules_details,
+                                                axis)
         return f"tf.squeeze({prev_out_var}, axis={axis})"
     else:
         return f"tf.squeeze({prev_out_var})"
 
 
-def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var,
+                             params):
     """Handle unsqueeze tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
     axis = tensorop.reduce_dim
-    if axis == 0 and hasattr(tensorop, 'is_rnn_initial_state') and tensorop.is_rnn_initial_state:
+    if (
+        axis == 0
+        and hasattr(tensorop, 'is_rnn_initial_state')
+        and tensorop.is_rnn_initial_state
+    ):
         return f"SKIP:{prev_out_var}"
     else:
         return f"tf.expand_dims({prev_out_var}, axis={axis})"
 
 
-def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var,
+                              params):
     """Handle zeros_like tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.zeros_like({prev_out_var})"
 
 
-def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var,
+                         params):
     """Handle split tensorop syntax.
 
     TensorFlow's tf.split returns a list of tensors.
-    The outputs will be unpacked in the template based on the assignment.
+    The outputs will be unpacked in the template based on
+    the assignment.
     """
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
-    split_dim = tensorop.split_dim if hasattr(tensorop, 'split_dim') else 0
-    split_sizes = tensorop.split_sizes if hasattr(tensorop, 'split_sizes') else None
+    split_dim   = getattr(tensorop, 'split_dim', 0)
+    split_sizes = getattr(tensorop, 'split_sizes', None)
 
     if split_sizes is None:
         # If no split size specified, return the input unchanged
@@ -801,17 +933,26 @@ def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var, params
     # If split_sizes is an int, it's the size of each chunk
     # If it's a list, it's the sizes of each chunk
     if isinstance(split_sizes, list):
-        # List of sizes: tf.split(x, num_or_size_splits=[32, 32], axis=1)
+        # List of sizes: 
+        # tf.split(x, num_or_size_splits=[32, 32], axis=1)
         sizes_str = str(split_sizes)
-        return f"tf.split({prev_out_var}, num_or_size_splits={sizes_str}, axis={split_dim})"
+        return (
+            f"tf.split({prev_out_var}, num_or_size_splits={sizes_str}, "
+            f"axis={split_dim})"
+        )
     else:
         # Single size: need to determine number of splits from context
         # For now, assume equal splits with given size
-        # This will create: tf.split(x, num_or_size_splits=2, axis=1) if splitting into 2 parts
-        return f"tf.split({prev_out_var}, num_or_size_splits={split_sizes}, axis={split_dim})"
+        # This will create: tf.split(x, num_or_size_splits=2, axis=1)
+        # if splitting into 2 parts
+        return (
+            f"tf.split({prev_out_var}, num_or_size_splits={split_sizes}, "
+            f"axis={split_dim})"
+        )
 
 
-def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var,
+                             params):
     """Handle normalize tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
@@ -819,47 +960,57 @@ def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     return f"tf.nn.l2_normalize({prev_out_var}, axis={axis})"
 
 
-def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var,
+                          params):
     """Handle repeat tensorop syntax."""
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.tile({prev_out_var}, [{params}])"
 
 
-def _handle_binop_add_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_binop_add_syntax(tensorop, modules_details, in_var, prev_out_var,
+                             params):
     """Handle binop_add tensorop syntax."""
     result = (f"{params[0]} + {params[1]}" if isinstance(params, list)
             else f"tf.add({params})")
     return result
 
 
-def _handle_binop_subtract_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_binop_subtract_syntax(tensorop, modules_details, in_var,
+                                  prev_out_var, params):
     """Handle binop_subtract tensorop syntax."""
     return (f"{params[0]} - {params[1]}" if isinstance(params, list)
             else f"tf.subtract({params})")
 
 
-def _handle_binop_multiply_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_binop_multiply_syntax(tensorop, modules_details, in_var,
+                                  prev_out_var, params):
     """Handle binop_multiply tensorop syntax."""
     return (f"{params[0]} * {params[1]}" if isinstance(params, list)
             else f"tf.multiply({params})")
 
 
-def _handle_binop_divide_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_binop_divide_syntax(tensorop, modules_details, in_var,
+                                prev_out_var, params):
     """Handle binop_divide tensorop syntax."""
     return (f"{params[0]} / {params[1]}" if isinstance(params, list)
             else f"tf.divide({params})")
 
 
-def _handle_binop_floor_divide_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_binop_floor_divide_syntax(tensorop, modules_details, in_var,
+                                      prev_out_var, params):
     """Handle binop_floor_divide tensorop syntax."""
     return (f"{params[0]} // {params[1]}" if isinstance(params, list)
             else f"tf.math.floordiv({params})")
 
 
 def _remap_subscript_for_conv(tensorop, modules_details, subscript_indices):
-    """Remap subscript indices for Conv layers (PyTorch to TF axis conversion)."""
-    if not (hasattr(tensorop, 'layers_of_tensors') and tensorop.layers_of_tensors):
+    """Remap subscript indices for Conv layers (PyTorch
+    to TF axis conversion)."""
+    if (
+        not (hasattr(tensorop, 'layers_of_tensors')
+        and tensorop.layers_of_tensors)
+    ):
         return subscript_indices
 
     source_layer = tensorop.layers_of_tensors[0]
@@ -869,24 +1020,27 @@ def _remap_subscript_for_conv(tensorop, modules_details, subscript_indices):
     if source_layer + "_layer" not in modules_details:
         return subscript_indices
 
-    layer_obj = (modules_details[source_layer + "_layer"][3]
-                 if len(modules_details[source_layer + "_layer"]) > 3 else None)
+    layer_obj = (
+        modules_details[source_layer + "_layer"][3]
+        if len(modules_details[source_layer + "_layer"]) > 3 else None
+    )
     if not (layer_obj and hasattr(layer_obj, '__class__')):
         return subscript_indices
 
     layer_class = layer_obj.__class__.__name__
-
+    si = subscript_indices
     # Conv1D: PyTorch [B,C,L] → TF [B,L,C], remap dims 1↔2
-    if layer_class == 'Conv1D' and len(subscript_indices) == 3:
-        return [subscript_indices[0], subscript_indices[2], subscript_indices[1]]
+    if layer_class == 'Conv1D' and len(si) == 3:
+        return [si[0], si[2], si[1]]
     # Conv2D: PyTorch [B,C,H,W] → TF [B,H,W,C], remap dims
-    elif layer_class == 'Conv2D' and len(subscript_indices) == 4:
-        return [subscript_indices[0], subscript_indices[2], subscript_indices[3], subscript_indices[1]]
+    elif layer_class == 'Conv2D' and len(si) == 4:
+        return [si[0], si[2], si[3], si[1]]
 
-    return subscript_indices
+    return si
 
 
-def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var,
+                             params):
     """Handle subscript tensorop syntax."""
     if tensorop.input_var is not None:
         source_var = tensorop.input_var
@@ -895,20 +1049,29 @@ def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, pa
         source_var = in_var if in_var is not None else prev_out_var
 
     subscript_indices = tensorop.subscript_indices
-    subscript_indices = _remap_subscript_for_conv(tensorop, modules_details, subscript_indices)
+    subscript_indices = _remap_subscript_for_conv(tensorop, modules_details,
+                                                  subscript_indices)
 
     # Build subscript string from structured list
     def build_subscript_string(indices):
         elements = []
         for elem in indices:
             if elem["type"] == "slice":
-                start = str(elem["start"]) if elem["start"] is not None else ""
-                stop = str(elem["stop"]) if elem["stop"] is not None else ""
-                step = str(elem["step"]) if elem["step"] is not None else ""
+                start = (
+                    str(elem["start"]) if elem["start"] is not None else ""
+                )
+                stop = (
+                    str(elem["stop"]) if elem["stop"] is not None else ""
+                )
+                step = (
+                    str(elem["step"]) if elem["step"] is not None else ""
+                )
                 if step:
                     elements.append(f"{start}:{stop}:{step}")
                 else:
-                    elements.append(f"{start}:{stop}" if start or stop else ":")
+                    elements.append(
+                        f"{start}:{stop}" if start or stop else ":"
+                    )
             elif elem["type"] == "index":
                 elements.append(str(elem["value"]))
         return "[" + ", ".join(elements) + "]"
@@ -917,7 +1080,8 @@ def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var, pa
     return f"{source_var}{subscript_str}"
 
 
-def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var,
+                             params):
     """Handle shape_dim tensorop syntax."""
     if prev_out_var is None and tensorop.input_var is not None:
         source_var = tensorop.input_var
@@ -928,30 +1092,40 @@ def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var, pa
         # Fallback: check layers_of_tensors
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):
-            if f"{tensors[0]}_layer" in modules_details or f"{tensors[0]}_op" in modules_details:
-                source_tensors = utils.get_layers_output_for_tensorops(tensors, modules_details)
+            if (
+                f"{tensors[0]}_layer" in modules_details
+                or f"{tensors[0]}_op" in modules_details
+            ):
+                source_tensors = utils.get_layers_output_for_tensorops(
+                    tensors, modules_details
+                )
                 source_var = source_tensors[0]
             else:
                 source_var = tensors[0]
         else:
             # Scalar value - render as int if whole number
             scalar = tensors[0]
-            source_var = str(int(scalar)) if scalar.is_integer() else str(scalar)
+            source_var = (
+                str(int(scalar)) if scalar.is_integer() else str(scalar)
+            )
 
     dim_index = tensorop.reduce_dim
     return f"tf.shape({source_var})[{dim_index}]"
 
 
-def _handle_identity_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_identity_syntax(tensorop, modules_details, in_var, prev_out_var,
+                            params):
     """Handle identity operation to preserve variable assignments."""
     # Identity just assigns the input variable to the output variable
-    # Return the input variable directly (e.g., "x_1") so the template generates: output_var = x_1
+    # Return the input variable directly (e.g., "x_1") so the template
+    # generates: output_var = x_1
     if prev_out_var is None and in_var is not None:
         return in_var
     return prev_out_var
 
 
-def _handle_default_syntax(tensorop, modules_details, in_var, prev_out_var, params):
+def _handle_default_syntax(tensorop, modules_details, in_var, prev_out_var,
+                           params):
     """Handle default case (matmul)."""
     return f"tf.matmul({params})"
 
@@ -989,10 +1163,10 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     Parameters:
         tensorop (TensorOp): The TensorOp BUML object.
-        modules_details (dict): A dict storing the NN modules syntax and
-            attributes.
-        in_var (str | None): the input variable notation of the tensorop
-            (e.g., 'x', 'x_1', ...).
+        modules_details (dict): A dict storing the NN modules syntax
+            and attributes.
+        in_var (str | None): the input variable notation of the
+            tensorop (e.g., 'x', 'x_1', ...).
 
     Returns:
         ts_op_synt (str): the syntax of the tensorop in TensorFlow.
@@ -1019,7 +1193,8 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
     # Dispatch to appropriate handler
     handler = _TENSOROP_SYNTAX_HANDLERS.get(tns_type, _handle_default_syntax)
     if tns_type in ("shape_dim", "subscript"):
-        return handler(tensorop, modules_details, in_var, prev_out_var, params)
+        return handler(tensorop, modules_details, in_var,
+                       prev_out_var, params)
     return handler(tensorop, modules_details, in_var, prev_out_var, params)
 
 
@@ -1027,7 +1202,8 @@ def get_rnn_hidden_var(layer_details, base_module):
     """
     Get the correct variable name for RNN hidden state in TensorFlow.
 
-    For both return_type="both" and "hidden": uses index 4 if available, else index 1
+    For both return_type="both" and "hidden": uses index 4
+    if available, else index 1
 
     Arguments:
         layer_details: The layer details from modules_details

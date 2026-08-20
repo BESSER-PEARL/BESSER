@@ -54,10 +54,10 @@ class TFGenerator(NNCodeGenerator):
             match = re.search(r'\)\(([^,)]+)', syntax)
         else:
             match = re.search(r'\(([^,)]+)', syntax)
-        var_to_replace = match.group(1).strip() if match else str(prev_out_var)
+        var_replace = match.group(1).strip() if match else str(prev_out_var)
 
         # Map old variable to x
-        syntax = re.sub(r'\b' + re.escape(var_to_replace) + r'\b', 'x', syntax)
+        syntax = re.sub(r'\b' + re.escape(var_replace) + r'\b', 'x', syntax)
 
         # Remove training parameter from dropout
         if hasattr(module, 'tns_type') and module.tns_type == 'dropout':

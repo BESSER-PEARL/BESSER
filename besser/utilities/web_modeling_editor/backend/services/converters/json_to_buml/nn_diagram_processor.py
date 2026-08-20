@@ -1667,7 +1667,6 @@ def create_tensor_op(element, elements):
         concatenate_dim = parse_tuple_or_int(concatenate_dim)
 
     layers_of_tensors_raw = get_element_attribute(element, 'LayersOfTensorsAttribute', elements)
-    print(f"[DEBUG] TensorOp '{name}' ({tns_type}): layers_of_tensors_raw = {layers_of_tensors_raw}")
     layers_of_tensors = None
     if layers_of_tensors_raw:
         # The metamodel declares this as List[Union[str, float]]. Preserve
@@ -1867,7 +1866,10 @@ def create_tensor_op(element, elements):
     # Type-specific required attributes
     if tns_type == 'reshape':
         tensor_op_params['reshape_dim'] = reshape_dim
-        tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
     elif tns_type == 'concatenate':
         tensor_op_params['concatenate_dim'] = concatenate_dim
         tensor_op_params['layers_of_tensors'] = layers_of_tensors
@@ -1877,6 +1879,8 @@ def create_tensor_op(element, elements):
         tensor_op_params['transpose_dim'] = transpose_dim
         if layers_of_tensors is not None:
             tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
     elif tns_type == 'permute':
         tensor_op_params['permute_dim'] = permute_dim
     elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
@@ -1886,13 +1890,18 @@ def create_tensor_op(element, elements):
             tensor_op_params['reduce_keepdims'] = reduce_keepdims
         if layers_of_tensors is not None:
             tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
     elif tns_type == 'subscript':
         if subscript_indices is not None:
             tensor_op_params['subscript_indices'] = subscript_indices
     elif tns_type == 'repeat':
         if repeat_dim is not None:
             tensor_op_params['repeat_dim'] = repeat_dim
-        tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
     elif tns_type == 'interpolate':
         if interpolate_size is not None:
             tensor_op_params['interpolate_size'] = interpolate_size
@@ -1919,6 +1928,8 @@ def create_tensor_op(element, elements):
             tensor_op_params['split_sizes'] = split_sizes
         if output_vars is not None:
             tensor_op_params['output_vars'] = output_vars
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
     elif tns_type in binops:
         if layers_of_tensors is not None:
             tensor_op_params['layers_of_tensors'] = layers_of_tensors
@@ -1927,10 +1938,17 @@ def create_tensor_op(element, elements):
     elif tns_type in ('multiply', 'matmultiply', 'zeros_like', 'identity'):
         if layers_of_tensors is not None:
             tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
 
-    print(f"[DEBUG] Creating TensorOp '{name}' with params: {tensor_op_params}")
     tensor_op = TensorOp(**tensor_op_params)
-    print(f"[DEBUG] After creation, tensor_op.layers_of_tensors = {getattr(tensor_op, 'layers_of_tensors', 'ATTR_NOT_FOUND')}")
+
+    # Mark input_var as explicit if it was passed to constructor
+    # For types that don't have either/or validation, set input_var post-construction
+    if input_var is not None:
+        if 'input_var' not in tensor_op_params:
+            tensor_op.input_var = input_var
+        mark_explicit(tensor_op, 'input_var')
 
     # Common optional attributes - set and mark explicit if present (not None)
     # Unlike regular layers, we don't filter empty strings - if the attribute
@@ -1941,9 +1959,6 @@ def create_tensor_op(element, elements):
     if permute_out is not None:
         tensor_op.permute_out = permute_out
         mark_explicit(tensor_op, 'permute_out')
-    if input_var is not None:
-        tensor_op.input_var = input_var
-        mark_explicit(tensor_op, 'input_var')
     if output_var is not None:
         tensor_op.output_var = output_var
         mark_explicit(tensor_op, 'output_var')

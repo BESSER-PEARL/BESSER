@@ -465,16 +465,12 @@ class NNCodeGenerator(GeneratorInterface):
 
         return modules_details
 
-    def _clean_forward_call_methods(self, code: str) -> str:
-        """Remove all blank lines from forward() and call() methods.
-        These methods should be compact sequential computation with
-        no spacing. Add 2 blank lines after the return statement for
-        proper separation."""
+    def _clean_generated_code(self, code: str) -> str:
+        """Clean excessive blank lines from generated code.
+        Remove all blank lines from forward/call methods and normalize
+        spacing throughout the file."""
 
-        # Pattern matches:
-        # 1. Method definition: def forward/call(self, ...):
-        # 2. Method body: everything until next method/class/main block
-        # 3. Next section marker: another def, class, or if __name__
+        # First pass: clean forward/call methods (subclassing only)
         pattern = (
             r'(    def (?:forward|call)\([^)]*\):.*?\n)'
             r'((?:.*?\n)*?)('
@@ -482,27 +478,30 @@ class NNCodeGenerator(GeneratorInterface):
             r'((?=    def |def |class |\nif __name__|$))'
         )
         def remove_blank_lines(match):
-            header = match.group(1)  # def forward/call(...):
-            body = match.group(2)    # method body (before return)
-            return_line = match.group(3)  # return statement
-            next_section = match.group(4)  # lookahead for next section
+            header = match.group(1)
+            body = match.group(2)
+            return_line = match.group(3)
+            next_section = match.group(4)
 
-            # Split body into lines and remove blank lines
-            # (including the one right after def)
             lines = body.split('\n')
             cleaned_lines = [line for line in lines if line.strip() != '']
-
-            # Rejoin with newlines
             cleaned_body = '\n'.join(cleaned_lines)
             if cleaned_body:
                 cleaned_body += '\n'
 
-            # Add 2 blank lines after return statement
             return header + cleaned_body + return_line + '\n\n' + next_section
 
-        return re.sub(
+        code = re.sub(
             pattern, remove_blank_lines, code, flags=re.DOTALL | re.MULTILINE
         )
+
+        # Second pass: normalize excessive blank lines globally (both modes)
+        code = re.sub(r'\n\n\n+', '\n\n', code)
+
+        # Clean up leading/trailing blank lines
+        code = code.strip() + '\n'
+
+        return code
 
     def generate(self, *args):
         """
@@ -536,8 +535,8 @@ class NNCodeGenerator(GeneratorInterface):
             strip_layer_counter_suffix=self.strip_layer_counter_suffix,
             has_training_aware_dropout=self.has_training_aware_dropout)
 
-        # Post-process: clean blank lines from forward/call methods
-        generated_code = self._clean_forward_call_methods(generated_code)
+        # Post-process: clean excessive blank lines
+        generated_code = self._clean_generated_code(generated_code)
 
         with open(file_path, mode="w", encoding="utf-8") as f:
             f.write(generated_code)

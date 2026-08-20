@@ -41,6 +41,13 @@ intersphinx_mapping = {
 }
 intersphinx_disabled_domains = ['std']
 
+# Optional third-party libraries that some generators import lazily (e.g.
+# ``deep_translator`` in the agent-personalization generator). They are not in
+# the docs build environment, so mock them for autodoc — otherwise importing the
+# module to read its docstrings fails with ModuleNotFoundError and the page is
+# dropped from the build.
+autodoc_mock_imports = ['deep_translator']
+
 templates_path = ['_templates']
 
 html_title = f"{project} {release}"

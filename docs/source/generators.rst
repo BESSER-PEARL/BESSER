@@ -156,6 +156,7 @@ Generate database schemas, APIs, and data formats:
 
    generators/sql
    generators/alchemy
+   generators/supabase
    generators/json_schema
    generators/rdf
    generators/terraform

@@ -1178,6 +1178,7 @@ def _match_role_case(template: str, candidate: str) -> str:
     """Adapt ``candidate`` to mirror the casing convention of ``template``.
 
     Heuristic:
+
     - If ``template`` is all lowercase -> return ``candidate.lower()``.
     - If ``template`` is all uppercase -> return ``candidate.upper()``.
     - If ``template`` starts with a lowercase letter (camelCase-ish role

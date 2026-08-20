@@ -122,7 +122,7 @@ instead of the virtual environment where BESSER is installed, or the
    settings** (``settings.json``).  This injects the variable into every
    integrated terminal:
 
-   .. code-block:: jsonc
+   .. code-block:: json
 
       // Windows
       "terminal.integrated.env.windows": {
@@ -212,7 +212,7 @@ all ``.ps1`` scripts, including the virtual-environment activation script.
 *Option 3* — If you only hit this in VS Code's integrated terminal, add the
 following to your ``settings.json``:
 
-.. code-block:: jsonc
+.. code-block:: json
 
    "terminal.integrated.env.windows": {
        "PSExecutionPolicyPreference": "RemoteSigned"

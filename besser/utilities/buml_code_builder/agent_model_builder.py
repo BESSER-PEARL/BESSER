@@ -24,8 +24,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
     Parameters:
     model (Agent): The B-UML Agent model object containing states, intents, and transitions.
     file_path (str): The path where the generated code will be saved.
-    model_var_name (str, optional): Name of the Agent variable in the generated code.
-        Defaults to "agent".
+    model_var_name (str, optional): Name of the Agent variable in the generated code. Defaults to "agent".
 
     Outputs:
     - A Python file containing the code representation of the B-UML agent model.

@@ -45,19 +45,30 @@ The whole run streams progress over Server-Sent Events, so the editor shows
 the phase timeline, the LLM's tool calls, a live cost/runtime meter, and the
 streamed text as it happens.
 
-Bring Your Own Key (BYOK)
--------------------------
+Providers, Free tier, and BYOK
+------------------------------
 
-The Vibe-Driven Generator calls a commercial LLM with **the user's own API
-key**. The key:
+The Vibe-Driven Generator supports **four** providers: ``free``, ``anthropic``,
+``openai``, and ``mistral``.
+
+**Free tier (default, keyless).** When the deployment configures a free tier,
+it is the **default**: the assistant runs on it with **no API-key prompt**, and
+the user supplies **no key at all**. The server injects a hosted, open-weight
+model on the request's behalf. The free tier is gated by
+``free_tier_available()`` / ``free_tier_model()`` and configured through the
+``BESSER_FREE_LLM_BASE_URL``, ``BESSER_FREE_LLM_MODEL``, and
+``BESSER_FREE_LLM_TOKEN`` environment variables; the backend config endpoint
+reports it as ``free_tier: {available, model}``.
+
+**Bring Your Own Key (BYOK, optional).** To target a commercial provider —
+``anthropic``, ``openai``, or ``mistral`` — for higher-fidelity results, the
+user supplies their **own API key**. The key:
 
 - is sent only in the request body, never in the URL;
 - is held as a Pydantic ``SecretStr`` so it never appears in logs or
   ``repr`` output;
 - is read exactly once to construct the LLM client and is **never stored or
   persisted** server-side.
-
-Two providers are supported: ``anthropic`` and ``openai``.
 
 Models
 ------
@@ -78,10 +89,17 @@ provider default is used:
    * - ``openai``
      - ``gpt-4o``
      - ``llm_model``
+   * - ``mistral``
+     - ``mistral-large-latest``
+     - ``llm_model``
+   * - ``free``
+     - server-configured (``BESSER_FREE_LLM_MODEL``)
+     - n/a (server-injected)
 
-The cheap **planning** call (the *gap* phase) always uses a small model
-(``gpt-4o-mini``) regardless of the main model, so planning never costs more
-than it needs to.
+The cheap **planning** call (the *gap* phase) uses a small model —
+``gpt-4o-mini`` for OpenAI, ``mistral-small-latest`` for Mistral — regardless of
+the main model, so planning never costs more than it needs to. It can be
+overridden with the ``BESSER_LLM_PLANNING_MODEL`` environment variable.
 
 Budgets and caps
 ----------------
@@ -111,9 +129,11 @@ Using it
 --------
 
 **From the editor.** Open the AI assistant, describe what you want
-("a FastAPI backend for this model with JWT auth and Docker"), provide your
-API key in the BYOK dialog, and confirm the run. See
-:doc:`../web_editor` for the assistant workflow.
+("a FastAPI backend for this model with JWT auth and Docker"), and confirm the
+run. When a free tier is configured it runs by default with no API-key prompt;
+to use a commercial provider for higher-fidelity results, supply your own key in
+the optional BYOK dialog first. See :doc:`../web_editor` for the assistant
+workflow.
 
 **From the API.** ``POST /besser_api/smart-generate`` streams the run as
 Server-Sent Events and returns a download URL on completion. The full
@@ -178,8 +198,9 @@ Troubleshooting
    * - Symptom
      - What it means / what to do
    * - ``INVALID_KEY`` error
-     - The provider rejected the API key. Check the key, and that it matches
-       the selected provider (``anthropic`` vs ``openai``).
+     - Only applies when using BYOK (never the keyless free tier). The provider
+       rejected the API key. Check the key, and that it matches the selected
+       provider (``anthropic`` / ``openai`` / ``mistral``).
    * - ``COST_CAP`` warning
      - The run reached ``max_cost_usd`` and stopped early. Whatever it
        produced so far is still returned (a ``done`` event follows). Raise the

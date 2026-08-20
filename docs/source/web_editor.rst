@@ -89,10 +89,12 @@ model, and trigger code generation — including the
 :doc:`Vibe-Driven (LLM-Augmented) Generator <generators/vibe_driven>`.
 
 When you ask for a customised codebase ("a FastAPI backend for this model with
-JWT auth and Docker", "build this in Rust"), the assistant routes the request
-to the Vibe-Driven Generator. Because that generator calls a commercial LLM
-with **your own API key** (BYOK), the assistant always asks for explicit
-confirmation before starting — a run never spends your key silently.
+JWT auth and Docker", "build this in Rust"), the assistant routes the request to
+the Vibe-Driven Generator. When a free tier is configured it is the **default** —
+the assistant runs on it with no API-key prompt. Bringing your own commercial API
+key (BYOK) is **optional**, offered for higher-fidelity results; whenever a run
+would spend your own key, the assistant always asks for explicit confirmation
+first — a run never spends your key silently.
 
 The run streams over `Server-Sent Events
 <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events>`_ so the
@@ -221,6 +223,17 @@ The response is a Server-Sent Events stream::
 
 Then issue a ``GET`` to the ``downloadUrl`` to retrieve the ZIP — it is
 re-fetchable within the run's TTL.
+
+Building a web app (review-then-generate)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When you ask the assistant to **create a web app**, it first builds the **data
+model** (a class diagram) *and* the **screens** (a GUI no-code diagram), then
+**pauses**: it presents the spec and screens for your review and does **not**
+auto-run code generation. To produce the code, reply with **"generate the web
+app"**. This deliberate pause is a safety and quality feature — there is no
+surprise, long-running code-generation pass until you approve the model and
+screens.
 
 Neural Network Diagram
 ----------------------

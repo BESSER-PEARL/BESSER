@@ -4153,6 +4153,7 @@ class NN(BehaviorImplementation):
         self._validate_module_uniqueness(errors)
         self._validate_module_input_references(errors)
         self._validate_tensor_op_references(errors)
+        self._validate_first_module_entry_point(errors)
         self._validate_numerical_bounds(errors)
         self._validate_module_names(errors, warnings)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
@@ -4205,6 +4206,17 @@ class NN(BehaviorImplementation):
                         f" not defined in this NN."
                     )
 
+    def _validate_first_module_entry_point(self, errors: list):
+        if not self.modules:
+            return
+        first = self.modules[0]
+        if not isinstance(first, Layer):
+            return
+        if first.name_module_input:
+            errors.append(
+                f"NN '{self.name}': first module '{first.name}' must not "
+                f"declare a 'name_module_input' (it is the entry point)."
+            )
     def _validate_sub_nn_acyclic(self, errors: list) -> bool:
         """Detect cycles in the sub-NN graph rooted at this NN. 
            Returns True if a cycle was found."""

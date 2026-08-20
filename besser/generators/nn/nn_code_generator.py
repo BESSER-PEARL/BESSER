@@ -74,6 +74,14 @@ class NNCodeGenerator(GeneratorInterface):
         self.modules_details: dict = self.get_modules_details()
         self.has_training_aware_dropout: bool = self._check_training_aware_dropout()
 
+        if self.generation_type == "sequential":
+            LAMBDA_WRAP_TYPES = {
+                'pad', 'identity', 'reshape', 'permute', 'normalize', 'interpolate',
+                'transpose', 'squeeze', 'unsqueeze', 'mean', 'max', 'repeat',
+                'zeros_like', 'shape_dim', 'subscript', 'split', 'dropout'
+            }
+            self._apply_sequential_constraints(LAMBDA_WRAP_TYPES)
+
     def _validate_sequential_flow(self):
         """Validate that model has linear flow suitable for sequential generation."""
         if not self.model.modules:
@@ -160,6 +168,90 @@ class NNCodeGenerator(GeneratorInterface):
                 f"Sequential generation requires linear flow. Violations:\n" +
                 "\n".join(f"  - {e}" for e in errors)
             )
+
+    def _apply_sequential_constraints(self, lambda_wrap_types):
+        """Apply sequential mode constraints and transformations (shared logic)."""
+        # Track previous module's output variable for sequential flow
+        prev_out_var = None
+        any_lambda_used = False
+
+        for module_name, module_details in self.modules_details.items():
+            if module_name.endswith('_op'):
+                module = next((m for m in self.model.modules if f"{m.name}_op" == module_name), None)
+                if not module:
+                    continue
+
+                needs_lambda = False
+
+                # Block split with split_sizes != 1 (multi-output breaks sequential API)
+                if hasattr(module, 'tns_type') and module.tns_type == 'split':
+                    split_sizes = getattr(module, 'split_sizes', None)
+                    if split_sizes != 1:
+                        raise ValueError(
+                            f"Sequential generation does not support split tensorop '{module.name}' "
+                            f"with split_sizes={split_sizes}. Only split_sizes=1 is allowed. "
+                            f"Use subclassing mode instead."
+                        )
+
+                # Check if it's a type that needs lambda wrapping
+                if hasattr(module, 'tns_type') and module.tns_type in lambda_wrap_types:
+                    # Framework-specific dropout validation
+                    if module.tns_type == 'dropout':
+                        self._validate_dropout_for_sequential(module)
+                    needs_lambda = True
+
+                # Check if it's a binary op with tensor + scalar
+                elif hasattr(module, 'tns_type') and module.tns_type.startswith('binop_'):
+                    if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
+                        has_string = any(isinstance(x, str) for x in module.layers_of_tensors)
+                        has_scalar = any(not isinstance(x, str) for x in module.layers_of_tensors)
+                        if has_string and has_scalar:
+                            needs_lambda = True
+
+                # Check if it's multiply with tensor + scalar
+                elif hasattr(module, 'tns_type') and module.tns_type == 'multiply':
+                    if hasattr(module, 'layers_of_tensors') and module.layers_of_tensors:
+                        has_string = any(isinstance(x, str) for x in module.layers_of_tensors)
+                        has_scalar = any(not isinstance(x, str) for x in module.layers_of_tensors)
+                        if has_string and has_scalar:
+                            needs_lambda = True
+
+                # Apply lambda wrapping to the syntax
+                if needs_lambda and module_details and prev_out_var:
+                    original_syntax = module_details[0]
+                    updated_syntax = self._cleanup_lambda_syntax(module, original_syntax, prev_out_var)
+                    module_details[0] = self._wrap_in_lambda(updated_syntax)
+                    any_lambda_used = True
+
+            # Update prev_out_var with current module's output
+            if module_details:
+                if module_name.endswith('_op'):
+                    module_obj = module_details[2] if len(module_details) > 2 else None
+                    if module_obj and hasattr(module_obj, 'tns_type') and module_obj.tns_type == 'split':
+                        if hasattr(module_obj, 'output_vars') and module_obj.output_vars:
+                            prev_out_var = module_obj.output_vars[0] if len(module_obj.output_vars) == 1 else module_obj.output_vars
+                        else:
+                            prev_out_var = module_details[1]
+                    else:
+                        prev_out_var = module_details[1]
+                else:
+                    prev_out_var = module_details[1]
+
+        # Store flag for template to conditionally generate Lambda class
+        self.modules_details['_lambda_needed'] = any_lambda_used
+
+
+    def _validate_dropout_for_sequential(self, module):
+        """Hook for framework-specific dropout validation in sequential mode."""
+        pass
+
+    def _cleanup_lambda_syntax(self, module, syntax, prev_out_var):
+        """Hook for framework-specific variable extraction, mapping, and syntax cleanup."""
+        return syntax
+
+    def _wrap_in_lambda(self, syntax):
+        """Hook for framework-specific lambda wrapping."""
+        return f"lambda x: {syntax}"
 
     def _validate_multi_input_var(self):
         """Validate that modules don't use multi-variable input_var unless they support it."""

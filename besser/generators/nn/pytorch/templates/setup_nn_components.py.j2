@@ -35,7 +35,7 @@ from datetime import datetime
 {%- set perm = namespace(imported=False) -%}
 {% if model.train_data is not none %}import torch
 from datetime import datetime {%- set ti.torch_imported = True %}{% endif %}
-{%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and module_details[0].startswith("torch")) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
+{%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and (module_details[0].startswith("torch") or "torch." in module_details[0])) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
 {% for module_name, module_details in modules_details.items() -%}{% if actv.actv_imported == False and "get_activation_function" in module_details[0] %}from besser.generators.nn.pytorch.utils_pytorch import get_activation_function{% set actv.actv_imported = True %}
 {% elif perm.imported == False and "Permute" in module_details[0] %}from besser.generators.nn.utils_nn import Permute {% set perm.imported = True %} 
 {% elif perm.imported == False and module_name.endswith("nn") %}{%- for subnn_key, subnn_value in module_details.items() %}{% if perm.imported == False and "Permute" in subnn_value[0] %}from besser.generators.nn.utils_nn import Permute{%- set perm.imported = True -%} {%- endif %}{%- endfor %}
@@ -43,6 +43,8 @@ from datetime import datetime {%- set ti.torch_imported = True %}{% endif %}
 {% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 from torch import nn
 import torch.nn.functional as F
+
+
 {% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms
 {% if model.train_data.image.normalize %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}{%- endif %}
 {% if model.train_data %}{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
@@ -51,6 +53,18 @@ import torch.nn.functional as F
 
 
 {%- macro print_sequential(model, modules_details) %}
+{% if modules_details.get('_lambda_needed', False) %}
+# Lambda wrapper for sequential compatibility
+class Lambda(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x)
+
+{% endif %}
+
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
 {{ module_name[:-3] }} = nn.Sequential(
@@ -70,12 +84,14 @@ import torch.nn.functional as F
 
 {{ model.name }} = nn.Sequential(
 {%- for module_name, module_details in modules_details.items() %}
-    {%- if module_name.endswith("nn") %}
+    {%- if module_name not in ["_lambda_needed"] %}
+        {%- if module_name.endswith("nn") %}
     {{ module_name[:-3] }},
-    {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+        {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
     {{ module_details[0].split('=', 1)[1].strip() }},
-    {%- else %}
+        {%- else %}
     {{ module_details[0] }},
+        {%- endif -%}
     {%- endif -%}
 {%- endfor %}
 )

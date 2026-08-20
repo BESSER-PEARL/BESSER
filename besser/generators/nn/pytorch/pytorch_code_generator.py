@@ -46,3 +46,50 @@ class PytorchGenerator(NNCodeGenerator):
         super().__init__(model, setup_layer, setup_tensorop, generation_type,
                          template_dir, channel_last, file_name, output_dir,
                          strip_layer_counter_suffix=strip_layer_counter_suffix)
+
+    def _validate_dropout_for_sequential(self, module):
+        """Handle PyTorch-specific dropout constraints."""
+        if hasattr(module, 'dropout_training_aware') and module.dropout_training_aware is True:
+            raise ValueError(
+                "PyTorch sequential generation does not support dropout tensorops with "
+                "dropout_training_aware=True. Use subclassing mode instead."
+            )
+
+    def _cleanup_lambda_syntax(self, module, syntax, prev_out_var):
+        """PyTorch-specific variable extraction, mapping, and cleanup."""
+        import re
+
+        # If syntax is just a bare variable, return 'x'
+        if re.match(r'^[a-zA-Z_]\w*$', syntax):
+            return 'x'
+
+        tns_type = module.tns_type if hasattr(module, 'tns_type') else None
+
+        # Method calls on variable (var.method(...))
+        if tns_type in {'permute', 'mean', 'max', 'squeeze', 'unsqueeze',
+                       'transpose', 'repeat', 'reshape', 'shape_dim'}:
+            syntax = re.sub(r'^[a-zA-Z_]\w*\.', 'x.', syntax)
+
+        # Function calls with variable as first arg (func(var, ...))
+        elif tns_type in {'interpolate', 'normalize', 'pad', 'multiply',
+                         'zeros_like', 'split', 'dropout'}:
+            syntax = re.sub(r'\([a-zA-Z_]\w*\b', '(x', syntax, count=1)
+
+        # Binary operations (var op value)
+        elif tns_type in {'binop_add', 'binop_subtract', 'binop_multiply',
+                         'binop_divide', 'binop_floor_divide'}:
+            syntax = re.sub(r'^[a-zA-Z_]\w*\b', 'x', syntax)
+
+        # Subscript (var[...])
+        elif tns_type == 'subscript':
+            syntax = re.sub(r'^[a-zA-Z_]\w*\b', 'x', syntax)
+
+        else:
+            # Fallback: replace first identifier
+            syntax = re.sub(r'^[a-zA-Z_]\w*\b', 'x', syntax)
+
+        return syntax
+
+    def _wrap_in_lambda(self, syntax):
+        """PyTorch uses Lambda module wrapper instead of raw lambda in sequential."""
+        return f"Lambda(lambda x: {syntax})"

@@ -200,17 +200,19 @@ from datetime import datetime
 
 {{ model.name }} = Sequential([
     {%- for module_name, module_details in modules_details.items() %}
-        {%- if module_name.endswith("nn") %}
+        {%- if module_name not in ["_lambda_needed"] %}
+            {%- if module_name.endswith("nn") %}
     {{ module_name.rsplit('_', 2)[0] }},
-        {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
-        {%- if "layers.ZeroPadding" in module_details[0] %}
+            {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+            {%- if "layers.ZeroPadding" in module_details[0] %}
     {{ module_details[0].split("#")[0].strip() }}
     {{ module_details[0].split("#")[1].strip() }}
-        {%- else %}
+            {%- else %}
     {{ module_details[0].split('=', 1)[1].strip() }},
-        {%- endif -%}
-        {%- else %}
+            {%- endif -%}
+            {%- else %}
     {{ module_details[0] }},
+            {%- endif -%}
         {%- endif -%}
     {%- endfor %}
 ])

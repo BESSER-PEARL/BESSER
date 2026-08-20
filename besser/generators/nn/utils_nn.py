@@ -512,7 +512,7 @@ def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
             out_vars.append(_handle_inline_call(layer_name))
         # Handle INPUT marker
         elif layer_name == 'INPUT':
-            out_vars.append('inp')
+            out_vars.append('x')
         # Handle numeric constants
         elif isinstance(layer_name, (int, float)):
             out_vars.append(str(layer_name))
@@ -1039,7 +1039,7 @@ def _resolve_source_layer_var(source_layer, modules_details, tensorop=None):
     if source_layer == 'INPUT':
         if tensorop and tensorop.input_var is not None:
             return tensorop.input_var
-        return 'inp'
+        return 'x'
 
     if not isinstance(source_layer, str):
         return source_layer
@@ -1113,7 +1113,7 @@ def _resolve_prev_out_var_from_module_input(
         # NEW: Prefer tensorop attribute
         if tensorop and tensorop.input_var is not None:
             return tensorop.input_var
-        return 'inp'
+        return 'x'
 
     if module_input.endswith("__hidden_forward"):
         result = _get_bidirectional_hidden_component(module_input, 16, -2, modules_details)

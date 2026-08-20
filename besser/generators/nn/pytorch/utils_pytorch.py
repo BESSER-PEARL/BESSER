@@ -485,7 +485,21 @@ def _handle_dropout_pytorch(tensorop, modules_details, in_var, prev_out_var, par
     if in_var is not None:
         prev_out_var = in_var
     dropout_rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
-    return f"F.dropout({prev_out_var}, p={dropout_rate})"
+
+    # Handle dropout_training_aware attribute
+    if hasattr(tensorop, 'dropout_training_aware'):
+        if tensorop.dropout_training_aware is True:
+            training_arg = "training=self.training"
+        elif tensorop.dropout_training_aware is False:
+            training_arg = "training=True"
+        else:  # None
+            raise ValueError(
+                f"PyTorch generation does not support dropout tensorop '{tensorop.name}' "
+                f"with dropout_training_aware=None. Set it to True or False."
+            )
+        return f"F.dropout({prev_out_var}, p={dropout_rate}, {training_arg})"
+    else:
+        return f"F.dropout({prev_out_var}, p={dropout_rate})"
 
 
 def _handle_interpolate_pytorch(tensorop, modules_details, in_var, prev_out_var, params):

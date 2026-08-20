@@ -237,3 +237,35 @@ def test_smart_generate_returns_429_when_saturated(monkeypatch):
     finally:
         runner_module.release_run_slot()
         runner_module._reset_concurrency_semaphore_for_tests()
+
+
+# ======================================================================
+# Dedicated blocking-work thread pool
+# ======================================================================
+# Smart-gen's long orchestrator runs on a dedicated pool, NOT asyncio's shared
+# default executor — otherwise a burst of concurrent runs would occupy every
+# default-pool thread for minutes and stall the quick to_thread endpoints
+# (BUML conversion, exports, deploys). These tests lock that in.
+
+
+def test_smart_gen_executor_is_dedicated_and_sized_to_cap():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from besser.utilities.web_modeling_editor.backend.constants import constants as C
+
+    runner_module._SMART_GEN_EXECUTOR = None  # rebuild at the current cap
+    ex = runner_module._get_smart_gen_executor()
+    assert isinstance(ex, ThreadPoolExecutor)
+    assert ex._max_workers == C.LLM_MAX_CONCURRENT_RUNS + 4
+
+
+def test_run_blocking_runs_on_the_dedicated_pool_not_the_default():
+    import threading
+
+    async def _go() -> str:
+        return await runner_module._run_blocking(
+            lambda: threading.current_thread().name
+        )
+
+    # A "smartgen"-prefixed worker proves the call landed on the dedicated pool.
+    assert asyncio.run(_go()).startswith("smartgen")

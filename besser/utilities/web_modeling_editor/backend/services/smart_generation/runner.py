@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Optional
 
@@ -262,6 +264,44 @@ def _reset_concurrency_semaphore_for_tests() -> None:
     """
     global _CONCURRENCY_SEMAPHORE
     _CONCURRENCY_SEMAPHORE = None
+
+
+# ---------------------------------------------------------------------
+# Dedicated blocking-work thread pool
+# ---------------------------------------------------------------------
+# Smart-gen's blocking work — model assembly, LLM client construction, and
+# above all the long-running orchestrator loop (up to LLM_MAX_RUNTIME seconds) —
+# runs OFF the default asyncio executor. On a small host the default pool is
+# only ``min(32, cpu_count + 4)`` threads (~6 on 2 vCPUs); a burst of concurrent
+# runs would otherwise occupy every default-pool thread for minutes and starve
+# the quick endpoints (BUML conversion, exports, deploys) that also use
+# ``asyncio.to_thread``. This pool is sized a little above the concurrency cap
+# so every admitted run gets its own worker without touching the shared pool.
+
+_SMART_GEN_EXECUTOR: ThreadPoolExecutor | None = None
+
+
+def _get_smart_gen_executor() -> ThreadPoolExecutor:
+    """Lazily build the dedicated smart-gen thread pool (see try_acquire_run_slot)."""
+    global _SMART_GEN_EXECUTOR
+    if _SMART_GEN_EXECUTOR is None:
+        from besser.utilities.web_modeling_editor.backend.constants.constants import (
+            LLM_MAX_CONCURRENT_RUNS,
+        )
+        _SMART_GEN_EXECUTOR = ThreadPoolExecutor(
+            max_workers=LLM_MAX_CONCURRENT_RUNS + 4,
+            thread_name_prefix="smartgen",
+        )
+    return _SMART_GEN_EXECUTOR
+
+
+async def _run_blocking(func, /, *args, **kwargs):
+    """Run *func* on the dedicated smart-gen pool — a drop-in replacement for
+    ``asyncio.to_thread`` that keeps long runs off the shared default executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _get_smart_gen_executor(), functools.partial(func, *args, **kwargs)
+    )
 
 
 def try_acquire_run_slot() -> bool:
@@ -581,7 +621,7 @@ class SmartGenerationRunner:
                     # ``_seeded`` stays False → run_orchestrator uses run().
                 else:
                     try:
-                        await asyncio.to_thread(
+                        await _run_blocking(
                             _seed_workspace_from_base,
                             base_entry.temp_dir,
                             self.temp_dir,
@@ -618,7 +658,7 @@ class SmartGenerationRunner:
 
         # ---- 3. Assemble BUML models from the project ------------------
         try:
-            assembled = await asyncio.to_thread(
+            assembled = await _run_blocking(
                 assemble_models_from_project,
                 self.request.project,
                 getattr(self.request, "primary_kind_override", None),
@@ -652,7 +692,7 @@ class SmartGenerationRunner:
 
         # ---- 4. Build the LLM client (may raise on invalid key) --------
         try:
-            client = await asyncio.to_thread(
+            client = await _run_blocking(
                 create_llm_client,
                 provider=self.request.provider,
                 api_key=self.request.resolved_api_key(),
@@ -913,17 +953,17 @@ class SmartGenerationRunner:
         async def run_orchestrator() -> str:
             try:
                 if self._resume_run_id:
-                    return await asyncio.to_thread(
+                    return await _run_blocking(
                         orchestrator.resume, self.request.instructions
                     )
                 if self._mode == "modify" and self._seeded:
                     # Seeded vibe-modify: edit the copied files in place.
                     # (A base-expired / failed-seed fallback left _seeded
                     # False and drops through to the from-scratch run().)
-                    return await asyncio.to_thread(
+                    return await _run_blocking(
                         orchestrator.modify, self.request.instructions
                     )
-                return await asyncio.to_thread(
+                return await _run_blocking(
                     orchestrator.run, self.request.instructions
                 )
             finally:
@@ -1273,7 +1313,7 @@ class SmartGenerationRunner:
 
             # ---- 10. Package the result and emit `done` ---------------
             try:
-                done_event, entry = await asyncio.to_thread(
+                done_event, entry = await _run_blocking(
                     self._package_result, result_path
                 )
                 done_event.incomplete = incomplete

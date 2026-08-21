@@ -126,6 +126,12 @@ class DoneEvent(BaseSseEvent):
     fileName: str
     isZip: bool
     recipe: dict[str, Any] = Field(default_factory=dict)
+    # Lightweight "what was generated" summary for the UI: how many user files
+    # the run produced and the top-level entries (dir/file names at the project
+    # root), so the client can show a concrete summary instead of a generic
+    # "code is ready". Capped so a large tree can't bloat the event.
+    fileCount: int = 0
+    topLevel: list[str] = Field(default_factory=list)
     # True when the run produced downloadable output but the customization
     # loop did NOT finish cleanly (e.g. a provider rate-limit, cost/runtime
     # cap, or turn cap cut it short). Clients should warn that the output

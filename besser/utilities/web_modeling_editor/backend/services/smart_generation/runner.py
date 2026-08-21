@@ -1409,12 +1409,23 @@ class SmartGenerationRunner:
                 created_at=time.time(),
             )
 
+        # Lightweight "what was generated" summary for the UI: file count and
+        # the top-level entries (the first path component of each user file,
+        # deduped) — e.g. app/, requirements.txt, Dockerfile. Capped at 12 so a
+        # deep tree can't bloat the event.
+        top_level = sorted({
+            os.path.relpath(p, result_path).replace(os.sep, "/").split("/", 1)[0]
+            for p in user_files
+        })[:12]
+
         event = DoneEvent(
             runId=self.run_id,
             downloadUrl=f"/besser_api/download-smart/{self.run_id}",
             fileName=entry.file_name,
             isZip=entry.is_zip,
             recipe=recipe,
+            fileCount=len(user_files),
+            topLevel=top_level,
         )
         return event, entry
 

@@ -3,23 +3,19 @@
 import tensorflow as tf
 from keras import layers
 
-
 from datetime import datetime
-from sklearn.metrics import mean_absolute_error 
+from sklearn.metrics import mean_absolute_error
 import pandas as pd
-
-
 
 # Define the network architecture
 class NeuralNetwork(tf.keras.Model):
     def __init__(self):
         super().__init__()
-        self.l1 = layers.Dense(units=64, activation='relu')
-        self.l2 = layers.Dense(units=128, activation='relu')
+        self.l1 = layers.Dense(units=64, use_bias=True, activation='relu')
+        self.l2 = layers.Dense(units=128, use_bias=True, activation='relu')
         self.l3 = layers.Dropout(rate=0.2)
-        self.l4 = layers.Dense(units=1, activation=None)
+        self.l4 = layers.Dense(units=1, use_bias=True)
 
-        
     def call(self, x):
         x = self.l1(x)
         x = self.l2(x)
@@ -27,11 +23,8 @@ class NeuralNetwork(tf.keras.Model):
         x = self.l4(x)
         return x
 
-
-
-# Dataset preparation
-
-def load_and_preprocess_data(train_path, test_path, batch_size):
+def prepare_datasets():
+    """Prepare training and testing datasets."""
     def load_dataset(csv_file):
         # Load data from CSV file
         data = pd.read_csv(csv_file)
@@ -47,26 +40,25 @@ def load_and_preprocess_data(train_path, test_path, batch_size):
         return dataset
 
     # Load training and test data
-    train_dataset = load_dataset(train_path)
-    test_dataset = load_dataset(test_path)
+    train_dataset = load_dataset("dataset/BostonHousingTrain.csv")
+    test_dataset = load_dataset("dataset/BostonHousingTest.csv")
 
     # Create data loaders
     def create_data_loader(dataset, mode):
         if mode == "train":
             dataset = dataset.shuffle(buffer_size=10000)
-        dataset = dataset.batch(batch_size)
+        dataset = dataset.batch(6)
         dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
         return dataset
 
     # Create data loaders
-    #train_loader = create_data_loader(train_dataset, "train")
-    #test_loader = create_data_loader(test_dataset, "test")
+    train_loader = create_data_loader(train_dataset, "train")
+    test_loader = create_data_loader(test_dataset, "test")
+    return train_loader, test_loader
 
-    return create_data_loader(train_dataset, "train"), create_data_loader(test_dataset, "test")
-
-
-# Train the neural network
-def train_model(model, train_loader, criterion, optimizer, epochs=10):
+def train(model, train_loader, criterion, optimizer, epochs, num_classes):
+    """Train the neural network."""
+    print('##### Training the model')
     for epoch in range(epochs):
         # Initialize the running loss for the current epoch
         running_loss = 0.0
@@ -97,11 +89,13 @@ def train_model(model, train_loader, criterion, optimizer, epochs=10):
         total_loss = 0.0
     print('Training finished')
 
-# Evaluate the neural network
-def evaluate_model(model, test_loader, criterion):
+def evaluate(model, test_loader, criterion, num_classes):
+    """Evaluate the neural network."""
+    print('##### Evaluating the model')
     predicted_labels = []
     true_labels = []
     test_loss = 0.0
+
     for inputs, labels in test_loader:
         outputs = model(inputs, training=False)
         true_labels.extend(labels.numpy())
@@ -114,35 +108,27 @@ def evaluate_model(model, test_loader, criterion):
     print(f"Test Loss: {average_loss:.3f}")
 
     # Calculate the metrics
+    metrics = ['mae']
     mae = mean_absolute_error(true_labels, predicted_labels)
     print("Mean Absolute Error (MAE):", mae)
 
-# Save the neural network
-def save_model(model):
-    model.save(f"my_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    print("The model is saved successfully")
+if __name__ == "__main__":
+    # Prepare datasets
+    train_loader, test_loader = prepare_datasets()
 
-
-def main():
-    train_path = "dataset/BostonHousingTrain.csv"
-    test_path = "dataset/BostonHousingTest.csv"
-    batch_size = 6
-    epochs = 40
-
-    train_loader, test_loader = load_and_preprocess_data(train_path, test_path, batch_size)
-    
+    # Define the network, loss function, and optimizer
     my_model = NeuralNetwork()
     criterion = tf.keras.losses.MeanSquaredError()
+
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
 
-    print('##### Training the model')
-    train_model(my_model, train_loader, criterion, optimizer, epochs)
+    # Train the neural network
+    train(my_model, train_loader, criterion, optimizer, 40, 1)
 
-    print('##### Evaluating the model')
-    evaluate_model(my_model, test_loader, criterion)
+    # Evaluate the neural network
+    evaluate(my_model, test_loader, criterion, 1)
 
+    # Save the neural network
     print('##### Saving the model')
-    save_model(my_model)
-
-if __name__ == "__main__":
-    main()
+    my_model.save(f"my_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    print("The model is saved successfully")

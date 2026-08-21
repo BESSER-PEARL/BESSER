@@ -1,28 +1,26 @@
 """PyTorch code generated based on BUML."""
 
-
-
 from torch import nn
+import torch.nn.functional as F
 
  
-
 
 # Define the network architecture
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=(11, 11), stride=(4, 4), padding=2),
+            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=(11, 11), stride=(4, 4), padding=2, dilation=1, groups=1, bias=True),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(3, 3), stride=(2, 2), padding=0),
-            nn.Conv2d(in_channels=64, out_channels=192, kernel_size=(5, 5), stride=(1, 1), padding=2),
+            nn.Conv2d(in_channels=64, out_channels=192, kernel_size=(5, 5), stride=(1, 1), padding=2, dilation=1, groups=1, bias=True),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(3, 3), stride=(2, 2), padding=0),
-            nn.Conv2d(in_channels=192, out_channels=384, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Conv2d(in_channels=192, out_channels=384, kernel_size=(3, 3), stride=(1, 1), padding=1, dilation=1, groups=1, bias=True),
             nn.ReLU(),
-            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=(3, 3), stride=(1, 1), padding=1, dilation=1, groups=1, bias=True),
             nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3, 3), stride=(1, 1), padding=1, dilation=1, groups=1, bias=True),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(3, 3), stride=(2, 2), padding=0),
         )
@@ -30,14 +28,13 @@ class NeuralNetwork(nn.Module):
         self.f1 = nn.Flatten(start_dim=1, end_dim=-1)
         self.classifier = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(in_features=9216, out_features=4096),
+            nn.Linear(in_features=9216, out_features=4096, bias=True),
             nn.ReLU(),
             nn.Dropout(p=0.5),
-            nn.Linear(in_features=4096, out_features=4096),
+            nn.Linear(in_features=4096, out_features=4096, bias=True),
             nn.ReLU(),
-            nn.Linear(in_features=4096, out_features=1000),
+            nn.Linear(in_features=4096, out_features=1000, bias=True),
         )
-
 
     def forward(self, x):
         x = self.features(x)
@@ -45,4 +42,3 @@ class NeuralNetwork(nn.Module):
         x = self.f1(x)
         x = self.classifier(x)
         return x
-

@@ -2,27 +2,26 @@
 import torch
 from datetime import datetime
 
-
 from torch import nn
+import torch.nn.functional as F
+
 from torchvision import datasets, transforms
 
 from sklearn.metrics import classification_report 
-
 
 # Define the network architecture
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        self.l1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=(3, 3), stride=(1, 1), padding=0)
+        self.l1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=(3, 3), stride=(1, 1), padding=0, dilation=1, groups=1, bias=True)
         self.actv_func_relu = nn.ReLU()
         self.l2 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
-        self.l3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0)
+        self.l3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0, dilation=1, groups=1, bias=True)
         self.l4 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
-        self.l5 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0)
+        self.l5 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0, dilation=1, groups=1, bias=True)
         self.l6 = nn.Flatten(start_dim=1, end_dim=-1)
-        self.l7 = nn.Linear(in_features=1024, out_features=64)
-        self.l8 = nn.Linear(in_features=64, out_features=10)
-
+        self.l7 = nn.Linear(in_features=1024, out_features=64, bias=True)
+        self.l8 = nn.Linear(in_features=64, out_features=10, bias=True)
 
     def forward(self, x):
         x = self.l1(x)
@@ -39,34 +38,35 @@ class NeuralNetwork(nn.Module):
         x = self.l8(x)
         return x
 
-
-# Dataset preparation
-def load_and_preprocess_data(train_path, test_path, image_size, batch_size):
+def prepare_datasets():
+    """Prepare training and testing datasets."""
+    IMAGE_SIZE = (32, 32)
     transform = transforms.Compose([
-        transforms.Resize(image_size),
-		transforms.ToTensor()
+        transforms.Resize(IMAGE_SIZE),
+    	transforms.ToTensor()
         ])
 
     # Load the training dataset
     # Directory structure: root/class1/img1.jpg, root/class1/img2.jpg,
     # root/class2/img1.jpg, ...
     train_dataset = datasets.ImageFolder(
-        root=train_path, transform=transform)
+        root="dataset/cifar10/train", transform=transform)
 
     # Load the testing dataset that is in a similar directory structure
     test_dataset = datasets.ImageFolder(
-        root=test_path, transform=transform)
+        root="dataset/cifar10/test", transform=transform)
 
     # Create data loaders
     train_loader = torch.utils.data.DataLoader(
-        dataset=train_dataset, batch_size=batch_size, shuffle=True)
+        dataset=train_dataset, batch_size=32, shuffle=True)
     test_loader = torch.utils.data.DataLoader(
-        dataset=test_dataset, batch_size=batch_size, shuffle=False)
+        dataset=test_dataset, batch_size=32, shuffle=False)
 
     return train_loader, test_loader
 
-# Train the neural network
-def train_model(model, train_loader, criterion, optimizer, epochs=10):
+def train(model, train_loader, criterion, optimizer, epochs):
+    """Train the neural network."""
+    print('##### Training the model')
     for epoch in range(epochs):
         # Initialize the running loss for the current epoch
         running_loss = 0.0
@@ -95,8 +95,9 @@ def train_model(model, train_loader, criterion, optimizer, epochs=10):
         )
     print('Training finished')
 
-# Evaluate the neural network
-def evaluate_model(model, test_loader, criterion):
+def evaluate(model, test_loader, criterion):
+    """Evaluate the neural network."""
+    print('##### Evaluating the model')
     # Disable gradient calculation during inference
     with torch.no_grad():
         # Initialize lists to store predicted and true labels
@@ -124,43 +125,28 @@ def evaluate_model(model, test_loader, criterion):
         for class_label in report.keys():
             if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
                 print(f"{metric.capitalize()} for class {class_label}:",
-                    report[class_label][metric])
+                      report[class_label][metric])
                 metric_list.append(report[class_label][metric])
         metric_value = sum(metric_list) / len(metric_list)
         print(f"Average {metric.capitalize()}: {metric_value:.2f}")
         print(f"Accuracy: {report['accuracy']}")
-    
 
-# Save the neural network
-def save_model(model):
-    torch.save(model, f"my_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
-    print("The model is saved successfully")
+if __name__ == "__main__":
+    # Prepare datasets
+    train_loader, test_loader = prepare_datasets()
 
-
-def main():
-    train_path = "dataset/cifar10/train"
-    test_path = "dataset/cifar10/test"
-    batch_size = 32
-    epochs = 10
-
-    image_size = (32, 32)
-
-    train_loader, test_loader = load_and_preprocess_data(train_path, test_path, image_size, batch_size)
-    
-    
+    # Define the network, loss function, and optimizer
     my_model = NeuralNetwork()
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(my_model.parameters(), lr=0.001)
 
-    print('##### Training the model')
-    train_model(my_model, train_loader, criterion, optimizer, epochs)
+    # Train the neural network
+    train(my_model, train_loader, criterion, optimizer, 10)
 
-    print('##### Evaluating the model')
-    evaluate_model(my_model, test_loader, criterion)
+    # Evaluate the neural network
+    evaluate(my_model, test_loader, criterion)
 
+    # Save the neural network
     print('##### Saving the model')
-    save_model(my_model)
-
-
-if __name__ == "__main__":
-    main()
+    torch.save(my_model, f"my_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
+    print("The model is saved successfully")

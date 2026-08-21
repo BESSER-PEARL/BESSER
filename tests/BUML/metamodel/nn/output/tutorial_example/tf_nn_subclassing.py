@@ -3,27 +3,23 @@
 import tensorflow as tf
 from keras import layers
 
-
 from datetime import datetime
-from sklearn.metrics import classification_report 
-
+from sklearn.metrics import classification_report
 from besser.generators.nn.utils_nn import compute_mean_std
-
 
 # Define the network architecture
 class NeuralNetwork(tf.keras.Model):
     def __init__(self):
         super().__init__()
-        self.l1 = layers.Conv2D(filters=32, kernel_size=(3, 3), strides=(1, 1), padding='valid', activation='relu')
+        self.l1 = layers.Conv2D(filters=32, kernel_size=(3, 3), strides=(1, 1), padding='valid', dilation_rate=1, groups=1, use_bias=True, activation='relu')
         self.l2 = layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2), padding='valid')
-        self.l3 = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=(1, 1), padding='valid', activation='relu')
+        self.l3 = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=(1, 1), padding='valid', dilation_rate=1, groups=1, use_bias=True, activation='relu')
         self.l4 = layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2), padding='valid')
-        self.l5 = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=(1, 1), padding='valid', activation='relu')
+        self.l5 = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=(1, 1), padding='valid', dilation_rate=1, groups=1, use_bias=True, activation='relu')
         self.l6 = layers.Flatten()
-        self.l7 = layers.Dense(units=64, activation='relu')
-        self.l8 = layers.Dense(units=10, activation=None)
+        self.l7 = layers.Dense(units=64, use_bias=True, activation='relu')
+        self.l8 = layers.Dense(units=10, use_bias=True)
 
-        
     def call(self, x):
         x = self.l1(x)
         x = self.l2(x)
@@ -35,27 +31,25 @@ class NeuralNetwork(tf.keras.Model):
         x = self.l8(x)
         return x
 
-
-
-# Dataset preparation
-def load_and_preprocess_data(train_path, test_path, image_size, batch_size):
+def prepare_datasets():
+    """Prepare training and testing datasets."""
+    IMAGE_SIZE = (32, 32)
 
     # Function to load and preprocess images
-    scale, _, _ = compute_mean_std(train_path, num_samples=100,
-                                   target_size=image_size)
+    scale, _, _ = compute_mean_std("dataset/cifar10/train", num_samples=100,
+                                   target_size=IMAGE_SIZE)
     def preprocess_image(image, label, to_scale):
         if to_scale:
             image = tf.cast(image, tf.float32) / 255.0
         return image, label
 
-
     # Load dataset (resizes by default)
-    def load_dataset(path, mode, image_size):
+    def load_dataset(directory, mode, image_size):
         dataset = tf.keras.preprocessing.image_dataset_from_directory(
-            directory=path,
+            directory=directory,
             label_mode="int",
             image_size=image_size,
-            batch_size=batch_size,
+            batch_size=32,
             shuffle=True if mode == 'train' else False,
         )
         # Apply preprocessing
@@ -66,11 +60,14 @@ def load_and_preprocess_data(train_path, test_path, image_size, batch_size):
         dataset = dataset.prefetch(buffer_size=AUTOTUNE)
         return dataset
 
-    return load_dataset(train_path, "train", image_size), load_dataset(test_path, "test", image_size)
+    # Load datasets
+    train_loader = load_dataset("dataset/cifar10/train", "train", IMAGE_SIZE)
+    test_loader = load_dataset("dataset/cifar10/test", "test", IMAGE_SIZE)
+    return train_loader, test_loader
 
-
-# Train the neural network
-def train_model(model, train_loader, criterion, optimizer, epochs=10):
+def train(model, train_loader, criterion, optimizer, epochs, num_classes):
+    """Train the neural network."""
+    print('##### Training the model')
     for epoch in range(epochs):
         # Initialize the running loss for the current epoch
         running_loss = 0.0
@@ -83,7 +80,7 @@ def train_model(model, train_loader, criterion, optimizer, epochs=10):
                 if labels.shape.rank > 1 and labels.shape[-1] == 1:
                     labels = tf.squeeze(labels, axis=-1)
                 labels = tf.cast(labels, dtype=tf.int32)
-                labels = tf.one_hot(labels, depth=10)
+                labels = tf.one_hot(labels, depth=num_classes)
                 loss = criterion(labels, outputs)
             # Compute gradients and update model parameters
             gradients = tape.gradient(loss, model.trainable_variables)
@@ -103,11 +100,13 @@ def train_model(model, train_loader, criterion, optimizer, epochs=10):
         total_loss = 0.0
     print('Training finished')
 
-# Evaluate the neural network
-def evaluate_model(model, test_loader, criterion):
+def evaluate(model, test_loader, criterion, num_classes):
+    """Evaluate the neural network."""
+    print('##### Evaluating the model')
     predicted_labels = []
     true_labels = []
     test_loss = 0.0
+
     for inputs, labels in test_loader:
         outputs = model(inputs, training=False)
         true_labels.extend(labels.numpy())
@@ -115,7 +114,7 @@ def evaluate_model(model, test_loader, criterion):
         if labels.shape.rank > 1 and labels.shape[-1] == 1:
             labels = tf.squeeze(labels, axis=-1)
         labels = tf.cast(labels, dtype=tf.int32)
-        labels = tf.one_hot(labels, depth=10)
+        labels = tf.one_hot(labels, depth=num_classes)
         predicted_labels.extend(predicted)
         test_loss += criterion(labels, outputs).numpy()
 
@@ -125,49 +124,35 @@ def evaluate_model(model, test_loader, criterion):
     # Calculate the metrics
     metrics = ['f1-score']
     report = classification_report(true_labels, predicted_labels,
-                                output_dict=True)
+                                   output_dict=True)
     for metric in metrics:
         metric_list = []
         for class_label in report.keys():
             if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
                 print(f"{metric.capitalize()} for class {class_label}:",
-                    report[class_label][metric])
+                      report[class_label][metric])
                 metric_list.append(report[class_label][metric])
         metric_value = sum(metric_list) / len(metric_list)
         print(f"Average {metric.capitalize()}: {metric_value:.2f}")
         print(f"Accuracy: {report['accuracy']}")
-    
-
-# Save the neural network
-def save_model(model):
-    model.save(f"my_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    print("The model is saved successfully")
-
-
-def main():
-    train_path = "dataset/cifar10/train"
-    test_path = "dataset/cifar10/test"
-    batch_size = 32
-    epochs = 10
-
-    image_size = (32, 32)
-
-    train_loader, test_loader = load_and_preprocess_data(train_path, test_path, image_size, batch_size)
-    
-    
-    my_model = NeuralNetwork()
-    criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-
-    print('##### Training the model')
-    train_model(my_model, train_loader, criterion, optimizer, epochs)
-
-    print('##### Evaluating the model')
-    evaluate_model(my_model, test_loader, criterion)
-
-    print('##### Saving the model')
-    save_model(my_model)
 
 if __name__ == "__main__":
-    main()
+    # Prepare datasets
+    train_loader, test_loader = prepare_datasets()
 
+    # Define the network, loss function, and optimizer
+    my_model = NeuralNetwork()
+    criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+
+    # Train the neural network
+    train(my_model, train_loader, criterion, optimizer, 10, 10)
+
+    # Evaluate the neural network
+    evaluate(my_model, test_loader, criterion, 10)
+
+    # Save the neural network
+    print('##### Saving the model')
+    my_model.save(f"my_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    print("The model is saved successfully")

@@ -72,7 +72,7 @@ def parse_metadata_to_buml(metadata: dict, model_name: str = "DB_DomainModel") -
         for col in table.get("columns", []):
             col_name = col["name"]
             if not any(fk["column"] == col_name for fk in table.get("foreign_keys", [])):
-                attrs.add(Property(name=col_name, type=map_type(col["type"])))
+                attrs.add(Property(name=col_name, type=map_type(col["type"]), is_id=col.get("primary_key", False)))
         classes[table["name"]] = Class(name=table["name"], attributes=attrs)
 
     # Create associations from foreign keys (excluding bridge table FKs)
@@ -91,14 +91,13 @@ def parse_metadata_to_buml(metadata: dict, model_name: str = "DB_DomainModel") -
             source_class = classes[source_table]
             target_class = classes[target_table]
 
-            source_mult = Multiplicity(0, "*")
-            target_mult = Multiplicity(1, 1)
-
+            # source_table owns the FK → many of source per one target
+            # target_table is referenced   → exactly 1 target per source
             source_prop = Property(
-                name=target_table.lower(), type=target_class, multiplicity=source_mult
+                name=target_table.lower(), type=target_class, multiplicity=Multiplicity(1, 1)
             )
             target_prop = Property(
-                name=f"{source_table.lower()}_list", type=source_class, multiplicity=target_mult
+                name=f"{source_table.lower()}_list", type=source_class, multiplicity=Multiplicity(0, "*")
             )
             associations.add(
                 BinaryAssociation(

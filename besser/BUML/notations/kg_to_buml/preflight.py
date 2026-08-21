@@ -1321,9 +1321,14 @@ def _detect_orphan_nodes(
     Structural blank nodes (``kind in {restriction, class_expression}``) are
     excluded — they're handled by their own detectors and live as auxiliary
     schema graph fragments rather than data.
+
+    Literals are never orphan on their own: they are only ever read through
+    the node they hang off, so they inherit that node's fate (Step 2b). A
+    literal on a class, a property or a restriction is therefore never
+    reported; one on an orphan individual joins that individual's component.
     """
     structural_kinds = {"restriction", "class_expression"}
-    eligible_kinds = (KGIndividual, KGLiteral, KGBlank)
+    eligible_kinds = (KGIndividual, KGBlank)
 
     # Step 1 — class-anchored closure via DFS over the schema-edge subgraph.
     schema_neighbors: Dict[str, Set[str]] = defaultdict(set)
@@ -1343,11 +1348,11 @@ def _detect_orphan_nodes(
         anchored.add(nid)
         stack.extend(schema_neighbors.get(nid, ()))
 
-    # Step 1b — anchor literals/blanks dangling off anchored individuals.
-    # These nodes contribute to the class diagram as datatype-attribute
-    # values (kg_to_class_diagram Step 5 bumps multiplicity from exactly
-    # these KGIndividual → KGLiteral edges), so they are not truly orphan
-    # even though no schema-anchor predicate connects them.
+    # Step 1b — anchor non-structural blanks dangling off anchored
+    # individuals (``:alice :address [ :city "Paris" ]``). They carry
+    # instance data hanging off a node that does reach a class, and get
+    # their own dedicated issue (``BLANK_NODE_INSTANCE``) rather than an
+    # orphan one.
     node_by_id: Dict[str, KGNode] = {n.id: n for n in kg.nodes}
     data_neighbors: Dict[str, Set[str]] = defaultdict(set)
     for edge in kg.edges:
@@ -1361,15 +1366,13 @@ def _detect_orphan_nodes(
             if neighbor_id in anchored:
                 continue
             neighbor = node_by_id.get(neighbor_id)
-            if isinstance(neighbor, KGLiteral):
-                anchored.add(neighbor_id)
-            elif (
+            if (
                 isinstance(neighbor, KGBlank)
                 and neighbor.metadata.get("kind") not in structural_kinds
             ):
                 anchored.add(neighbor_id)
 
-    # Step 2 — collect orphan candidates.
+    # Step 2 — collect orphan candidates among individuals and blanks.
     orphan_ids: Set[str] = set()
     for node in kg.nodes:
         if not isinstance(node, eligible_kinds):
@@ -1377,6 +1380,23 @@ def _detect_orphan_nodes(
         if isinstance(node, KGBlank) and node.metadata.get("kind") in structural_kinds:
             continue
         if node.id in anchored:
+            continue
+        orphan_ids.add(node.id)
+
+    # Step 2b — literals inherit orphan-hood from whatever they hang off.
+    # A literal is never orphan in its own right: the converters read it
+    # through its carrier, so the carrier is what the user has to decide
+    # about. A literal on a class or a property is an annotation the
+    # converters ignore (rdfs:label, rdfs:comment); one inside a
+    # restriction is consumed as a cardinality bound; one on a surviving
+    # individual becomes an attribute value. Only a literal whose every
+    # carrier is itself orphan — or one with no carrier at all — is
+    # orphan, and it then joins that carrier's component.
+    for node in kg.nodes:
+        if not isinstance(node, KGLiteral):
+            continue
+        carriers = data_neighbors.get(node.id, set()) - {node.id}
+        if carriers and not carriers <= orphan_ids:
             continue
         orphan_ids.add(node.id)
 

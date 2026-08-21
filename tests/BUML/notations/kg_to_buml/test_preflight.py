@@ -840,3 +840,123 @@ def test_orphan_literal_attached_to_typed_individual_not_flagged(tmp_path: Path)
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     report = analyze_kg_for_class_diagram(kg)
     assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)
+
+
+def test_orphan_literal_attached_to_class_not_flagged(tmp_path: Path):
+    """Annotation literals hanging off a class (rdfs:label, rdfs:comment) are
+    ignored by the converters — a class has no attribute values to carry them —
+    so the user must not be asked to drop them."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Church a owl:Class ; rdfs:label "church" ; rdfs:comment "a building" .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(analyze_kg_for_class_diagram(kg))
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(analyze_kg_for_object_diagram(kg))
+
+
+def test_orphan_literal_attached_to_property_not_flagged(tmp_path: Path):
+    """Same rule for literals on a property — including a property that is
+    itself incomplete, whose own issue (here PROPERTY_NO_RANGE) must not drag
+    its label along as a second one."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Church a owl:Class .
+    :name    a owl:DatatypeProperty ; rdfs:domain :Church ; rdfs:range xsd:string ;
+             rdfs:label "name" .
+    :dangling a owl:DatatypeProperty ; rdfs:label "dangling" .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)
+    assert "PROPERTY_NO_RANGE" in _codes(report)
+
+
+def test_orphan_hand_drawn_class_to_literal_edge_not_flagged():
+    """The editor case: a class drawn on the canvas with a literal wired to it
+    through a plain ``label`` edge (no rdfs: IRI at all)."""
+    from besser.BUML.metamodel.kg import KGClass, KGEdge, KGLiteral, KnowledgeGraph
+
+    kg = KnowledgeGraph(name="drawn")
+    church = KGClass(id="n1", label="church", iri="http://ex.org/church")
+    literal = KGLiteral(id="n2", value="church")
+    for n in (church, literal):
+        kg.add_node(n)
+    kg.add_edge(KGEdge(id="e1", source=church, target=literal, label="label"))
+
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(analyze_kg_for_class_diagram(kg))
+
+
+def test_orphan_literal_on_unanchored_individual_still_flagged():
+    """The exemption is for schema elements only: a literal hanging off an
+    individual with no class link stays part of that orphan component."""
+    from besser.BUML.metamodel.kg import KGEdge, KGIndividual, KGLiteral, KnowledgeGraph
+
+    kg = KnowledgeGraph(name="drawn")
+    stray = KGIndividual(id="n1", label="stray", iri="http://ex.org/stray")
+    literal = KGLiteral(id="n2", value="whatever")
+    for n in (stray, literal):
+        kg.add_node(n)
+    kg.add_edge(KGEdge(id="e1", source=stray, target=literal, label="note"))
+
+    issue = _issue(analyze_kg_for_class_diagram(kg), "ORPHAN_NODE_NO_CLASS_LINK")
+    assert sorted(issue.affected_node_ids) == ["n1", "n2"]
+
+
+def test_orphan_restriction_cardinality_literal_not_flagged(tmp_path: Path):
+    """A cardinality literal inside a restriction is *consumed* by the
+    conversion (it becomes the multiplicity bound), so recommending its
+    removal would silently weaken the model."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Person a owl:Class ; rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty :hasPet ;
+        owl:minCardinality "2"^^xsd:nonNegativeInteger
+    ] .
+    :Pet a owl:Class .
+    :hasPet a owl:ObjectProperty ; rdfs:domain :Person ; rdfs:range :Pet .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(analyze_kg_for_class_diagram(kg))
+
+
+def test_orphan_literal_behind_anchored_blank_not_flagged(tmp_path: Path):
+    """The literal sits two hops from the class, behind a blank node that is
+    itself reported (BLANK_NODE_INSTANCE). That blank is the decision the user
+    has to make — the literal must not be raised as a second one."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+    :Person a owl:Class .
+    :alice a :Person ; :address [ :city "Paris" ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(report)
+    assert "BLANK_NODE_INSTANCE" in _codes(report)
+
+
+def test_orphan_isolated_literal_still_flagged():
+    """A literal wired to nothing at all has no carrier to inherit from and
+    remains a node the user should decide about."""
+    from besser.BUML.metamodel.kg import KGClass, KGLiteral, KnowledgeGraph
+
+    kg = KnowledgeGraph(name="drawn")
+    kg.add_node(KGClass(id="n1", label="Church", iri="http://ex.org/Church"))
+    kg.add_node(KGLiteral(id="n2", value="floating"))
+
+    issue = _issue(analyze_kg_for_class_diagram(kg), "ORPHAN_NODE_NO_CLASS_LINK")
+    assert issue.affected_node_ids == ["n2"]

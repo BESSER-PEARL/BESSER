@@ -12,6 +12,7 @@ B-OCL-Interpreter, with three differences:
   downstream pretty-printing and rule lookups.
 """
 
+import logging
 import re
 
 from antlr4 import InputStream, CommonTokenStream

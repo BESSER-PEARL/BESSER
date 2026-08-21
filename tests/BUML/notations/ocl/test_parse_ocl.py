@@ -62,6 +62,97 @@ def test_parse_iterator_constraint(model):
     assert result.context.name == "Department"
 
 
+def test_parse_closure_iterator(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->closure(e | e.name <> '')",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+
+def test_parse_closure_short(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->closure(name)->isEmpty()",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_asset(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->asSet()->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_asset_chained(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->asSet()->union(self.employee)->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_including(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->including(self.employee)->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_excluding(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->excluding(self.employee)->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_union(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->union(self.employee)->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_intersection(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->intersection(self.employee)->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_chained_navigation_on_string_typed_property():
+    """Chained navigation must work when the receiver's type is a class-name
+    string (``Property('spouse', 'Person')``), not a resolved Class object."""
+    from besser.BUML.metamodel.structural import DomainModel, Class, Property, StringType
+    person = Class("Person", attributes={
+        Property("name", StringType),
+        Property("spouse", "Person"),
+        Property("parents", "Person"),
+    })
+    model = DomainModel("PersonModel", types={person})
+    result = parse_ocl(
+        "context Person inv : self.spouse.parents->intersection(self.parents)",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Person"
+
+
 # Tests for OCLConstraint.ast / .expression separation (Pre-work B)
 
 def test_ocl_constraint_ast_is_the_parsed_tree(model):

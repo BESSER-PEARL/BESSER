@@ -2,10 +2,10 @@ from besser.BUML.metamodel.ocl.ocl import (
     OperationCallExpression, LoopExp, IfExp, IteratorExp,
     IntegerLiteralExpression, RealLiteralExpression,
     BooleanLiteralExpression, StringLiteralExpression,
-    DateLiteralExpression, InfixOperator, PropertyCallExpression,
-    TypeExp, VariableExp,
+    DateLiteralExpression, EnumLiteralExpression, InfixOperator,
+    PropertyCallExpression, TypeExp, VariableExp,
 )
-from besser.BUML.metamodel.structural.structural import Property
+from besser.BUML.metamodel.structural.structural import Property, Enumeration
 from .BOCLVisitor import BOCLVisitor
 from .BOCLParser import BOCLParser
 
@@ -54,10 +54,22 @@ class BOCLVisitorImpl(BOCLVisitor):
                 return self.context_class
             return self.iterators_context.get(receiver.name)
         if isinstance(receiver, Property):
-            return receiver.type
+            return self._resolve_type(receiver.type)
         if isinstance(receiver, PropertyCallExpression):
-            return receiver.property.type
+            return self._resolve_type(receiver.property.type)
         return None
+
+    def _resolve_type(self, type):
+        """Resolve a type that may be a class-name string to the Class.
+
+        ``Property.type`` stores bare string references (e.g. ``"Employee"``)
+        when the model was built with string types, so chained navigation
+        like ``self.employer.minSalary`` must resolve the receiver's type
+        against the domain model before looking up attributes on it.
+        """
+        if isinstance(type, str):
+            return self._get_class_by_name(type)
+        return type
 
     def _get_class_by_name(self, name):
         for t in self.dm.types:
@@ -282,6 +294,13 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce.source = source
         return oce
 
+    def visitArrowIncluding(self, ctx: BOCLParser.ArrowIncludingContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="INCLUDING", operation="INCLUDING", arguments=[arg])
+        oce.source = source
+        return oce
+
     def visitArrowExcludes(self, ctx: BOCLParser.ArrowExcludesContext):
         source = self.visit(ctx.expression(0))
         arg = self.visit(ctx.expression(1))
@@ -289,10 +308,24 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce.source = source
         return oce
 
+    def visitArrowExcluding(self, ctx: BOCLParser.ArrowExcludingContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="EXCLUDING", operation="EXCLUDING", arguments=[arg])
+        oce.source = source
+        return oce
+
     def visitArrowUnion(self, ctx: BOCLParser.ArrowUnionContext):
         source = self.visit(ctx.expression(0))
         arg = self.visit(ctx.expression(1))
         oce = OperationCallExpression(name="UNION", operation="UNION", arguments=[arg])
+        oce.source = source
+        return oce
+
+    def visitArrowIntersection(self, ctx: BOCLParser.ArrowIntersectionContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="INTERSECTION", operation="INTERSECTION", arguments=[arg])
         oce.source = source
         return oce
 
@@ -348,6 +381,12 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce = OperationCallExpression(
             name="SUBORDEREDSET", operation="SUBORDEREDSET", arguments=[arg1, arg2]
         )
+        oce.source = source
+        return oce
+
+    def visitArrowAsSet(self, ctx: BOCLParser.ArrowAsSetContext):
+        source = self.visit(ctx.expression())
+        oce = OperationCallExpression(name="ASSET", operation="ASSET", arguments=[])
         oce.source = source
         return oce
 
@@ -452,9 +491,15 @@ class BOCLVisitorImpl(BOCLVisitor):
     def visitNullLiteral(self, ctx: BOCLParser.NullLiteralContext):
         return None
 
-    def visitAllInstancesExpr(self, ctx: BOCLParser.AllInstancesExprContext):
-        class_name = ctx.ID().getText()
-        type_exp = TypeExp(class_name, class_name)
+    def visitDotAllInstances(self, ctx: BOCLParser.DotAllInstancesContext):
+        source = self.visit(ctx.expression())
+        if isinstance(source, VariableExp):
+            class_name = source.name
+            if class_name == "self" and self.context_class is not None:
+                class_name = self.context_class.name
+            type_exp = TypeExp(class_name, class_name)
+        else:
+            type_exp = source
         oce = OperationCallExpression(name="ALLInstances", operation="ALLInstances", arguments=[])
         oce.referredOperation = OperationCallExpression(
             name="ALLInstances", operation="ALLInstances", arguments=[]
@@ -466,6 +511,19 @@ class BOCLVisitorImpl(BOCLVisitor):
         func_name = ctx.ID().getText()
         date_str = f"Date::{func_name}()"
         return DateLiteralExpression("date", date_str)
+
+    def visitEnumLiteralExpr(self, ctx):
+        enum_name = ctx.ID(0).getText()
+        literal_name = ctx.ID(1).getText()
+        enum_type = self._get_class_by_name(enum_name)
+        if enum_type is not None and not isinstance(enum_type, Enumeration):
+            enum_type = None
+        return EnumLiteralExpression(
+            name=f"{enum_name}::{literal_name}",
+            enum_name=enum_name,
+            literal_name=literal_name,
+            enumeration=enum_type,
+        )
 
     def visitFunctionCallExpr(self, ctx: BOCLParser.FunctionCallExprContext):
         name = ctx.ID().getText()

@@ -19,24 +19,89 @@ def test_tensorop():
     """Test tensorop"""
     l1: LinearLayer = LinearLayer(name="l1", actv_func="relu",
                                   in_features=10, out_features=20)
-    l2: LinearLayer = LinearLayer(name="l2", actv_func="relu",
+    l2: LinearLayer = LinearLayer(name="l22", actv_func="relu",
                                   in_features=10, out_features=20)
     reshape: TensorOp = TensorOp(name="reshape", tns_type="reshape",
-                                 reshape_dim=[2, 2])
+                                 reshape_dim=[2, 2], layers_of_tensors=["l2"])
     permute: TensorOp = TensorOp(name="permute", tns_type="permute",
                                  permute_dim=[0, 2, 1])
     concatenate: TensorOp = TensorOp(name="concatenate",
                                      tns_type="concatenate",
-                                     layers_of_tensors=[l1, l2],
+                                     layers_of_tensors=["l1", "l2"],
                                      concatenate_dim=1)
     transpose: TensorOp = TensorOp(name="transpose", tns_type="transpose",
-                                   transpose_dim=[0, 1])
+                                   transpose_dim=[0, 1],
+                                   layers_of_tensors=["l2"])
+    squeeze: TensorOp = TensorOp(name="squeeze", tns_type="squeeze",
+                                 reduce_dim=1, layers_of_tensors=["l2"])
+    unsqueeze: TensorOp = TensorOp(name="unsqueeze", tns_type="unsqueeze",
+                                   reduce_dim=1, input_var="x")
+    mean: TensorOp = TensorOp(name="mean", tns_type="mean",
+                              reduce_dim=0, reduce_keepdims=True,
+                              input_var="x")
+    max_op: TensorOp = TensorOp(name="max_op", tns_type="max",
+                                reduce_dim=1, reduce_keepdims=False,
+                                layers_of_tensors=["l1"])
+    repeat: TensorOp = TensorOp(name="repeat", tns_type="repeat",
+                                repeat_dim=[2, 3, 1],
+                                layers_of_tensors=["l2"])
+    shape_dim: TensorOp = TensorOp(name="shape_dim", tns_type="shape_dim",
+                                   shape_dim=1, input_var="x",
+                                   reduce_dim=0)
+    interpolate: TensorOp = TensorOp(name="interpolate", tns_type="interpolate",
+                                     interpolate_size=(224, 224),
+                                     interpolate_mode="bilinear",
+                                     layers_of_tensors=["l2"])
+    pad: TensorOp = TensorOp(name="pad", tns_type="pad",
+                             pad_amount=[[1, 1], [2, 2]], pad_mode="constant",
+                             pad_value=0.0)
+    dropout: TensorOp = TensorOp(name="dropout", tns_type="dropout",
+                                 dropout_rate=0.3, dropout_training_aware=True)
+    split: TensorOp = TensorOp(name="split", tns_type="split",
+                               split_dim=1, split_sizes=[2, 3, 1],
+                               layers_of_tensors=["l2"])
+    subscript: TensorOp = TensorOp(name="subscript", tns_type="subscript",
+                                   subscript_indices=[{"type": 'index', "value": 2}])
+    binop_add: TensorOp = TensorOp(name="binop_add", tns_type="binop_add",
+                                   layers_of_tensors=["l1", 5.0])
+    binop_multiply: TensorOp = TensorOp(name="binop_multiply",
+                                        tns_type="binop_multiply",
+                                        layers_of_tensors=["l2", 2.0])
+    multiply: TensorOp = TensorOp(name="multiply", tns_type="multiply",
+                                  layers_of_tensors=["l1", 3.0])
+    normalize: TensorOp = TensorOp(name="normalize", tns_type="normalize",
+                                   layers_of_tensors=["l1"], reduce_dim=0)
+    zeros_like: TensorOp = TensorOp(name="zeros_like", tns_type="zeros_like",
+                                    layers_of_tensors=["l1"])
 
     assert reshape.tns_type == 'reshape'
     assert reshape.reshape_dim == [2, 2]
     assert permute.permute_dim == [0, 2, 1]
-    assert concatenate.layers_of_tensors == [l1, l2]
+    assert concatenate.layers_of_tensors == ["l1", "l2"]
     assert transpose.transpose_dim == [0, 1]
+    assert squeeze.reduce_dim == 1
+    assert unsqueeze.reduce_dim == 1
+    assert mean.reduce_dim == 0
+    assert mean.reduce_keepdims is True
+    assert max_op.reduce_dim == 1
+    assert max_op.reduce_keepdims is False
+    assert repeat.repeat_dim == [2, 3, 1]
+    assert shape_dim.shape_dim == 1
+    assert interpolate.interpolate_size == (224, 224)
+    assert interpolate.interpolate_mode == "bilinear"
+    assert pad.pad_amount == [[1, 1], [2, 2]]
+    assert pad.pad_mode == "constant"
+    assert pad.pad_value == 0.0
+    assert dropout.dropout_rate == 0.3
+    assert dropout.dropout_training_aware is True
+    assert split.split_dim == 1
+    assert split.split_sizes == [2, 3, 1]
+    assert subscript.subscript_indices == [{"type": "index", "value": 2}]
+    assert binop_add.layers_of_tensors == ["l1", 5.0]
+    assert binop_multiply.layers_of_tensors == ["l2", 2.0]
+    assert multiply.layers_of_tensors == ["l1", 3.0]
+    assert normalize.layers_of_tensors == ["l1"]
+    assert zeros_like.layers_of_tensors == ["l1"]
 
 
 # Test general layers

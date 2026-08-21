@@ -1,0 +1,30 @@
+open util/boolean
+{% if "int" in basic_signatures %}
+open util/integer
+{% endif %}
+{% if has_date_values %}
+open util/ordering[date]
+{% endif %}
+{% for tipo in basic_signatures %}
+{% if tipo != 'bool' and tipo != 'int' and tipo != 'date' %}
+sig {{ tipo }} {}
+{% endif %}
+{% endfor %}
+{% if has_date_values %}
+sig date {}
+{% endif %}
+{% for e in enum_types %}
+abstract sig {{ e.name }} {}
+  {% for v in e.literals %}
+one sig {{ "ENUM_" ~ e.name ~"_"~ v.name }} extends {{e.name}}{}
+  {% endfor %}
+{% endfor %}
+{% raw %}
+fun image [s: univ -> univ]: set univ {{ f: univ | some i: univ | i -> f in s }}
+{% endraw %}
+{% raw %}
+
+fun toSeq[a: set univ, rel: univ -> univ]: univ -> univ {a <: rel}
+fun collect[s: univ->univ, r: univ->univ] : univ->univ {s.r}
+
+{% endraw %}

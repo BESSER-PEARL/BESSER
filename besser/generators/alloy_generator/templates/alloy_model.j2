@@ -1,0 +1,64 @@
+{%- if class_obj.name not in ['Integer', 'String'] -%}
+{%- set lines = [] -%}
+{# --- 1. MAPEO DE ATRIBUTOS --- #}
+{%- for attr in class_obj.attributes -%}
+  {%- set typename = "Int" if (attr.type.name == "int" or attr.type.name == "float") else ("Bool" if attr.type.name == "bool" else ("date" if attr.type.name in ("date", "datetime", "time", "timedelta") else attr.type.name)) -%}
+  {%- set line = class_obj.name ~ "_" ~ attr.name ~ ": " ~ typename -%}
+  {%- do lines.append(line) -%}
+{%- endfor -%}
+{# --- 2. MAPEO DE ASOCIACIONES --- #}
+{%- for association in associations if association.ends|length == 2 -%}
+    {%- set ends_list = association.ends|list -%}
+    {%- set e1 = ends_list[0] -%}
+    {%- set e2 = ends_list[1] -%}
+    {# Relaciones Reflexivas #}
+    {%- if e1.type.name == class_obj.name and e2.type.name == class_obj.name -%}
+        {%- for end_ref in ends_list if end_ref.is_navigable -%}
+            {%- set typename = "Int" if end_ref.type.name|lower in ['integer', 'int'] else end_ref.type.name -%}
+            {%- if end_ref.multiplicity.min == 0 and end_ref.multiplicity.max == 1 -%}
+                {%- set mult = "lone " -%}
+            {%- elif end_ref.multiplicity.max > 1 -%}
+                {%- set mult = "set " -%}
+            {%- else -%}
+                {%- set mult = "one " -%}
+            {%- endif -%}
+            {%- set line = class_obj.name ~ "_" ~ end_ref.name ~ ": " ~ mult ~ typename -%}
+            {%- do lines.append(line) -%}
+        {%- endfor -%}
+    {# Relaciones Normales #}
+    {%- else -%}
+        {%- set target_end = e2 if e1.type.name == class_obj.name else (e1 if e2.type.name == class_obj.name else None) -%}
+        {%- if target_end and target_end.is_navigable -%}
+            {%- set typename = "Int" if target_end.type.name|lower in ['integer', 'int'] else target_end.type.name -%}
+            {%- if target_end.multiplicity.min == 0 and target_end.multiplicity.max == 1 -%}
+                {%- set mult = "lone " -%}
+            {%- elif target_end.multiplicity.max > 1 -%}
+                {%- set mult = "set " -%}
+            {%- else -%}
+                {%- set mult = "one " -%}
+            {%- endif -%}
+            {%- set line = class_obj.name ~ "_" ~ target_end.name ~ ": " ~ mult ~ typename -%}
+            {%- do lines.append(line) -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor -%}
+{# --- 3. IMPRESIÓN DEL BLOQUE ALLOY --- #}
+{%- if class_obj.parents() -%}
+    {%- if class_obj.parents()|length > 1 -%}
+sig {{ class_obj.name }} in {{ class_obj.parents() | map(attribute='name') | join('+') }} {
+    {%- else -%}
+sig {{ class_obj.name }} extends {{ (class_obj.parents() | list | first).name }} {
+    {%- endif -%}
+{%- else -%}
+    {%- if class_obj.is_abstract -%}
+abstract sig {{ class_obj.name }} {
+    {%- else -%}
+sig {{ class_obj.name }} {
+    {%- endif -%}
+{%- endif -%}
+
+{% for line in lines %}
+    {{ line }}{{ "," if not loop.last else "" }}
+{% endfor %}
+}
+{% endif -%}

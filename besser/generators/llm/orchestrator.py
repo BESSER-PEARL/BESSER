@@ -102,6 +102,70 @@ _RECIPE_EXCLUDED_DIRS = {
 }
 
 
+# ----------------------------------------------------------------------
+# Deterministic scaffold repair
+# ----------------------------------------------------------------------
+# The deterministic Phase-1 backend generator always writes a correct
+# requirements.txt, but a weak Phase-2 model sometimes deletes it while
+# customizing — leaving a Dockerfile that ``COPY requirements.txt``s a file that
+# no longer exists (a hard build blocker the weak model then can't self-repair).
+# Restore it deterministically instead of relying on the LLM fix loop.
+_DEFAULT_BACKEND_REQUIREMENTS = (
+    "fastapi>=0.103.0\n"
+    "uvicorn>=0.15.0\n"
+    "pydantic>=2.0.0\n"
+    "typing-extensions>=4.6.0\n"
+    "sqlalchemy>=2.0.0\n"
+    "python-multipart>=0.0.6\n"
+)
+
+# import token -> pip requirement, for the few extras Phase 2 commonly adds
+# (auth, http). Kept small and high-confidence; a baseline is better than a
+# missing file that breaks the whole image build.
+_IMPORT_TO_REQUIREMENT = {
+    "jose": "python-jose[cryptography]>=3.3.0",
+    "passlib": "passlib[bcrypt]>=1.7.4",
+    "bcrypt": "bcrypt>=4.0.0",
+    "jwt": "pyjwt>=2.8.0",
+    "httpx": "httpx>=0.27.0",
+    "requests": "requests>=2.31.0",
+    "dotenv": "python-dotenv>=1.0.0",
+    "aiofiles": "aiofiles>=23.0.0",
+    "alembic": "alembic>=1.13.0",
+}
+
+
+def _ensure_requirements_txt(docker_dir: str) -> bool:
+    """Write a sensible requirements.txt next to a Dockerfile when it's missing.
+
+    Base FastAPI stack plus a few extras inferred from the Python imports that
+    actually appear beside the Dockerfile. Returns True when a file was written.
+    """
+    req_path = os.path.join(docker_dir, "requirements.txt")
+    if os.path.isfile(req_path):
+        return False
+    extras: set = set()
+    for root, _, files in os.walk(docker_dir):
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(root, fn), "r", encoding="utf-8") as f:
+                    src = f.read()
+            except Exception:
+                continue
+            for token, pkg in _IMPORT_TO_REQUIREMENT.items():
+                if _re.search(rf"^\s*(?:import|from)\s+{token}\b", src, _re.MULTILINE):
+                    extras.add(pkg)
+    content = _DEFAULT_BACKEND_REQUIREMENTS + "".join(sorted(e + "\n" for e in extras))
+    try:
+        with open(req_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return True
+    except Exception:
+        return False
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     """A single Phase 3 validator finding, tagged by severity.
@@ -1807,10 +1871,15 @@ class LLMOrchestrator:
                         if "requirements.txt" in content:
                             req = os.path.join(docker_dir, "requirements.txt")
                             if not os.path.isfile(req):
-                                issues.append(
-                                    f"{rel} references requirements.txt but it doesn't exist -- "
-                                    f"create it or fix the Dockerfile"
-                                )
+                                if _ensure_requirements_txt(docker_dir):
+                                    logger.info(
+                                        "Auto-fixed: restored missing requirements.txt for %s", rel
+                                    )
+                                else:
+                                    issues.append(
+                                        f"{rel} references requirements.txt but it doesn't exist -- "
+                                        f"create it or fix the Dockerfile"
+                                    )
                         if "package.json" in content or "package*.json" in content:
                             pkg = os.path.join(docker_dir, "package.json")
                             if not os.path.isfile(pkg):
@@ -2795,7 +2864,12 @@ class LLMOrchestrator:
                         if "requirements.txt" in content:
                             req = os.path.join(docker_dir, "requirements.txt")
                             if not os.path.isfile(req):
-                                raw_issues.append(f"{rel} references requirements.txt but it doesn't exist")
+                                if _ensure_requirements_txt(docker_dir):
+                                    logger.info(
+                                        "Auto-fixed: restored missing requirements.txt for %s", rel
+                                    )
+                                else:
+                                    raw_issues.append(f"{rel} references requirements.txt but it doesn't exist")
                     except Exception:
                         pass
 

@@ -119,6 +119,23 @@ _EXCLUDED_OUTPUT_DIRS = {
 }
 
 
+def _dir_has_user_output(path: Optional[str]) -> bool:
+    """True when *path* holds at least one generated USER file.
+
+    Mirrors ``_package_result``'s selection: excluded build/dependency dirs and
+    internal ``.besser_*`` artefacts don't count. Used to salvage output when a
+    run hit a late error — surface the (partial) app instead of a hard failure.
+    """
+    if not path or not os.path.isdir(path):
+        return False
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
+        for fn in files:
+            if not fn.startswith(".besser_"):
+                return True
+    return False
+
+
 class _EmptyGenerationError(Exception):
     """Raised when the orchestrator returned but produced no output files.
 
@@ -1129,14 +1146,25 @@ class SmartGenerationRunner:
                 worker_exception = exc
                 yield format_sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
             except Exception as exc:
-                worker_exception = exc
                 logger.exception(
                     "Unexpected error in smart_generate worker %s", self.run_id
                 )
-                yield format_sse(ErrorEvent(
-                    code="INTERNAL",
-                    message="Internal server error",
-                ))
+                # A late internal error must not discard output the run already
+                # produced — surface the (partial) app as an INCOMPLETE result
+                # instead of a hard failure, so the user gets something usable.
+                # Only when files were actually written; otherwise fail as before.
+                if _dir_has_user_output(self.temp_dir):
+                    result_path = self.temp_dir
+                    self._late_internal_error = (
+                        "The run hit an internal error after generating files, "
+                        "so the output may be incomplete."
+                    )
+                else:
+                    worker_exception = exc
+                    yield format_sse(ErrorEvent(
+                        code="INTERNAL",
+                        message="Internal server error",
+                    ))
         finally:
             emitter_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1257,7 +1285,8 @@ class SmartGenerationRunner:
                 if getattr(i, "severity", None) == "blocker"
             ]
 
-            incomplete = (not exited_cleanly) or bool(_unfixed_blockers)
+            _late_err = getattr(self, "_late_internal_error", None)
+            incomplete = (not exited_cleanly) or bool(_unfixed_blockers) or bool(_late_err)
             incomplete_reason_msg: Optional[str] = None
             if incomplete and exited_cleanly and _unfixed_blockers:
                 # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
@@ -1310,6 +1339,15 @@ class SmartGenerationRunner:
                             "resume the run to continue from where it stopped."
                         ),
                     ))
+
+            # A late internal error that still produced output (salvaged
+            # above) is surfaced as an incomplete result, not a hard failure.
+            if _late_err and incomplete_reason_msg is None:
+                incomplete_reason_msg = _late_err
+                yield format_sse(ErrorEvent(
+                    code="INCOMPLETE",
+                    message=_late_err + " You can resume the run to continue.",
+                ))
 
             # ---- 10. Package the result and emit `done` ---------------
             try:

@@ -4,7 +4,7 @@ Structural model
 The structural metamodel enables the specification of a domain model using the typical concepts of a class diagram. 
 Elements such as *Classes*, *Properties*, *Associations*, and *Generalizations* can be instantiated to define the static 
 structure of a system or application. While this metamodel is rooted in the UML specification, certain modifications and 
-additions have been implemented to provide additional modeling capabilities. For instance, the *is_id* attribue 
+additions have been implemented to provide additional modeling capabilities. For instance, the *is_id* attribute 
 has been introduced in the *Property* class to specify whether a property serves as an identifier for the instances of that
 class, a common need in many code generation scenarios.
 
@@ -25,6 +25,23 @@ Available Data Types
 BESSER provides a comprehensive set of primitive data types for modeling. The available types include ``StringType``, 
 ``IntegerType``, ``FloatType``, ``BooleanType``, ``DateType``, ``TimeType``, ``DateTimeType``, ``TimeDeltaType`` 
 and ``AnyType``. These types can be used to define properties and attributes in your structural models.
+
+Validation
+----------
+
+The structural metamodel performs validation at multiple levels:
+
+- **Construction validation**: ``NamedElement.name`` setters reject ``None``, empty, or
+  whitespace-only names and warn when the name is a Python keyword.
+- **Attribute shadowing**: ``DomainModel.validate()`` checks that subclass attributes do not
+  shadow inherited attributes from parent classes. A warning is raised if a subclass defines
+  an attribute with the same name as one already present in a superclass.
+
+.. code-block:: python
+
+    result = domain_model.validate()
+    # result contains errors and warnings about the model structure
+
 
 Supported notations
 -------------------

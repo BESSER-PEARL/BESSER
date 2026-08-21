@@ -1,7 +1,6 @@
 # Generated from OD.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -46,13 +45,13 @@ class ODParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'Object'", "':'", "'{'", "'}'", "'<|--'", 
-                     "'o--'", "'--'", "'..'", "'-->'", "'..>'", "'@startuml'", 
+    literalNames = [ "<INVALID>", "'Object'", "':'", "'{'", "'}'", "'<|--'",
+                     "'o--'", "'--'", "'..'", "'-->'", "'..>'", "'@startuml'",
                      "'@enduml'" ]
 
-    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "Start", "End", 
+    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "Start", "End",
                       "IDENTIFIER", "STRING", "NUMBER", "WHITESPACE", "DATE" ]
 
     RULE_objectDiagram = 0
@@ -68,8 +67,8 @@ class ODParser ( Parser ):
     RULE_linkType = 10
     RULE_linkName = 11
 
-    ruleNames =  [ "objectDiagram", "objectDeclaration", "objectName", "className", 
-                   "propertiesBlock", "property", "propertyName", "propertyValue", 
+    ruleNames =  [ "objectDiagram", "objectDeclaration", "objectName", "className",
+                   "propertiesBlock", "property", "propertyName", "propertyValue",
                    "linkDeclaration", "linkObjectName", "linkType", "linkName" ]
 
     EOF = Token.EOF
@@ -150,7 +149,7 @@ class ODParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 24
             self.match(ODParser.Start)
-            self.state = 27 
+            self.state = 27
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
@@ -168,7 +167,7 @@ class ODParser ( Parser ):
                 else:
                     raise NoViableAltException(self)
 
-                self.state = 29 
+                self.state = 29
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==1 or _la==13):
@@ -539,7 +538,7 @@ class ODParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 62 
+            self.state = 62
             self._errHandler.sync(self)
             _alt = 1
             while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -554,7 +553,7 @@ class ODParser ( Parser ):
 
                 else:
                     raise NoViableAltException(self)
-                self.state = 64 
+                self.state = 64
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,5,self._ctx)
 

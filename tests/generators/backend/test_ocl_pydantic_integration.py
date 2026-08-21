@@ -8,11 +8,9 @@ work correctly at runtime, rejecting invalid values and accepting valid ones.
 import pytest
 import os
 import tempfile
-import sys
 from besser.BUML.metamodel.structural import (
-    DomainModel, Class, Property, Constraint,
-    IntegerType, StringType, FloatType, BooleanType,
-    BinaryAssociation, Multiplicity
+    DomainModel, Constraint,
+    BinaryAssociation, Multiplicity, Property,
 )
 from besser.generators.pydantic_classes import PydanticGenerator
 
@@ -21,9 +19,19 @@ from besser.generators.pydantic_classes import PydanticGenerator
 # Test Fixtures
 # ============================================================================
 
+# team_class is provided by tests/conftest.py.
+# player_class is overridden here because the Pydantic integration tests
+# generate actual Pydantic models and need a Player class without the
+# 'active' attribute (the shared fixture includes it for OCL utils tests).
+
+from besser.BUML.metamodel.structural import (
+    Class, Property, IntegerType, StringType, FloatType,
+)
+
+
 @pytest.fixture
 def player_class():
-    """Create a Player class with various attributes."""
+    """Player class without the 'active' field for Pydantic generation tests."""
     return Class(name="Player", attributes={
         Property(name="age", type=IntegerType),
         Property(name="name", type=StringType),
@@ -33,17 +41,12 @@ def player_class():
 
 
 @pytest.fixture
-def team_class():
-    """Create a Team class."""
-    return Class(name="Team", attributes={
-        Property(name="name", type=StringType),
-        Property(name="city", type=StringType),
-    })
-
-
-@pytest.fixture
 def simple_domain_model(player_class, team_class):
-    """Create a simple domain model with Player and Team."""
+    """Create a simple domain model with Player and Team and an association.
+
+    Extends the shared player_class/team_class fixtures with a
+    team_player association needed by the Pydantic integration tests.
+    """
     association = BinaryAssociation(
         name="team_player",
         ends={

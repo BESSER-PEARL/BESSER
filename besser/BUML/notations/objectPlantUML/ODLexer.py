@@ -1,6 +1,5 @@
 # Generated from OD.g4 by ANTLR 4.13.1
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
     from typing import TextIO
@@ -91,15 +90,15 @@ class ODLexer(Lexer):
     modeNames = [ "DEFAULT_MODE" ]
 
     literalNames = [ "<INVALID>",
-            "'Object'", "':'", "'{'", "'}'", "'<|--'", "'o--'", "'--'", 
+            "'Object'", "':'", "'{'", "'}'", "'<|--'", "'o--'", "'--'",
             "'..'", "'-->'", "'..>'", "'@startuml'", "'@enduml'" ]
 
     symbolicNames = [ "<INVALID>",
-            "Start", "End", "IDENTIFIER", "STRING", "NUMBER", "WHITESPACE", 
+            "Start", "End", "IDENTIFIER", "STRING", "NUMBER", "WHITESPACE",
             "DATE" ]
 
-    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6", 
-                  "T__7", "T__8", "T__9", "Start", "End", "IDENTIFIER", 
+    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6",
+                  "T__7", "T__8", "T__9", "Start", "End", "IDENTIFIER",
                   "STRING", "NUMBER", "WHITESPACE", "DATE" ]
 
     grammarFileName = "OD.g4"
@@ -115,7 +114,7 @@ class ODLexer(Lexer):
     def action(self, localctx:RuleContext, ruleIndex:int, actionIndex:int):
         if self._actions is None:
             actions = dict()
-            actions[13] = self.STRING_action 
+            actions[13] = self.STRING_action
             self._actions = actions
         action = self._actions.get(ruleIndex, None)
         if action is not None:
@@ -127,6 +126,6 @@ class ODLexer(Lexer):
     def STRING_action(self, localctx:RuleContext , actionIndex:int):
         if actionIndex == 0:
             4
-     
+
 
 

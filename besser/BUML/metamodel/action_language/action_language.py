@@ -24,7 +24,7 @@ ReturnType = TypeVar('ReturnType')
 class Statement(ABC):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Statements(self, context)
-    
+
 
 class Expression(Statement):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
@@ -566,7 +566,7 @@ class ImplicitDecl(AssignTarget, NameDecl):
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_ImplicitDecl(self, context)
-    
+
 
 class Parameter(NameDecl):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
@@ -639,7 +639,7 @@ class FunctionDefinition(NameDecl):
 class ConditionalBranch(ABC):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_ConditionalBranch(self, context)
-    
+
 
 class Block(ConditionalBranch):
     def __init__(self, statements:list[Statement]):
@@ -689,7 +689,7 @@ class Condition(Statement, ConditionalBranch):
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Condition(self, context)
-    
+
 
 class CondLoop(Statement):
     def __init__(self, condition: Expression, body: Block):

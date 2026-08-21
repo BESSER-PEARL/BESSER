@@ -1,9 +1,9 @@
 from abc import ABC
 from enum import Enum
 import json
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
-from besser.BUML.metamodel.state_machine.state_machine import Action, Transition, Event, Condition, StateMachine, State, Session, TransitionBuilder
+from besser.BUML.metamodel.state_machine.state_machine import Action, Event, Condition, StateMachine, State, Session, TransitionBuilder
 from besser.BUML.metamodel.structural import NamedElement
 
 
@@ -55,17 +55,45 @@ class LLMReply(Action):
 
     Args:
         prompt (str, optional): Additional system prompt injected when calling the LLM.
+        llm_name (str, optional): Name of the LLM (registered on the agent via
+            :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
+            the generator fall back to the agent's default LLM.
 
     Attributes:
         prompt (str | None): Optional system prompt that augments the user message.
+        llm_name (str | None): Name of the LLM used for this reply.
     """
 
-    def __init__(self, prompt: Optional[str] = None):
+    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
         super().__init__()
         self.prompt: Optional[str] = prompt
+        self.llm_name: Optional[str] = llm_name
 
     def __repr__(self):
-        return f"LLMReply(prompt={self.prompt!r})"
+        return f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
+
+
+class LLMChatReply(Action):
+    """Primitive action that represents sending a chat-style reply using an LLM.
+
+    Args:
+        prompt (str, optional): Additional system prompt injected in the chat call.
+        llm_name (str, optional): Name of the LLM (registered on the agent via
+            :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
+            the generator fall back to the agent's default LLM.
+
+    Attributes:
+        prompt (str | None): Optional system prompt used by ``llm.chat(...)``.
+        llm_name (str | None): Name of the LLM used for this reply.
+    """
+
+    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+        super().__init__()
+        self.prompt: Optional[str] = prompt
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
 
 
 class RAGReply(Action):
@@ -87,6 +115,238 @@ class RAGReply(Action):
 
     def __repr__(self):
         return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
+
+
+class WebCrawlLLMReply(Action):
+    """Crawls a website (or reuses a cached result) and queries an LLM with the content.
+
+    Args:
+        initial_url (str): Target URL. Used as BFS start point when run_crawl=True,
+            or as the session-key suffix when run_crawl=False.
+        max_depth (int): Maximum link depth to follow. Used only when run_crawl=True.
+        max_pages (int): Maximum number of pages to fetch. Used only when run_crawl=True.
+        crawl_format (str): Output format for crawled content ("markdown" or "html").
+        base_url_prefix (str, optional): Only URLs starting with this prefix are included.
+            Used only when run_crawl=True.
+        run_crawl (bool): When True, the crawl runs and its result is stored in the session
+            under the key ``f"web_crawl_{initial_url}"``. When False, reads from that key.
+        no_crawl_error_message (str): Reply sent when run_crawl=False and no cached result
+            is found in the session.
+        system_message_prefix (str, optional): Prepended to the crawl result when building
+            the LLM system message. Defaults to a generic instruction when None.
+        llm_name (str, optional): Name of the LLM to use. Falls back to the agent default.
+
+    Attributes:
+        initial_url (str): Target URL.
+        max_depth (int): Maximum link depth.
+        max_pages (int): Maximum number of pages.
+        crawl_format (str): Output format ("markdown" or "html").
+        base_url_prefix (str | None): Optional URL prefix filter.
+        run_crawl (bool): Whether to execute the crawl.
+        no_crawl_error_message (str): Error reply when no cached data exists.
+        system_message_prefix (str | None): Prefix for the LLM system message.
+        llm_name (str | None): Name of the LLM to use.
+    """
+
+    def __init__(
+        self,
+        initial_url: str = "",
+        max_depth: int = 2,
+        max_pages: int = 20,
+        crawl_format: str = "markdown",
+        base_url_prefix: Optional[str] = None,
+        run_crawl: bool = True,
+        no_crawl_error_message: str = "No web crawl data is available yet.",
+        system_message_prefix: Optional[str] = None,
+        llm_name: Optional[str] = None,
+    ):
+        super().__init__()
+        self.initial_url: str = initial_url
+        self.max_depth: int = max_depth
+        self.max_pages: int = max_pages
+        self.crawl_format: str = crawl_format
+        self.base_url_prefix: Optional[str] = base_url_prefix
+        self.run_crawl: bool = run_crawl
+        self.no_crawl_error_message: str = no_crawl_error_message
+        self.system_message_prefix: Optional[str] = system_message_prefix
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return (
+            "WebCrawlLLMReply("
+            f"initial_url={self.initial_url!r}, "
+            f"max_depth={self.max_depth!r}, "
+            f"max_pages={self.max_pages!r}, "
+            f"crawl_format={self.crawl_format!r}, "
+            f"base_url_prefix={self.base_url_prefix!r}, "
+            f"run_crawl={self.run_crawl!r}, "
+            f"no_crawl_error_message={self.no_crawl_error_message!r}, "
+            f"system_message_prefix={self.system_message_prefix!r}, "
+            f"llm_name={self.llm_name!r}"
+            ")"
+        )
+
+
+class WebSocketReplyMarkdown(Action):
+    """Send a Markdown-formatted text reply via WebSocketPlatform.reply_markdown()."""
+
+    def __init__(self, message: str = ""):
+        super().__init__()
+        self.message: str = message
+
+    def __repr__(self):
+        return f"WebSocketReplyMarkdown(message={self.message!r})"
+
+
+class WebSocketReplyHTML(Action):
+    """Send an HTML-formatted text reply via WebSocketPlatform.reply_html()."""
+
+    def __init__(self, message: str = ""):
+        super().__init__()
+        self.message: str = message
+
+    def __repr__(self):
+        return f"WebSocketReplyHTML(message={self.message!r})"
+
+
+class WebSocketReplySpeech(Action):
+    """Convert text to speech and send the audio via WebSocketPlatform.reply_speech()."""
+
+    def __init__(self, message: str = "", audio_speed: Optional[float] = None):
+        super().__init__()
+        self.message: str = message
+        self.audio_speed: Optional[float] = audio_speed
+
+    def __repr__(self):
+        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r})"
+
+
+class WebSocketReplyOptions(Action):
+    """Send a list of selectable options via WebSocketPlatform.reply_options()."""
+
+    def __init__(self, options: Optional[list] = None):
+        super().__init__()
+        self.options: list = options if options is not None else []
+
+    def __repr__(self):
+        return f"WebSocketReplyOptions(options={self.options!r})"
+
+
+class WebSocketReplyLocation(Action):
+    """Send a geographic location reply via WebSocketPlatform.reply_location()."""
+
+    def __init__(self, latitude: float = 0.0, longitude: float = 0.0):
+        super().__init__()
+        self.latitude: float = latitude
+        self.longitude: float = longitude
+
+    def __repr__(self):
+        return f"WebSocketReplyLocation(latitude={self.latitude!r}, longitude={self.longitude!r})"
+
+
+class WebSocketReplyFile(Action):
+    """Send a file reply via WebSocketPlatform.reply_file(). Requires a runtime File object."""
+
+    def __repr__(self):
+        return "WebSocketReplyFile()"
+
+
+class WebSocketReplyImage(Action):
+    """Send an image reply via WebSocketPlatform.reply_image(). Requires a runtime numpy ndarray."""
+
+    def __repr__(self):
+        return "WebSocketReplyImage()"
+
+
+class WebSocketReplyDataframe(Action):
+    """Send a DataFrame reply via WebSocketPlatform.reply_dataframe(). Requires a runtime pandas DataFrame."""
+
+    def __repr__(self):
+        return "WebSocketReplyDataframe()"
+
+
+class WebSocketReplyPlotly(Action):
+    """Send a Plotly figure reply via WebSocketPlatform.reply_plotly(). Requires a runtime plotly Figure."""
+
+    def __repr__(self):
+        return "WebSocketReplyPlotly()"
+
+
+class DBReply(Action):
+    """Primitive action that represents fetching information from a database.
+
+    Args:
+        db_selection_type (str): Database selection mode. Supported values are ``default`` and ``custom``.
+        db_custom_name (str, optional): Custom database identifier used when ``db_selection_type`` is ``custom``.
+        db_query_mode (str): Query execution mode. Supported values are ``llm_query`` and ``sql``.
+        db_operation (str): SQL operation restriction. Supported values are ``any``, ``select``, ``insert``,
+            ``update`` and ``delete``.
+        db_sql_query (str, optional): SQL query to run when ``db_query_mode`` is ``sql``.
+
+    Attributes:
+        db_selection_type (str): Whether the default application database or a named custom database is used.
+        db_custom_name (str | None): Name of the custom database when applicable.
+        db_query_mode (str): How the query will be produced at runtime.
+        db_operation (str): Which DB handler method must be used when executing the query.
+        db_sql_query (str | None): Raw SQL query when SQL mode is selected.
+    """
+
+    VALID_SELECTION_TYPES = {"default", "custom"}
+    VALID_QUERY_MODES = {"llm_query", "sql"}
+    VALID_OPERATIONS = {"any", "select", "insert", "update", "delete"}
+
+    def __init__(
+            self,
+            db_selection_type: str = "default",
+            db_custom_name: Optional[str] = None,
+            db_query_mode: str = "llm_query",
+            db_operation: str = "any",
+            db_sql_query: Optional[str] = None,
+            llm_name: Optional[str] = None,
+    ):
+        super().__init__()
+
+        normalized_selection_type = (db_selection_type or "default").strip().lower()
+        if normalized_selection_type not in self.VALID_SELECTION_TYPES:
+            raise ValueError(
+                f"Unsupported db_selection_type '{db_selection_type}'. "
+                f"Expected one of {sorted(self.VALID_SELECTION_TYPES)}."
+            )
+
+        normalized_query_mode = (db_query_mode or "llm_query").strip().lower()
+        if normalized_query_mode not in self.VALID_QUERY_MODES:
+            raise ValueError(
+                f"Unsupported db_query_mode '{db_query_mode}'. "
+                f"Expected one of {sorted(self.VALID_QUERY_MODES)}."
+            )
+
+        normalized_operation = (db_operation or "any").strip().lower()
+        if normalized_operation not in self.VALID_OPERATIONS:
+            raise ValueError(
+                f"Unsupported db_operation '{db_operation}'. "
+                f"Expected one of {sorted(self.VALID_OPERATIONS)}."
+            )
+
+        normalized_custom_name = (db_custom_name or "").strip() or None
+
+        self.db_selection_type: str = normalized_selection_type
+        self.db_custom_name: Optional[str] = normalized_custom_name
+        self.db_query_mode: str = normalized_query_mode
+        self.db_operation: str = normalized_operation
+        self.db_sql_query: Optional[str] = db_sql_query
+        self.llm_name: Optional[str] = llm_name
+
+    def __repr__(self):
+        return (
+            "DBReply("
+            f"db_selection_type={self.db_selection_type!r}, "
+            f"db_custom_name={self.db_custom_name!r}, "
+            f"db_query_mode={self.db_query_mode!r}, "
+            f"db_operation={self.db_operation!r}, "
+            f"db_sql_query={self.db_sql_query!r}, "
+            f"llm_name={self.llm_name!r}"
+            ")"
+        )
 
 
 class IntentClassifierConfiguration(ABC):
@@ -163,44 +423,52 @@ class LLMSuite(Enum):
     huggingface = "huggingface"
     huggingface_inference_api = "huggingface-inference-api"
     replicate = "replicate"
+    ollama = "ollama"
 
 
 class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     """The LLM Intent Classifier Configuration class.
 
     Args:
-        llm_suite (LLMSuite): the service provider from which we will load/access the LLM
+        llm_suite (LLMSuite | None): the service provider from which we will
+            load/access the LLM. Optional when ``llm_name`` is provided —
+            in that case the suite is resolved from the named LLM's class.
         parameters (dict): the LLM parameters (this will vary depending on the suite and the LLM)
         use_intent_descriptions (bool): whether to include the intent descriptions in the LLM prompt
         use_training_sentences (bool): whether to include the intent training sentences in the LLM prompt
         use_entity_descriptions (bool): whether to include the entity descriptions in the LLM prompt
         use_entity_synonyms (bool): whether to include the entity value's synonyms in the LLM prompt
+        llm_name (str, optional): Name of an LLM registered on the agent
+            (via :meth:`Agent.new_llm`) that this classifier should use.
 
     Attributes:
-        llm_suite (str): the service provider from which we will load/access the LLM
+        llm_suite (str | None): the service provider from which we will load/access the LLM
         parameters (dict): the LLM parameters (this will vary depending on the suite and the LLM)
         use_intent_descriptions (bool): whether to include the intent descriptions in the LLM prompt
         use_training_sentences (bool): whether to include the intent training sentences in the LLM prompt
         use_entity_descriptions (bool): whether to include the entity descriptions in the LLM prompt
         use_entity_synonyms (bool): whether to include the entity value's synonyms in the LLM prompt
+        llm_name (str | None): Name of the registered LLM that this classifier should use.
     """
 
     def __init__(
             self,
-            llm_suite: LLMSuite,
-            parameters: dict = {},
+            llm_suite: Optional[LLMSuite] = None,
+            parameters: dict = None,
             use_intent_descriptions: bool = False,
             use_training_sentences: bool = False,
             use_entity_descriptions: bool = False,
-            use_entity_synonyms: bool = False
+            use_entity_synonyms: bool = False,
+            llm_name: Optional[str] = None,
     ):
         super().__init__()
-        self.llm_suite: str = llm_suite.value
-        self.parameters: dict = parameters
+        self.llm_suite: Optional[str] = llm_suite.value if llm_suite is not None else None
+        self.parameters: dict = parameters if parameters is not None else {}
         self.use_intent_descriptions: bool = use_intent_descriptions
         self.use_training_sentences: bool = use_training_sentences
         self.use_entity_descriptions: bool = use_entity_descriptions
         self.use_entity_synonyms: bool = use_entity_synonyms
+        self.llm_name: Optional[str] = llm_name
 
 
 class LLMWrapper(ABC):
@@ -258,7 +526,7 @@ class LLMWrapper(ABC):
             session (Session): the user session
             parameters (dict): the LLM parameters. If none is provided, the RAG's default value will be used
             system_message (str): system message to give high priority context to the LLM
-       
+
         Returns:
             str: the LLM output
         """
@@ -464,6 +732,472 @@ class LLMReplicate(LLMWrapper):
         self.num_previous_messages = num_previous_messages
 
 
+class LLMOllama(LLMWrapper):
+    """An LLM wrapper for locally hosted models served via Ollama.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name
+        parameters (dict): the LLM parameters. Typically includes ``base_url``
+            (default ``http://localhost:11434``) and ``model`` (e.g. ``"llama3"``).
+        num_previous_messages (int): for the chat functionality, the number of previous
+            messages of the conversation to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous
+            messages of the conversation to add to the prompt context (must be > 0)
+        _global_context (str): the global context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMMistral(LLMWrapper):
+    """An LLM wrapper for Mistral AI models via Mistral's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"mistral-small-latest"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMDeepSeek(LLMWrapper):
+    """An LLM wrapper for DeepSeek models via DeepSeek's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"deepseek-chat"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMGoogle(LLMWrapper):
+    """An LLM wrapper for Google Gemini models via Google's OpenAI-compatible endpoint.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"gemini-2.5-flash"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMMeta(LLMWrapper):
+    """An LLM wrapper for Meta Llama models via Meta's hosted OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"Llama-3.3-70B-Instruct"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMAnthropic(LLMWrapper):
+    """An LLM wrapper for Anthropic Claude models using the native anthropic SDK.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"claude-opus-4-5"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMQwen(LLMWrapper):
+    """An LLM wrapper for Alibaba Qwen models via DashScope's OpenAI-compatible endpoint.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"qwen-max"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMxAI(LLMWrapper):
+    """An LLM wrapper for xAI Grok models via xAI's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"grok-3-mini"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMGroq(LLMWrapper):
+    """An LLM wrapper for Groq-hosted models via Groq's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"llama-3.3-70b-versatile"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMTogether(LLMWrapper):
+    """An LLM wrapper for Together AI-hosted models via Together's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"meta-llama/Llama-3.3-70B-Instruct-Turbo"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMOpenRouter(LLMWrapper):
+    """An LLM wrapper for models accessed via OpenRouter's OpenAI-compatible API.
+
+    OpenRouter provides a unified gateway to hundreds of models from many providers.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier in OpenRouter format
+            (e.g. ``"anthropic/claude-opus-4"``, ``"openai/gpt-4o"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
 class RAGVectorStore:
     """Declarative description of a vector store used by a RAG pipeline.
 
@@ -508,7 +1242,15 @@ class RAG(NamedElement):
 
         vector_store = Chroma(...)
         splitter = RecursiveCharacterTextSplitter(...)
-        rag = RAG(agent=agent, vector_store=vector_store, splitter=splitter, llm_name='gpt-4o-mini', k=4, num_previous_messages=0)
+        rag = RAG(
+            agent=agent,
+            vector_store=vector_store,
+            splitter=splitter,
+            llm_name='gpt-4o-mini',
+            llm_prompt='Use only trusted corpus facts.',
+            k=4,
+            num_previous_messages=0,
+        )
 
     Args:
         name (str): Logical name of the RAG resource.
@@ -516,6 +1258,7 @@ class RAG(NamedElement):
         vector_store (RAGVectorStore): Vector store definition.
         splitter (RAGTextSplitter): Chunking strategy definition.
         llm_name (str): Identifier of the LLM used to synthesize answers.
+        llm_prompt (str | None): Optional prefix instructions injected before each RAG prompt.
         k (int): Number of chunks retrieved per question.
         num_previous_messages (int): Conversation context depth forwarded to the LLM.
     """
@@ -527,6 +1270,7 @@ class RAG(NamedElement):
             vector_store: RAGVectorStore,
             splitter: RAGTextSplitter,
             llm_name: str,
+            llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
     ):
@@ -535,8 +1279,114 @@ class RAG(NamedElement):
         self.vector_store: RAGVectorStore = vector_store
         self.splitter: RAGTextSplitter = splitter
         self.llm_name: str = llm_name
+        self.llm_prompt: Optional[str] = llm_prompt
         self.k: int = k
         self.num_previous_messages: int = num_previous_messages
+
+
+# --- Reasoning extension primitives -------------------------------------- #
+#
+# Mirror the runtime classes in baf.reasoning (Tool / Skill / Workspace) and
+# baf.library.state.reasoning_state_library (the ReasoningState body factory).
+# These classes are pure data carriers — they describe what should be
+# generated in the BAF agent code, not how the runtime behaves.
+
+
+class Tool(NamedElement):
+    """A Python callable the agent's reasoning state can invoke.
+
+    The metamodel stores the tool's source code as a string (similar to how
+    ``CustomCodeAction`` stores user-supplied Python). The BAF generator
+    pastes ``code`` into the output module verbatim and registers the
+    callable on the agent via ``agent.new_tool(...)``.
+
+    Args:
+        name (str): the tool name (defaults to the callable's own name at
+            runtime, but here we require it explicitly so the generator
+            can produce a stable Python identifier).
+        description (str): a short description shown to the LLM.
+        code (str): the Python source defining the callable. Must define a
+            top-level ``def`` whose name matches ``name``.
+
+    Attributes:
+        description (str): the description shown to the LLM.
+        code (str): the Python source defining the callable.
+    """
+
+    def __init__(self, name: str, description: str = "", code: str = ""):
+        super().__init__(name)
+        self.description: str = description
+        self.code: str = code
+
+    def __repr__(self):
+        return f"Tool(name={self.name!r})"
+
+
+class Skill(NamedElement):
+    """A markdown-based playbook the reasoning state injects into the system prompt.
+
+    Args:
+        name (str): the skill name. Surfaced to the LLM as the skill header.
+        content (str): the markdown body of the skill.
+        description (str | None): optional one-line description.
+
+    Attributes:
+        content (str): the markdown body of the skill.
+        description (str | None): optional one-line description.
+    """
+
+    def __init__(self, name: str, content: str = "", description: Optional[str] = None):
+        super().__init__(name)
+        self.content: str = content
+        self.description: Optional[str] = description
+
+    def __repr__(self):
+        return f"Skill(name={self.name!r})"
+
+
+class Workspace(NamedElement):
+    """A filesystem path the reasoning state can browse and (optionally) modify.
+
+    The BAF runtime auto-registers ``list_directory`` / ``read_file`` tools
+    on the agent the first time a workspace is added, plus
+    ``write_file`` / ``create_file`` / ``delete_file`` when at least one
+    workspace has ``writable=True``.
+
+    Args:
+        name (str): the workspace identifier (used by the LLM as the
+            ``workspace`` argument when multiple workspaces are present).
+        path (str): the workspace root path (absolute or relative to the
+            generated agent's working directory).
+        description (str | None): a short human-readable explanation of
+            *what* the workspace contains. Strongly recommended.
+        writable (bool): when False, mutating operations on this workspace
+            raise ``WorkspaceError`` at runtime. Defaults to True.
+        max_read_bytes (int): cap on ``read_file`` output. Defaults to
+            ``200_000`` (matches the BAF runtime default).
+
+    Attributes:
+        path (str): the workspace root path.
+        description (str | None): optional human-readable description.
+        writable (bool): whether mutating operations are allowed.
+        max_read_bytes (int): cap on ``read_file`` output.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        path: str = "",
+        description: Optional[str] = None,
+        writable: bool = True,
+        max_read_bytes: int = 200_000,
+    ):
+        super().__init__(name)
+        self.path: str = path
+        self.description: Optional[str] = description
+        self.writable: bool = writable
+        self.max_read_bytes: int = max_read_bytes
+
+    def __repr__(self):
+        return f"Workspace(name={self.name!r}, writable={self.writable!r})"
 
 
 class AgentSession(Session):
@@ -1094,15 +1944,15 @@ class AgentState(State):
     def go_to(self, dest: 'AgentState') -> None:
         """Create a new `auto` transition on this state.
 
-        This transition needs no event to be triggered, which means that when the agent moves to a state 
-        that has an `auto` transition, the agent will move to the transition's destination state 
+        This transition needs no event to be triggered, which means that when the agent moves to a state
+        that has an `auto` transition, the agent will move to the transition's destination state
         unconditionally without waiting for user input. This transition cannot be combined with other
         transitions.
 
         Args:
             dest (AgentState): the destination state
         """
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=Auto())
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=[Auto()])
         transition_builder.go_to(dest)
 
     def when_intent_matched(self, intent: Intent) -> TransitionBuilder:
@@ -1121,13 +1971,13 @@ class AgentState(State):
         self.intents.append(intent)
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(intent)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_no_intent_matched(self) -> TransitionBuilder:
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(Intent("fallback_intent"))
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_variable_matches_operation(
@@ -1150,7 +2000,7 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         condition: Condition = VariableOperationMatcher(var_name, operation, target)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=[condition])
         return transition_builder
 
     def when_file_received(self, allowed_types: list[str] or str = None) -> TransitionBuilder:
@@ -1164,8 +2014,116 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         event = ReceiveFileEvent()
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=FileTypeMatcher(allowed_types))
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[FileTypeMatcher(allowed_types)])
         return transition_builder
+
+    def when_event(self, event: Event) -> TransitionBuilder:
+        """Start the definition of a transition triggered by a custom event.
+
+        Args:
+            event (Event): Event instance used to trigger the transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        return TransitionBuilder(source=self, event=event)
+
+    def when_condition(self, condition: Condition) -> TransitionBuilder:
+        """Start the definition of a transition triggered by a custom condition.
+
+        Args:
+            condition (Condition): Condition instance evaluated by the transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        return TransitionBuilder(source=self, conditions=[condition])
+
+
+class ReasoningState(AgentState):
+    """A predefined state whose body runs an LLM-driven plan→act→observe loop.
+
+    The body is supplied automatically at code-generation time (via the
+    BAF ``new_reasoning_state(...)`` factory) — this metamodel class only
+    captures the configuration knobs that flow into that factory plus the
+    LLM driving the loop.
+
+    Args:
+        agent (Agent): the agent the state belongs to.
+        name (str): the state name.
+        llm (str | None): the name of the LLM that drives the reasoning
+            loop. This is a free-form identifier — the state does not
+            require the LLM to be registered on the agent's ``llms`` list;
+            code generation will instantiate an LLM with this name.
+            May be ``None`` during incremental model construction (e.g.
+            while the diagram is being built).
+        initial (bool): whether this is the agent's initial state.
+        max_steps (int): maximum LLM turns per user message.
+        enable_task_planning (bool): when True, expose the built-in
+            ``add_tasks`` / ``complete_task`` / ``skip_task`` tools and
+            require all tasks to be resolved before a final answer is
+            accepted.
+        stream_steps (bool): forward intermediate step events to the
+            session's platform (if it supports
+            ``reply_reasoning_step``).
+        system_prompt (str | None): optional override for the base system
+            prompt. ``None`` keeps the BAF default.
+        fallback_message (str | None): optional override for the message
+            sent when ``max_steps`` is exhausted. ``None`` keeps the BAF
+            default.
+
+    Attributes:
+        llm (str | None): name of the LLM driving the loop.
+        max_steps (int): maximum LLM turns per user message.
+        enable_task_planning (bool): whether to expose the planning tools.
+        stream_steps (bool): whether to stream intermediate events.
+        system_prompt (str | None): optional system prompt override.
+        fallback_message (str | None): optional fallback override.
+    """
+
+    def __init__(
+        self,
+        agent: 'Agent',
+        name: str,
+        llm: Optional[str] = None,
+        initial: bool = False,
+        max_steps: int = 8,
+        enable_task_planning: bool = True,
+        stream_steps: bool = True,
+        system_prompt: Optional[str] = None,
+        fallback_message: Optional[str] = None,
+    ):
+        super().__init__(agent, name, initial)
+        if llm is not None and not isinstance(llm, str):
+            llm = getattr(llm, "name", None)
+        self.llm: Optional[str] = llm
+        self.max_steps: int = int(max_steps)
+        self.enable_task_planning: bool = bool(enable_task_planning)
+        self.stream_steps: bool = bool(stream_steps)
+        self.system_prompt: Optional[str] = system_prompt
+        self.fallback_message: Optional[str] = fallback_message
+
+    def set_body(self, body):
+        """Reasoning states use the predefined :func:`new_reasoning_state`
+        body — a hand-written body would be ignored at generation time."""
+        raise ValueError(
+            f"ReasoningState '{self.name}' does not accept a hand-written "
+            f"body; the body is provided by new_reasoning_state(...) at "
+            f"code-generation time."
+        )
+
+    def set_fallback_body(self, body):
+        """ReasoningState does not accept a fallback body either — the
+        reasoning loop has its own ``fallback_message`` knob."""
+        raise ValueError(
+            f"ReasoningState '{self.name}' does not accept a fallback "
+            f"body; configure ``fallback_message`` instead."
+        )
+
+    def __repr__(self):
+        return (f"ReasoningState(name={self.name!r}, llm={self.llm!r}, "
+                f"max_steps={self.max_steps}, "
+                f"enable_task_planning={self.enable_task_planning})")
 
 
 class Agent(StateMachine):
@@ -1195,7 +2153,12 @@ class Agent(StateMachine):
         self.entities: list[Entity] = []
         self.global_initial_states: list[tuple[AgentState, Intent]] = []
         self.llms: list[LLMWrapper] = []
+        self.default_llm_name: Optional[str] = None
         self.rags: list[RAG] = []
+        # Reasoning extension primitives — see baf.reasoning at runtime.
+        self.tools: list[Tool] = []
+        self.skills: list[Skill] = []
+        self.workspaces: list[Workspace] = []
 
     def validate(self, raise_exception: bool = True) -> dict:
         """
@@ -1212,6 +2175,8 @@ class Agent(StateMachine):
 
         self._validate_state_intent_name_collisions(errors)
         self._validate_transition_intent_references(errors)
+        self._validate_reasoning_primitives(errors, warnings)
+        self._validate_llm_references(errors, warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -1307,9 +2272,9 @@ class Agent(StateMachine):
         if new_state in self.states:
             raise ValueError(f"Duplicated state in agent ({new_state.name})")
         if initial and self.initial_state():
-            raise ValueError(f"A agent must have exactly 1 initial state")
+            raise ValueError("A agent must have exactly 1 initial state")
         if not initial and not self.states:
-            raise ValueError(f"The first state of a agent must be initial")
+            raise ValueError("The first state of a agent must be initial")
         self.states.append(new_state)
         return new_state
 
@@ -1393,12 +2358,73 @@ class Agent(StateMachine):
         self.entities.append(new_entity)
         return new_entity
 
+    # Mapping from the public ``provider`` keyword (used in the WME and the
+    # generator template) to the matching :class:`LLMWrapper` subclass.
+    _LLM_PROVIDERS: dict[str, type] = {}  # populated below the class definition
+
+    def new_llm(
+            self,
+            name: str,
+            provider: str = "openai",
+            parameters: Optional[dict] = None,
+            num_previous_messages: int = 1,
+            global_context: Optional[str] = None,
+    ) -> 'LLMWrapper':
+        """Register an LLM on the agent and return the :class:`LLMWrapper` instance.
+
+        ``provider`` selects the concrete :class:`LLMWrapper` subclass via
+        :attr:`Agent._LLM_PROVIDERS`; ``sorted(Agent._LLM_PROVIDERS)`` is the
+        authoritative list of accepted keys (the :class:`ValueError` raised below
+        reports it). Names must be unique on the agent so other elements
+        (reasoning states, RAG, replies, intent classifiers) can reference the
+        LLM by ``llm_name``.
+        """
+        if any(existing.name == name for existing in self.llms):
+            raise ValueError(
+                f"An agent cannot have two LLMs with the same name ({name})."
+            )
+        provider_key = (provider or "openai").strip().lower()
+        llm_cls = self._LLM_PROVIDERS.get(provider_key)
+        if llm_cls is None:
+            raise ValueError(
+                f"Unsupported LLM provider '{provider}'. Expected one of "
+                f"{sorted(self._LLM_PROVIDERS)}."
+            )
+        # Each subclass auto-appends to ``self.llms`` via LLMWrapper.__init__.
+        llm = llm_cls(
+            agent=self,
+            name=name,
+            parameters=parameters if parameters is not None else {},
+            num_previous_messages=num_previous_messages,
+            global_context=global_context,
+        )
+        # First registered LLM becomes the default unless one is set already.
+        if self.default_llm_name is None:
+            self.default_llm_name = name
+        return llm
+
+    def set_default_llm(self, name: str) -> None:
+        """Mark the LLM with the given name as the agent's default.
+
+        The default LLM is the one used by every consumer (``LLMReply``,
+        ``DBReply``, RAG, intent classifier) that does not specify its own
+        ``llm_name``. The named LLM must already be registered on the
+        agent via :meth:`new_llm`.
+        """
+        if not any(existing.name == name for existing in self.llms):
+            raise ValueError(
+                f"Cannot set default LLM to '{name}': no LLM with that "
+                f"name is registered on agent '{self.name}'."
+            )
+        self.default_llm_name = name
+
     def new_rag(
             self,
             name: str,
             vector_store: RAGVectorStore,
             splitter: RAGTextSplitter,
             llm_name: str,
+            llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
     ) -> RAG:
@@ -1412,6 +2438,7 @@ class Agent(StateMachine):
             vector_store=vector_store,
             splitter=splitter,
             llm_name=llm_name,
+            llm_prompt=llm_prompt,
             k=k,
             num_previous_messages=num_previous_messages,
         )
@@ -1443,6 +2470,291 @@ class Agent(StateMachine):
                 return None  # Only 1 platform max of each kind
         self.platforms.append(telegram_platform)
         return telegram_platform
+
+    # ─── Reasoning extension builders ─────────────────────────────────── #
+
+    def add_tool(self, tool: Tool) -> Tool:
+        """Add a pre-built :class:`Tool` to the agent.
+
+        Mirrors :meth:`add_intent` — the caller constructs the wrapper, this
+        method registers it. Use :meth:`new_tool` to skip the explicit
+        ``Tool(...)`` construction.
+
+        Args:
+            tool (Tool): the tool to register.
+
+        Returns:
+            Tool: the registered tool.
+        """
+        if any(t.name == tool.name for t in self.tools):
+            raise ValueError(
+                f"A agent cannot have two tools with the same name ({tool.name})."
+            )
+        self.tools.append(tool)
+        return tool
+
+    def new_tool(self, name: str, description: str = "", code: str = "") -> Tool:
+        """Build a :class:`Tool` and register it on the agent."""
+        return self.add_tool(Tool(name=name, description=description, code=code))
+
+    def add_skill(self, skill: Skill) -> Skill:
+        """Add a pre-built :class:`Skill` to the agent."""
+        if any(s.name == skill.name for s in self.skills):
+            raise ValueError(
+                f"A agent cannot have two skills with the same name ({skill.name})."
+            )
+        self.skills.append(skill)
+        return skill
+
+    def new_skill(
+        self,
+        name: str,
+        content: str = "",
+        description: Optional[str] = None,
+    ) -> Skill:
+        """Build a :class:`Skill` and register it on the agent."""
+        return self.add_skill(Skill(name=name, content=content, description=description))
+
+    def add_workspace(self, workspace: Workspace) -> Workspace:
+        """Add a pre-built :class:`Workspace` to the agent."""
+        if any(w.name == workspace.name for w in self.workspaces):
+            raise ValueError(
+                f"A agent cannot have two workspaces with the same name "
+                f"({workspace.name})."
+            )
+        self.workspaces.append(workspace)
+        return workspace
+
+    def new_workspace(
+        self,
+        name: str,
+        path: str = "",
+        description: Optional[str] = None,
+        writable: bool = True,
+        max_read_bytes: int = 200_000,
+    ) -> Workspace:
+        """Build a :class:`Workspace` and register it on the agent."""
+        return self.add_workspace(Workspace(
+            name=name,
+            path=path,
+            description=description,
+            writable=writable,
+            max_read_bytes=max_read_bytes,
+        ))
+
+    def add_reasoning_state(self, state: ReasoningState) -> ReasoningState:
+        """Add a pre-built :class:`ReasoningState` to the agent's state list."""
+        if any(s.name == state.name for s in self.states):
+            raise ValueError(f"Duplicated state in agent ({state.name})")
+        if state.initial and self.initial_state():
+            raise ValueError("A agent must have exactly 1 initial state")
+        if not state.initial and not self.states:
+            raise ValueError("The first state of a agent must be initial")
+        self.states.append(state)
+        return state
+
+    def new_reasoning_state(
+        self,
+        name: str,
+        llm: Optional[str] = None,
+        initial: bool = False,
+        max_steps: int = 8,
+        enable_task_planning: bool = True,
+        stream_steps: bool = True,
+        system_prompt: Optional[str] = None,
+        fallback_message: Optional[str] = None,
+    ) -> ReasoningState:
+        """Create a new :class:`ReasoningState` on the agent.
+
+        Mirrors :meth:`new_state` for non-reasoning states. The ``llm``
+        argument may be omitted during incremental model construction
+        (e.g. while the diagram is being built); it must be set before
+        code generation.
+        """
+        return self.add_reasoning_state(ReasoningState(
+            agent=self,
+            name=name,
+            llm=llm,
+            initial=initial,
+            max_steps=max_steps,
+            enable_task_planning=enable_task_planning,
+            stream_steps=stream_steps,
+            system_prompt=system_prompt,
+            fallback_message=fallback_message,
+        ))
+
+    # ─── LLM-reference validation ────────────────────────────────────── #
+
+    def _validate_llm_references(
+        self,
+        errors: list[str],
+        warnings: list[str],
+    ) -> None:
+        """Validate that every ``llm_name`` reference resolves to a registered LLM."""
+        registered = {llm.name for llm in self.llms}
+
+        def _check(label: str, value: Optional[str]) -> None:
+            if value is None or not str(value).strip():
+                return
+            if value not in registered:
+                errors.append(
+                    f"{label} references LLM '{value}' which is not "
+                    f"registered on agent '{self.name}'. Define it via "
+                    f"agent.new_llm(...) first."
+                )
+
+        # ReasoningState.llm
+        for state in self.states:
+            if isinstance(state, ReasoningState):
+                _check(f"ReasoningState '{state.name}'", state.llm)
+
+        # State bodies / fallback bodies referencing LLMs.
+        for state in self.states:
+            for body, label in (
+                (getattr(state, "body", None), "body"),
+                (getattr(state, "fallback_body", None), "fallback_body"),
+            ):
+                if body is None or not getattr(body, "actions", None):
+                    continue
+                for action in body.actions:
+                    if isinstance(action, (LLMReply, LLMChatReply)):
+                        _check(
+                            f"State '{state.name}' {label} {action.__class__.__name__}",
+                            action.llm_name,
+                        )
+                    elif isinstance(action, DBReply) and action.db_query_mode == "llm_query":
+                        _check(
+                            f"State '{state.name}' {label} DBReply",
+                            action.llm_name,
+                        )
+
+        # RAG configurations.
+        for rag in self.rags:
+            _check(f"RAG '{rag.name}'", rag.llm_name)
+
+        # Default IC config (LLM-based).
+        ic = self.default_ic_config
+        if isinstance(ic, LLMIntentClassifierConfiguration):
+            _check("Default LLMIntentClassifierConfiguration", ic.llm_name)
+
+        # Per-state IC configs (LLM-based).
+        for state in self.states:
+            ic = getattr(state, "ic_config", None)
+            if isinstance(ic, LLMIntentClassifierConfiguration):
+                _check(
+                    f"State '{state.name}' LLMIntentClassifierConfiguration",
+                    ic.llm_name,
+                )
+
+        # Default LLM pointer.
+        if self.default_llm_name is not None:
+            _check("Agent.default_llm_name", self.default_llm_name)
+
+    # ─── Reasoning validation ─────────────────────────────────────────── #
+
+    def _validate_reasoning_primitives(
+        self,
+        errors: list[str],
+        warnings: list[str],
+    ) -> None:
+        """Validate the reasoning extension's metamodel constraints."""
+        # Tool: code must define a top-level def matching the tool name.
+        # (Best-effort regex — the runtime will catch real-world failures.)
+        import re
+        for tool in self.tools:
+            code = (tool.code or "").strip()
+            if not code:
+                errors.append(
+                    f"Tool '{tool.name}' has empty code. Provide the "
+                    f"Python source of the callable."
+                )
+                continue
+            if not re.search(r"^\s*def\s+\w+\s*\(", code, re.MULTILINE):
+                errors.append(
+                    f"Tool '{tool.name}' code must contain at least one "
+                    f"top-level 'def' definition."
+                )
+            # The tool name is emitted as a bare function reference in the
+            # generated agent (``agent.new_tool(<name>, ...)``), so it must be
+            # a valid Python identifier matching the callable defined in code.
+            if not (isinstance(tool.name, str) and tool.name.isidentifier()):
+                errors.append(
+                    f"Tool name '{tool.name}' must be a valid Python "
+                    f"identifier matching the function defined in its code."
+                )
+
+        # Skill: must have non-empty content.
+        for skill in self.skills:
+            if not (skill.content or "").strip():
+                errors.append(
+                    f"Skill '{skill.name}' has empty content."
+                )
+
+        # Workspace: must have a non-empty path.
+        for ws in self.workspaces:
+            if not (ws.path or "").strip():
+                errors.append(
+                    f"Workspace '{ws.name}' has empty path."
+                )
+            if ws.max_read_bytes <= 0:
+                errors.append(
+                    f"Workspace '{ws.name}' must have max_read_bytes > 0 "
+                    f"(got {ws.max_read_bytes})."
+                )
+
+        # ReasoningState: empty llm signals "use the agent's default_llm at
+        # codegen time"; runtime fails loudly if no default is registered.
+        for state in self.states:
+            if not isinstance(state, ReasoningState):
+                continue
+            if state.max_steps <= 0:
+                errors.append(
+                    f"ReasoningState '{state.name}' must have max_steps > 0."
+                )
+
+        # Recommend descriptions for workspaces and tools (warning only).
+        for ws in self.workspaces:
+            if not (ws.description or "").strip():
+                warnings.append(
+                    f"Workspace '{ws.name}' has no description; the LLM "
+                    f"only sees the name and root path and may not "
+                    f"realise it should browse it."
+                )
+        for tool in self.tools:
+            if not (tool.description or "").strip():
+                warnings.append(
+                    f"Tool '{tool.name}' has no description; the LLM may "
+                    f"not pick it up reliably."
+                )
+
+
+# Register the concrete LLM wrappers against the public ``provider`` keys
+# used by :meth:`Agent.new_llm`, the WME, and the BAF generator.
+Agent._LLM_PROVIDERS = {
+    "openai": LLMOpenAI,
+    "huggingface": LLMHuggingFace,
+    "huggingface_api": LLMHuggingFaceAPI,
+    "replicate": LLMReplicate,
+    "ollama": LLMOllama,
+    "mistral": LLMMistral,
+    "deepseek": LLMDeepSeek,
+    "google": LLMGoogle,
+    "meta": LLMMeta,
+    "anthropic": LLMAnthropic,
+    "qwen": LLMQwen,
+    "xai": LLMxAI,
+    "groq": LLMGroq,
+    "together": LLMTogether,
+    "openrouter": LLMOpenRouter,
+}
+
+
+def llm_provider_key(llm: 'LLMWrapper') -> str:
+    """Reverse-lookup the ``provider`` keyword for an existing LLM instance."""
+    for key, cls in Agent._LLM_PROVIDERS.items():
+        if isinstance(llm, cls):
+            return key
+    return "openai"
 
 
 class MatchedParameter:

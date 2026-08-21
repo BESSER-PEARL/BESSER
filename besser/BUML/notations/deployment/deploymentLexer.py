@@ -1,6 +1,5 @@
 # Generated from ./deployment.g4 by ANTLR 4.13.1
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
     from typing import TextIO
@@ -287,29 +286,29 @@ class deploymentLexer(Lexer):
     modeNames = [ "DEFAULT_MODE" ]
 
     literalNames = [ "<INVALID>",
-            "'Deployment model'", "'{'", "'applications'", "'}'", "'services'", 
-            "'containers'", "'deployments'", "'regions'", "'clusters'", 
-            "'->'", "'name'", "':'", "','", "'image'", "'port'", "'cpu_required'", 
-            "'m'", "'memory_required'", "'Mi'", "'domain_model'", "'target_port'", 
-            "'protocol'", "'type'", "'app_name'", "'cpu_limit'", "'memory_limit'", 
-            "'replicas'", "'['", "']'", "'zones'", "'public_cluster'", "'number_of_nodes'", 
-            "'provider'", "'config_file'", "'net_config'", "'networks'", 
-            "'subnetworks'", "'private_cluster'", "'HTTP'", "'HTTPS'", "'TCP'", 
-            "'UDP'", "'ALL'", "'lb'", "'ingress'", "'egress'", "'google'", 
+            "'Deployment model'", "'{'", "'applications'", "'}'", "'services'",
+            "'containers'", "'deployments'", "'regions'", "'clusters'",
+            "'->'", "'name'", "':'", "','", "'image'", "'port'", "'cpu_required'",
+            "'m'", "'memory_required'", "'Mi'", "'domain_model'", "'target_port'",
+            "'protocol'", "'type'", "'app_name'", "'cpu_limit'", "'memory_limit'",
+            "'replicas'", "'['", "']'", "'zones'", "'public_cluster'", "'number_of_nodes'",
+            "'provider'", "'config_file'", "'net_config'", "'networks'",
+            "'subnetworks'", "'private_cluster'", "'HTTP'", "'HTTPS'", "'TCP'",
+            "'UDP'", "'ALL'", "'lb'", "'ingress'", "'egress'", "'google'",
             "'aws'", "'azure'", "'other'", "'True'", "'False'" ]
 
     symbolicNames = [ "<INVALID>",
             "WS", "ML_COMMENT", "SL_COMMENT", "INT", "ID", "ID_REG", "STRING" ]
 
-    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6", 
-                  "T__7", "T__8", "T__9", "T__10", "T__11", "T__12", "T__13", 
-                  "T__14", "T__15", "T__16", "T__17", "T__18", "T__19", 
-                  "T__20", "T__21", "T__22", "T__23", "T__24", "T__25", 
-                  "T__26", "T__27", "T__28", "T__29", "T__30", "T__31", 
-                  "T__32", "T__33", "T__34", "T__35", "T__36", "T__37", 
-                  "T__38", "T__39", "T__40", "T__41", "T__42", "T__43", 
-                  "T__44", "T__45", "T__46", "T__47", "T__48", "T__49", 
-                  "T__50", "T__51", "WS", "ML_COMMENT", "SL_COMMENT", "INT", 
+    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6",
+                  "T__7", "T__8", "T__9", "T__10", "T__11", "T__12", "T__13",
+                  "T__14", "T__15", "T__16", "T__17", "T__18", "T__19",
+                  "T__20", "T__21", "T__22", "T__23", "T__24", "T__25",
+                  "T__26", "T__27", "T__28", "T__29", "T__30", "T__31",
+                  "T__32", "T__33", "T__34", "T__35", "T__36", "T__37",
+                  "T__38", "T__39", "T__40", "T__41", "T__42", "T__43",
+                  "T__44", "T__45", "T__46", "T__47", "T__48", "T__49",
+                  "T__50", "T__51", "WS", "ML_COMMENT", "SL_COMMENT", "INT",
                   "ID", "ID_REG", "STRING" ]
 
     grammarFileName = "deployment.g4"

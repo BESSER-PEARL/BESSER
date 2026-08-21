@@ -2,52 +2,38 @@ import os
 import pytest
 from besser.generators.rdf import RDFGenerator
 from besser.BUML.metamodel.structural import (
-    Class, DomainModel, DateType, StringType, IntegerType,
-    Property, BinaryAssociation, Multiplicity, Enumeration, EnumerationLiteral
+    Property, Enumeration, EnumerationLiteral,
 )
 
+
 @pytest.fixture
-def domain_model():
-    # Enumeration example
+def domain_model(library_book_author_model):
+    """Extend the shared Library-Book-Author model with an enumeration.
+
+    The RDF generator tests need a MemberType enum on Author, so we add
+    it on top of the shared fixture.
+    """
+    model = library_book_author_model
+
+    # Add MemberType enumeration
     member_type = Enumeration(
         name="MemberType",
         literals={
             EnumerationLiteral(name="ADULT"),
             EnumerationLiteral(name="SENIOR"),
             EnumerationLiteral(name="STUDENT"),
-            EnumerationLiteral(name="CHILD")
-        }
+            EnumerationLiteral(name="CHILD"),
+        },
     )
 
-    # Classes
-    library = Class(name="Library", attributes={
-        Property(name="name", type=StringType),
-        Property(name="address", type=StringType)
-    })
-    book = Class(name="Book", attributes={
-        Property(name="title", type=StringType),
-        Property(name="pages", type=IntegerType),
-        Property(name="release", type=DateType)
-    })
-    author = Class(name="Author", attributes={
-        Property(name="email", type=StringType),
-        Property(name="member", type=member_type)
-    })
+    # Find the Author class and add the 'member' attribute
+    author = next(t for t in model.types if t.name == "Author")
+    member_prop = Property(name="member", type=member_type)
+    author.attributes = author.attributes | {member_prop}
 
-    # Associations
-    located_in = Property(name="locatedIn", type=library, multiplicity=Multiplicity(1, 1))
-    has = Property(name="has", type=book, multiplicity=Multiplicity(0, "*"))
-    lib_book_association = BinaryAssociation(name="lib_book_assoc", ends={located_in, has})
+    # Add the enum to the model types
+    model.types = model.types | {member_type}
 
-    written_by = Property(name="writtenBy", type=author, multiplicity=Multiplicity(1, "*"))
-    publishes = Property(name="publishes", type=book, multiplicity=Multiplicity(0, "*"))
-    book_author_association = BinaryAssociation(name="book_author", ends={written_by, publishes})
-
-    model = DomainModel(
-        name="Library_model",
-        types={library, book, author, member_type},
-        associations={lib_book_association, book_author_association}
-    )
     return model
 
 def test_rdf_classes_exist(domain_model, tmpdir):

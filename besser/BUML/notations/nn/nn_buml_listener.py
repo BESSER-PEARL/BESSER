@@ -197,7 +197,7 @@ class NeuralNetworkASTListener(NNListener):
         text += "nn_model.train_data = train_data\n"
         text += "nn_model.test_data = test_data\n"
         self.output.write(text)
-    
+
     def default_config_params(self):
         text = "\n# Configuration parameters of the NN\n"
         text += "config_params = Configuration(batch_size=32,"\

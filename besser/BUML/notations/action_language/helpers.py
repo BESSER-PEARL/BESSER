@@ -66,5 +66,5 @@ def get_typename(t: Type) -> str:
     if isinstance(t, TypeUnion):
         return f"({get_typename(t.a)}|{get_typename(t.b)})"
     if isinstance(t, Nothing):
-        return f"Nothing"
-    return f"No Type Infered"
+        return "Nothing"
+    return "No Type Infered"

@@ -1,9 +1,9 @@
 """
-This module provides the `SetupLayerSyntax` class and the 
-`get_tensorop_syntax` function along with two functions to 
+This module provides the `SetupLayerSyntax` class and the
+`get_tensorop_syntax` function along with two functions to
 process the activation function.
-The `SetupLayerSyntax` class is used to define the syntax 
-of layers in PyTorch, while `get_tensorop_syntax` defines the 
+The `SetupLayerSyntax` class is used to define the syntax
+of layers in PyTorch, while `get_tensorop_syntax` defines the
 tensorOps.
 """
 
@@ -18,16 +18,16 @@ class SetupLayerSyntax:
 
     Attributes:
         layer (Layer): the BUML layer object.
-        modules_details (dict): A dict storing the NN modules syntax and 
+        modules_details (dict): A dict storing the NN modules syntax and
             attributes.
-        permute_out (bool | None): Whether to add a permute tensorop after 
+        permute_out (bool | None): Whether to add a permute tensorop after
             the layer.
-        permute_in (bool | None): Whether to add a permute tensorop before 
+        permute_in (bool | None): Whether to add a permute tensorop before
             the layer.
         dim (str | None): The dimentionality of the layer
 
-    Returns: 
-        None, but stores the layers and their attributes in the 
+    Returns:
+        None, but stores the layers and their attributes in the
         modules_details dictionary.
 
     """
@@ -82,7 +82,7 @@ class SetupLayerSyntax:
                     is_subnn: bool = False):
         """
         It permutes the input and output of conv layers
-        
+
         Args:
             lyr_name (str): the name of the layer.
             dim (str): the dimentionality of the layer ('1', '2' or '3').
@@ -91,11 +91,11 @@ class SetupLayerSyntax:
             permute_in (bool): Whether to permute the input of the layer.
             sequential (bool): Whether the layer is in a seq architecture.
             is_subnn (bool): Whether the layer is in a subnn model.
-        
-        Returns: 
-            None, but stores the permute module in the 
+
+        Returns:
+            None, but stores the permute module in the
             modules_details dictionary.
-        
+
         """
         if permute_in:
             perm_name = f"{lyr_name}_in_op"
@@ -180,11 +180,11 @@ class SetupLayerSyntax:
     def setup_conv(self, lyr_name: str, cls_name: str):
         """
         It defines the syntax of convolutional layers.
-        
+
         Args:
             lyr_name (str): The name of the layer.
             cls_name (str): The name of its class.
-        
+
         Returns:
             lyr (str): The syntax of the layer in PyTorch.
         """
@@ -256,11 +256,11 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     Parameters:
         tensorop (TensorOp): The TensorOp BUML object.
-        modules_details (dict): A dict storing the NN modules syntax and 
+        modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         in_var (str | None): the input variable notation of the tensorop
             (e.g., 'x', 'x_1', ...).
-    
+
     Returns:
         ts_op_synt (str): the syntax of the tensorop in PyTorch.
 
@@ -291,9 +291,9 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 def adjust_actv_func_name(modules_details: dict):
     """
     Renames activation functions as activ_func_1, activ_func_2, ...
-    
+
     Parameters:
-        modules_details (dict): A dict storing the NN modules syntax and 
+        modules_details (dict): A dict storing the NN modules syntax and
             attributes.
 
     Returns:

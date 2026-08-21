@@ -11,12 +11,41 @@ Let's generate the SQL code for the :doc:`../examples/library_example`. You shou
     
     from besser.generators.sql import SQLGenerator
     
-    generator: SQLGenerator = SQLGenerator(model=library_model, sql_dialects="sqlite")
+    generator: SQLGenerator = SQLGenerator(model=library_model, sql_dialect="sqlite")
     generator.generate()
 
-The ``model`` parameter specifies the input B-UML structural model, while the ``sql_dialects`` parameter specifies the target SQL 
-dialect for the generated statements.
-In this example, we use ``sqlite``, but you can also specify ``postgres``, ``mysql``, ``mssql``, ``mariadb`` or ``oracle``.
+Parameters
+----------
+
+- ``model``: The input B-UML structural model.
+- ``sql_dialect``: The target SQL dialect for the generated statements (default: ``"sqlite"``).
+- ``output_dir``: Optional output directory (default: ``output/`` in the current directory).
+
+Supported Dialects
+------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Dialect
+     - Description
+   * - ``sqlite``
+     - Default. Generates SQLite-compatible DDL statements.
+   * - ``postgresql``
+     - PostgreSQL DDL with ``CREATE TYPE`` for enumerations.
+   * - ``mysql``
+     - MySQL DDL with ``ENUM()`` column types.
+   * - ``mssql``
+     - Microsoft SQL Server DDL.
+   * - ``mariadb``
+     - MariaDB DDL (similar to MySQL).
+   * - ``oracle``
+     - Oracle DDL with ``CHECK`` constraints for enumeration values.
+
+The generator handles enumeration types differently depending on the dialect: PostgreSQL
+uses ``CREATE TYPE ... AS ENUM``, MySQL/MariaDB use inline ``ENUM()`` column types, and
+Oracle uses ``CHECK`` constraints.
 
 Output
 ------

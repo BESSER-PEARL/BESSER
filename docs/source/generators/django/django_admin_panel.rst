@@ -48,3 +48,65 @@ If `containerization=True`, the following files will also be generated for Docke
 - `entrypoint.sh`
 
 To run the application, follow the steps in :ref:`deploy`.
+
+OCL Constraint Validation
+--------------------------
+
+The Django generator automatically generates a ``clean()`` method from OCL (Object Constraint
+Language) invariant constraints defined in your B-UML model, the same way the
+:doc:`../pydantic` generates field validators.
+
+Defining OCL Constraints
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can define OCL constraints on your domain model classes:
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.structural import Class, Constraint
+
+    Player = Class(name="Player", attributes={...})
+
+    age_constraint = Constraint(
+        name="min_age",
+        context=Player,
+        expression="context Player inv: self.age > 10",
+        language="OCL"
+    )
+
+    domain_model.constraints = {age_constraint}
+
+The same OCL comparison operators (``>``, ``<``, ``>=``, ``<=``, ``=``, ``<>``) documented for the
+:doc:`../pydantic` are supported here.
+
+Generated Validation
+^^^^^^^^^^^^^^^^^^^^^
+
+For each constrained class, the generator adds a ``clean()`` method that checks every OCL
+constraint defined on it and raises a Django ``ValidationError`` (keyed by field name) when one
+fails:
+
+.. code-block:: python
+
+    from django.core.exceptions import ValidationError
+
+    class Player(models.Model):
+        age = models.IntegerField()
+        name = models.CharField(max_length=255)
+
+        def clean(self):
+            super().clean()
+            errors = {}
+            if not (self.age > 10):
+                errors.setdefault('age', []).append('age must be > 10')
+            if errors:
+                raise ValidationError(errors)
+
+.. important::
+
+   Unlike the Pydantic validators, Django does **not** call ``clean()`` automatically on
+   ``save()``. It runs as part of ``full_clean()``, which Django's ``ModelForm`` and the admin
+   panel already call for you — so OCL constraints are enforced automatically when creating or
+   editing entities through the admin panel. If you save model instances directly (e.g. in a
+   script or a custom view), call ``full_clean()`` yourself before ``save()`` to get the same
+   validation.

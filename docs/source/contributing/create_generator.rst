@@ -18,6 +18,34 @@ Use this playbook when you want to add support for a new technology stack (e.g.,
 * Keep reusable helpers inside ``besser/utilities``. Only generator-specific code should live under your new folder in
   ``besser/generators``.
 
+Your generator directory should follow this structure:
+
+.. code-block:: text
+
+   besser/generators/my_generator/
+   ├── __init__.py              # Exports MyGenerator
+   ├── my_generator.py          # Main generator class
+   └── templates/
+       └── my_template.py.j2    # Jinja2 template(s)
+
+The generator class must inherit from ``GeneratorInterface``:
+
+.. code-block:: python
+
+   from besser.generators import GeneratorInterface
+
+   class MyGenerator(GeneratorInterface):
+       def __init__(self, model, output_dir=None):
+           super().__init__(model, output_dir)
+
+       def generate(self):
+           # 1. Traverse the model
+           for cls in self.model.get_classes():
+               # 2. Render templates
+               output = self.render_template('my_template.py.j2', cls=cls)
+               # 3. Write output files
+               self.write_file(f'{cls.name}.py', output)
+
 3. Implement Transformations
 ----------------------------
 
@@ -33,6 +61,20 @@ Use this playbook when you want to add support for a new technology stack (e.g.,
 * Use small BUML fixture models to test mappings in isolation and full-generation scenarios.
 * Validate both structure (e.g., class names, endpoints) and content (e.g., business logic snippets, configuration files).
 
+Example test structure:
+
+.. code-block:: python
+
+   # tests/generators/my_generator/test_my_generator.py
+   import pytest
+   from besser.generators.my_generator import MyGenerator
+
+   def test_generates_output(library_book_author_model):
+       """Use shared fixture from tests/conftest.py."""
+       generator = MyGenerator(model=library_book_author_model)
+       generator.generate()
+       # Assert output files exist and contain expected content
+
 5. Document and Demo
 --------------------
 
@@ -40,3 +82,9 @@ Use this playbook when you want to add support for a new technology stack (e.g.,
   with the generated artifact running locally.
 * List prerequisites (installed toolchains, environment variables, Docker images) and troubleshooting hints.
 * Attach screenshots, logs, or GIFs if they make reviewer validation easier.
+
+.. seealso::
+
+   :doc:`../generators/build_generator`
+      Annotated source code example of the Python generator and instructions for
+      registering your generator in the web editor via ``GeneratorInfo``.

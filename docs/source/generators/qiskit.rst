@@ -22,6 +22,15 @@ The generator automatically maps BESSER quantum gates to their Qiskit equivalent
 * **Function Gates**: Nested circuits defined in ``FunctionGate`` are generated as separate Python functions that return a Qiskit instruction, which is then appended to the main circuit.
 * **Arithmetic & Custom**: Complex gates like ``ArithmeticGate`` or ``CustomGate`` are currently generated as placeholders or specific library calls (e.g., ``DraperQFTAdder``) if supported.
 
+Web Modeling Editor Support
+---------------------------
+
+Quantum circuits can also be designed visually in the :doc:`BESSER Web Modeling Editor <../web_editor>`
+using the ``QuantumCircuitDiagram`` type. The backend converts the editor JSON to a
+``QuantumCircuit`` metamodel instance and passes it to the Qiskit generator. You can generate
+Qiskit code directly from the editor by selecting the **Qiskit** generator.
+
+
 Usage
 -----
 
@@ -29,7 +38,7 @@ To use the Qiskit Generator, you need a populated ``QuantumCircuit`` model.
 
 .. code-block:: python
 
-    from besser.generators.qiskit_generator import QiskitGenerator
+    from besser.generators.qiskit import QiskitGenerator
 
     # Assuming 'quantum_circuit_model' is your BESSER QuantumCircuit object
     generator = QiskitGenerator(

@@ -1,6 +1,9 @@
 {#- Django model template generator #}
 {%- import "django_fields.py.j2" as django_fields -%}
 from django.db import models
+{% if constraints_map %}
+from django.core.exceptions import ValidationError
+{% endif %}
 
 {# Enumeration definition -#}
 {%- for enum in model.get_enumerations() %}
@@ -21,9 +24,9 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     """
     Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
     """
-{%- for attr in sort_by_timestamp(class_obj.attributes) %}
-    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations()) }}{%- if not loop.last %}{% endif %}
-{%- endfor %}
+{% for attr in sort_by_timestamp(class_obj.attributes) %}
+    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations(), attr.is_id, attr.is_external_id) }}
+{% endfor %}
     {%- for end in class_obj.association_ends() -%}
         {%- set ns = namespace(opposite_end=end) %}
         {%- for end_assoc in end.owner.ends %}
@@ -60,7 +63,31 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
               {%- set _ = attr_primitive_data_type.append(attr) %}
             {%- endif %}
         {%- endfor %}
-    {%- if attr_primitive_data_type %}
+    {# External-id attributes drive __str__ so ForeignKey dropdowns, admin list    #}
+    {# views, and {{ object }} template rendering show a human-meaningful label   #}
+    {# instead of the primary key (addresses BESSER#225 / #230).                   #}
+    {%- set external_id_attrs = [] %}
+        {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+            {%- if attr.is_external_id and attr.type is is_primitive_data_type %}
+              {%- set _ = external_id_attrs.append(attr) %}
+            {%- endif %}
+        {%- endfor %}
+    {%- if external_id_attrs %}
+
+    def __str__(self):
+        """
+        Returns a string representation of the {{ class_obj.name[0].lower() + class_obj.name[1:] }}
+        using its external identifier{% if external_id_attrs | length > 1 %}s{% endif %}.
+        """
+        return {% if external_id_attrs | length == 1 -%}
+            str(self.{{ external_id_attrs[0].name }})
+        {%- else -%}
+            " - ".join(str(x) for x in (
+            {%- for a in external_id_attrs %}self.{{ a.name }}{% if not loop.last %}, {% endif %}{% endfor -%}
+            ))
+        {%- endif %}
+
+    {%- elif attr_primitive_data_type %}
     {%- set first_attr = attr_primitive_data_type[0] %}
 
     def __str__(self):
@@ -69,6 +96,33 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         """
         return str(self.{{ first_attr.name }})
 
+    {%- endif %}
+
+    {# OCL Constraint Validators #}
+    {%- if constraints_map and class_obj.name in constraints_map %}
+
+    def clean(self):
+        """
+        Validates the OCL constraints defined on {{ class_obj.name }}.
+        Called by full_clean() (and therefore by ModelForm/admin validation);
+        does not run automatically on save() unless the caller invokes
+        full_clean() first.
+        """
+        super().clean()
+        errors = {}
+        {% for constraint in constraints_map[class_obj.name] %}
+        {% if constraint.python_expression is defined %}
+        v = self.{{ constraint.property }}
+        if not ({{ constraint.python_expression }}):
+            errors.setdefault('{{ constraint.property }}', []).append('{{ constraint.message }}')
+        {% else %}
+        if not (self.{{ constraint.property }} {{ constraint.python_operator }} {{ constraint.value_repr }}):
+            errors.setdefault('{{ constraint.property }}', []).append(
+                '{{ constraint.property }} must be {{ constraint.python_operator }} {{ constraint.value_repr }}')
+        {% endif %}
+        {%- endfor %}
+        if errors:
+            raise ValidationError(errors)
     {%- endif %}
 
     {#- Generate methods with code #}

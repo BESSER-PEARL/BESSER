@@ -2,6 +2,8 @@
 Quantum diagram conversion from BUML to JSON format.
 """
 
+from typing import Dict, Any
+
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, QuantumOperation, PrimitiveGate, ParametricGate,
     ArithmeticGate, ModularArithmeticGate, ComparisonGate, QFTGate,
@@ -18,31 +20,31 @@ from besser.BUML.metamodel.quantum.quantum import (
 def quantum_circuit_to_json(circuit: QuantumCircuit) -> dict:
     """
     Convert a BUML QuantumCircuit to JSON format matching the frontend structure.
-    
+
     Args:
         circuit: The QuantumCircuit model to convert.
-        
+
     Returns:
         A dictionary in the Quirk-compatible JSON format.
     """
     cols = []
-    
+
     # Get total number of qubits
     num_qubits = sum(qreg.size for qreg in circuit.qregs) if circuit.qregs else 0
-    
+
     # Get total number of classical bits
     num_clbits = sum(creg.size for creg in circuit.cregs) if circuit.cregs else 0
-    
+
     # Group operations by column (we'll need to infer columns from operation order)
     # For simplicity, each operation gets its own column unless it shares qubits with controls
-    
+
     gate_metadata = {}
-    
+
     for op in circuit.operations:
         col = _operation_to_column(op, num_qubits, gate_metadata, len(cols))
         if col:
             cols.append(col)
-    
+
     return {
         "title": circuit.name,
         "model": {
@@ -56,20 +58,20 @@ def quantum_circuit_to_json(circuit: QuantumCircuit) -> dict:
 def _operation_to_column(op: QuantumOperation, num_qubits: int, gate_metadata: dict, col_index: int) -> list:
     """
     Convert a single operation to a column array.
-    
+
     Args:
         op: The quantum operation to convert.
         num_qubits: Total number of qubits in the circuit.
-        
+
     Returns:
         A list representing a column in the circuit.
     """
     # Initialize column with identity (1) for all qubits
     col = [1] * num_qubits
-    
+
     # Get the gate symbol
     symbol = _get_gate_symbol(op)
-    
+
     # Place controls
     for i, ctrl_qubit in enumerate(op.control_qubits):
         if ctrl_qubit < num_qubits:
@@ -78,13 +80,13 @@ def _operation_to_column(op: QuantumOperation, num_qubits: int, gate_metadata: d
                 col[ctrl_qubit] = "•"  # Filled circle for control
             else:
                 col[ctrl_qubit] = "◦"  # Empty circle for anti-control
-    
+
     # Place the gate on target qubits
     metadata_added = False  # Track if we've already added metadata for this CustomGate
     for target in op.target_qubits:
         if target < num_qubits:
             col[target] = symbol
-            
+
             # Handle CustomGate or FunctionGate with definition (Nested Circuit)
             # Only add metadata once (for the first target) to avoid duplicates
             if isinstance(op, (CustomGate, FunctionGate)) and not metadata_added:
@@ -94,7 +96,7 @@ def _operation_to_column(op: QuantumOperation, num_qubits: int, gate_metadata: d
                     "type": "FUNCTION", # Or derive from op
                     "isFunctionGate": True
                 }
-                
+
                 if hasattr(op, 'definition') and op.definition and op.definition.circuit:
                     # Recursively convert the nested circuit
                     nested_json = quantum_circuit_to_json(op.definition.circuit)
@@ -102,25 +104,25 @@ def _operation_to_column(op: QuantumOperation, num_qubits: int, gate_metadata: d
                 elif hasattr(op, 'gates') and op.gates:
                     # Serialize list of gates into new columns format
                     metadata["nestedCircuit"] = _serialize_gates_to_columns(op.gates)
-                
+
                 gate_metadata[metadata_key] = metadata
                 metadata_added = True
-    
+
     # Handle special cases
     if isinstance(op, SwapGate) and len(op.target_qubits) >= 2:
         col[op.target_qubits[0]] = "Swap"
         col[op.target_qubits[1]] = "Swap"
-    
+
     return col
 
 
 def _get_gate_symbol(op: QuantumOperation) -> str:
     """
     Get the frontend symbol for a quantum operation.
-    
+
     Args:
         op: The quantum operation.
-        
+
     Returns:
         The symbol string used by the frontend.
     """
@@ -139,15 +141,13 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "T"
     if isinstance(op, SwapGate):
         return "Swap"
-    if isinstance(op, SwapGate):
-        return "Swap"
     if isinstance(op, SqrtSwapGate):
         return "SqrtSwap"
     if isinstance(op, iSwapGate):
         return "iSwap"
     if isinstance(op, BellGate):
         return "Bell"
-    
+
     # === Controlled Gates (Map to base symbol) ===
     if isinstance(op, CXGate):
         return "X"
@@ -183,7 +183,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "RZX"
     if isinstance(op, RYYGate):
         return "RYY"
-    
+
     if isinstance(op, ParametricGate):
         type_name = op.type_name
         # Quarter turns
@@ -210,17 +210,17 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             return "SQRT_SQRT_Y_DAG"
         # Generic parametric
         return type_name
-    
+
     if isinstance(op, PrimitiveGate):
         return op.type_name
-    
+
     # === Frequency Gates ===
     if isinstance(op, QFTGate):
         return "QFT_DAG" if op.inverse else "QFT"
-    
+
     if isinstance(op, PhaseGradientGate):
         return "PHASE_GRADIENT_DAG" if op.inverse else "PhaseGradient"
-    
+
     # === Arithmetic Gates ===
     if isinstance(op, ArithmeticGate):
         op_map = {
@@ -236,7 +236,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'XOR': 'XOR',
         }
         return op_map.get(op.operation_type, op.operation_type)
-    
+
     # === Modular Arithmetic Gates ===
     if isinstance(op, ModularArithmeticGate):
         op_map = {
@@ -250,7 +250,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'MultiplyBInverse': 'MOD_MUL_B_INV',
         }
         return op_map.get(op.operation_type, f"MOD_{op.operation_type}")
-    
+
     # === Comparison Gates ===
     if isinstance(op, ComparisonGate):
         op_map = {
@@ -265,7 +265,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'AEqual': 'A=',
         }
         return op_map.get(op.operation, op.operation)
-    
+
     # === Order Gates ===
     if isinstance(op, OrderGate):
         op_map = {
@@ -279,7 +279,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'TimeShiftInv': 'TIME_SHIFT_INV',
         }
         return op_map.get(op.order_type, op.order_type)
-    
+
     # === Scalar Gates ===
     if isinstance(op, ScalarGate):
         op_map = {
@@ -291,7 +291,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             '√-i': 'PHASE_SQRT_MINUS_I',
         }
         return op_map.get(op.scalar_type, op.scalar_type)
-    
+
     # === Time-Dependent Gates ===
     if isinstance(op, TimeDependentGate):
         type_map = {
@@ -309,7 +309,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'X_FUNC': 'X_FUNC_T',
         }
         return type_map.get(op.type_name, op.type_name)
-    
+
     # === Display Operations ===
     if isinstance(op, DisplayOperation):
         type_map = {
@@ -322,7 +322,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'AxisSample': 'AXIS_SAMPLE',
         }
         return type_map.get(op.display_type, op.display_type)
-    
+
     # === Measurement ===
     if isinstance(op, Measurement):
         if op.basis == 'X':
@@ -331,7 +331,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             return 'MEASURE_Y'
         else:
             return 'Measure'
-    
+
     # === Post-Selection ===
     if isinstance(op, PostSelection):
         if op.basis == 'Z':
@@ -341,19 +341,19 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         elif op.basis == 'Y':
             return 'POST_SELECT_Y_ON' if op.value == 1 else 'POST_SELECT_Y_OFF'
         return f'POST_SELECT_{op.basis}_{op.value}'
-    
+
     # === Input Gates ===
     if isinstance(op, InputGate):
         return op.input_type
-    
+
     # === Spacer ===
     if isinstance(op, SpacerGate):
         return '…'
-    
+
     # === Custom Gate ===
     if isinstance(op, CustomGate):
         return op.name
-    
+
     # === Fallback ===
     return op.name if hasattr(op, 'name') else 'Unknown'
 
@@ -361,19 +361,19 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
 def quantum_circuit_to_editor_json(circuit: QuantumCircuit) -> dict:
     """
     Convert a BUML QuantumCircuit to the editor JSON format (Quirk-compatible).
-    
+
     This is the format expected by the web modeling editor's quantum canvas.
     It uses the Quirk cols format where each column is an array of gate symbols.
-    
+
     Args:
         circuit: The QuantumCircuit model to convert.
-        
+
     Returns:
         A dictionary in the Quirk-compatible format with version info.
     """
     # Get the basic Quirk format
     quirk_data = quantum_circuit_to_json(circuit)
-    
+
     # Add editor metadata
     return {
         "version": "1.0.0",
@@ -387,16 +387,16 @@ def quantum_circuit_to_editor_json(circuit: QuantumCircuit) -> dict:
 def _serialize_gates_to_columns(gates):
     """
     Serialize a list of gates into the columns/gates JSON format.
-    
+
     Args:
         gates: List of Gate objects
-        
+
     Returns:
         Dict with 'columns', 'qubitCount', and 'initialStates'
     """
     if not gates:
         return {"columns": [], "qubitCount": 0, "initialStates": []}
-        
+
     # Determine number of qubits
     max_qubit = 0
     for gate in gates:
@@ -405,19 +405,19 @@ def _serialize_gates_to_columns(gates):
         if hasattr(gate, 'control_qubits') and gate.control_qubits:
             for q in gate.control_qubits:
                 max_qubit = max(max_qubit, q)
-            
+
     num_qubits = max_qubit + 1
-    
+
     # Organize gates into columns
     # This is a simplified placement: one column per gate
     columns = []
-    
+
     for gate in gates:
         col_gates = [None] * num_qubits
-        
+
         # Get gate symbol and type
         symbol = _get_gate_symbol(gate)
-        
+
         # Create gate object for JSON
         gate_obj = {
             "type": symbol,
@@ -426,7 +426,7 @@ def _serialize_gates_to_columns(gates):
             "height": 1,
             "canResize": False
         }
-        
+
         # Place control qubits first
         if hasattr(gate, 'control_qubits') and gate.control_qubits:
             for i, ctrl_qubit in enumerate(gate.control_qubits):
@@ -441,17 +441,91 @@ def _serialize_gates_to_columns(gates):
                         "isControl": True
                     }
                     col_gates[ctrl_qubit] = ctrl_obj
-        
+
         # Place the gate on target qubit
         if gate.target_qubits:
             target = gate.target_qubits[0]
             if target < num_qubits:
                 col_gates[target] = gate_obj
-                
+
         columns.append({"gates": col_gates})
-        
+
     return {
         "columns": columns,
         "qubitCount": num_qubits,
         "initialStates": ["|0⟩"] * num_qubits
     }
+
+
+def quantum_buml_to_json(content: str) -> Dict[str, Any]:
+    """
+    Convert quantum model Python code to the editor JSON format.
+
+    Executes the BUML code, finds the QuantumCircuit instance, and converts
+    it to JSON using quantum_circuit_to_editor_json.
+
+    Args:
+        content: Quantum model Python code as string
+
+    Returns:
+        Dictionary representing the quantum circuit diagram in JSON format
+    """
+    import besser.BUML.metamodel.quantum.quantum as quantum_module
+
+    safe_globals: dict = {
+        "__builtins__": {
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "len": len,
+            "range": range,
+            "True": True,
+            "False": False,
+            "None": None,
+            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
+        },
+    }
+    # Expose all quantum module members for exec
+    for name in dir(quantum_module):
+        if not name.startswith("_"):
+            safe_globals[name] = getattr(quantum_module, name)
+
+    # Strip import lines -- all required types are in safe_globals already.
+    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
+    cleaned_lines = []
+    in_import_block = False
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if in_import_block:
+            if ")" in line:
+                in_import_block = False
+            continue
+        if stripped.startswith(("import ", "from ")):
+            if "(" in line and ")" not in line:
+                in_import_block = True
+            continue
+        cleaned_lines.append(line)
+    cleaned_content = "\n".join(cleaned_lines)
+
+    local_vars = {}
+    try:
+        exec(cleaned_content, safe_globals, local_vars)
+    except Exception as exc:
+        raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
+
+    # Find the QuantumCircuit instance
+    circuit = None
+    for var_value in local_vars.values():
+        if isinstance(var_value, QuantumCircuit):
+            circuit = var_value
+            break
+
+    if circuit is None:
+        raise ValueError("No QuantumCircuit instance found in the quantum BUML content")
+
+    return quantum_circuit_to_editor_json(circuit)

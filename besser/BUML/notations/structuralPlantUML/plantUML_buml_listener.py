@@ -6,7 +6,7 @@ from .PlantUMLListener import PlantUMLListener
 
 class BUMLGenerationListener(PlantUMLListener):
     """
-       This listener class generates a B-UML structural model from a parse-tree that 
+       This listener class generates a B-UML structural model from a parse-tree that
        representing a plantUML textual model
     """
 
@@ -51,11 +51,11 @@ class BUMLGenerationListener(PlantUMLListener):
 
         Args:
             node: The node to search for descendants. This can be any node in the parse tree.
-            target_type: The type of node to match against. This should be a class type that 
+            target_type: The type of node to match against. This should be a class type that
                         the nodes are expected to be instances of.
 
         Returns:
-            A list of nodes that are instances of the specified target type. 
+            A list of nodes that are instances of the specified target type.
             If no matching nodes are found, an empty list is returned.
         """
         matching_nodes = []
@@ -77,8 +77,10 @@ class BUMLGenerationListener(PlantUMLListener):
             else "public"
 
         if ctx.dType().primitiveData():
-            primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
-                else ctx.dType().primitiveData().getText()
+            primitive_type = {"string": "str", "integer": "int", "boolean": "bool"}.get(
+                ctx.dType().primitiveData().getText(),
+                ctx.dType().primitiveData().getText(),
+            )
             attr_type = self.__buml_model.get_type_by_name(primitive_type)
         else:
             attr_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
@@ -125,8 +127,10 @@ class BUMLGenerationListener(PlantUMLListener):
         param_name = ctx.ID().getText()
 
         if ctx.dType().primitiveData():
-            primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
-                else ctx.dType().primitiveData().getText()
+            primitive_type = {"string": "str", "integer": "int", "boolean": "bool"}.get(
+                ctx.dType().primitiveData().getText(),
+                ctx.dType().primitiveData().getText(),
+            )
             param_type = self.__buml_model.get_type_by_name(primitive_type)
         else:
             param_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
@@ -204,7 +208,7 @@ class BUMLGenerationListener(PlantUMLListener):
 
         left_name = ctx.ID(0).getText()
         right_name = ctx.ID(1).getText()
-        
+
         if left_name == right_name:
             # Avoid duplicate end names in self-associations
             left_name = f"{left_name}_source"
@@ -230,11 +234,11 @@ class BUMLGenerationListener(PlantUMLListener):
         Extracts and constructs the cardinality from the given context.
 
         Args:
-            ctx (PlantUMLParser.CardinalityContext): The context object that 
+            ctx (PlantUMLParser.CardinalityContext): The context object that
                 contains the cardinality values to be parsed.
 
         Returns:
-            Multiplicity: An B-UML Multiplicity object representing the minimum 
+            Multiplicity: An B-UML Multiplicity object representing the minimum
             and maximum cardinality derived from the context.
         """
         if ctx.cardinalityVal(0).INT():

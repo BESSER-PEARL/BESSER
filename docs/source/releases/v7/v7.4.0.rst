@@ -1,0 +1,57 @@
+Version 7.4.0
+=============
+
+This release introduces a new **OCL utility package** under
+``besser.BUML.metamodel.ocl`` (chain, clone, predicates, substitute, walk) and a
+new **OCL normalization subsystem** under ``besser.BUML.notations.ocl.normalization``
+that rewrites parsed constraints into a canonical CNF/iterator-fused form. The Web
+Modeling Editor gains **per-project modeling perspectives** (filter the workspace
+to the diagram families a project actually uses, with quick-select presets and a
+recovery banner when hidden perspectives still hold content), a substantial
+**agent configuration** rewrite, and a number of editor polish fixes. ``bocl`` is
+bumped to ``1.0.1`` to pick up the matching parser-side fixes.
+
+New Features and Improvements
+-----------------------------
+
+**OCL Utility Package** (``besser.BUML.metamodel.ocl``)
+
+* Added ``walk`` — post-order traversal helper that skips structural ``InfixOperator`` markers and surfaces only AST nodes.
+* Added ``clone`` — typed AST cloner that preserves shared metamodel references (Property, InfixOperator) while deep-copying the expression tree, so rewrite rules can mutate without touching the source.
+* Added ``substitute`` — capture-avoiding substitution with an explicit ``ScopeStack`` (push/pop in try/finally), correct under nested iterators and shadowed iterator variables.
+* Added ``chain`` — extracts the property-call chain rooted at a navigation expression, surfacing the navigation path consumers need for downstream analysis.
+* Added ``predicates`` — composable predicate set (``is_op``, ``is_and``, ``is_implies``, ``is_xor``, ``is_isempty``, ``is_loop``, …) for matching nodes in rewrite rules and external analyzers.
+
+**OCL Normalization Subsystem** (``besser.BUML.notations.ocl.normalization``)
+
+* Added a fixed-iteration rewrite engine (``normalize.normalize``) that drives a deterministic, ordered rule pipeline to a fixpoint, with a developer-bug ``max_iterations`` guard against non-terminating rules.
+* Added six rule modules covering the normalization tactics: ``boolean`` (NNF / De Morgan / double-negation elimination), ``cnf`` (implies-elimination, if-bool-elim, distribute-or-over-and), ``collection`` (size/isEmpty / notEmpty rewrites), ``iterator`` (select/forall/exists fusion), ``multiplicity`` (multiplicity-aware optimizations), ``all_instances`` (allInstances rewrites).
+* Added ``pretty_printer`` for human-readable round-tripping of OCL ASTs back to source form.
+* Added ``api.parse_ocl`` as the single new public entry point that wraps the existing ANTLR parser and surfaces aggregated ``BOCLSyntaxError`` instead of raising on the first error.
+* Added ``wrapping_visitor`` so external callers can catch parse-shaped errors uniformly across the visitor stack.
+* Narrowed the if-to-boolean rewrite so it only fires on if-expressions whose branches are boolean-typed (preventing accidental rewrites of conditional values), and surfaced unresolved-property errors as ``BOCLSyntaxError`` instead of bare ``Exception``.
+
+**Web Modeling Editor — Modeling Perspectives**
+
+* Added **per-project modeling perspectives**: each project carries a per-diagram visibility map under ``BesserProject.settings.perspectives`` that filters the workspace sidebar, mobile navigation, and command palette in lockstep. Hiding a perspective removes it from every switch surface but preserves its diagrams, so toggling it back on restores the workspace state. Project schema bumped from v3 to v4 with an automatic migration that preserves any pre-existing user choices and defaults missing keys to enabled.
+* Added **quick presets** in Project Settings — *Data Modeler*, *Agent Developer*, *Full Application*, *Quantum*, *Show All* — that flip the per-diagram toggles together for common project shapes. Individual per-diagram toggles remain available below the presets for fine-grained control.
+* Added a **last-enabled guard**: the only remaining enabled perspective cannot be toggled off (the workspace would have nothing to show). Disabling the perspective whose diagram is currently active auto-switches the editor to the first still-enabled type, so the canvas never lands on a hidden diagram.
+* Added a **hidden-perspectives recovery banner** at the top of the workspace that appears whenever the project still references a hidden perspective (either because that perspective's diagrams hold content, or because another diagram cross-references one of them). The banner offers one-click re-enable and renders on every route, including Project Settings itself, so users can recover the moment they realize a toggle was a mistake.
+
+**Web Modeling Editor — Agent Configuration**
+
+* Rewrote the Agent Configuration panel for usability: clearer grouping of platform / intent-recognition / LLM provider settings on the agent diagram, refined personalization flow, and tighter agent-variant lifecycle. Agent runtime config continues to live on the agent diagram itself (single source of truth introduced in v7.3.0); no storage changes required for existing projects.
+* Added an internal ``agent-variants-service`` that centralizes read / upsert / prune of personalized agent-model variants on the agent diagram, replacing scattered inline manipulation across the configuration panel.
+
+**Web Modeling Editor — Editor Fixes**
+
+* Fixed a class-diagram bug where toggling Abstract or Enumeration **off** left the stereotype label and italic styling on the element; the toggle now clears ``stereotype``, ``italic``, and ``underline`` on the underlying ``UMLClass`` instance.
+* Restored JSON-object generation for user models — user diagrams once again emit a JSON-object representation alongside the model export.
+* Fixed assistant ``modify_model`` routing: the hook now dispatches model modifications through ``modelingService.injectToEditor`` (with an ``updateDiagramModelThunk`` fallback when the service ref is null) and rejects unknown action names instead of silently skipping them.
+* The workspace sidebar now starts collapsed by default to give the editor canvas more space on first load; users can expand it from the toggle and the choice is remembered for the session.
+
+Dependencies
+------------
+
+* Bumped ``bocl`` to ``1.0.1`` in both ``requirements.txt`` and ``besser/utilities/web_modeling_editor/backend/requirements.txt`` to pick up the matching OCL parser-side fixes that this release's normalization layer depends on.
+

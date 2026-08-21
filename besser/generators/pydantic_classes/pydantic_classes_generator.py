@@ -15,8 +15,8 @@ class PydanticGenerator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         backend (bool, optional): A boolean flag indicating whether the generator should generate code for a backend API.
-        nested_creations (bool, optional): This parameter determines how entities are linked in the API request. 
-                                            If set to True, both nested creations and linking by the ID of the entity 
+        nested_creations (bool, optional): This parameter determines how entities are linked in the API request.
+                                            If set to True, both nested creations and linking by the ID of the entity
                                             are enabled. If set to False, only the ID of the linked entity will be used.
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
@@ -26,7 +26,7 @@ class PydanticGenerator(GeneratorInterface):
         self.domain_model = model
         self.backend = backend
         self.nested_creations = nested_creations
-    
+
     def generate(self):
         """
         Generates Python domain model code based on the provided B-UML model and saves it to the specified output directory.
@@ -34,7 +34,7 @@ class PydanticGenerator(GeneratorInterface):
         folder.
 
         Returns:
-            None, but store the generated code as a file named pydantic_classes.py 
+            None, but store the generated code as a file named pydantic_classes.py
         """
         file_path = self.build_generation_path(file_name="pydantic_classes.py")
         templates_path = os.path.join(os.path.dirname(
@@ -42,7 +42,7 @@ class PydanticGenerator(GeneratorInterface):
         def ascii_identifier(name: str) -> str:
             normalized = unicodedata.normalize("NFKD", name)
             ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
-            ascii_name = re.sub(r"\\W", "_", ascii_name)
+            ascii_name = re.sub(r"\W", "_", ascii_name)
             if ascii_name and ascii_name[0].isdigit():
                 ascii_name = f"_{ascii_name}"
             return ascii_name
@@ -56,13 +56,13 @@ class PydanticGenerator(GeneratorInterface):
         )
         env.filters["ascii_identifier"] = ascii_identifier
         template = env.get_template('pydantic_classes_template.py.j2')
-        
+
         # Use DomainModel's built-in method to sort classes by inheritance (parents before children)
         sorted_classes = self.domain_model.classes_sorted_by_inheritance()
-        
+
         # Build constraints map for OCL validation
         constraints_map = build_constraints_map(self.domain_model)
-        
+
         class_names = {cls.name for cls in sorted_classes}
         with open(file_path, mode="w", newline='\n', encoding="utf-8") as f:
             generated_code = template.render(

@@ -28,3 +28,43 @@ When modelling a state machine, a session is only used as an argument for the ev
 .. note::
 
   The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
+
+
+Conditions
+^^^^^^^^^^
+
+A ``Condition`` guards a transition — the transition fires only when the condition evaluates
+to ``True``. Conditions can be created from a Python callable or from a raw source string
+(useful for JSON round-trip serialization with the web editor):
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.state_machine import Condition
+
+    # From a callable
+    cond = Condition(name="is_adult", callable=lambda session: session.get("age") >= 18)
+
+    # From a source string (deserialized from JSON)
+    cond = Condition(name="is_adult", source='lambda session: session.get("age") >= 18')
+
+
+Validation
+^^^^^^^^^^
+
+Call ``StateMachine.validate()`` to check structural correctness before generation:
+
+.. code-block:: python
+
+    result = my_state_machine.validate()
+    # result = {"success": True/False, "errors": [...], "warnings": [...]}
+
+The following rules are enforced:
+
+- **Final states with outgoing transitions** (error): a final state marks the end
+  of execution and must not have outgoing transitions.
+- **Unreachable states** (warning): a non-initial state with no incoming transitions
+  can never be visited during execution.
+
+Construction-time constraints (duplicate state names, missing initial state,
+invalid transition targets) are enforced by ``StateMachine.new_state()`` and
+``TransitionBuilder.go_to()`` and raise a ``ValueError`` immediately.

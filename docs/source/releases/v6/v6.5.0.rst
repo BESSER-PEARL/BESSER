@@ -1,0 +1,54 @@
+Version 6.5.0
+=============
+
+Database reply actions for agents, custom transition conditions, YAML configuration, and Oracle SQL enum fixes.
+
+New Features
+------------
+
+**Database Reply Action for Agents** (`#459 <https://github.com/BESSER-PEARL/BESSER/pull/459>`_)
+- Added a new ``DBReply`` action to the agent metamodel, enabling agent states to query relational databases as part of their responses.
+- Supports two query modes: ``sql`` (raw SQL) and ``llm_query`` (LLM-assisted natural language to SQL).
+- Supports five SQL operation types: ``any``, ``select``, ``insert``, ``update``, and ``delete``.
+- Configurable database selection: ``default`` (application DB) or ``custom`` (named DB).
+- Input validation with class-level constants for all configurable fields.
+
+**Custom Transition Conditions** (`#459 <https://github.com/BESSER-PEARL/BESSER/pull/459>`_)
+- Added ``when_event(event)`` and ``when_condition(condition)`` fluent methods to ``AgentState`` for defining transitions triggered by custom events or conditions.
+- Transition conditions are now passed as lists, enabling support for multiple conditions per transition via ``.with_condition()`` chaining.
+- Custom condition function code is automatically generated in the agent template output.
+
+**Agent Configuration Format Migration** (`#459 <https://github.com/BESSER-PEARL/BESSER/pull/459>`_)
+- Switched generated agent configuration from ``.ini`` to ``.yaml`` for improved readability and richer structure.
+- Expanded default configuration with NLP settings, platform options, and SQL database connection blocks.
+
+Bug Fixes
+---------
+
+**Oracle SQL Enum Generation** (`#462 <https://github.com/BESSER-PEARL/BESSER/pull/462>`_)
+- Improved robustness of Oracle-specific ``CHECK`` constraint generation for enum types.
+- Added Oracle-specific tests for enum handling and CHECK constraints.
+
+Improvements
+------------
+
+**Agent Diagram Converters** (`#459 <https://github.com/BESSER-PEARL/BESSER/pull/459>`_)
+- Full round-trip support for ``DBReply`` actions in JSON-to-BUML and BUML-to-JSON converters.
+- Restructured transition JSON schema with ``transitionType``, ``predefined``, and ``custom`` blocks for cleaner separation of predefined vs custom transitions.
+- Custom condition source code is resolved and preserved during BUML-to-JSON conversion.
+
+**Agent Code Builder** (`#459 <https://github.com/BESSER-PEARL/BESSER/pull/459>`_)
+- ``DBReply`` actions are emitted with only non-default parameters for concise generated code.
+- Custom conditions are written as standalone functions with ``Condition`` object bindings.
+- Multi-condition transition chains are generated using the new fluent API.
+
+**Agent Template Cleanup**
+- Extracted duplicated DB reply rendering logic into a reusable ``render_db_reply_actions`` Jinja macro.
+- Added guard for missing LLM configuration in the LLM-query code path to prevent runtime errors.
+- Replaced wildcard imports in generated agent code with explicit imports.
+
+**Frontend** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Added DB action support to agent states with configurable selection type, query mode, operation, and SQL query.
+- Added ``dbOperation`` property to ``AgentStateMember``.
+- Enhanced ``AgentStateTransition`` to support custom transition types and conditions.
+- Added a template DB Agent diagram.

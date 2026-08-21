@@ -10,4 +10,4 @@ __all__ = [
     'VALID_PRIMITIVE_TYPES',
     'VISIBILITY_MAP',
     'RELATIONSHIP_TYPES',
-] 
+]

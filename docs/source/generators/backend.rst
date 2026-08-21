@@ -58,7 +58,7 @@ you set this parameter to *True*, you have two options for creating your image:
 
 1. Automated DockerHub Integration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Our code generator can create and upload the Docker image to your `DockerHub <https://hub.docker.com>`_ in one step. Provide a configuration file through the ``docker_config_file`` parameter, which 
+Our code generator can create and upload the Docker image to your `DockerHub <https://hub.docker.com>`_ in one step. Provide a configuration file through the ``docker_config_path`` parameter, which 
 enables the generator to automatically create and upload the image in your DockerHub accout using the provided configurations.
 
 To create the configuration file, use the following template and save it as a .conf file:
@@ -76,7 +76,7 @@ To create the configuration file, use the following template and save it as a .c
 2. Custom Dockerfile Generation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 The second option is to generate the Dockerfile with the instructions to create your Docker image and then run it yourself to build the image and upload it to 
-your repository. To follow this option, just don't use the ``docker_image_file`` parameter in the code generator. BESSER will then assume that you will handle 
+your repository. To follow this option, just don't use the ``docker_config_path`` parameter in the code generator. BESSER will then assume that you will handle 
 running the Dockerfile and uploading the image to the repository yourself.
 
 The generator will create two files:

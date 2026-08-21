@@ -83,8 +83,8 @@ def test_one_to_many_association():
     # Employee should have a reference to Department (N:1 from Employee's perspective)
     assert 'department: "Department"  # N:1 Relationship' in content, "Employee-Department association is missing."
     
-    # Department should have a list of Employees (1:N from Department's perspective)
-    assert 'employees: List["Employee"]  # 1:N Relationship' in content, "Department-Employee association is missing."
+    # Department should have an optional list of Employees (1:N from Department's perspective, min=0)
+    assert 'employees: Optional[List["Employee"]] = None  # 1:N Relationship (optional)' in content, "Department-Employee association is missing."
     
     os.remove(output_file)
 
@@ -110,9 +110,9 @@ def test_many_to_many_association():
     with open(output_file, 'r') as file:
         content = file.read()
     
-    # Both should have List[int] for N:M relationship (when nested_creations=False)
-    assert 'courses: List[int]  # N:M Relationship' in content, "Student-Course association is missing."
-    assert 'students: List[int]  # N:M Relationship' in content, "Course-Student association is missing."
+    # Both should have Optional[List[int]] for N:M relationship with min=0 (when nested_creations=False)
+    assert 'courses: Optional[List[int]] = None  # N:M Relationship (optional)' in content, "Student-Course association is missing."
+    assert 'students: Optional[List[int]] = None  # N:M Relationship (optional)' in content, "Course-Student association is missing."
     
     os.remove(output_file)
 
@@ -208,8 +208,8 @@ def test_combined_inheritance_and_associations():
     dept_content = '\n'.join(dept_section)
     assert dept_content.count('size:') == 0, "Department should not re-declare inherited 'size' attribute."
     
-    # Check associations
-    assert 'manages: List["Department"]  # 1:N Relationship' in content, "Employee-Department association is missing."
+    # Check associations (manages has min=0, so it's optional)
+    assert 'manages: Optional[List["Department"]] = None  # 1:N Relationship (optional)' in content, "Employee-Department association is missing."
     assert 'boss: "Employee"  # N:1 Relationship' in content, "Department-Employee association is missing."
     
     os.remove(output_file)

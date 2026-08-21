@@ -1,67 +1,21 @@
 import os
 import pytest
 from besser.generators.rest_api import RESTAPIGenerator
-from besser.BUML.metamodel.structural import (
-    Class, DomainModel, Property, BinaryAssociation,
-    Multiplicity, StringType, IntegerType
-)
+
+
+# Use shared fixtures from tests/conftest.py
 
 
 @pytest.fixture
-def self_association_model():
-    """Model with an Employee class that has a self-association (Manages)."""
-    Employee = Class(name="Employee")
-
-    employee_name: Property = Property(name="name", type=StringType)
-    Employee.attributes = {employee_name}
-
-    manages: BinaryAssociation = BinaryAssociation(
-        name="Manages",
-        ends={
-            Property(name="manager", type=Employee, multiplicity=Multiplicity(0, 1)),
-            Property(name="subordinates", type=Employee, multiplicity=Multiplicity(0, "*"))
-        }
-    )
-
-    model = DomainModel(
-        name="Self_Assoc_Model",
-        types={Employee},
-        associations={manages},
-        generalizations={}
-    )
-
-    return model
+def self_association_model(employee_self_assoc_model):
+    """Alias the shared Employee self-association fixture."""
+    return employee_self_assoc_model
 
 
 @pytest.fixture
-def library_book_model():
-    """Standard Library-Book model without self-associations."""
-    Library = Class(name="Library")
-    Book = Class(name="Book")
-
-    library_name: Property = Property(name="name", type=StringType)
-    Library.attributes = {library_name}
-
-    book_title: Property = Property(name="title", type=StringType)
-    book_pages: Property = Property(name="pages", type=IntegerType)
-    Book.attributes = {book_title, book_pages}
-
-    has: BinaryAssociation = BinaryAssociation(
-        name="Has",
-        ends={
-            Property(name="Book_end", type=Book, multiplicity=Multiplicity(0, "*")),
-            Property(name="Library_end", type=Library, multiplicity=Multiplicity(1, 1))
-        }
-    )
-
-    model = DomainModel(
-        name="Library_Model",
-        types={Library, Book},
-        associations={has},
-        generalizations={}
-    )
-
-    return model
+def library_book_model(simple_library_book_model):
+    """Alias the shared simple Library-Book fixture."""
+    return simple_library_book_model
 
 
 def test_self_association_does_not_crash(self_association_model, tmp_path):

@@ -15,7 +15,7 @@ the ``generate`` method as follows:
     generator: RDFGenerator = RDFGenerator(model=library_model)
     generator.generate()
 
-The ``vocabulary.ttl`` file with the vocabulary specification in turtle forma will be generated in the ``<<current_directory>>/output`` 
+The ``vocabulary.ttl`` file with the vocabulary specification in turtle format will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
 .. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/vocabulary.ttl

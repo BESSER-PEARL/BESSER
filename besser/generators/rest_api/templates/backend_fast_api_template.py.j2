@@ -291,6 +291,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% set class2_name = lns.end2.type.name %}
         {% set name_end1 = lns.end1.name %}
         {% set name_end2 = lns.end2.name %}
+        {% if lns.end2.is_navigable %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
@@ -300,6 +301,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -322,6 +324,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% set class2_name = plns.end2.type.name %}
         {% set name_end1 = plns.end1.name %}
         {% set name_end2 = plns.end2.name %}
+        {% if plns.end2.is_navigable %}
         {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
@@ -331,6 +334,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -1059,6 +1063,26 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
         "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
         "{{x[3]}}_count": len({{x[1]|lower}}_list),
         "{{x[3]}}": {{x[1]|lower}}_list
+    }
+
+{% endfor %}
+{% endif %}
+
+{% if ns.one_to_many %}
+{% for x in ns.one_to_many %}
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[2]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    """Get all {{x[0]}} entities related to this {{ class.name }} through {{x[2]}}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {{x[2]}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_id).all()
+
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[2]}}_count": len({{x[2]}}_list),
+        "{{x[2]}}": {{x[2]}}_list
     }
 
 {% endfor %}

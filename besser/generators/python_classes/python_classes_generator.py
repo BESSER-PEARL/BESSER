@@ -11,7 +11,7 @@ class PythonGenerator(GeneratorInterface):
 
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
-        output_dir (str, optional): The output directory where the generated code will be 
+        output_dir (str, optional): The output directory where the generated code will be
             saved. Defaults to None.
     """
     def __init__(self, model: DomainModel, output_dir: str = None):
@@ -19,13 +19,13 @@ class PythonGenerator(GeneratorInterface):
 
     def generate(self, *args):
         """
-        Generates Python domain model code based on the provided B-UML model and saves it to 
+        Generates Python domain model code based on the provided B-UML model and saves it to
         the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the 
+        If the output directory was not specified, the code generated will be stored in the
         <current directory>/output folder.
 
         Returns:
-            None, but store the generated code as a file named classes.py 
+            None, but store the generated code as a file named classes.py
         """
         file_path = self.build_generation_path(file_name="classes.py")
         templates_path = os.path.join(os.path.dirname(

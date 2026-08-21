@@ -10,7 +10,7 @@ def plantuml_to_buml(plantUML_model_path:str, buml_file_path:str = None):
 
     Args:
         plantUML_model_path (str): The path to the file containing the PlantUML code.
-        buml_file_path (str, optional): the path of the file produced with the base 
+        buml_file_path (str, optional): the path of the file produced with the base
                 code to build the B-UML model (None as default).
 
     Returns:

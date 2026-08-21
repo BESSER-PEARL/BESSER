@@ -7,20 +7,25 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: http://localhost:8000
-{% if agent_model %}
+{% if agent_models %}
         VITE_AGENT_URL: ws://localhost:8765
+        # JSON map keyed by agent name so each AgentComponent in the React app
+        # can connect to its own backing service. Quoted so the YAML parser
+        # treats it as a literal string, not an inline mapping.
+        VITE_AGENT_URLS: '{ {%- for agent in agent_models %}"{{ agent.name }}":"ws://localhost:{{ 8765 + loop.index0 }}"{% if not loop.last %},{% endif %}{% endfor %} }'
 {% endif %}
     ports:
       - "3000:3000"
     depends_on:
       - backend
-{% if agent_model %}
-      - agent
-{% endif %}
+{% for agent in agent_models %}
+      - {{ agent | agent_slug }}_agent
+{% endfor %}
     environment:
       - VITE_API_URL=http://localhost:8000
-{% if agent_model %}
+{% if agent_models %}
       - VITE_AGENT_URL=ws://localhost:8765
+      - 'VITE_AGENT_URLS={ {%- for agent in agent_models %}"{{ agent.name }}":"ws://localhost:{{ 8765 + loop.index0 }}"{% if not loop.last %},{% endif %}{% endfor %} }'
 {% endif %}
 
   backend:
@@ -33,27 +38,29 @@ services:
       - DATABASE_URL=sqlite:///./data/{{ name }}.db
     volumes:
       - sqlite_data:/app/data
-{% if agent_model %}
+{% if agent_models %}
     depends_on:
-      - agent
+{% for agent in agent_models %}
+      - {{ agent | agent_slug }}_agent
+{% endfor %}
 {% endif %}
 
-{% if agent_model %}
-  agent:
+{% for agent in agent_models %}
+  {{ agent | agent_slug }}_agent:
     build:
-      context: ./agent
+      context: ./agents/{{ agent | agent_slug }}
       dockerfile: Dockerfile
     ports:
-      - "8765:8765"
-      - "5000:5000"
+      - "{{ 8765 + loop.index0 }}:8765"
+      - "{{ 5000 + loop.index0 }}:5000"
     volumes:
-      - agent_data:/app/data
+      - {{ agent | agent_slug }}_agent_data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
-{% endif %}
 
+{% endfor %}
 volumes:
   sqlite_data:
-{% if agent_model %}
-  agent_data:
-{% endif %}
+{% for agent in agent_models %}
+  {{ agent | agent_slug }}_agent_data:
+{% endfor %}

@@ -6,7 +6,7 @@
 #ViewComponent definition
 viewComponent: ViewComponent=ViewComponent(name="my_component", description= "Detailed Information at a Glance")
 
-     
+
 
 #####  Elements for Home page Screen   #####
 

@@ -16,7 +16,7 @@ The BESSER low-code platform is built on top of [B-UML](https://besser.readthedo
 With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django web apps or database structures compatible with SQLAlchemy.
 
 This repository contains the backend foundation for the ecosystem: the
-metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER-WEB-MODELING-EDITOR](https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR) repository and is included here only as a submodule (at `besser/utilities/web_modeling_editor/frontend`) for local deployments.
+metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER-Web-Modeling-Editor](https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor) repository and is included here only as a submodule (at `besser/utilities/web_modeling_editor/frontend`) for local deployments.
 
 **Check out the [BESSER Web Modeling Editor online](https://editor.besser-pearl.org/)**
 ![BESSER Web Modeling Editor Demo](./docs/source/img/besser_new.gif)
@@ -47,7 +47,7 @@ If you are interested in developing new code generators or designing BESSER exte
 Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
 
     $ python -m venv venv
-    $ venv/Script/activate
+    $ venv/Scripts/activate
     $ pip install -r requirements.txt
 
 ### Step 3: Run an example
@@ -59,6 +59,20 @@ To verify the setup, you can run a basic example.
 
 ## Examples
 If you want to try examples, check out the [BESSER-examples](https://github.com/BESSER-PEARL/BESSER-examples) repository!
+
+## AI Agent Skills
+
+Working with BESSER through an AI coding agent (Claude Code, Cursor, Cline, Copilot, …)? Two companion repositories package BESSER as [Agent Skills](https://agentskills.io), so your agent gets the right knowledge on demand instead of loading the whole codebase into context.
+
+[BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) covers BESSER's metamodel, generators, and troubleshooting, so your agent builds *correct, validated* B-UML models — and viewable diagrams — without guesswork.
+
+    npx skills add BESSER-PEARL/besser-skills --all
+
+[UML Drawing](https://github.com/BESSER-PEARL/uml-drawing) is the diagrams-for-docs front door to BESSER: it turns a description or existing code into a correct UML class diagram, rendered as a real SVG/PNG straight into your README or docs.
+
+    npx skills add BESSER-PEARL/uml-drawing --all
+
+Both follow the open Agent Skills standard, so they work with any spec-compatible coding agent.
 
 ## Contributing
 

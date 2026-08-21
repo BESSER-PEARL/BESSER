@@ -1,26 +1,26 @@
 """
 OCL Constraint Utilities for Pydantic Generator
 
-This module uses the BESSER OCL parser infrastructure to extract validation 
+This module uses the B-OCL parser infrastructure to extract validation
 information from OCL constraint expressions for use in Pydantic field validators.
 
-It leverages the existing ANTLR-based parser in besser/BUML/notations/ocl
-and traverses the parsed OCL expression tree similar to the B-OCL-Interpreter.
+It leverages the bocl ANTLR-based visitor parser and traverses the parsed
+OCL expression tree.
 """
 
 import re
 from typing import Optional, Dict, Any, List
+from antlr4 import InputStream, CommonTokenStream
 from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
 from besser.BUML.notations.ocl.BOCLParser import BOCLParser
-from besser.BUML.notations.ocl.BOCLListener import BOCLListener
-from besser.BUML.notations.ocl.RootHandler import Root_Handler
-from antlr4 import InputStream, CommonTokenStream, ParseTreeWalker
+from besser.BUML.notations.ocl.visitor import BOCLVisitorImpl
+from besser.BUML.notations.ocl.error_handling import BOCLErrorListener
 
 from besser.BUML.metamodel.ocl.ocl import (
-    OperationCallExpression, PropertyCallExpression, 
-    IntegerLiteralExpression, RealLiteralExpression, 
+    OperationCallExpression, PropertyCallExpression,
+    IntegerLiteralExpression, RealLiteralExpression,
     StringLiteralExpression, BooleanLiteralExpression,
-    DateLiteralExpression, InfixOperator, LoopExp
+    DateLiteralExpression, InfixOperator
 )
 
 
@@ -41,24 +41,26 @@ def parse_ocl_constraint(constraint, domain_model) -> Optional[Dict[str, Any]]:
         Returns None if the expression cannot be parsed for validation.
     """
     try:
-        # Parse using the ANTLR OCL parser - similar to OCLParserWrapper.parse()
-        # but we keep a reference to the rootHandler
+        # Parse using the bocl ANTLR visitor parser
         input_stream = InputStream(constraint.expression)
-        root_handler = Root_Handler(domain_model, None)
-        root_handler.set_context(constraint.context)
-        
+
         lexer = BOCLLexer(input_stream)
+        lexer.removeErrorListeners()
+        error_listener = BOCLErrorListener()
+        lexer.addErrorListener(error_listener)
+
         stream = CommonTokenStream(lexer)
         parser = BOCLParser(stream)
+        parser.removeErrorListeners()
+        parser.addErrorListener(error_listener)
+
         tree = parser.oclFile()
-        
-        listener = BOCLListener(root_handler)
-        listener.preprocess(constraint.expression)
-        walker = ParseTreeWalker()
-        walker.walk(listener, tree)
-        
-        # Get the parsed expression tree from the root handler
-        root = root_handler.get_root()
+
+        if error_listener.has_errors():
+            return _fallback_parse(constraint.expression)
+
+        visitor = BOCLVisitorImpl(domain_model, None, constraint.context)
+        root = visitor.visit(tree)
         
         if root is None:
             # Fallback to regex parsing if no root was produced
@@ -72,7 +74,7 @@ def parse_ocl_constraint(constraint, domain_model) -> Optional[Dict[str, Any]]:
         # If tree extraction failed, try fallback
         return _fallback_parse(constraint.expression)
         
-    except Exception as e:
+    except Exception:
         # Fallback to regex parsing if OCL parser fails
         return _fallback_parse(constraint.expression)
 

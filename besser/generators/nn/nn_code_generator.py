@@ -1,6 +1,6 @@
 """
 This module defines the `NNCodeGenerator` class that is inherited
-by `TFGenerator` and `PytorchGenerator` to generates code for neural 
+by `TFGenerator` and `PytorchGenerator` to generates code for neural
 networks based on the B-UML model.
 """
 
@@ -22,30 +22,30 @@ from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
 
 class NNCodeGenerator(GeneratorInterface):
     """
-    NNCodeGenerator is a class that implements the GeneratorInterface and 
-    is inherited by `TFGenerator` and `PytorchGenerator` to generates code 
-    for neural networks training and evaluation based on the B-UML model. 
+    NNCodeGenerator is a class that implements the GeneratorInterface and
+    is inherited by `TFGenerator` and `PytorchGenerator` to generates code
+    for neural networks training and evaluation based on the B-UML model.
 
     Args:
-        model (NN): An instance of the NN Model class representing 
+        model (NN): An instance of the NN Model class representing
             the B-UML model.
-        setup_layer (Union[SetupLayerTF, SetupLayerTorch]): The class 
+        setup_layer (Union[SetupLayerTF, SetupLayerTorch]): The class
             that defines the syntax of layers.
         get_tensorop_syntax (Callable): The function that defines the
             syntax of tensorops.
-        output_dir (str, optional): The output directory where the 
+        output_dir (str, optional): The output directory where the
             generated code will be saved. Defaults to None.
         file_name (str): The name of the file where the generated
             code is stored.
         template_name (str): The name of the jinja template.
-        template_dir (str): The name of the directory where the jinja 
+        template_dir (str): The name of the directory where the jinja
             template `template_name` is stored. Either `tf` or `pytorch`.
         generation_type (str): 'subclassing' or 'sequential'
-        channel_last (bool, optional): If true, PyTorch conv layers will 
+        channel_last (bool, optional): If true, PyTorch conv layers will
             have their input and output permuted to match TF convention.
-        modules_details (dict): A dict storing the NN modules syntax and 
+        modules_details (dict): A dict storing the NN modules syntax and
             attributes.
-        
+
     """
     def __init__(self, model: NN,
                  setup_layer: SetupLayerTF | SetupLayerTorch,
@@ -72,21 +72,21 @@ class NNCodeGenerator(GeneratorInterface):
     def get_modules_details(self) -> str:
         """
         A module can be a layer, a sub_nn or a tensorop.
-        The `modules_details` dict is created to keep track of 
-        the syntax of modules, their tensor input variables, and 
-        their tensor output variables in the forward method. 
+        The `modules_details` dict is created to keep track of
+        the syntax of modules, their tensor input variables, and
+        their tensor output variables in the forward method.
         It has this structure:
                 {"name_module": [syntax, out_var, in_var]}
         - syntax: The syntax of calling the module.
         - out_var: the output tensor variable of the module.
         - in_var: the input tensor variable of module.
         Example (TensoFlow):
-                  {"l2": 
+                  {"l2":
                   ["self.l2 = layers.Dense(units=40, activation='relu')",
-                  "x_1", 
+                  "x_1",
                   "x"]}
 
-        For the case of layers, an additional element is added to 
+        For the case of layers, an additional element is added to
         the list, representing the layer object.
         """
         counter_subnn: int = 0
@@ -128,9 +128,9 @@ class NNCodeGenerator(GeneratorInterface):
 
     def generate(self, *args):
         """
-        Generates NN code based on the provided B-UML model and saves 
+        Generates NN code based on the provided B-UML model and saves
         it to the specified output directory.
-        If the output directory was not specified, the code generated 
+        If the output directory was not specified, the code generated
         will be stored in the <current directory>/output folder.
 
         Returns:

@@ -71,7 +71,7 @@ You should get output like this:
 
 .. code-block:: console
 
-    tittle
+    title
     pages
     release
 

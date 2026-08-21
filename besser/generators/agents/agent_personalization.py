@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import re
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
 
@@ -9,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 
 OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
+
+# Single default model for all OpenAI-backed personalization helpers.
+DEFAULT_OPENAI_MODEL = "gpt-5"
 
 
 def _resolve_openai_api_key(config: dict = None, openai_api_key: str = None) -> str | None:
@@ -81,7 +83,7 @@ def flatten_agent_config_structure(raw_config):
     return flattened
 
 
-def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=None, config=None):
+def call_openai_chat(system_prompt, user_prompt, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None):
     """
     Calls OpenAI ChatCompletion with a system prompt and user prompt (openai>=1.0.0).
     Returns the response text only.
@@ -92,7 +94,12 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=N
             f"OpenAI API key not found. Set '{OPENAI_API_KEY_ENV_VAR}' or pass it via generator config."
         )
 
-    from openai import OpenAI  # lazy import – optional dependency
+    try:
+        from openai import OpenAI  # lazy import – optional dependency
+    except ImportError as exc:
+        raise ImportError(
+            "OpenAI personalization requires the 'agents' extra: pip install besser[agents]"
+        ) from exc
     client = OpenAI(api_key=resolved_api_key)
     response = client.chat.completions.create(
         model=model,
@@ -107,9 +114,9 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=N
 
 
 
-def translate_text_batch(texts, target_language, model="gpt-5", openai_api_key=None, config=None):
+def translate_text_batch(texts, target_language, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None):
     """
-    Translates each text in `texts` to the target language using OpenAI GPT-5.
+    Translates each text in `texts` to the target language using OpenAI.
     Returns a list of translated texts in the same order as input.
     """
     if not isinstance(texts, (list, tuple)):
@@ -166,21 +173,18 @@ def translate_text_api(text, target_language):
 
 
 
-def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=None):
+def style_text_batch(texts, style, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None):
     """
     Rewrites each text in `texts` to the requested `style` while preserving meaning and content.
-    `style` should be 'formal' or 'informal'.
+    `style` should be one of 'formal', 'informal', 'friendly', or 'technical'.
     Returns a list of rewritten texts in the same order as input.
     """
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts must be a list or tuple of strings")
 
     style = (style or '').lower()
-    if style not in ('formal', 'informal'):
-        raise ValueError("style must be 'formal' or 'informal'")
-
-    if style == 'formal':
-        system_prompt = (
+    style_prompts = {
+        'formal': (
             "you are a professional editor specializing in formal writing. "
             "for each numbered text below, transform it into a formal, polished version while preserving its original meaning and intent. "
             "requirements: - use formal tone and vocabulary suitable for professional or academic contexts "
@@ -189,9 +193,8 @@ def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=No
             "- keep the length and structure close to the original unless improvement requires rephrasing "
             "- maintain clarity and natural flow. "
             "return the rewritten texts as a numbered list, matching the input order, with no explanations."
-        )
-    else:  # informal
-        system_prompt = (
+        ),
+        'informal': (
             "you are a professional writer specializing in natural, conversational language. "
             "for each numbered text below, transform it into an informal, friendly version while keeping its original meaning and intent. "
             "requirements: - use a casual and approachable tone "
@@ -200,7 +203,32 @@ def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=No
             "- make it sound like something someone would say in conversation "
             "- keep the length and structure close to the original unless rewording improves flow. "
             "return the rewritten texts as a numbered list, matching the input order, with no explanations."
-        )
+        ),
+        'friendly': (
+            "you are a warm, personable writer specializing in welcoming, encouraging language. "
+            "for each numbered text below, transform it into a friendly version while keeping its original meaning and intent. "
+            "requirements: - use a warm, approachable, and supportive tone "
+            "- prefer positive, encouraging phrasing and inclusive language (e.g. 'let's', 'happy to help') "
+            "- contractions and light, genuine enthusiasm are welcome, but avoid being over-the-top or using slang "
+            "- keep grammar correct and the message clear "
+            "- keep the length and structure close to the original unless rewording improves warmth. "
+            "return the rewritten texts as a numbered list, matching the input order, with no explanations."
+        ),
+        'technical': (
+            "you are a technical writer specializing in precise, domain-accurate language. "
+            "for each numbered text below, transform it into a technical version while preserving its original meaning and intent. "
+            "requirements: - use precise terminology and unambiguous phrasing suitable for an expert audience "
+            "- be concise and direct; remove filler, hedging, and colloquialisms "
+            "- preserve any specific facts, values, or steps exactly "
+            "- keep grammar and punctuation correct "
+            "- keep the length and structure close to the original unless precision requires rephrasing. "
+            "return the rewritten texts as a numbered list, matching the input order, with no explanations."
+        ),
+    }
+    if style not in style_prompts:
+        raise ValueError(f"style must be one of {', '.join(sorted(style_prompts))}")
+
+    system_prompt = style_prompts[style]
 
     # Combine all texts into a single prompt with numbering for clarity
     user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
@@ -262,7 +290,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
                     logger.debug("Replacing sentence %d with translated version.", ti)
                     intent.training_sentences[idx] = translated_sentences[ti]
                     ti += 1
-    
+
     messages = []
     for state in getattr(agent, 'states', []):
 
@@ -270,7 +298,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
             body = getattr(state, body_attr, None)
             if body and body.actions:
                 for action in body.actions:
-                    if isinstance(action, AgentReply):  
+                    if isinstance(action, AgentReply):
                         # process each message individually
                         # action.message = replace_reply(action.message, config)
                         messages.append(action.message)
@@ -306,13 +334,19 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
     config = flatten_agent_config_structure(config or {})
     personalized_messages = messages
 
-    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and False:
+    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         target_language = config['agentLanguage']
-        # personalized_message = translate_text(personalized_message, target_language)
-    elif 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original' and False:
-        target_language = config['agentLanguage']
-        for i, msg in enumerate(personalized_messages):
-            personalized_messages[i] = translate_text_api(msg, target_language)
+        personalized_messages = translate_text_batch(
+            personalized_messages,
+            target_language,
+            openai_api_key=openai_api_key,
+            config=config,
+        )
     if 'agentStyle' in config and config['agentStyle'] != 'original':
         if not openai_api_key:
             raise RuntimeError(
@@ -363,20 +397,8 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
             config,
             openai_api_key=openai_api_key,
         )
-    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-        if not openai_api_key:
-            raise RuntimeError(
-                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-                "or include 'openaiApiKey'/'openai_api_key' in generator config."
-            )
-        target_language = config['agentLanguage']
-        personalized_messages = translate_text_batch(
-            personalized_messages,
-            target_language,
-            openai_api_key=openai_api_key,
-            config=config,
-        )
-        
+
+
     return personalized_messages
 
 
@@ -396,7 +418,7 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
 
     model_name = flattened_config.get('llm')
     if not isinstance(model_name, str) or not model_name.strip():
-        model_name = 'gpt-5'
+        model_name = DEFAULT_OPENAI_MODEL
     else:
         model_name = model_name.strip()
 
@@ -470,7 +492,7 @@ def append_speech(match):
     text = match.group(1)
     return f"session.reply('{text}')\n    platform.reply_speech(session, '{text}')"
 
-def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None, config=None):
+def complexity_text_batch(texts, complexity, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None):
     """
     Adjusts the complexity of each text in `texts` based on the specified `complexity` level.
     Complexity can be "simple", "medium", or "complex".
@@ -526,7 +548,7 @@ def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None,
     return results
 
 
-def sentence_length_batch(texts, preference, model="gpt-5", openai_api_key=None, config=None):
+def sentence_length_batch(texts, preference, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None):
     """
     Adjusts each text in `texts` to be more concise or verbose.
     `preference` accepts "concise" or "verbose" (case-insensitive).

@@ -1,0 +1,14 @@
+Version 7.1.2
+=============
+
+Patch release: **multi-agent support in the Full Web App generator**. Projects with several ``AgentDiagram``\ s now end up with one generated agent per diagram, and GUI ``AgentComponent``\ s can be bound to different agents individually. Changes span the web modeling editor frontend, the web-app generator, its templates, and the GitHub/Render deploy integration — no metamodel or API-level contract changes.
+
+Highlights
+----------
+
+- **All agents are now generated**: ``WebAppGenerator`` accepts an ``agent_models`` list (plus a per-agent ``agent_configs`` mapping) and emits one subdirectory under ``agents/<slug>/`` per agent. The scalar ``agent_model=``/``agent_config=`` parameters are kept as deprecated back-compat shims.
+- **Every agent is selectable in the editor**: the GUI ``AgentComponent`` property panel now lists *every* ``AgentDiagram`` in the project, not just the one referenced by the active GUI diagram. Previously the dropdown returned a single option and silently collapsed multi-agent projects to one agent.
+- **Per-agent WebSocket routing at runtime**: the generated React ``AgentComponent`` reads a new ``VITE_AGENT_URLS`` JSON map keyed by agent name and opens the WebSocket matching its own ``agent-name`` prop. The legacy single-URL ``VITE_AGENT_URL`` variable is still emitted as a fallback for back-compat.
+- **docker-compose rewrite**: one service block per agent with port offsets (``8765+i``, ``5000+i``), per-agent volume, and a JSON ``VITE_AGENT_URLS`` build arg injected into the frontend image.
+- **Render deployment rewrite**: one ``type: web`` service block per agent in ``render.yaml`` with unique per-agent service names (``<app>-<slug>-agent-<suffix>``). ``frontend/.env.production`` now carries the same JSON URL map so the React app resolves each component to its own deployed ``*.onrender.com`` WebSocket.
+- **Name-uniqueness invariant**: agent names must now be unique within a project. The frontend hard-blocks rename and add operations that would cause a collision; the generation endpoint returns ``HTTP 400`` with the duplicate list as a safety net. This replaces the previous silent-overwrite behavior where two agents named ``"Alpha"`` would clobber each other.

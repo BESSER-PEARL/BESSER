@@ -1,0 +1,2144 @@
+{
+  "project": {
+    "id": "project_1786673097681_6pp13lu2b",
+    "type": "Project",
+    "schemaVersion": 4,
+    "name": "FIFAWorldCup",
+    "description": "A model of a FIFA World Cup tournament, including teams, matches, stadiums, and tournament personnel.",
+    "owner": "BESSER User",
+    "createdAt": "2026-08-14T02:04:57.681Z",
+    "currentDiagramType": "ClassDiagram",
+    "currentDiagramIndices": {
+      "ClassDiagram": 0,
+      "ObjectDiagram": 0,
+      "StateMachineDiagram": 0,
+      "AgentDiagram": 0,
+      "NNDiagram": 0,
+      "UserDiagram": 0,
+      "GUINoCodeDiagram": 0,
+      "QuantumCircuitDiagram": 0
+    },
+    "diagrams": {
+      "ClassDiagram": [
+        {
+          "id": "d45032b4-50b1-45d1-ae22-66a44dbeed22",
+          "title": "Class Diagram",
+          "model": {
+            "version": "3.0.0",
+            "type": "ClassDiagram",
+            "size": {
+              "width": 2957.333333333333,
+              "height": 2273
+            },
+            "interactive": {
+              "elements": {},
+              "relationships": {}
+            },
+            "elements": {
+              "a584e9ac-bd82-4219-bc66-e473967a4777": {
+                "id": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                "name": "Tournament",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 350.6666666666665,
+                  "y": -64.5,
+                  "width": 160,
+                  "height": 190
+                },
+                "attributes": [
+                  "e935a44d-6138-43d3-b655-091c69217783",
+                  "c1eaf9af-b82a-46aa-8453-3dd371699a24",
+                  "1ffcc2b4-5f9f-4333-9e7a-4080e7c42e81",
+                  "8f61f60b-0f91-4c74-8f9d-cac8eeb75144",
+                  "ce292abf-09a4-48a9-97bf-c0139a7a48b2"
+                ],
+                "methods": []
+              },
+              "e935a44d-6138-43d3-b655-091c69217783": {
+                "id": "e935a44d-6138-43d3-b655-091c69217783",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": -24,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "c1eaf9af-b82a-46aa-8453-3dd371699a24": {
+                "id": "c1eaf9af-b82a-46aa-8453-3dd371699a24",
+                "name": "year",
+                "type": "ClassAttribute",
+                "owner": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 6,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "1ffcc2b4-5f9f-4333-9e7a-4080e7c42e81": {
+                "id": "1ffcc2b4-5f9f-4333-9e7a-4080e7c42e81",
+                "name": "hostCountry",
+                "type": "ClassAttribute",
+                "owner": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 36,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "8f61f60b-0f91-4c74-8f9d-cac8eeb75144": {
+                "id": "8f61f60b-0f91-4c74-8f9d-cac8eeb75144",
+                "name": "startDate",
+                "type": "ClassAttribute",
+                "owner": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 66,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "ce292abf-09a4-48a9-97bf-c0139a7a48b2": {
+                "id": "ce292abf-09a4-48a9-97bf-c0139a7a48b2",
+                "name": "endDate",
+                "type": "ClassAttribute",
+                "owner": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 96,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "9b9fe71c-bf04-4d1c-b312-9122c9eec1ee": {
+                "id": "9b9fe71c-bf04-4d1c-b312-9122c9eec1ee",
+                "name": "Group",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 66.33333333333326,
+                  "y": 245.5,
+                  "width": 160,
+                  "height": 70
+                },
+                "attributes": [
+                  "3096f8d6-be35-42cd-b70b-d4d4c81f8624"
+                ],
+                "methods": []
+              },
+              "3096f8d6-be35-42cd-b70b-d4d4c81f8624": {
+                "id": "3096f8d6-be35-42cd-b70b-d4d4c81f8624",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "9b9fe71c-bf04-4d1c-b312-9122c9eec1ee",
+                "bounds": {
+                  "x": 66.83333333333326,
+                  "y": 286,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "15d47532-bae7-45c1-8136-6e3d193d5e60": {
+                "id": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                "name": "Team",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 350.6666666666665,
+                  "y": 465.5,
+                  "width": 160,
+                  "height": 130
+                },
+                "attributes": [
+                  "0f802de8-3e9b-4b26-9818-fda3f208000b",
+                  "b1ea5ceb-f90e-44f6-a154-424662a59b1d",
+                  "ea367166-2366-4899-a576-351613342563"
+                ],
+                "methods": []
+              },
+              "0f802de8-3e9b-4b26-9818-fda3f208000b": {
+                "id": "0f802de8-3e9b-4b26-9818-fda3f208000b",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 506,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "b1ea5ceb-f90e-44f6-a154-424662a59b1d": {
+                "id": "b1ea5ceb-f90e-44f6-a154-424662a59b1d",
+                "name": "fifaCode",
+                "type": "ClassAttribute",
+                "owner": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 536,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "ea367166-2366-4899-a576-351613342563": {
+                "id": "ea367166-2366-4899-a576-351613342563",
+                "name": "fifaRanking",
+                "type": "ClassAttribute",
+                "owner": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                "bounds": {
+                  "x": 351.1666666666665,
+                  "y": 566,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "c5807d7a-2adf-43ce-ad8f-ce4e1b26d184": {
+                "id": "c5807d7a-2adf-43ce-ad8f-ce4e1b26d184",
+                "name": "Stadium",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 1132.6666666666665,
+                  "y": 465.5,
+                  "width": 160,
+                  "height": 130
+                },
+                "attributes": [
+                  "666ddc6e-c55d-44b1-83d7-e5246ec2c3c4",
+                  "a3dd23a0-2ff2-4a20-9ebd-2ed08ac58901",
+                  "d93c873e-1234-4585-a7fe-b7e8e1164082"
+                ],
+                "methods": []
+              },
+              "666ddc6e-c55d-44b1-83d7-e5246ec2c3c4": {
+                "id": "666ddc6e-c55d-44b1-83d7-e5246ec2c3c4",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "c5807d7a-2adf-43ce-ad8f-ce4e1b26d184",
+                "bounds": {
+                  "x": 1133.1666666666665,
+                  "y": 506,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "a3dd23a0-2ff2-4a20-9ebd-2ed08ac58901": {
+                "id": "a3dd23a0-2ff2-4a20-9ebd-2ed08ac58901",
+                "name": "city",
+                "type": "ClassAttribute",
+                "owner": "c5807d7a-2adf-43ce-ad8f-ce4e1b26d184",
+                "bounds": {
+                  "x": 1133.1666666666665,
+                  "y": 536,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "d93c873e-1234-4585-a7fe-b7e8e1164082": {
+                "id": "d93c873e-1234-4585-a7fe-b7e8e1164082",
+                "name": "capacity",
+                "type": "ClassAttribute",
+                "owner": "c5807d7a-2adf-43ce-ad8f-ce4e1b26d184",
+                "bounds": {
+                  "x": 1133.1666666666665,
+                  "y": 566,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "92000c54-414f-4c26-a6b1-540fb686e35e": {
+                "id": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                "name": "Match",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 1116.6666666666665,
+                  "y": 215.5,
+                  "width": 160,
+                  "height": 160
+                },
+                "attributes": [
+                  "23f5fc13-440d-467c-8169-9bf82000f0d3",
+                  "380ce897-cba4-4a66-a871-686592f98d33",
+                  "9e061ec3-32e5-43c7-8c9a-ec10fb98a74f",
+                  "100c8f0b-00c9-4f81-a385-fb05660d7219"
+                ],
+                "methods": []
+              },
+              "23f5fc13-440d-467c-8169-9bf82000f0d3": {
+                "id": "23f5fc13-440d-467c-8169-9bf82000f0d3",
+                "name": "matchDate",
+                "type": "ClassAttribute",
+                "owner": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                "bounds": {
+                  "x": 1117.1666666666665,
+                  "y": 256,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "datetime",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "380ce897-cba4-4a66-a871-686592f98d33": {
+                "id": "380ce897-cba4-4a66-a871-686592f98d33",
+                "name": "stage",
+                "type": "ClassAttribute",
+                "owner": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                "bounds": {
+                  "x": 1117.1666666666665,
+                  "y": 286,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "MatchStage",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "9e061ec3-32e5-43c7-8c9a-ec10fb98a74f": {
+                "id": "9e061ec3-32e5-43c7-8c9a-ec10fb98a74f",
+                "name": "homeScore",
+                "type": "ClassAttribute",
+                "owner": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                "bounds": {
+                  "x": 1117.1666666666665,
+                  "y": 316,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "100c8f0b-00c9-4f81-a385-fb05660d7219": {
+                "id": "100c8f0b-00c9-4f81-a385-fb05660d7219",
+                "name": "awayScore",
+                "type": "ClassAttribute",
+                "owner": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                "bounds": {
+                  "x": 1117.1666666666665,
+                  "y": 346,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "fae88921-89ba-4b15-9da4-d09834abc9b7": {
+                "id": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                "name": "Person",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": 1182.6666666666665,
+                  "y": 905.5,
+                  "width": 160,
+                  "height": 170
+                },
+                "attributes": [
+                  "6680b60a-4b4b-4fe8-b726-d48b2b8decd3",
+                  "d076a6e3-bf34-42e0-bbab-916ed319f97a",
+                  "e96a4683-8007-4fdc-82b3-d0be413844e1",
+                  "5f7a8998-f49d-4cbd-afc1-9dbea21ba20b"
+                ],
+                "methods": []
+              },
+              "6680b60a-4b4b-4fe8-b726-d48b2b8decd3": {
+                "id": "6680b60a-4b4b-4fe8-b726-d48b2b8decd3",
+                "name": "firstName",
+                "type": "ClassAttribute",
+                "owner": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                "bounds": {
+                  "x": 1183.1666666666665,
+                  "y": 956,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "d076a6e3-bf34-42e0-bbab-916ed319f97a": {
+                "id": "d076a6e3-bf34-42e0-bbab-916ed319f97a",
+                "name": "lastName",
+                "type": "ClassAttribute",
+                "owner": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                "bounds": {
+                  "x": 1183.1666666666665,
+                  "y": 986,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "e96a4683-8007-4fdc-82b3-d0be413844e1": {
+                "id": "e96a4683-8007-4fdc-82b3-d0be413844e1",
+                "name": "nationality",
+                "type": "ClassAttribute",
+                "owner": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                "bounds": {
+                  "x": 1183.1666666666665,
+                  "y": 1016,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "5f7a8998-f49d-4cbd-afc1-9dbea21ba20b": {
+                "id": "5f7a8998-f49d-4cbd-afc1-9dbea21ba20b",
+                "name": "birthDate",
+                "type": "ClassAttribute",
+                "owner": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                "bounds": {
+                  "x": 1183.1666666666665,
+                  "y": 1046,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "68a90a95-5258-4eab-9ecf-93aad79df48f": {
+                "id": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                "name": "Player",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1193.6666666666667,
+                  "y": 310.5,
+                  "width": 160,
+                  "height": 130
+                },
+                "attributes": [
+                  "2b06a3c1-d05f-4612-b5f5-4dbf1db4a7a1",
+                  "aae1d8a8-5682-457b-94d1-c4c878da99a6",
+                  "8ddd0a1a-86a2-4d38-b6f2-ed01e46743d2"
+                ],
+                "methods": []
+              },
+              "2b06a3c1-d05f-4612-b5f5-4dbf1db4a7a1": {
+                "id": "2b06a3c1-d05f-4612-b5f5-4dbf1db4a7a1",
+                "name": "position",
+                "type": "ClassAttribute",
+                "owner": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                "bounds": {
+                  "x": -1193.1666666666667,
+                  "y": 351,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "PlayerPosition",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "aae1d8a8-5682-457b-94d1-c4c878da99a6": {
+                "id": "aae1d8a8-5682-457b-94d1-c4c878da99a6",
+                "name": "shirtNumber",
+                "type": "ClassAttribute",
+                "owner": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                "bounds": {
+                  "x": -1193.1666666666667,
+                  "y": 381,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "8ddd0a1a-86a2-4d38-b6f2-ed01e46743d2": {
+                "id": "8ddd0a1a-86a2-4d38-b6f2-ed01e46743d2",
+                "name": "goalsScored",
+                "type": "ClassAttribute",
+                "owner": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                "bounds": {
+                  "x": -1193.1666666666667,
+                  "y": 411,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "02ca3920-4a0a-43a7-964b-9e5a8e1504a0": {
+                "id": "02ca3920-4a0a-43a7-964b-9e5a8e1504a0",
+                "name": "Coach",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 377.33333333333326,
+                  "y": 715.5,
+                  "width": 160,
+                  "height": 70
+                },
+                "attributes": [
+                  "4123dfc5-0a1b-4e30-b99a-92962cbe4515"
+                ],
+                "methods": []
+              },
+              "4123dfc5-0a1b-4e30-b99a-92962cbe4515": {
+                "id": "4123dfc5-0a1b-4e30-b99a-92962cbe4515",
+                "name": "yearsOfExperience",
+                "type": "ClassAttribute",
+                "owner": "02ca3920-4a0a-43a7-964b-9e5a8e1504a0",
+                "bounds": {
+                  "x": 377.83333333333326,
+                  "y": 756,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "8223ec43-a875-4e33-bed3-54f9d210406c": {
+                "id": "8223ec43-a875-4e33-bed3-54f9d210406c",
+                "name": "Referee",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 1222.6666666666665,
+                  "y": 715.5,
+                  "width": 160,
+                  "height": 70
+                },
+                "attributes": [
+                  "73233982-5cf6-4490-b36e-7f3a3fe0f7a7"
+                ],
+                "methods": []
+              },
+              "73233982-5cf6-4490-b36e-7f3a3fe0f7a7": {
+                "id": "73233982-5cf6-4490-b36e-7f3a3fe0f7a7",
+                "name": "matchesOfficiated",
+                "type": "ClassAttribute",
+                "owner": "8223ec43-a875-4e33-bed3-54f9d210406c",
+                "bounds": {
+                  "x": 1223.1666666666665,
+                  "y": 756,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab": {
+                "id": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "name": "MatchStage",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -875.6666666666665,
+                  "y": -244.5,
+                  "width": 160,
+                  "height": 230
+                },
+                "attributes": [
+                  "40eba666-eeea-4127-b4c0-9e1c037b3fae",
+                  "468bacd6-00f1-4dc3-9109-00ba32d33c4e",
+                  "af0e6f9f-bfc8-4be2-9ab0-b8040a1c6142",
+                  "5d8e40d3-d3d6-4281-93f3-3cde9e4bd4d7",
+                  "00e92595-250f-4995-a4f2-e4fd0b8c000a",
+                  "ee5271eb-3f3d-4890-924c-eaca53684503"
+                ],
+                "methods": []
+              },
+              "40eba666-eeea-4127-b4c0-9e1c037b3fae": {
+                "id": "40eba666-eeea-4127-b4c0-9e1c037b3fae",
+                "name": "GROUP_STAGE",
+                "type": "ClassAttribute",
+                "owner": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "bounds": {
+                  "x": -875.1666666666665,
+                  "y": -194,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "468bacd6-00f1-4dc3-9109-00ba32d33c4e": {
+                "id": "468bacd6-00f1-4dc3-9109-00ba32d33c4e",
+                "name": "ROUND_OF_16",
+                "type": "ClassAttribute",
+                "owner": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "bounds": {
+                  "x": -875.1666666666665,
+                  "y": -164,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "af0e6f9f-bfc8-4be2-9ab0-b8040a1c6142": {
+                "id": "af0e6f9f-bfc8-4be2-9ab0-b8040a1c6142",
+                "name": "QUARTER_FINAL",
+                "type": "ClassAttribute",
+                "owner": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "bounds": {
+                  "x": -875.1666666666665,
+                  "y": -134,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "5d8e40d3-d3d6-4281-93f3-3cde9e4bd4d7": {
+                "id": "5d8e40d3-d3d6-4281-93f3-3cde9e4bd4d7",
+                "name": "SEMI_FINAL",
+                "type": "ClassAttribute",
+                "owner": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "bounds": {
+                  "x": -875.1666666666665,
+                  "y": -104,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "00e92595-250f-4995-a4f2-e4fd0b8c000a": {
+                "id": "00e92595-250f-4995-a4f2-e4fd0b8c000a",
+                "name": "THIRD_PLACE_PLAYOFF",
+                "type": "ClassAttribute",
+                "owner": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "bounds": {
+                  "x": -875.1666666666665,
+                  "y": -74,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "ee5271eb-3f3d-4890-924c-eaca53684503": {
+                "id": "ee5271eb-3f3d-4890-924c-eaca53684503",
+                "name": "FINAL",
+                "type": "ClassAttribute",
+                "owner": "5e61cdcd-8286-44cc-8b1b-70bbbfae5bab",
+                "bounds": {
+                  "x": -875.1666666666665,
+                  "y": -44,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "79f87da7-cd1c-47f4-8197-065a812b3f72": {
+                "id": "79f87da7-cd1c-47f4-8197-065a812b3f72",
+                "name": "PlayerPosition",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -1055.6666666666665,
+                  "y": -244.5,
+                  "width": 160,
+                  "height": 170
+                },
+                "attributes": [
+                  "f52f3e23-df87-44a9-94f5-dd0bad17b2b8",
+                  "0888864a-37e2-431b-8baf-a570b1f0c58b",
+                  "d866afdc-958a-4912-8f1a-acec3541ef3f",
+                  "0ed12261-88a6-45b2-be77-76b843e9a9f5"
+                ],
+                "methods": []
+              },
+              "f52f3e23-df87-44a9-94f5-dd0bad17b2b8": {
+                "id": "f52f3e23-df87-44a9-94f5-dd0bad17b2b8",
+                "name": "GOALKEEPER",
+                "type": "ClassAttribute",
+                "owner": "79f87da7-cd1c-47f4-8197-065a812b3f72",
+                "bounds": {
+                  "x": -1055.1666666666665,
+                  "y": -194,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "0888864a-37e2-431b-8baf-a570b1f0c58b": {
+                "id": "0888864a-37e2-431b-8baf-a570b1f0c58b",
+                "name": "DEFENDER",
+                "type": "ClassAttribute",
+                "owner": "79f87da7-cd1c-47f4-8197-065a812b3f72",
+                "bounds": {
+                  "x": -1055.1666666666665,
+                  "y": -164,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "d866afdc-958a-4912-8f1a-acec3541ef3f": {
+                "id": "d866afdc-958a-4912-8f1a-acec3541ef3f",
+                "name": "MIDFIELDER",
+                "type": "ClassAttribute",
+                "owner": "79f87da7-cd1c-47f4-8197-065a812b3f72",
+                "bounds": {
+                  "x": -1055.1666666666665,
+                  "y": -134,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "0ed12261-88a6-45b2-be77-76b843e9a9f5": {
+                "id": "0ed12261-88a6-45b2-be77-76b843e9a9f5",
+                "name": "FORWARD",
+                "type": "ClassAttribute",
+                "owner": "79f87da7-cd1c-47f4-8197-065a812b3f72",
+                "bounds": {
+                  "x": -1055.1666666666665,
+                  "y": -104,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "0c39790c-38a3-458d-8a27-e20f66d7c9d3": {
+                "id": "0c39790c-38a3-458d-8a27-e20f66d7c9d3",
+                "name": "Match_inv_DifferentTeams",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": 570.6666666666665,
+                  "y": 35.5,
+                  "width": 384,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context Match inv Match_inv_DifferentTeams: self.homeTeam <> self.awayTeam"
+              },
+              "cb53a0c2-13cc-436d-bb56-1690f1186627": {
+                "id": "cb53a0c2-13cc-436d-bb56-1690f1186627",
+                "name": "Match_inv_ValidScores",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": 1014.6666666666665,
+                  "y": 35.5,
+                  "width": 444,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context Match inv Match_inv_ValidScores: self.homeScore >= 0 and self.awayScore >= 0"
+              },
+              "10f46930-960b-4504-9e8c-40eaf7b0c89b": {
+                "id": "10f46930-960b-4504-9e8c-40eaf7b0c89b",
+                "name": "Group_inv_GroupTeamsCount",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1384.3333333333335,
+                  "y": 589.5,
+                  "width": 732,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context Group inv Group_inv_GroupTeamsCount: self.teams->size() = 4"
+              },
+              "409c8842-39a2-41c2-bb74-a3c1414d4aec": {
+                "id": "409c8842-39a2-41c2-bb74-a3c1414d4aec",
+                "name": "Tournament_inv_HasFinal",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": 172.66666666666652,
+                  "y": -244.5,
+                  "width": 516,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context Tournament inv Tournament_inv_HasFinal: self.matches->exists(m | m.stage = MatchStage::FINAL)"
+              },
+              "56d5e5f9-1a2d-44af-9839-0d52b215e302": {
+                "id": "56d5e5f9-1a2d-44af-9839-0d52b215e302",
+                "name": "Player_inv_ValidShirtNumber",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1144.3333333333335,
+                  "y": 30.5,
+                  "width": 504,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context Player inv Player_inv_ValidShirtNumber: self.shirtNumber > 0 and self.shirtNumber <= 99"
+              },
+              "91728726-7b59-459b-adf5-2d6def70772f": {
+                "id": "91728726-7b59-459b-adf5-2d6def70772f",
+                "name": "Team_inv_UniqueShirtNumbers",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1181.6666666666667,
+                  "y": 135.5,
+                  "width": 702,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context Team inv Team_inv_UniqueShirtNumbers: self.players->forAll(p1, p2 | p1 <> p2 implies p1.shirtNumber <> p2.shirtNumber)"
+              }
+            },
+            "relationships": {
+              "f9c21bad-36e2-4bc4-b6a8-305794e956e0": {
+                "id": "f9c21bad-36e2-4bc4-b6a8-305794e956e0",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1033.6666666666667,
+                  "y": 365.5,
+                  "width": 2216.333333333333,
+                  "height": 646
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 1108.1666666666665,
+                    "y": 10
+                  },
+                  {
+                    "x": 1108.1666666666665,
+                    "y": 625
+                  },
+                  {
+                    "x": 2216.333333333333,
+                    "y": 625
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "6859a185-166c-4db0-a529-65f6c66ad954": {
+                "id": "6859a185-166c-4db0-a529-65f6c66ad954",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": 537.3333333333333,
+                  "y": 740.5,
+                  "width": 645.3333333333333,
+                  "height": 271
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 322.66666666666663,
+                    "y": 10
+                  },
+                  {
+                    "x": 322.66666666666663,
+                    "y": 250
+                  },
+                  {
+                    "x": 645.3333333333333,
+                    "y": 250
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "02ca3920-4a0a-43a7-964b-9e5a8e1504a0",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "c32290e2-5099-4b2d-b954-62244449a61f": {
+                "id": "c32290e2-5099-4b2d-b954-62244449a61f",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": 1142.6666666666665,
+                  "y": 675.5,
+                  "width": 165,
+                  "height": 441
+                },
+                "path": [
+                  {
+                    "x": 160,
+                    "y": 40
+                  },
+                  {
+                    "x": 160,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 440
+                  },
+                  {
+                    "x": 120,
+                    "y": 440
+                  },
+                  {
+                    "x": 120,
+                    "y": 400
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "8223ec43-a875-4e33-bed3-54f9d210406c",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "fae88921-89ba-4b15-9da4-d09834abc9b7",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "72e56eb1-e091-47af-a8b7-c4826ab75af4": {
+                "id": "72e56eb1-e091-47af-a8b7-c4826ab75af4",
+                "name": "TournamentTeams",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 209.34685770670558,
+                  "y": 20.5,
+                  "width": 390.9602355957031,
+                  "height": 549.1818180084229
+                },
+                "path": [
+                  {
+                    "x": 301.31980895996094,
+                    "y": 10
+                  },
+                  {
+                    "x": 341.31980895996094,
+                    "y": 10
+                  },
+                  {
+                    "x": 341.31980895996094,
+                    "y": 145
+                  },
+                  {
+                    "x": 101.31980895996094,
+                    "y": 145
+                  },
+                  {
+                    "x": 101.31980895996094,
+                    "y": 510
+                  },
+                  {
+                    "x": 141.31980895996094,
+                    "y": 510
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                  "multiplicity": "1..1",
+                  "role": "tournament",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "0..*",
+                  "role": "participatingTeams",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "063bb360-292c-4695-a086-a7c8ca097a78": {
+                "id": "063bb360-292c-4695-a086-a7c8ca097a78",
+                "name": "TournamentGroups",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 9.42911275227857,
+                  "y": 20.5,
+                  "width": 590.8779805501301,
+                  "height": 299.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 501.23755391438795,
+                    "y": 10
+                  },
+                  {
+                    "x": 541.237553914388,
+                    "y": 10
+                  },
+                  {
+                    "x": 541.237553914388,
+                    "y": 145
+                  },
+                  {
+                    "x": 16.904220581054688,
+                    "y": 145
+                  },
+                  {
+                    "x": 16.904220581054688,
+                    "y": 260
+                  },
+                  {
+                    "x": 56.90422058105469,
+                    "y": 260
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                  "multiplicity": "1..1",
+                  "role": "tournament",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "9b9fe71c-bf04-4d1c-b312-9122c9eec1ee",
+                  "multiplicity": "0..*",
+                  "role": "groups",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "9cacfd90-9f1c-4ba9-a4bc-3019ab4aed26": {
+                "id": "9cacfd90-9f1c-4ba9-a4bc-3019ab4aed26",
+                "name": "GroupTeams",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 226.33333333333326,
+                  "y": 270.5,
+                  "width": 124.33333333333326,
+                  "height": 299.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 62.16666666666663,
+                    "y": 10
+                  },
+                  {
+                    "x": 62.16666666666663,
+                    "y": 260
+                  },
+                  {
+                    "x": 124.33333333333326,
+                    "y": 260
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "9b9fe71c-bf04-4d1c-b312-9122c9eec1ee",
+                  "multiplicity": "1..1",
+                  "role": "group",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "2..8",
+                  "role": "teams",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "6a3f792b-5b6a-4841-95c4-57f26a6f7542": {
+                "id": "6a3f792b-5b6a-4841-95c4-57f26a6f7542",
+                "name": "TournamentMatches",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 510.6666666666665,
+                  "y": 20.5,
+                  "width": 606,
+                  "height": 314.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 303,
+                    "y": 10
+                  },
+                  {
+                    "x": 303,
+                    "y": 275
+                  },
+                  {
+                    "x": 606,
+                    "y": 275
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                  "multiplicity": "1..1",
+                  "role": "tournament",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "0..*",
+                  "role": "matches",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "59ef65e6-d59f-4530-91be-a4feaaec53cd": {
+                "id": "59ef65e6-d59f-4530-91be-a4feaaec53cd",
+                "name": "MatchStadium",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 1048.2161814371743,
+                  "y": 285.5,
+                  "width": 308.4569778442383,
+                  "height": 284.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 68.45048522949219,
+                    "y": 10
+                  },
+                  {
+                    "x": 28.450485229492188,
+                    "y": 10
+                  },
+                  {
+                    "x": 28.450485229492188,
+                    "y": 130
+                  },
+                  {
+                    "x": 284.4504852294922,
+                    "y": 130
+                  },
+                  {
+                    "x": 284.4504852294922,
+                    "y": 245
+                  },
+                  {
+                    "x": 244.4504852294922,
+                    "y": 245
+                  }
+                ],
+                "source": {
+                  "direction": "Left",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "0..*",
+                  "role": "matches",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Right",
+                  "element": "c5807d7a-2adf-43ce-ad8f-ce4e1b26d184",
+                  "multiplicity": "1..1",
+                  "role": "stadium",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "45fa17a9-759a-4dbe-92de-7d936f5cd02f": {
+                "id": "45fa17a9-759a-4dbe-92de-7d936f5cd02f",
+                "name": "MatchHomeTeam",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 263.5473505655923,
+                  "y": 285.5,
+                  "width": 1121.5657424926758,
+                  "height": 284.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 1013.1193161010742,
+                    "y": 10
+                  },
+                  {
+                    "x": 1053.1193161010742,
+                    "y": 10
+                  },
+                  {
+                    "x": 1053.1193161010742,
+                    "y": 130
+                  },
+                  {
+                    "x": 47.11931610107422,
+                    "y": 130
+                  },
+                  {
+                    "x": 47.11931610107422,
+                    "y": 245
+                  },
+                  {
+                    "x": 87.11931610107422,
+                    "y": 245
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "0..*",
+                  "role": "homeMatches",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "1..1",
+                  "role": "homeTeam",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "051d98fd-3041-43c6-b4f3-0616436e1186": {
+                "id": "051d98fd-3041-43c6-b4f3-0616436e1186",
+                "name": "MatchAwayTeam",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 266.22592417399073,
+                  "y": 285.5,
+                  "width": 1116.208595275879,
+                  "height": 284.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 1010.4407424926758,
+                    "y": 10
+                  },
+                  {
+                    "x": 1050.4407424926758,
+                    "y": 10
+                  },
+                  {
+                    "x": 1050.4407424926758,
+                    "y": 130
+                  },
+                  {
+                    "x": 44.44074249267578,
+                    "y": 130
+                  },
+                  {
+                    "x": 44.44074249267578,
+                    "y": 245
+                  },
+                  {
+                    "x": 84.44074249267578,
+                    "y": 245
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "0..*",
+                  "role": "awayMatches",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "1..1",
+                  "role": "awayTeam",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "e0c8e0e1-aaa1-4c84-af01-0110c47bd796": {
+                "id": "e0c8e0e1-aaa1-4c84-af01-0110c47bd796",
+                "name": "TeamSquad",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -1033.6666666666667,
+                  "y": 365.5,
+                  "width": 1384.3333333333333,
+                  "height": 203.17171669006348
+                },
+                "path": [
+                  {
+                    "x": 1384.3333333333333,
+                    "y": 165
+                  },
+                  {
+                    "x": 692.1666666666666,
+                    "y": 165
+                  },
+                  {
+                    "x": 692.1666666666666,
+                    "y": 10
+                  },
+                  {
+                    "x": 0,
+                    "y": 10
+                  }
+                ],
+                "source": {
+                  "direction": "Left",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "1..1",
+                  "role": "team",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Right",
+                  "element": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                  "multiplicity": "1..26",
+                  "role": "players",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "9ccbc8b1-3472-4c92-92e8-d74fe62cc654": {
+                "id": "9ccbc8b1-3472-4c92-92e8-d74fe62cc654",
+                "name": "TeamCoach",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 396.1327896118163,
+                  "y": 595.5,
+                  "width": 79.73635292053223,
+                  "height": 130.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 47.867210388183594,
+                    "y": 0
+                  },
+                  {
+                    "x": 47.867210388183594,
+                    "y": 120
+                  }
+                ],
+                "source": {
+                  "direction": "Down",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "0..1",
+                  "role": "team",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Up",
+                  "element": "02ca3920-4a0a-43a7-964b-9e5a8e1504a0",
+                  "multiplicity": "0..1",
+                  "role": "coach",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "f5d3cbd3-0bac-49a9-930e-8f4adde4cc3f": {
+                "id": "f5d3cbd3-0bac-49a9-930e-8f4adde4cc3f",
+                "name": "MatchReferees",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 1129.6666666666665,
+                  "y": 285.5,
+                  "width": 215.4504852294922,
+                  "height": 504.18181800842285
+                },
+                "path": [
+                  {
+                    "x": 147,
+                    "y": 10
+                  },
+                  {
+                    "x": 187,
+                    "y": 10
+                  },
+                  {
+                    "x": 187,
+                    "y": 130
+                  },
+                  {
+                    "x": 0,
+                    "y": 130
+                  },
+                  {
+                    "x": 0,
+                    "y": 465
+                  },
+                  {
+                    "x": 93,
+                    "y": 465
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "0..*",
+                  "role": "matches",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "8223ec43-a875-4e33-bed3-54f9d210406c",
+                  "multiplicity": "1..3",
+                  "role": "referees",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "33e4d6a0-116e-4776-adb7-06a2c7d32e2b": {
+                "id": "33e4d6a0-116e-4776-adb7-06a2c7d32e2b",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": 757.6666666666665,
+                  "y": -4.5,
+                  "width": 444,
+                  "height": 420
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 40
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  },
+                  {
+                    "x": 237,
+                    "y": 0
+                  },
+                  {
+                    "x": 237,
+                    "y": 420
+                  },
+                  {
+                    "x": 439,
+                    "y": 420
+                  },
+                  {
+                    "x": 439,
+                    "y": 380
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "0c39790c-38a3-458d-8a27-e20f66d7c9d3",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "b830c08e-b26b-4a25-8a11-b1de4bc0be69": {
+                "id": "b830c08e-b26b-4a25-8a11-b1de4bc0be69",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": 974.6666666666665,
+                  "y": -4.5,
+                  "width": 267,
+                  "height": 420
+                },
+                "path": [
+                  {
+                    "x": 262,
+                    "y": 40
+                  },
+                  {
+                    "x": 262,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 420
+                  },
+                  {
+                    "x": 222,
+                    "y": 420
+                  },
+                  {
+                    "x": 222,
+                    "y": 380
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "cb53a0c2-13cc-436d-bb56-1690f1186627",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "92000c54-414f-4c26-a6b1-540fb686e35e",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "eebd6a00-e75b-40a3-9596-2ab2ec8ecb98": {
+                "id": "eebd6a00-e75b-40a3-9596-2ab2ec8ecb98",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -1023.3333333333335,
+                  "y": 315.5,
+                  "width": 1174.6666666666667,
+                  "height": 274
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 274
+                  },
+                  {
+                    "x": 5,
+                    "y": 137
+                  },
+                  {
+                    "x": 1169.6666666666667,
+                    "y": 137
+                  },
+                  {
+                    "x": 1169.6666666666667,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "10f46930-960b-4504-9e8c-40eaf7b0c89b",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "9b9fe71c-bf04-4d1c-b312-9122c9eec1ee",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "a70ee098-7d71-43c5-8d3e-0e139350be4d": {
+                "id": "a70ee098-7d71-43c5-8d3e-0e139350be4d",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": 425.6666666666665,
+                  "y": -284.5,
+                  "width": 303,
+                  "height": 450
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 40
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  },
+                  {
+                    "x": 303,
+                    "y": 0
+                  },
+                  {
+                    "x": 303,
+                    "y": 450
+                  },
+                  {
+                    "x": 5,
+                    "y": 450
+                  },
+                  {
+                    "x": 5,
+                    "y": 410
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "409c8842-39a2-41c2-bb74-a3c1414d4aec",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "a584e9ac-bd82-4219-bc66-e473967a4777",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "4e6917c7-92aa-49c7-87f2-0cf973970cff": {
+                "id": "4e6917c7-92aa-49c7-87f2-0cf973970cff",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -1184.3333333333335,
+                  "y": 65.5,
+                  "width": 190.66666666666674,
+                  "height": 331
+                },
+                "path": [
+                  {
+                    "x": 40,
+                    "y": 10
+                  },
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 0,
+                    "y": 150
+                  },
+                  {
+                    "x": 190.66666666666674,
+                    "y": 150
+                  },
+                  {
+                    "x": 190.66666666666674,
+                    "y": 310
+                  },
+                  {
+                    "x": 150.66666666666674,
+                    "y": 310
+                  }
+                ],
+                "source": {
+                  "direction": "Left",
+                  "element": "56d5e5f9-1a2d-44af-9839-0d52b215e302",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Right",
+                  "element": "68a90a95-5258-4eab-9ecf-93aad79df48f",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "89e36036-208f-44f9-baa6-f54efdd4948a": {
+                "id": "89e36036-208f-44f9-baa6-f54efdd4948a",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -1221.6666666666667,
+                  "y": 170.5,
+                  "width": 1772.3333333333333,
+                  "height": 381
+                },
+                "path": [
+                  {
+                    "x": 40,
+                    "y": 10
+                  },
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 0,
+                    "y": 95
+                  },
+                  {
+                    "x": 1772.3333333333333,
+                    "y": 95
+                  },
+                  {
+                    "x": 1772.3333333333333,
+                    "y": 360
+                  },
+                  {
+                    "x": 1732.3333333333333,
+                    "y": 360
+                  }
+                ],
+                "source": {
+                  "direction": "Left",
+                  "element": "91728726-7b59-459b-adf5-2d6def70772f",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Right",
+                  "element": "15d47532-bae7-45c1-8136-6e3d193d5e60",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              }
+            },
+            "assessments": {}
+          },
+          "lastUpdate": "2026-08-14T02:08:41.609Z"
+        }
+      ]
+    },
+    "settings": {
+      "defaultDiagramType": "ClassDiagram",
+      "autoSave": true,
+      "collaborationEnabled": false,
+      "perspectives": {
+        "ClassDiagram": true,
+        "ObjectDiagram": true,
+        "StateMachineDiagram": true,
+        "AgentDiagram": true,
+        "UserDiagram": true,
+        "GUINoCodeDiagram": true,
+        "QuantumCircuitDiagram": true,
+        "NNDiagram": true
+      }
+    }
+  },
+  "exportedAt": "2026-08-14T02:09:07.206Z",
+  "version": "2.0.0"
+}

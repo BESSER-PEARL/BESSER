@@ -1,0 +1,1516 @@
+{
+  "project": {
+    "id": "project_1786824395533_o5zle7jss",
+    "type": "Project",
+    "schemaVersion": 4,
+    "name": "HospitalManagementSystem",
+    "description": "Hospital Management System BUML Model",
+    "owner": "BESSER User",
+    "createdAt": "2026-08-15T20:06:35.533Z",
+    "currentDiagramType": "ClassDiagram",
+    "currentDiagramIndices": {
+      "ClassDiagram": 0,
+      "ObjectDiagram": 0,
+      "StateMachineDiagram": 0,
+      "AgentDiagram": 0,
+      "NNDiagram": 0,
+      "UserDiagram": 0,
+      "GUINoCodeDiagram": 0,
+      "QuantumCircuitDiagram": 0
+    },
+    "diagrams": {
+      "ClassDiagram": [
+        {
+          "id": "d64251be-dca8-42cf-91b6-905da077a6ec",
+          "title": "Class Diagram",
+          "model": {
+            "version": "3.0.0",
+            "type": "ClassDiagram",
+            "size": {
+              "width": 3641.826171875,
+              "height": 1300.6264953613281
+            },
+            "interactive": {
+              "elements": {},
+              "relationships": {}
+            },
+            "elements": {
+              "a50c463a-7bbf-4f49-8728-3eae1c3c86f9": {
+                "id": "a50c463a-7bbf-4f49-8728-3eae1c3c86f9",
+                "name": "AppointmentStatus",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -1800.9130859375,
+                  "y": -630.3132476806641,
+                  "width": 160,
+                  "height": 170
+                },
+                "attributes": [
+                  "9454fb84-e278-4220-9ddd-256789f647ba",
+                  "7894e1a7-e012-425a-9eac-3f56c65df737",
+                  "3080b070-6c52-4281-9feb-5b52735f33b0",
+                  "adb5b90e-c450-48f9-9fd5-8d975c612dc2"
+                ],
+                "methods": []
+              },
+              "9454fb84-e278-4220-9ddd-256789f647ba": {
+                "id": "9454fb84-e278-4220-9ddd-256789f647ba",
+                "name": "CANCELLED",
+                "type": "ClassAttribute",
+                "owner": "a50c463a-7bbf-4f49-8728-3eae1c3c86f9",
+                "bounds": {
+                  "x": -1800.4130859375,
+                  "y": -579.8132476806641,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "7894e1a7-e012-425a-9eac-3f56c65df737": {
+                "id": "7894e1a7-e012-425a-9eac-3f56c65df737",
+                "name": "COMPLETED",
+                "type": "ClassAttribute",
+                "owner": "a50c463a-7bbf-4f49-8728-3eae1c3c86f9",
+                "bounds": {
+                  "x": -1800.4130859375,
+                  "y": -549.8132476806641,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "3080b070-6c52-4281-9feb-5b52735f33b0": {
+                "id": "3080b070-6c52-4281-9feb-5b52735f33b0",
+                "name": "NO_SHOW",
+                "type": "ClassAttribute",
+                "owner": "a50c463a-7bbf-4f49-8728-3eae1c3c86f9",
+                "bounds": {
+                  "x": -1800.4130859375,
+                  "y": -519.8132476806641,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "adb5b90e-c450-48f9-9fd5-8d975c612dc2": {
+                "id": "adb5b90e-c450-48f9-9fd5-8d975c612dc2",
+                "name": "SCHEDULED",
+                "type": "ClassAttribute",
+                "owner": "a50c463a-7bbf-4f49-8728-3eae1c3c86f9",
+                "bounds": {
+                  "x": -1800.4130859375,
+                  "y": -489.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "71335115-81b6-4d70-8125-80d7caabc3b4": {
+                "id": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "name": "BloodType",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -1620.9130859375,
+                  "y": -630.3132476806641,
+                  "width": 160,
+                  "height": 290
+                },
+                "attributes": [
+                  "85a7428e-6790-41bb-9e87-54fc2dd7d14f",
+                  "aaa513ab-d4df-4f65-b269-05db13ed1270",
+                  "c0d05b9b-bc6d-44fe-b777-fea78d96fc17",
+                  "68233ee8-143c-4b85-8307-2d66b252f61d",
+                  "61e097db-222f-466e-98fc-45a544ae0386",
+                  "d50e22b9-db36-45c9-900c-b2f31c7853b7",
+                  "9136eb70-feff-4e26-b792-3cf7a9913cc6",
+                  "c57e6413-b82e-45e6-9488-6851367fc91c"
+                ],
+                "methods": []
+              },
+              "85a7428e-6790-41bb-9e87-54fc2dd7d14f": {
+                "id": "85a7428e-6790-41bb-9e87-54fc2dd7d14f",
+                "name": "AB_NEGATIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -579.8132476806641,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "aaa513ab-d4df-4f65-b269-05db13ed1270": {
+                "id": "aaa513ab-d4df-4f65-b269-05db13ed1270",
+                "name": "AB_POSITIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -549.8132476806641,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "c0d05b9b-bc6d-44fe-b777-fea78d96fc17": {
+                "id": "c0d05b9b-bc6d-44fe-b777-fea78d96fc17",
+                "name": "A_NEGATIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -519.8132476806641,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "68233ee8-143c-4b85-8307-2d66b252f61d": {
+                "id": "68233ee8-143c-4b85-8307-2d66b252f61d",
+                "name": "A_POSITIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -489.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "61e097db-222f-466e-98fc-45a544ae0386": {
+                "id": "61e097db-222f-466e-98fc-45a544ae0386",
+                "name": "B_NEGATIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -459.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "d50e22b9-db36-45c9-900c-b2f31c7853b7": {
+                "id": "d50e22b9-db36-45c9-900c-b2f31c7853b7",
+                "name": "B_POSITIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -429.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "9136eb70-feff-4e26-b792-3cf7a9913cc6": {
+                "id": "9136eb70-feff-4e26-b792-3cf7a9913cc6",
+                "name": "O_NEGATIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -399.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "c57e6413-b82e-45e6-9488-6851367fc91c": {
+                "id": "c57e6413-b82e-45e6-9488-6851367fc91c",
+                "name": "O_POSITIVE",
+                "type": "ClassAttribute",
+                "owner": "71335115-81b6-4d70-8125-80d7caabc3b4",
+                "bounds": {
+                  "x": -1620.4130859375,
+                  "y": -369.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "efe1e60e-2465-4d87-aabd-e4e151281e09": {
+                "id": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                "name": "Doctor",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -935.9130859375,
+                  "y": 179.68675231933594,
+                  "width": 310,
+                  "height": 130
+                },
+                "attributes": [
+                  "6dacb64d-c378-4e71-bc0c-b55276766acd",
+                  "d04b5fdc-1636-4848-b9d6-0f4695870e28",
+                  "3fae5269-c073-4ff6-a527-a9b03cd10952"
+                ],
+                "methods": []
+              },
+              "6dacb64d-c378-4e71-bc0c-b55276766acd": {
+                "id": "6dacb64d-c378-4e71-bc0c-b55276766acd",
+                "name": "consultationFee",
+                "type": "ClassAttribute",
+                "owner": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                "bounds": {
+                  "x": -935.4130859375,
+                  "y": 220.18675231933594,
+                  "width": 309,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "d04b5fdc-1636-4848-b9d6-0f4695870e28": {
+                "id": "d04b5fdc-1636-4848-b9d6-0f4695870e28",
+                "name": "medicalLicense",
+                "type": "ClassAttribute",
+                "owner": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                "bounds": {
+                  "x": -935.4130859375,
+                  "y": 250.18675231933594,
+                  "width": 309,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "3fae5269-c073-4ff6-a527-a9b03cd10952": {
+                "id": "3fae5269-c073-4ff6-a527-a9b03cd10952",
+                "name": "specialty",
+                "type": "ClassAttribute",
+                "owner": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                "bounds": {
+                  "x": -935.4130859375,
+                  "y": 280.18675231933594,
+                  "width": 309,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "2fff64b3-7f6e-4dd2-b105-9c06d9377e71": {
+                "id": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                "name": "MedicalAppointment",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -688.9130859375,
+                  "y": -598.3132476806641,
+                  "width": 380,
+                  "height": 160
+                },
+                "attributes": [
+                  "f077e8e7-35a0-429f-96b2-f90a2967c29e",
+                  "71bf65c2-d09e-4dad-aed8-fccdc9dd648c",
+                  "b06711c5-64ef-430e-b973-4df95c30c1b5",
+                  "dc8a304e-6f15-4a2f-83bf-89334099c2de"
+                ],
+                "methods": []
+              },
+              "f077e8e7-35a0-429f-96b2-f90a2967c29e": {
+                "id": "f077e8e7-35a0-429f-96b2-f90a2967c29e",
+                "name": "appointmentDate",
+                "type": "ClassAttribute",
+                "owner": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                "bounds": {
+                  "x": -688.4130859375,
+                  "y": -557.8132476806641,
+                  "width": 379,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "71bf65c2-d09e-4dad-aed8-fccdc9dd648c": {
+                "id": "71bf65c2-d09e-4dad-aed8-fccdc9dd648c",
+                "name": "appointmentId",
+                "type": "ClassAttribute",
+                "owner": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                "bounds": {
+                  "x": -688.4130859375,
+                  "y": -527.8132476806641,
+                  "width": 379,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "b06711c5-64ef-430e-b973-4df95c30c1b5": {
+                "id": "b06711c5-64ef-430e-b973-4df95c30c1b5",
+                "name": "reason",
+                "type": "ClassAttribute",
+                "owner": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                "bounds": {
+                  "x": -688.4130859375,
+                  "y": -497.81324768066406,
+                  "width": 379,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "dc8a304e-6f15-4a2f-83bf-89334099c2de": {
+                "id": "dc8a304e-6f15-4a2f-83bf-89334099c2de",
+                "name": "status",
+                "type": "ClassAttribute",
+                "owner": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                "bounds": {
+                  "x": -688.4130859375,
+                  "y": -467.81324768066406,
+                  "width": 379,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "AppointmentStatus",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "19591a07-749e-4089-bad0-7644896d6f56": {
+                "id": "19591a07-749e-4089-bad0-7644896d6f56",
+                "name": "MedicalRecord",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1502.5797526041667,
+                  "y": -70.31324768066406,
+                  "width": 260,
+                  "height": 160
+                },
+                "attributes": [
+                  "1c6f540e-fc8a-49fc-985d-a648e02792ae",
+                  "44d3541b-cad6-4db8-a506-607d45cb531a",
+                  "fa7f4650-b3bd-4812-a373-8e9461766465",
+                  "d1794e60-6468-48c2-a8f3-5d5e2d1f86e4"
+                ],
+                "methods": []
+              },
+              "1c6f540e-fc8a-49fc-985d-a648e02792ae": {
+                "id": "1c6f540e-fc8a-49fc-985d-a648e02792ae",
+                "name": "createdDate",
+                "type": "ClassAttribute",
+                "owner": "19591a07-749e-4089-bad0-7644896d6f56",
+                "bounds": {
+                  "x": -1502.0797526041667,
+                  "y": -29.813247680664062,
+                  "width": 259,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "44d3541b-cad6-4db8-a506-607d45cb531a": {
+                "id": "44d3541b-cad6-4db8-a506-607d45cb531a",
+                "name": "diagnosis",
+                "type": "ClassAttribute",
+                "owner": "19591a07-749e-4089-bad0-7644896d6f56",
+                "bounds": {
+                  "x": -1502.0797526041667,
+                  "y": 0.1867523193359375,
+                  "width": 259,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "fa7f4650-b3bd-4812-a373-8e9461766465": {
+                "id": "fa7f4650-b3bd-4812-a373-8e9461766465",
+                "name": "prescription",
+                "type": "ClassAttribute",
+                "owner": "19591a07-749e-4089-bad0-7644896d6f56",
+                "bounds": {
+                  "x": -1502.0797526041667,
+                  "y": 30.186752319335938,
+                  "width": 259,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "d1794e60-6468-48c2-a8f3-5d5e2d1f86e4": {
+                "id": "d1794e60-6468-48c2-a8f3-5d5e2d1f86e4",
+                "name": "recordId",
+                "type": "ClassAttribute",
+                "owner": "19591a07-749e-4089-bad0-7644896d6f56",
+                "bounds": {
+                  "x": -1502.0797526041667,
+                  "y": 60.18675231933594,
+                  "width": 259,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "9c506138-6e27-47d6-91dd-622acf8067d5": {
+                "id": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                "name": "Patient",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -97.9130859375,
+                  "y": 300.68675231933594,
+                  "width": 220,
+                  "height": 130
+                },
+                "attributes": [
+                  "8af425f3-8b6f-4fe1-bfa1-81f47a7e612a",
+                  "8d337d85-ad52-4bfc-904b-2cbce664f591",
+                  "9f6c062d-c2e1-4d2c-8ed2-c3c3a483077e"
+                ],
+                "methods": []
+              },
+              "8af425f3-8b6f-4fe1-bfa1-81f47a7e612a": {
+                "id": "8af425f3-8b6f-4fe1-bfa1-81f47a7e612a",
+                "name": "birthDate",
+                "type": "ClassAttribute",
+                "owner": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                "bounds": {
+                  "x": -97.4130859375,
+                  "y": 341.18675231933594,
+                  "width": 219,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "8d337d85-ad52-4bfc-904b-2cbce664f591": {
+                "id": "8d337d85-ad52-4bfc-904b-2cbce664f591",
+                "name": "bloodGroup",
+                "type": "ClassAttribute",
+                "owner": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                "bounds": {
+                  "x": -97.4130859375,
+                  "y": 371.18675231933594,
+                  "width": 219,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "BloodType",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "9f6c062d-c2e1-4d2c-8ed2-c3c3a483077e": {
+                "id": "9f6c062d-c2e1-4d2c-8ed2-c3c3a483077e",
+                "name": "patientId",
+                "type": "ClassAttribute",
+                "owner": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                "bounds": {
+                  "x": -97.4130859375,
+                  "y": 401.18675231933594,
+                  "width": 219,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "9d279ba6-93f3-4165-9ffe-81419e48e6d8": {
+                "id": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                "name": "Person",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -705.9130859375,
+                  "y": -342.31324768066406,
+                  "width": 160,
+                  "height": 170
+                },
+                "attributes": [
+                  "20ecab7b-2cf5-4779-ad57-f2ed314a724c",
+                  "1ba60454-7bb8-494e-9c02-f1d6ac9cb1c6",
+                  "0d47a783-d49b-4892-bbcc-9be0ca21dd11",
+                  "4d84777c-2c12-4617-b740-739b34bfb241"
+                ],
+                "methods": []
+              },
+              "20ecab7b-2cf5-4779-ad57-f2ed314a724c": {
+                "id": "20ecab7b-2cf5-4779-ad57-f2ed314a724c",
+                "name": "email",
+                "type": "ClassAttribute",
+                "owner": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                "bounds": {
+                  "x": -705.4130859375,
+                  "y": -291.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "1ba60454-7bb8-494e-9c02-f1d6ac9cb1c6": {
+                "id": "1ba60454-7bb8-494e-9c02-f1d6ac9cb1c6",
+                "name": "fullName",
+                "type": "ClassAttribute",
+                "owner": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                "bounds": {
+                  "x": -705.4130859375,
+                  "y": -261.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "0d47a783-d49b-4892-bbcc-9be0ca21dd11": {
+                "id": "0d47a783-d49b-4892-bbcc-9be0ca21dd11",
+                "name": "id",
+                "type": "ClassAttribute",
+                "owner": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                "bounds": {
+                  "x": -705.4130859375,
+                  "y": -231.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "4d84777c-2c12-4617-b740-739b34bfb241": {
+                "id": "4d84777c-2c12-4617-b740-739b34bfb241",
+                "name": "phone",
+                "type": "ClassAttribute",
+                "owner": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                "bounds": {
+                  "x": -705.4130859375,
+                  "y": -201.81324768066406,
+                  "width": 159,
+                  "height": 30
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false
+              },
+              "ed0f2833-a5ac-4ba9-a0d9-23436936f178": {
+                "id": "ed0f2833-a5ac-4ba9-a0d9-23436936f178",
+                "name": "",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1509.9130859375,
+                  "y": -185.31324768066406,
+                  "width": 770,
+                  "height": 90
+                },
+                "description": "",
+                "constraint": "context MedicalRecord inv : self.createdDate > self.appointment.appointmentDate"
+              },
+              "30be2c43-7cd0-4510-ad84-f31b87693ef2": {
+                "id": "30be2c43-7cd0-4510-ad84-f31b87693ef2",
+                "name": "",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1283.5797526041667,
+                  "y": -318.31324768066406,
+                  "width": 160,
+                  "height": 100
+                },
+                "description": "",
+                "constraint": "context Doctor inv : self.scheduledAppointments ->size()>2"
+              },
+              "f98cc971-f106-4ea1-8188-8eb9891eb5fe": {
+                "id": "f98cc971-f106-4ea1-8188-8eb9891eb5fe",
+                "name": "",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -66.9130859375,
+                  "y": -327.31324768066406,
+                  "width": 440,
+                  "height": 110
+                },
+                "description": "",
+                "constraint": "context Patient inv : self.bloodGroup=BloodType::AB_NEGATIVE"
+              },
+              "c11400f4-b818-421b-936a-1bc3b8204b08": {
+                "id": "c11400f4-b818-421b-936a-1bc3b8204b08",
+                "name": "",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1141.9130859375,
+                  "y": 408.68675231933594,
+                  "width": 400,
+                  "height": 120
+                },
+                "description": "",
+                "constraint": "context Patient inv : Patient.allInstances()->forAll(p| p.bloodGroup=BloodType::AB_NEGATIVE)"
+              },
+              "561e24af-6207-4a74-b74d-b33939bfb9a3": {
+                "id": "561e24af-6207-4a74-b74d-b33939bfb9a3",
+                "name": "",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": 91.0869140625,
+                  "y": 91.68675231933594,
+                  "width": 390,
+                  "height": 100
+                },
+                "description": "",
+                "constraint": "context Patient inv : (self.primaryDoctor<>null) implies (self.id<>self.primaryDoctor.id)"
+              },
+              "19b85fa7-faa4-4dbb-9368-7cd67224b851": {
+                "id": "19b85fa7-faa4-4dbb-9368-7cd67224b851",
+                "name": "",
+                "type": "ClassOCLConstraint",
+                "owner": null,
+                "bounds": {
+                  "x": -1397.743896484375,
+                  "y": -539.3062133789062,
+                  "width": 440,
+                  "height": 100
+                },
+                "description": "",
+                "constraint": "context Person inv : Person.allInstances()->forAll(c,p:Person | c.id=p.id   implies c=p)"
+              }
+            },
+            "relationships": {
+              "4bbb6286-d733-45da-8ff0-393e2ef0be1c": {
+                "id": "4bbb6286-d733-45da-8ff0-393e2ef0be1c",
+                "name": "AppointmentRecord",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -1242.5797526041667,
+                  "y": -528.3132476806641,
+                  "width": 1029.9505259195964,
+                  "height": 617
+                },
+                "path": [
+                  {
+                    "x": 933.6666666666667,
+                    "y": 10
+                  },
+                  {
+                    "x": 973.6666666666667,
+                    "y": 10
+                  },
+                  {
+                    "x": 973.6666666666667,
+                    "y": 578
+                  },
+                  {
+                    "x": 0,
+                    "y": 578
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                  "multiplicity": "1..1",
+                  "role": "appointment",
+                  "bounds": {
+                    "x": -440,
+                    "y": -25,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Downright",
+                  "element": "19591a07-749e-4089-bad0-7644896d6f56",
+                  "multiplicity": "0..1",
+                  "role": "record",
+                  "bounds": {
+                    "x": -300,
+                    "y": -25,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "e56f3ca4-4aca-4d19-8fbe-ee94ae8ab2a1": {
+                "id": "e56f3ca4-4aca-4d19-8fbe-ee94ae8ab2a1",
+                "name": "DoctorAppointments",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -625.9130859375,
+                  "y": -438.31324768066406,
+                  "width": 251.0208339691162,
+                  "height": 754.5
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 715.5
+                  },
+                  {
+                    "x": 222,
+                    "y": 715.5
+                  },
+                  {
+                    "x": 222,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Downright",
+                  "element": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                  "multiplicity": "1..1",
+                  "role": "attendingDoctor",
+                  "bounds": {
+                    "x": 0,
+                    "y": -240,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Bottomright",
+                  "element": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                  "multiplicity": "0..*",
+                  "role": "scheduledAppointments",
+                  "bounds": {
+                    "x": -440,
+                    "y": -25,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "9a8d2edf-2d19-41de-b98c-e632ca99efdd": {
+                "id": "9a8d2edf-2d19-41de-b98c-e632ca99efdd",
+                "name": "PatientAppointments",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -308.9130859375,
+                  "y": -528.3132476806641,
+                  "width": 211,
+                  "height": 933
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 105.5,
+                    "y": 10
+                  },
+                  {
+                    "x": 105.5,
+                    "y": 894
+                  },
+                  {
+                    "x": 211,
+                    "y": 894
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "2fff64b3-7f6e-4dd2-b105-9c06d9377e71",
+                  "multiplicity": "0..*",
+                  "role": "appointments",
+                  "bounds": {
+                    "x": -440,
+                    "y": -25,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                  "multiplicity": "1..1",
+                  "role": "patient",
+                  "bounds": {
+                    "x": 0,
+                    "y": -40,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "54459c9e-6b27-4178-bf3d-a74db34ef31c": {
+                "id": "54459c9e-6b27-4178-bf3d-a74db34ef31c",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -630.9130859375,
+                  "y": -172.31324768066406,
+                  "width": 648,
+                  "height": 473
+                },
+                "path": [
+                  {
+                    "x": 643,
+                    "y": 473
+                  },
+                  {
+                    "x": 643,
+                    "y": 236.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 236.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                  "multiplicity": "",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                  "multiplicity": "",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "10e44d56-fa33-47af-9638-17701abdc4b6": {
+                "id": "10e44d56-fa33-47af-9638-17701abdc4b6",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -670.9130859375,
+                  "y": -172.31324768066406,
+                  "width": 10,
+                  "height": 352
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 352
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "50e5ea3e-d4ab-4e38-aee3-e6e1eae2886c": {
+                "id": "50e5ea3e-d4ab-4e38-aee3-e6e1eae2886c",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -1377.5797526041667,
+                  "y": -95.31324768066406,
+                  "width": 10,
+                  "height": 25
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 0
+                  },
+                  {
+                    "x": 5,
+                    "y": 25
+                  }
+                ],
+                "source": {
+                  "direction": "Down",
+                  "element": "ed0f2833-a5ac-4ba9-a0d9-23436936f178",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Topleft",
+                  "element": "19591a07-749e-4089-bad0-7644896d6f56",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "2e495599-d743-483e-ab65-f6b203c1ba43": {
+                "id": "2e495599-d743-483e-ab65-f6b203c1ba43",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -1208.5797526041667,
+                  "y": -358.31324768066406,
+                  "width": 355.16666666666674,
+                  "height": 708
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 40
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  },
+                  {
+                    "x": 125,
+                    "y": 0
+                  },
+                  {
+                    "x": 125,
+                    "y": 708
+                  },
+                  {
+                    "x": 350.16666666666674,
+                    "y": 708
+                  },
+                  {
+                    "x": 350.16666666666674,
+                    "y": 668
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "30be2c43-7cd0-4510-ad84-f31b87693ef2",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Bottomleft",
+                  "element": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "86236bc9-5a7d-49b8-a93f-ede93acc6888": {
+                "id": "86236bc9-5a7d-49b8-a93f-ede93acc6888",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -137.9130859375,
+                  "y": -367.31324768066406,
+                  "width": 406,
+                  "height": 838
+                },
+                "path": [
+                  {
+                    "x": 401,
+                    "y": 40
+                  },
+                  {
+                    "x": 401,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 838
+                  },
+                  {
+                    "x": 95,
+                    "y": 838
+                  },
+                  {
+                    "x": 95,
+                    "y": 798
+                  }
+                ],
+                "source": {
+                  "direction": "Topright",
+                  "element": "f98cc971-f106-4ea1-8188-8eb9891eb5fe",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Bottomleft",
+                  "element": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "a3774ca3-114d-46d1-aaa3-c11c874b832a": {
+                "id": "a3774ca3-114d-46d1-aaa3-c11c874b832a",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -741.9130859375,
+                  "y": 388.18675231933594,
+                  "width": 644,
+                  "height": 131.5
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 110.5
+                  },
+                  {
+                    "x": 322,
+                    "y": 110.5
+                  },
+                  {
+                    "x": 322,
+                    "y": 10
+                  },
+                  {
+                    "x": 644,
+                    "y": 10
+                  }
+                ],
+                "source": {
+                  "direction": "Downright",
+                  "element": "c11400f4-b818-421b-936a-1bc3b8204b08",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Downleft",
+                  "element": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "cdc06b35-6c8b-43aa-a9c0-523d506f1450": {
+                "id": "cdc06b35-6c8b-43aa-a9c0-523d506f1450",
+                "name": "",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -808.8818359375,
+                  "y": 309.68675231933594,
+                  "width": 710.96875,
+                  "height": 127.5
+                },
+                "path": [
+                  {
+                    "x": 710.96875,
+                    "y": 88.5
+                  },
+                  {
+                    "x": 105.46875,
+                    "y": 88.5
+                  },
+                  {
+                    "x": 105.46875,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Downleft",
+                  "element": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                  "multiplicity": "0..*",
+                  "role": "patients"
+                },
+                "target": {
+                  "direction": "Bottomright",
+                  "element": "efe1e60e-2465-4d87-aabd-e4e151281e09",
+                  "multiplicity": "0..1",
+                  "role": "primaryDoctor"
+                },
+                "isManuallyLayouted": false
+              },
+              "d6965f62-3a26-45d9-aaee-7f19981c349f": {
+                "id": "d6965f62-3a26-45d9-aaee-7f19981c349f",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": 51.0869140625,
+                  "y": 51.68675231933594,
+                  "width": 240,
+                  "height": 419
+                },
+                "path": [
+                  {
+                    "x": 235,
+                    "y": 40
+                  },
+                  {
+                    "x": 235,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 194.5
+                  },
+                  {
+                    "x": 111,
+                    "y": 194.5
+                  },
+                  {
+                    "x": 111,
+                    "y": 419
+                  },
+                  {
+                    "x": 16,
+                    "y": 419
+                  },
+                  {
+                    "x": 16,
+                    "y": 379
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "561e24af-6207-4a74-b74d-b33939bfb9a3",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Bottomright",
+                  "element": "9c506138-6e27-47d6-91dd-622acf8067d5",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              },
+              "31a335de-c678-443e-9ef9-d845cac79cbf": {
+                "id": "31a335de-c678-443e-9ef9-d845cac79cbf",
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": null,
+                "bounds": {
+                  "x": -957.743896484375,
+                  "y": -499.30621337890625,
+                  "width": 251.830810546875,
+                  "height": 262.9929656982422
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 125.9154052734375,
+                    "y": 10
+                  },
+                  {
+                    "x": 125.9154052734375,
+                    "y": 241.9929656982422
+                  },
+                  {
+                    "x": 251.830810546875,
+                    "y": 241.9929656982422
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "19b85fa7-faa4-4dbb-9368-7cd67224b851",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "9d279ba6-93f3-4165-9ffe-81419e48e6d8",
+                  "multiplicity": "",
+                  "role": ""
+                },
+                "isManuallyLayouted": false
+              }
+            },
+            "assessments": {}
+          },
+          "lastUpdate": "2026-08-19T01:32:05.290Z"
+        }
+      ]
+    },
+    "settings": {
+      "defaultDiagramType": "ClassDiagram",
+      "autoSave": true,
+      "collaborationEnabled": false,
+      "perspectives": {
+        "ClassDiagram": true,
+        "ObjectDiagram": true,
+        "StateMachineDiagram": true,
+        "AgentDiagram": true,
+        "UserDiagram": true,
+        "GUINoCodeDiagram": true,
+        "QuantumCircuitDiagram": true,
+        "NNDiagram": true
+      }
+    }
+  },
+  "exportedAt": "2026-08-19T01:34:30.765Z",
+  "version": "2.0.0"
+}

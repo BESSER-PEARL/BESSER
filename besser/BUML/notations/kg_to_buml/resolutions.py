@@ -37,14 +37,20 @@ from besser.BUML.metamodel.kg.axioms import (
     PropertyChainAxiom,
     SubPropertyOfAxiom,
 )
+from besser.BUML.metamodel.kg.constants import OWL as OWL_NS
 from besser.BUML.notations.kg_to_buml._common import (
     RDFS_DOMAIN,
     RDFS_RANGE,
     RDFS_SUBCLASS_OF,
     RDF_TYPE,
+    is_meta_vocab,
     looks_like_datatype_iri as _looks_like_datatype_iri,
     normalize_predicate,
+    sorted_by_id,
 )
+
+#: ``owl:Thing`` — the root every class implicitly specialises in OWL.
+OWL_THING = f"{OWL_NS}Thing"
 
 
 __all__ = [
@@ -164,13 +170,60 @@ def _require_property(kg: KnowledgeGraph, prop_id: str) -> KGProperty:
 
 
 def _ensure_thing_class(kg: KnowledgeGraph) -> KGClass:
-    """Return a synthetic 'Thing' KGClass, creating it if absent."""
+    """Return the 'Thing' KGClass, creating a synthetic one if absent.
+
+    An ontology that declares ``owl:Thing`` itself must be reused rather than
+    shadowed: the IRI ends in ``#Thing``, so the label/suffix match alone let it
+    through and a second ``urn:besser:Thing`` was created. Both canonicalise to
+    the UML name ``Thing``, so one would end up renamed to ``Thing_2`` and the
+    properties attached to it would be invisible from the other.
+    """
     for n in kg.nodes:
-        if isinstance(n, KGClass) and (n.label == "Thing" or n.id.endswith("/Thing")):
+        if isinstance(n, KGClass) and (
+            n.iri == OWL_THING
+            or n.id == OWL_THING
+            or n.label == "Thing"
+            or n.id.endswith("/Thing")
+        ):
             return n
     thing = KGClass(id="urn:besser:Thing", label="Thing", iri="urn:besser:Thing")
     kg.add_node(thing)
     return thing
+
+
+def _parent_root_classes_under_thing(kg: KnowledgeGraph, thing: KGClass) -> None:
+    """Make every top-level class an ``rdfs:subClassOf`` of ``thing``.
+
+    Hanging the property off Thing is only half the job. OCL navigation resolves
+    ``self.<property>`` by walking the context class and its *ancestors* — never
+    its subclasses — so unless the classes really do inherit from Thing, the
+    property stays invisible from every one of them and each constraint that
+    navigates it fails to resolve.
+
+    Classes that already have a named superclass reach Thing transitively and
+    are left alone, which also makes repeated calls idempotent. Framework
+    vocabulary (``owl:Restriction``, ``sh:NodeShape``, ``xsd:string``, …) is
+    skipped for the same reason ``kg_to_rdf._declaration_for`` refuses to declare
+    it as a class: giving it a superclass would be enough to pull it into the
+    diagram as one.
+    """
+    has_parent = {
+        e.source.id for e in kg.edges
+        if normalize_predicate(e.iri) == RDFS_SUBCLASS_OF and isinstance(e.target, KGClass)
+    }
+    for node in sorted_by_id([n for n in kg.nodes if isinstance(n, KGClass)]):
+        if node.id == thing.id or node.id in has_parent:
+            continue
+        iri = node.iri or node.id
+        if is_meta_vocab(iri) or _looks_like_datatype_iri(iri):
+            continue
+        kg.add_edge(KGEdge(
+            id=_next_edge_id(kg, "subclass"),
+            source=node,
+            target=thing,
+            label="subClassOf",
+            iri=RDFS_SUBCLASS_OF,
+        ))
 
 
 # ----------------------------------------------------------------------
@@ -211,6 +264,7 @@ def _h_attach_to_thing(kg: KnowledgeGraph, res: KGResolution) -> None:
         label="domain",
         iri=RDFS_DOMAIN,
     ))
+    _parent_root_classes_under_thing(kg, thing)
 
 
 def _h_drop_property(kg: KnowledgeGraph, res: KGResolution) -> None:

@@ -67,6 +67,76 @@ def test_property_no_domain_with_abox_usage(tmp_path: Path):
     assert issue.skip_action.key == "drop_property"
 
 
+def test_property_no_domain_when_it_is_a_super_property(tmp_path: Path):
+    """No ABox at all, but O18 will emit ``self.contributor`` for the
+    sub-property — which resolves nowhere while contributor sits on Thing."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Document a owl:Class .
+    :contributor a owl:ObjectProperty .
+    :editor a owl:ObjectProperty ; rdfs:domain :Document ; rdfs:subPropertyOf :contributor .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    issue = _issue(report, "PROPERTY_NO_DOMAIN")
+    _assert_actions_present(issue)
+    assert "contributor" in issue.description
+    assert "super-property" in issue.description
+    # :editor has a domain, so only :contributor is raised.
+    assert len([i for i in report.issues if i.code == "PROPERTY_NO_DOMAIN"]) == 1
+
+
+def test_property_no_domain_when_it_is_a_shacl_path(tmp_path: Path):
+    """The SHACL rules navigate ``self.name`` from the shape's target class."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix sh: <http://www.w3.org/ns/shacl#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Agent a owl:Class .
+    :name a owl:DatatypeProperty .
+    :AgentShape a sh:NodeShape ;
+        sh:targetClass :Agent ;
+        sh:property [ sh:path :name ; sh:minCount 1 ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    issue = _issue(report, "PROPERTY_NO_DOMAIN")
+    assert "name" in issue.description
+    assert "sh:path" in issue.description
+
+
+def test_union_domain_is_a_domain(tmp_path: Path):
+    """A ``owl:unionOf`` domain is a blank node, and the shared ``_domain_targets``
+    helper filters blank nodes out because its other callers need named classes.
+    Reading that as "no domain" made the recommendation add a second
+    ``rdfs:domain``, which the mapper then took to mean the *intersection* of
+    Thing and the union."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Collection a owl:Class .
+    :Document a owl:Class .
+    :contributor a owl:ObjectProperty .
+    :editor a owl:ObjectProperty ;
+        rdfs:subPropertyOf :contributor ;
+        rdfs:domain [ a owl:Class ; owl:unionOf ( :Collection :Document ) ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    raised = {
+        i.recommended_action.parameters["property_iri"]
+        for i in report.issues if i.code == "PROPERTY_NO_DOMAIN"
+    }
+    assert raised == {"http://ex.org/contributor"}
+
+
 def test_property_with_domain_does_not_trigger_no_domain_issue(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .

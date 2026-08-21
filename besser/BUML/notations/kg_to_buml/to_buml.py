@@ -103,7 +103,7 @@ def lower_to_buml(
 
     classes = _build_classes(model, renames, out)
     enumerations = _build_enumerations(model, renames, out.warnings)
-    _build_attributes(model, renames, classes, enumerations, out)
+    _build_attributes(model, renames, classes, enumerations, generalizations, out)
 
     buml_generalizations = _build_generalizations(generalizations, classes)
     associations = _build_associations(model, renames, classes, buml_generalizations, out)
@@ -365,14 +365,17 @@ def _multiplicity(lower: int, upper, warnings, *, label: str) -> Multiplicity:
 # ----------------------------------------------------------------------
 
 
-def _build_attributes(model: UMLModel, renames, classes, enumerations, out: LoweredModel) -> None:
+def _build_attributes(model: UMLModel, renames, classes, enumerations,
+                      generalizations, out: LoweredModel) -> None:
+    inherited = _inherited_attribute_names(model, renames, generalizations)
     for name in sorted(model.classes):
         uml_class = model.classes[name]
         safe = _resolve(name, renames)
         buml_class = classes.get(safe)
         if buml_class is None or not uml_class.attributes:
             continue
-        _attach_attributes(buml_class, uml_class.attributes, renames, classes, enumerations, out)
+        _attach_attributes(buml_class, uml_class.attributes, renames, classes, enumerations,
+                           out, inherited.get(safe, set()))
 
     # Materialised data ranges carry a single `value` attribute (O01-O05).
     for name in sorted(model.datatypes):
@@ -386,13 +389,48 @@ def _build_attributes(model: UMLModel, renames, classes, enumerations, out: Lowe
         _attach_attributes(buml_class, datatype.attributes, renames, classes, enumerations, out)
 
 
-def _attach_attributes(buml_class, attributes, renames, classes, enumerations, out) -> None:
+def _inherited_attribute_names(model: UMLModel, renames, generalizations) -> Dict[str, Set[str]]:
+    """Attribute names each class already inherits from an ancestor.
+
+    A restriction over a data property declares the attribute on the auxiliary
+    class it materialises, above the class it constrains — the mirror of what an
+    object restriction does with the association. The constrained class usually
+    declares the same attribute itself, from the property's own ``rdfs:domain``,
+    and then ``all_attributes()`` would hand every consumer the name twice.
+
+    Association ends already resolve this the same way (``_ancestors_first``,
+    ``ASSOC_INHERITED_SHADOWED``): the ancestor's copy is the one to keep, since
+    the auxiliary class carries the tighter multiplicity and type.
+    """
+    declared: Dict[str, Set[str]] = {}
+    for name, uml_class in model.classes.items():
+        declared[_resolve(name, renames)] = {
+            naming.sanitize(a.name) or "_" for a in uml_class.attributes
+        }
+    parents: Dict[str, List[str]] = {}
+    for sub, sup in generalizations:
+        parents.setdefault(sub, []).append(sup)
+    return {
+        name: set().union(*(declared.get(a, set()) for a in _closure(name, parents)) or [set()])
+        for name in declared
+    }
+
+
+def _attach_attributes(buml_class, attributes, renames, classes, enumerations, out,
+                       inherited: Optional[Set[str]] = None) -> None:
     built: List[Property] = []
-    taken: Set[str] = set()
+    taken: Set[str] = set(inherited or ())
     seen_id = False
     for attribute in attributes:
         attr_name = naming.sanitize(attribute.name) or "_"
         if attr_name in taken:
+            if inherited and attr_name in inherited:
+                add_warning(
+                    out.warnings,
+                    "ATTR_INHERITED_SHADOWED",
+                    f"{buml_class.name}.{attr_name} is already inherited from an ancestor "
+                    f"that constrains it; the redundant declaration was dropped.",
+                )
             continue
         taken.add(attr_name)
         is_id = bool(attribute.is_id)
@@ -738,14 +776,24 @@ def _unique_association_name(assoc: _PlannedAssociation, used: Set[str]) -> str:
 def _build_constraints(model: UMLModel, renames, classes, domain_model, out: LoweredModel) -> None:
     """Attach the invariants, re-validated against the finished model.
 
-    The mapper already guards emission with ``_has_property``, but that runs
-    before the fan-out merges and end renames above. Re-checking here is what
-    guarantees no constraint survives referencing a feature or type the
-    ``DomainModel`` does not actually have — which would otherwise surface as a
-    silent drop (or a crash) in the editor and the OCL generators.
+    The mapper already guards emission with ``_has_property``, but that only
+    asks whether the property exists *somewhere* — and it runs before the end
+    renames above. The question that decides whether an invariant is worth
+    anything is narrower: can its context class navigate every feature the body
+    mentions? An OCL evaluator answers that by walking the context and its
+    ancestors (``Class.all_attributes()`` / ``all_association_ends()``, both via
+    ``all_parents()``), so that is the rule applied here.
+
+    Nothing is re-targeted to make it fit: a rule that emits an invariant is
+    responsible for putting it on a class that owns what it navigates, which is
+    why every materialised class declares the feature it constrains (see
+    :mod:`~besser.BUML.notations.kg_to_buml.owl2uml.expressions`). What is left
+    unresolvable here is genuinely unexpressible — a property with no domain
+    that the user declined to attach to ``Thing`` — and is dropped with a
+    warning rather than shipped in a form no evaluator can read.
     """
     type_names = {t.name for t in domain_model.types}
-    features = _reachable_features(classes, domain_model)
+    features = _reachable_features(classes, _hierarchy(domain_model))
     used_names: Set[str] = set()
 
     for invariant in model.ocl_constraints():
@@ -764,9 +812,10 @@ def _build_constraints(model: UMLModel, renames, classes, domain_model, out: Low
                 f"the editor's OCL parser uses as a block separator; dropped.",
             )
             continue
-        if not _features_resolve(body, context_name, features, out, context_name):
-            continue
         if not _types_resolve(body, type_names, out, context_name):
+            continue
+
+        if not _features_resolve(body, context_name, features, out):
             continue
 
         name = _unique_constraint_name(context_name, invariant, used_names)
@@ -778,19 +827,30 @@ def _build_constraints(model: UMLModel, renames, classes, domain_model, out: Low
         ))
 
 
-def _reachable_features(classes, domain_model) -> Dict[str, Set[str]]:
-    """Feature names an invariant on each class may legitimately navigate.
+def _hierarchy(domain_model) -> Dict[str, List[str]]:
+    """``subclass -> superclasses`` adjacency over the model's generalizations."""
+    parents: Dict[str, List[str]] = {}
+    for generalization in sorted(
+        domain_model.generalizations,
+        key=lambda g: (g.specific.name, g.general.name),
+    ):
+        parents.setdefault(generalization.specific.name, []).append(generalization.general.name)
+    return parents
 
-    Its own features plus every ancestor's, and also every *descendant's*.
-    Descendants matter because of the † rule in the paper's Table 3: the
-    auxiliary class materialised for a data restriction carries the invariant,
-    while the feature it constrains is declared on the named classes that become
-    its subclasses. Excluding descendants would drop exactly those invariants
-    (O10-O15) even though the model does define the feature.
 
-    ``Thing``'s features are folded into every class because the mapper attaches
-    domain-less properties there, and every OWL class is implicitly a subclass
-    of ``owl:Thing`` even without an explicit generalization edge.
+def _reachable_features(classes, parents) -> Dict[str, Set[str]]:
+    """Feature names an invariant on each class can actually navigate.
+
+    Its own features plus every *ancestor's* — no more. This mirrors how OCL
+    resolves ``self.<feature>`` (``Class.all_attributes()`` and
+    ``all_association_ends()``, both walking ``all_parents()``), so a name that
+    passes here is one an evaluator will find.
+
+    Neither descendants nor ``Thing`` are folded in. Both used to be, and both
+    certified invariants no evaluator could resolve: a feature on a subclass is
+    invisible from above, and ``owl:Thing`` is only an ancestor when the user
+    accepted the ``attach_to_thing`` recommendation for the domain-less property
+    that put it there.
     """
     direct: Dict[str, Set[str]] = {}
     for name, buml_class in classes.items():
@@ -801,35 +861,31 @@ def _reachable_features(classes, domain_model) -> Dict[str, Set[str]]:
             | {end.name for end in buml_class.association_ends()}
         )
 
-    parents: Dict[str, List[str]] = {}
-    children: Dict[str, List[str]] = {}
-    for generalization in domain_model.generalizations:
-        sub, sup = generalization.specific.name, generalization.general.name
-        parents.setdefault(sub, []).append(sup)
-        children.setdefault(sup, []).append(sub)
-
-    thing_features = direct.get("Thing", set())
     resolved: Dict[str, Set[str]] = {}
     for name in classes:
-        names = set(thing_features) | direct.get(name, set())
-        for relative in _closure(name, parents) | _closure(name, children):
-            names |= direct.get(relative, set())
+        names = set(direct.get(name, set()))
+        for ancestor in _closure(name, parents):
+            names |= direct.get(ancestor, set())
         resolved[name] = names
     return resolved
 
 
-def _features_resolve(body, context_name, features, out, label) -> bool:
-    available = features.get(context_name, set())
-    for feature in _SELF_FEATURE_RE.findall(body):
-        if feature in _OCL_OPERATIONS or feature in available:
-            continue
-        add_warning(
-            out.warnings,
-            "OCL_DROPPED_UNRESOLVED_FEATURE",
-            f"Invariant on {label} navigates self.{feature}, which the class does not have; dropped.",
-        )
-        return False
-    return True
+def _features_resolve(body, context_name, features, out) -> bool:
+    """Whether the context can navigate every ``self.<feature>`` in ``body``."""
+    missing = sorted(
+        {f for f in _SELF_FEATURE_RE.findall(body) if f not in _OCL_OPERATIONS}
+        - features.get(context_name, set())
+    )
+    if not missing:
+        return True
+    add_warning(
+        out.warnings,
+        "OCL_DROPPED_UNRESOLVED_FEATURE",
+        f"Invariant on {context_name} navigates "
+        f"{', '.join('self.' + m for m in missing)}, which neither the class nor any of "
+        f"its ancestors has; dropped.",
+    )
+    return False
 
 
 def _types_resolve(body, type_names, out, label) -> bool:

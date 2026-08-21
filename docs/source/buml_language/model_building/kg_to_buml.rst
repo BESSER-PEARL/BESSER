@@ -137,7 +137,8 @@ The conversion runs in three stages, each independently testable:
 ``to_buml``
     Lowers the intermediate model onto B-UML, reconciling it with the
     metamodel's validation rules (association end-name uniqueness, the fixed
-    primitive set, multiplicity bounds).
+    primitive set, multiplicity bounds), and checks that every invariant can
+    navigate what it references from its own context.
 
 The transformation is deterministic: identical input always produces an
 identical model.
@@ -156,3 +157,22 @@ Before converting, the KG can be checked with
 no domain, a class referenced but never declared, …) together with the
 resolutions available for each. This is what the editor's KG refinement dialog
 drives.
+
+Properties without a domain
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A property declared without an ``rdfs:domain`` has no class to attach to, so it
+is placed on a synthetic ``Thing``. In OWL every class is implicitly a subclass
+of ``owl:Thing``, but UML has no such rule: unless the classes are actually made
+to inherit from it, an OCL invariant that navigates the property resolves from
+nowhere, because OCL looks a feature up on the context class and its
+*ancestors* — never its subclasses.
+
+``analyze_kg_for_class_diagram()`` therefore raises a ``PROPERTY_NO_DOMAIN``
+issue for each such property that something references — an ABox assertion, an
+``rdfs:subPropertyOf`` axiom, or a SHACL ``sh:path``. Accepting the recommended
+``attach_to_thing`` resolution gives the property a domain *and* makes every
+top-level class inherit from ``Thing``, so those invariants resolve. Converting
+without accepting it is still fine; the invariants that cannot be navigated are
+dropped with an ``OCL_DROPPED_UNRESOLVED_FEATURE`` warning rather than shipped
+in a form no evaluator can read.

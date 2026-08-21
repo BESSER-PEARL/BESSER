@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from besser.BUML.metamodel.kg import (
     EquivalentClassesAxiom,
     InversePropertiesAxiom,
+    SubPropertyOfAxiom,
     KGBlank,
     KGClass,
     KGEdge,
@@ -35,7 +36,10 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KnowledgeGraph,
 )
-from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
+from besser.BUML.metamodel.kg.constants import (
+    CONSTRAINT_TARGET_CLASS,
+    CONSTRAINT_TARGET_PROPERTY,
+)
 
 from besser.BUML.notations.kg_to_buml._common import (
     RDFS_DOMAIN,
@@ -224,6 +228,20 @@ def _domain_targets(prop: KGProperty, indexes) -> List[Any]:
     ]
 
 
+def _has_any_domain(prop: KGProperty, indexes) -> bool:
+    """Whether ``prop`` carries any ``rdfs:domain`` at all.
+
+    ``_domain_targets`` deliberately drops blank-node targets because the
+    detectors that compare domains need *named* classes to reason about. For
+    "has no domain" that filter is wrong: an ``owl:unionOf`` expression is a
+    blank node and is a perfectly good domain — the mapper resolves it to the
+    auxiliary union class. Treating it as missing made the recommendation add a
+    second ``rdfs:domain``, which the mapper then read as the *intersection* of
+    Thing and the union.
+    """
+    return bool(indexes.out_with_predicate(prop.id, RDFS_DOMAIN))
+
+
 def _range_targets(prop: KGProperty, indexes) -> List[Any]:
     return [e.target for e in indexes.out_with_predicate(prop.id, RDFS_RANGE)]
 
@@ -237,31 +255,71 @@ def _has_abox_usage(prop_iri: Optional[str], kg: KnowledgeGraph) -> bool:
     return False
 
 
+def _is_super_property(prop: KGProperty, kg: KnowledgeGraph) -> bool:
+    """Whether some property is declared ``rdfs:subPropertyOf`` this one.
+
+    O18/O27 turn each such axiom into an invariant that navigates
+    ``self.<super>`` from the sub-property's domain, so a super-property with
+    nowhere to attach leaves that invariant unresolvable.
+    """
+    keys = {k for k in (prop.id, prop.iri) if k}
+    return any(
+        isinstance(axiom, SubPropertyOfAxiom) and axiom.super_property_id in keys
+        for axiom in kg.axioms
+    )
+
+
+def _is_shape_path(prop: KGProperty, indexes) -> bool:
+    """Whether a SHACL property shape targets this property via ``sh:path``.
+
+    Every S-rule invariant the shape produces navigates ``self.<path>`` from the
+    shape's target class.
+    """
+    return bool(indexes.in_with_predicate(prop.id, CONSTRAINT_TARGET_PROPERTY))
+
+
 # ----------------------------------------------------------------------
 # Class-diagram detectors
 # ----------------------------------------------------------------------
 
 
 def _detect_no_domain(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
+    """Properties with no ``rdfs:domain`` that something actually references.
+
+    A domain-less property has no class to attach to, so it lands on a synthetic
+    ``Thing``. That is only a problem when something *navigates* it — an ABox
+    assertion, an O18/O27 sub-property invariant, or a SHACL shape's path — and
+    then it is a hard one: ``Thing`` is nobody's superclass unless the user asks
+    for it, so ``self.<property>`` cannot be resolved from any context class.
+    Raising every domain-less property instead would bury the ones that matter
+    (on BIBO, 14 of 42).
+    """
     out: List[KGIssue] = []
     for prop in _properties_in(kg):
-        if _domain_targets(prop, indexes):
+        if _has_any_domain(prop, indexes):
             continue
-        if not _has_abox_usage(prop.iri, kg):
+        if _has_abox_usage(prop.iri, kg):
+            why = "is used in the ABox"
+        elif _is_super_property(prop, kg):
+            why = "is the super-property of another property"
+        elif _is_shape_path(prop, indexes):
+            why = "is the sh:path of a SHACL shape"
+        else:
             continue
         prop_label = prop.label or local_name(prop.iri) or prop.id
         out.append(KGIssue(
             id=_issue_id("PROPERTY_NO_DOMAIN", prop.id),
             code="PROPERTY_NO_DOMAIN",
             description=(
-                f"Property '{prop_label}' has no rdfs:domain but is used in the ABox. "
-                f"Without a domain it cannot be attached to a specific class."
+                f"Property '{prop_label}' has no rdfs:domain but {why}. "
+                f"Without a domain it cannot be attached to a specific class, and any "
+                f"OCL constraint that navigates it cannot be resolved."
             ),
             affected_node_ids=[prop.id],
             recommended_action=KGAction(
                 key="attach_to_thing",
                 parameters={"property_iri": prop.iri or prop.id},
-                label=f"Attach '{prop_label}' to a synthetic 'Thing' class",
+                label=f"Attach '{prop_label}' to a 'Thing' class every class inherits from",
             ),
             skip_action=KGAction(
                 key="drop_property",

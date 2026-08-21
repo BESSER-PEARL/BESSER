@@ -84,8 +84,56 @@ class Mapper:
         self._map_individuals()       # D13, D39, D40, D41
         if self.shapes is not None:
             self._map_shacl()         # SHACL -> OCL (Table tab:shacl-ocl)
+        self._complete_thing_hierarchy()
         self._post_checks()
         return self.model
+
+    def _complete_thing_hierarchy(self) -> None:
+        """Parent the classes the KG could not name under ``Thing``.
+
+        ``attach_to_thing`` — the Refine-KG resolution offered for
+        ``PROPERTY_NO_DOMAIN`` — makes every top-level *KG* class a subclass of
+        Thing, which is what lets an invariant navigate a domain-less property:
+        OCL resolves ``self.<p>`` by walking the context's ancestors, so Thing
+        has to really be one. The classes materialised during this mapping —
+        union and intersection aux classes above all — do not exist at KG time,
+        so they would be left as roots and any invariant whose context is one of
+        them would still fail to resolve.
+
+        Runs only when the KG already puts a class under Thing, i.e. the user
+        accepted the recommendation. Declining leaves the model as it was.
+
+        One exception: a class that declares a feature name Thing also declares
+        keeps its own. Restriction aux classes exist precisely to narrow such a
+        property (``_all_hasPart_Issue --hasPart--> Issue``, ``_max_1_isPartOf_Thing``),
+        and BUML keeps only one end per name across a hierarchy — so parenting
+        them would drop the narrower end and, with it, the cardinality that only
+        the association carries.
+        """
+        thing = self.canon.name(OWL.Thing)
+        if thing not in self.model.classes:
+            return
+        if not any(g.superclass == thing for g in self.model.generalizations):
+            return
+
+        def features(name: str) -> set[str]:
+            cls = self.model.classes.get(name)
+            names = {a.name for a in cls.attributes} if cls is not None else set()
+            for assoc in self.model.associations:
+                if assoc.source.type == name and assoc.target.role:
+                    names.add(assoc.target.role)
+                if assoc.target.type == name and assoc.source.navigable and assoc.source.role:
+                    names.add(assoc.source.role)
+            return names
+
+        inherited = features(thing)
+        has_parent = {g.subclass for g in self.model.generalizations}
+        for name in sorted(self.model.classes):
+            if name == thing or name in has_parent:
+                continue
+            if features(name) & inherited:
+                continue
+            self.add_generalization(name, thing)
 
     def _map_shacl(self) -> None:
         from .shacl import ShaclMapper   # local import to keep shacl.py optional
@@ -146,6 +194,23 @@ class Mapper:
             target=AssociationEnd(type=target_type, role=role,
                                   lower=tgt_mult[0], upper=tgt_mult[1], navigable=True),
         ))
+
+    def add_attribute(self, ctx: str, pname: str, dtype: str,
+                      mult=(0, "*"), uri: str | None = None) -> None:
+        """Declare an attribute on ``ctx``, unless it already has one by that name.
+
+        The data-property counterpart of :meth:`add_association`. A restriction
+        over a data property materialises an auxiliary class the same way one
+        over an object property does, and the class has to own the feature it
+        constrains — otherwise the invariant it carries names something that
+        lives on its subclasses, where no OCL evaluator will look for it.
+        """
+        cls = self.model.classes.get(ctx)
+        if cls is None or any(a.name == pname for a in cls.attributes):
+            return
+        cls.attributes.append(
+            Attribute(name=pname, type=dtype, lower=mult[0], upper=mult[1], uri=uri)
+        )
 
     def add_ocl(self, context: str, body: str, origin: str = "",
                 kind: str = "inv", name: str | None = None) -> None:
@@ -392,7 +457,21 @@ class Mapper:
             self.add_ocl(cname, disj, origin="O17", name="complete")
 
     def _combine(self, nodes) -> str:
-        """Resolve one-or-more domain/range nodes to a single class name."""
+        """Resolve one-or-more domain/range nodes to a single class name.
+
+        The single place a property's ``rdfs:domain`` / ``rdfs:range`` becomes a
+        class, for object and data properties alike. Class expressions are
+        resolved bottom-up first (:class:`~owl2uml.expressions.ExpressionResolver`),
+        so a union domain lands on the auxiliary union class D19 materialised for
+        it — the one every member already generalises to — rather than being
+        expanded back into its members. Several ``rdfs:domain`` axioms mean the
+        intersection of them, and an absent domain/range falls back to Thing.
+
+        Assigning the property to the resolved class is what keeps the OCL
+        emitted for it navigable: every rule that references ``self.<p>`` picks
+        its context through this same method, so the feature is always on the
+        context class or one of its ancestors.
+        """
         names = sorted({self.resolver.resolve_class(n) for n in nodes})
         if not names:
             return self.ensure_class(OWL.Thing)
@@ -402,39 +481,6 @@ class Mapper:
         for nm in names:
             self.add_generalization(aux, nm)
         return aux
-
-    def _participating_classes(self, nodes) -> list[str]:
-        """Classes an object-property association (or its O22 invariant)
-        attaches to.
-
-        Per the spec, an ObjectPropertyDomain / ObjectPropertyRange that is a
-        union of classes is linked directly to each participating class rather
-        than through an auxiliary union class; a member that is a (transitive)
-        subclass of another member is dropped, since the superclass link
-        already covers it. Non-union expressions resolve to a single (possibly
-        materialised) class, and an absent domain/range falls back to Thing.
-        """
-        if not nodes:
-            return [self.ensure_class(OWL.Thing)]
-        names: list[str] = []
-        for n in nodes:
-            members = self.resolver.union_members(n)
-            names.extend(members if members is not None else [self.resolver.resolve_class(n)])
-        return self._drop_subclasses(list(dict.fromkeys(names)))
-
-    def _drop_subclasses(self, names: list[str]) -> list[str]:
-        nameset = set(names)
-        kept: list[str] = []
-        for n in names:
-            iri = self.iri_for_name(n)
-            ancestors = ({self.canon.name(s)
-                          for s in self.g.transitive_objects(iri, RDFS.subClassOf)
-                          if isinstance(s, URIRef) and s != iri}
-                         if iri is not None else set())
-            if ancestors & nameset:
-                continue                 # a superclass of n is also present -> redundant link
-            kept.append(n)
-        return kept
 
     def _warn_missing_domain_range(self, prop, domains, ranges) -> None:
         """Surface the two fallbacks that silently widen a property.
@@ -469,39 +515,42 @@ class Mapper:
         return nodes
 
     def _map_object_properties(self) -> None:
-        # D29 inverse pairs first (one bidirectional association per member pair)
+        """D10, D29-D32, O22 — one association per object property.
+
+        D30/D31 resolve a union-typed domain/range to the union class itself
+        (see :meth:`_combine`) rather than linking to each member separately.
+        Linking to the members put the association *below* every invariant O18 /
+        O21 / O23-O26 emits for the same property, whose context is that same
+        resolved class, so ``self.<p>`` was unresolvable for any OCL evaluator:
+        they walk a context's ancestors, never its subclasses.
+        """
+        # D29 inverse pairs first (one bidirectional association per pair)
         for a, b in self.ax.inverse_pairs():
             if not (isinstance(a, URIRef) and isinstance(b, URIRef)):
                 continue
             if a in self._handled_props or b in self._handled_props:
                 continue
             self._handled_props.update({a, b})
-            srcs = self._participating_classes(self._group_domains(a) or self._group_ranges(b))
-            tgts = self._participating_classes(self._group_ranges(a) or self._group_domains(b))
-            for src in srcs:
-                for tgt in tgts:
-                    self.add_association(src, tgt, role=self.canon.name(a),
-                                         source_role=self.canon.name(b), uri=str(a))
+            src = self._combine(self._group_domains(a) or self._group_ranges(b))
+            tgt = self._combine(self._group_ranges(a) or self._group_domains(b))
+            self.add_association(src, tgt, role=self.canon.name(a),
+                                 source_role=self.canon.name(b), uri=str(a))
         # remaining object properties
         for p in self.ax.sorted_object_props:
             if self.canon.is_alias(p) or p in self._handled_props:
                 continue
             self._warn_missing_domain_range(p, self._group_domains(p), self._group_ranges(p))
-            srcs = self._participating_classes(self._group_domains(p))
-            tgts = self._participating_classes(self._group_ranges(p))
+            src = self._combine(self._group_domains(p))
+            tgt = self._combine(self._group_ranges(p))
             tgt_mult = (0, 1) if self.ax.is_functional(p) else (0, "*")
             src_mult = (0, 1) if self.ax.is_inverse_functional(p) else (0, "*")
             pname = self.canon.name(p)
-            for src in srcs:
-                for tgt in tgts:
-                    self.add_association(src, tgt, role=pname,
-                                         src_mult=src_mult, tgt_mult=tgt_mult, uri=str(p))
+            self.add_association(src, tgt, role=pname,
+                                 src_mult=src_mult, tgt_mult=tgt_mult, uri=str(p))
             if self.ax.is_inverse_functional(p):     # O22
-                for src in srcs:
-                    for tgt in tgts:
-                        self.add_ocl(tgt, f"{tgt}.allInstances()->forAll(d | {src}.allInstances()"
-                                          f"->select(c | c.{pname}->includes(d))->size() <= 1)",
-                                     origin="O22")
+                self.add_ocl(tgt, f"{tgt}.allInstances()->forAll(d | {src}.allInstances()"
+                                  f"->select(c | c.{pname}->includes(d))->size() <= 1)",
+                             origin="O22")
 
     def _map_data_properties(self) -> None:
         for p in self.ax.sorted_data_props:
@@ -534,12 +583,13 @@ class Mapper:
         case would reference a feature the context class doesn't have, so the
         constraint is skipped instead.
 
-        Every OWL class is implicitly ``rdfs:subClassOf owl:Thing`` even when
-        no explicit generalization edge encodes it, so a domain-less
-        property/data-property (which the mapper falls back to attaching to
-        ``Thing``, see ``_map_data_properties``/``_map_object_properties``) is
-        reachable from *any* class — ``Thing`` is always checked as an
-        implicit ancestor in addition to the walked generalization chain.
+        ``Thing`` is checked alongside the walked generalization chain because a
+        domain-less property falls back to it (see ``_map_data_properties`` /
+        ``_map_object_properties``), so the property does exist in the model.
+        Whether the context can actually *navigate* it is a different question,
+        answered against the finished model by ``to_buml._reachable_features``:
+        Thing is only an ancestor if the user accepted the ``attach_to_thing``
+        recommendation for it (see ``_complete_thing_hierarchy``).
         """
         thing_name = self.canon.name(OWL.Thing)
         seen: set[str] = set()

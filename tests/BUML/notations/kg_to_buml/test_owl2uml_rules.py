@@ -188,7 +188,7 @@ def test_complement_of_materializes_abstract_aux_with_ocl(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_union_range_links_directly_to_each_member(tmp_path: Path):
+def test_union_range_links_through_the_union_class(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -203,12 +203,15 @@ def test_union_range_links_directly_to_each_member(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
-    # D30/D31 fan the property out to one association per union member, but BUML
-    # forbids a class owning two association ends with the same name — and
-    # renaming one would break every `self.worksFor` in the generated OCL. The
-    # lowering therefore reinstates the D19 union class: a single association to
-    # an abstract auxiliary that both members specialise, which preserves both
-    # the navigation name and `oclIsKindOf(<member>)`.
+    # D30/D31 resolve the union range bottom-up and link the property to the
+    # class that expression resolves to — the D19 union class: a single
+    # association to an abstract auxiliary that both members specialise, which
+    # preserves both the navigation name and `oclIsKindOf(<member>)`.
+    #
+    # Linking to each member instead put the association *below* every invariant
+    # emitted for the same property (whose context is that same resolved class),
+    # where no OCL evaluator could reach it — they walk a context's ancestors,
+    # never its subclasses.
     linked_target_types = set()
     for assoc in result.domain_model.associations:
         src_end = result.assoc_source_end.get(id(assoc))
@@ -220,7 +223,9 @@ def test_union_range_links_directly_to_each_member(tmp_path: Path):
     assert _generalizes_to(result.domain_model, "Org", "_Org_Person1_Union")
     assert _generalizes_to(result.domain_model, "Person1", "_Org_Person1_Union")
     assert _class(result.domain_model, "_Org_Person1_Union").is_abstract is True
-    assert any(w.code == "ASSOC_FANOUT_MERGED" for w in result.warnings)
+    # Built once, up front — not fanned out and merged back together during the
+    # lowering, which is what `_merge_fanout` used to have to repair here.
+    assert not any(w.code == "ASSOC_FANOUT_MERGED" for w in result.warnings)
 
 
 def test_union_domain_drops_subclass_redundant_member(tmp_path: Path):

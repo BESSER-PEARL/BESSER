@@ -355,9 +355,46 @@ def test_invariant_containing_a_context_token_is_dropped():
     assert "OCL_DROPPED_MALFORMED_BODY" in _codes(warnings)
 
 
-def test_an_aux_class_may_reference_a_feature_its_subclasses_declare():
-    """The † rule in Table 3: the auxiliary class carries the invariant while
-    the constrained feature is declared on the classes that specialise it."""
+def test_an_aux_class_invariant_resolves_through_its_own_declaration():
+    """The † rule in Table 3: the auxiliary class materialised for a restriction
+    carries the invariant, and declares the feature it constrains.
+
+    That declaration is what makes the invariant evaluable — OCL resolves
+    ``self.name`` by walking the context's ancestors, so an aux class talking
+    about an attribute only its subclasses declare could never be checked. The
+    class it constrains does not repeat the declaration: the aux class's carries
+    the restriction's own multiplicity and is the one to keep."""
+    model = UMLModel()
+    aux = UMLClass(name="_min_1_name_str", is_auxiliary=True)
+    aux.attributes.append(Attribute(name="name", type="str", lower=1, upper="*"))
+    model.classes["_min_1_name_str"] = aux
+    person = UMLClass(name="Person")
+    person.attributes.append(Attribute(name="name", type="str", lower=0, upper="*"))
+    model.classes["Person"] = person
+    model.generalizations.append(
+        Generalization(subclass="Person", superclass="_min_1_name_str")
+    )
+    aux.invariants.append(
+        OCLConstraint(context="_min_1_name_str", body="self.name->size() >= 1", name="min")
+    )
+    result, warnings = _lower(model)
+
+    assert len(result.domain_model.constraints) == 1
+    constraint = result.domain_model.constraints.pop()
+    assert constraint.context.name == "_min_1_name_str"
+    assert "OCL_DROPPED_UNRESOLVED_FEATURE" not in _codes(warnings)
+
+    lowered_person = next(t for t in result.domain_model.types if t.name == "Person")
+    assert [a.name for a in lowered_person.attributes] == []
+    assert [a.name for a in lowered_person.all_attributes()] == ["name"]
+    assert "ATTR_INHERITED_SHADOWED" in _codes(warnings)
+
+
+def test_an_invariant_naming_a_feature_only_a_subclass_has_is_dropped():
+    """The other half of that contract. A rule that emits an invariant is
+    responsible for putting it on a class that owns what it navigates; the
+    lowering does not go looking downwards for a class it would fit, because
+    picking one silently narrows what the rule said."""
     model = UMLModel()
     model.classes["_min_1_name_str"] = UMLClass(name="_min_1_name_str", is_auxiliary=True)
     person = UMLClass(name="Person")
@@ -371,8 +408,8 @@ def test_an_aux_class_may_reference_a_feature_its_subclasses_declare():
     )
     result, warnings = _lower(model)
 
-    assert len(result.domain_model.constraints) == 1
-    assert "OCL_DROPPED_UNRESOLVED_FEATURE" not in _codes(warnings)
+    assert not result.domain_model.constraints
+    assert "OCL_DROPPED_UNRESOLVED_FEATURE" in _codes(warnings)
 
 
 def test_constraint_names_are_uniquified():

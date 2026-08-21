@@ -74,6 +74,74 @@ def test_attach_to_thing_creates_synthetic_class(tmp_path: Path):
     assert things
 
 
+def test_attach_to_thing_makes_the_classes_inherit_from_thing(tmp_path: Path):
+    """Hanging the property off Thing is only half the fix.
+
+    OCL resolves ``self.contributor`` by walking the context class and its
+    ancestors, so unless the classes really do inherit from Thing the property
+    stays invisible from every one of them — which is what made 15 of BIBO's
+    invariants unresolvable. Classes that already have a superclass reach Thing
+    transitively and are left alone."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Document a owl:Class .
+    :Article  a owl:Class ; rdfs:subClassOf :Document .
+    :contributor a owl:ObjectProperty .
+    :editor a owl:ObjectProperty ; rdfs:domain :Document ; rdfs:subPropertyOf :contributor .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    res = KGResolution(
+        issue_id="i1",
+        choice="attach_to_thing",
+        parameters={"property_iri": "http://ex.org/contributor"},
+    )
+    new_kg = apply_resolutions(kg, [res])
+    thing = next(n for n in new_kg.nodes if getattr(n, "label", "") == "Thing")
+    parented = {
+        e.source.id for e in new_kg.edges
+        if e.target.id == thing.id and e.iri.endswith("subClassOf")
+    }
+    assert "http://ex.org/Document" in parented
+    assert "http://ex.org/Article" not in parented   # reaches Thing via Document
+
+    # End to end: the O18 invariant now resolves from its own context.
+    result = kg_to_class_diagram(new_kg, model_name="T")
+    document = next(t for t in result.domain_model.types if t.name == "Document")
+    assert "contributor" in {e.name for e in document.all_association_ends()}
+    assert any("self.contributor" in c.expression for c in result.domain_model.constraints)
+    assert not [w for w in result.warnings if w.code == "OCL_DROPPED_UNRESOLVED_FEATURE"]
+
+
+def test_attach_to_thing_leaves_framework_vocabulary_alone(tmp_path: Path):
+    """``owl:Restriction``, ``sh:NodeShape``, ``xsd:string`` and friends are
+    classified as KG classes so they render on the canvas, but they are not
+    domain concepts. Giving them a superclass is enough to pull them into the
+    diagram as ordinary classes."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Person a owl:Class ;
+        rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :age ; owl:maxCardinality 1 ] .
+    :age a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:int .
+    :note a owl:DatatypeProperty .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    res = KGResolution(
+        issue_id="i1",
+        choice="attach_to_thing",
+        parameters={"property_iri": "http://ex.org/note"},
+    )
+    result = kg_to_class_diagram(apply_resolutions(kg, [res]), model_name="T")
+    names = {t.name for t in result.domain_model.types}
+    assert not names & {"Restriction", "NodeShape", "Literal", "string", "int_"}
+
+
 # --- drop_property ---------------------------------------------------------
 
 

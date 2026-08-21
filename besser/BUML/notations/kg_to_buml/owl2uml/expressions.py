@@ -5,6 +5,12 @@ Every rule that touches an anonymous expression (restrictions, union domains,
 nested ``allValuesFrom``) goes through :class:`ExpressionResolver`, so the
 "innermost first" behaviour and aux-class de-duplication live in one place.
 
+A materialised class owns the feature it constrains — an object restriction
+links the property to its auxiliary class (``add_association``), and a data
+restriction declares it there (``add_attribute``). Without that, the invariant
+the auxiliary class carries names a feature declared only on its subclasses, and
+OCL resolves ``self.<p>`` by walking a context's ancestors, never its subclasses.
+
 The resolver mutates the :class:`~owl2uml.model.UMLModel` owned by the
 ``Mapper`` it is bound to, via the mapper's ``ensure_*`` / ``add_*`` helpers.
 Aux classes are de-duplicated by content *signature*.
@@ -85,18 +91,6 @@ class ExpressionResolver:
             for op in ops:
                 self.m.add_generalization(op, name)       # Ci  ▷  _Union  (D19)
         return name
-
-    def union_members(self, node) -> list[str] | None:
-        """Resolved member class names if ``node`` is a ``unionOf`` class
-        expression, else ``None``.
-
-        Used for the direct-link handling of object-property domain/range
-        unions (see :meth:`Mapper._participating_classes`): the members are
-        linked to individually rather than through a materialised union class.
-        """
-        if isinstance(node, BNode) and (node, OWL.unionOf, None) in self.g:
-            return list(dict.fromkeys(self.resolve_class(i) for i in self._list(node, OWL.unionOf)))
-        return None
 
     def _intersection(self, node) -> str:
         ops = sorted(dict.fromkeys(self.resolve_class(i) for i in self._list(node, OWL.intersectionOf)))
@@ -191,6 +185,7 @@ class ExpressionResolver:
             dr = self.m.resolve_data_range(val)
             name, new = self._aux(("some", p, dr, False), naming.restriction_name("some", p, dr))
             if new:
+                self.m.add_attribute(name, p, dr, (1, "*"))
                 self.m.add_ocl(name, f"self.{p}->asSet()->exists(v | {self.m.satisfies(dr, 'v')})", origin="O10")
         return name
 
@@ -205,6 +200,7 @@ class ExpressionResolver:
             dr = self.m.resolve_data_range(val)
             name, new = self._aux(("all", p, dr, False), naming.restriction_name("all", p, dr))
             if new:
+                self.m.add_attribute(name, p, dr, (0, "*"))
                 self.m.add_ocl(name, f"self.{p}->asSet()->forAll(v | {self.m.satisfies(dr, 'v')})", origin="O11")
         return name
 
@@ -221,6 +217,7 @@ class ExpressionResolver:
             name, new = self._aux(("hasValue", p, str(val), False),
                                   naming.restriction_name("hasValue", p, naming.sanitize(str(val))))
             if new:
+                self.m.add_attribute(name, p, self.m.resolve_data_range(None), (1, "*"))
                 self.m.add_ocl(name, f"self.{p}->asSet()->includes({lit})", origin="O12")
         return name
 
@@ -247,6 +244,7 @@ class ExpressionResolver:
                   else self.m.resolve_data_range(None))
             name, new = self._aux((kind, p, dr, k, False), naming.restriction_name(kind, p, dr, n=k))
             if new:
+                self.m.add_attribute(name, p, dr, _CARD_MULT[kind](k))
                 self.m.add_ocl(
                     name,
                     f"self.{p}->asSet()->select(v | {self.m.satisfies(dr, 'v')})->size() {_CARD_OP[kind]} {k}",

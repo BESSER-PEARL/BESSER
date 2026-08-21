@@ -66,14 +66,25 @@ def test_min_cardinality_materializes_aux_class(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
-    # Person's own "hasName" attribute is unaffected by the restriction; it
-    # stays many-valued because the property is not owl:FunctionalProperty.
-    attr = _attribute(result.domain_model, "Person", "hasName")
-    assert (attr.multiplicity.min, attr.multiplicity.max) == (0, 9999)
-    # The restriction lives on a dedicated aux class Person generalizes to,
-    # with its own "hasName" attribute and an OCL invariant enforcing >= 1.
+    # Person declares no "hasName" of its own: the aux class above it declares
+    # the attribute with the restriction's multiplicity, and Person's own
+    # unconstrained copy is the redundant one. Object properties have always
+    # worked this way — `_min_1_owns_Pet.owns [1..*]` supersedes
+    # `Person.owns [0..*]` — and data properties now match.
+    assert not [a for a in _class(result.domain_model, "Person").attributes]
+    seen = [a for a in _class(result.domain_model, "Person").all_attributes()
+            if a.name == "hasName"]
+    assert len(seen) == 1
+    assert (seen[0].multiplicity.min, seen[0].multiplicity.max) == (1, 9999)
+    # The restriction lives on a dedicated aux class Person generalizes to, and
+    # that class declares the attribute it constrains — with the restriction's
+    # own multiplicity, not the property's. An object restriction has always
+    # linked the association to its aux class; a data restriction does the same
+    # with the attribute, so the invariant it carries resolves where it sits.
     aux = _class(result.domain_model, "_min_1_hasName_str")
     assert _generalizes_to(result.domain_model, "Person", "_min_1_hasName_str")
+    restricted = _attribute(result.domain_model, "_min_1_hasName_str", "hasName")
+    assert (restricted.multiplicity.min, restricted.multiplicity.max) == (1, 9999)
     bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
     assert any("self.hasName->asSet()->select(v | v.oclIsKindOf(str))->size() >= 1" in b for b in bodies)
 
@@ -179,12 +190,14 @@ def test_functional_property_caps_max_to_one(tmp_path: Path):
     assert attr.multiplicity.max == 1
 
 
-def test_abox_bump_and_restriction_aux_are_independent(tmp_path: Path):
-    """A cardinality restriction no longer touches the property's own
-    ``Multiplicity`` at all (it's enforced by an independent OCL invariant on
-    its aux class instead — see test_exact_cardinality_materializes_aux_class),
-    so the ABox multi-valued-literal heuristic is free to bump Person's own
-    plain "name" attribute same as it would for any other property."""
+def test_abox_bump_applies_where_no_restriction_supersedes_it(tmp_path: Path):
+    """The ABox multi-valued-literal heuristic bumps a property it sees carrying
+    several values — unless a cardinality restriction declares that same property
+    above it, in which case the restriction's multiplicity is the one that
+    survives, exactly as it does for an object property.
+
+    Both facts are still recorded for the restricted property: the structure
+    carries "= 1" and so does the OCL invariant on the aux class."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -197,16 +210,22 @@ def test_abox_bump_and_restriction_aux_are_independent(tmp_path: Path):
             owl:onProperty :name ;
             owl:cardinality "1"^^xsd:nonNegativeInteger
         ] .
-    :name a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+    :name     a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+    :nickname a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
 
-    :alice a :Person ; :name "Alice" , "Alicia" .
+    :alice a :Person ; :name "Alice" , "Alicia" ; :nickname "Ali" , "Al" .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     result = kg_to_class_diagram(kg)
-    attr = _attribute(result.domain_model, "Person", "name")
-    assert attr.multiplicity.max == 9999
-    # The exact-cardinality restriction still independently enforces "= 1" on
-    # its own aux class, regardless of what Person's own attribute allows.
+    # Unrestricted: the heuristic bumps Person's own declaration.
+    bumped = _attribute(result.domain_model, "Person", "nickname")
+    assert bumped.multiplicity.max == 9999
+    # Restricted: the aux class's "= 1" declaration is what Person sees.
+    restricted = _attribute(result.domain_model, "_exact_1_name_str", "name")
+    assert (restricted.multiplicity.min, restricted.multiplicity.max) == (1, 1)
+    assert [a.name for a in _class(result.domain_model, "Person").attributes] == ["nickname"]
+    # The exact-cardinality restriction still independently enforces "= 1"
+    # through its own aux class, regardless of what Person's own attribute allows.
     aux = _class(result.domain_model, "_exact_1_name_str")
     assert _generalizes_to(result.domain_model, "Person", "_exact_1_name_str")
     bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]

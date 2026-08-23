@@ -4,9 +4,18 @@ Validation Router
 Handles all diagram validation endpoints for the BESSER web modeling editor backend.
 """
 
+import json
 import logging
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
+)
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -16,33 +25,31 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
     ValidationResponse,
 )
 
+# Centralized error handling
+from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+    handle_endpoint_errors,
+)
+
 # Backend services - Converters
 from besser.utilities.web_modeling_editor.backend.services.converters import (
-    process_class_diagram,
-    process_state_machine,
     process_agent_diagram,
-    process_object_diagram,
-    process_nn_diagram,
     process_bpmn_diagram,
+    process_class_diagram,
+    process_nn_diagram,
+    process_object_diagram,
+    process_state_machine,
 )
-from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
-    domain_model as user_reference_domain_model,
-)
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BPMN_DIAGRAM_TYPE,
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
 )
-
-# Centralized error handling
-from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
-    handle_endpoint_errors,
-)
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
+from besser.utilities.web_modeling_editor.backend.services.validators.sat_checker import (
+    check_alloy_consistency_stream,
+    generate_alloy_do_stream,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,9 +57,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/besser_api", tags=["validation"])
 
 
+@router.post("/check-alloy-consistency-stream")
+async def check_alloy_consistency_stream_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Stream SAT consistency-check progress events for a class diagram (SSE)."""
+    return StreamingResponse(
+        check_alloy_consistency_stream(input_data),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # importante para nginx
+        },
+    )
+
+
 @router.post("/validate-diagram", response_model=ValidationResponse)
 @handle_endpoint_errors("validate_diagram")
-async def validate_diagram(input_data: DiagramInput):
+async def validate_diagram(input_data: DiagramInput) -> dict:
     """
     Validate diagram by converting to BUML and running metamodel validation.
 
@@ -226,6 +246,13 @@ async def validate_diagram(input_data: DiagramInput):
             if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                 validation_warnings.extend(buml_model.ocl_warnings)
 
+            # Surface OCL semantic warnings (e.g. enum literals that do not
+            # exist in the model) alongside the metamodel warnings.
+            if ocl_results:
+                validation_warnings.extend(
+                    ocl_results.get("warning_constraints", [])
+                )
+
         except Exception:
             logger.exception("Unexpected error during OCL constraint check")
             validation_warnings.append("OCL constraint check encountered an unexpected error.")
@@ -243,6 +270,7 @@ async def validate_diagram(input_data: DiagramInput):
     if ocl_results:
         response["valid_constraints"] = ocl_results.get("valid_constraints", [])
         response["invalid_constraints"] = ocl_results.get("invalid_constraints", [])
+        response["warning_constraints"] = ocl_results.get("warning_constraints", [])
         if ocl_results.get("message"):
             response["ocl_message"] = ocl_results["message"]
 
@@ -251,10 +279,48 @@ async def validate_diagram(input_data: DiagramInput):
 
 @router.post("/check-ocl", response_model=ValidationResponse)
 @handle_endpoint_errors("check_ocl")
-async def check_ocl(input_data: DiagramInput):
+async def check_ocl(input_data: DiagramInput) -> dict:
     """
     Deprecated: Use /validate-diagram instead.
     This endpoint is kept for backwards compatibility and redirects to the new unified validation.
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
+
+
+@router.post("/generate-alloy-do-stream")
+async def generate_alloy_do_stream_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Stream Object Diagram generation progress from Alloy SAT solving (SSE)."""
+    return StreamingResponse(
+        generate_alloy_do_stream(input_data),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # importante para nginx
+        },
+    )
+
+
+@router.post("/generate-alloy-do")
+@handle_endpoint_errors("generate_alloy_do")
+async def generate_alloy_do_endpoint(input_data: DiagramInput) -> dict:
+    """Non-streaming variant of /generate-alloy-do-stream.
+
+    Collects the SSE events from the streaming generator and returns the final
+    SAT result as a single JSON document, so the set-based "Generate Objects
+    with Sat" action can consume it with a plain ``fetch`` + ``response.json()``.
+    """
+    final_result = None
+    async for event in generate_alloy_do_stream(input_data):
+        if event.startswith("data: "):
+            final_result = json.loads(event[len("data: "):].strip())
+    if final_result is None:
+        final_result = {
+            "sat": False,
+            "isValid": False,
+            "done": True,
+            "message": "No result produced.",
+            "errors": [],
+            "warnings": [],
+        }
+    return final_result

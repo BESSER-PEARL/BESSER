@@ -132,6 +132,10 @@ class DoneEvent(BaseSseEvent):
     # "code is ready". Capped so a large tree can't bloat the event.
     fileCount: int = 0
     topLevel: list[str] = Field(default_factory=list)
+    # Total LLM tokens the run consumed (0 for a purely deterministic run). Shown
+    # on the card as "N tokens used" — the counterpart to the deterministic
+    # card's "0 tokens".
+    tokensUsed: int = 0
     # True when the run produced downloadable output but the customization
     # loop did NOT finish cleanly (e.g. a provider rate-limit, cost/runtime
     # cap, or turn cap cut it short). Clients should warn that the output

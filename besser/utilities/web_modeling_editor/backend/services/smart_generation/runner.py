@@ -1222,6 +1222,13 @@ class SmartGenerationRunner:
                 final_cost = float(client.usage.estimated_cost)
             except Exception:
                 final_cost = 0.0
+            # Capture the end-of-run token total for the DoneEvent (shown on the
+            # card as "N tokens used" — the LLM counterpart to a deterministic
+            # run's "0 tokens").
+            try:
+                self._final_tokens = int(client.usage.total_tokens)
+            except Exception:
+                self._final_tokens = 0
 
             # Emit a final cost snapshot so the client always sees the
             # exact end-of-run usage, not the last periodic tick.
@@ -1464,6 +1471,7 @@ class SmartGenerationRunner:
             recipe=recipe,
             fileCount=len(user_files),
             topLevel=top_level,
+            tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
         )
         return event, entry
 

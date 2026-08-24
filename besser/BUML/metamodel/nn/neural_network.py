@@ -801,8 +801,6 @@ class TensorOp(NamedElement):
                     "with a letter"
                 )
         self.__input_var = input_var
-        if input_var is not None and self.__output_var is None:
-            self.__output_var = input_var
 
     @property
     def output_var(self) -> str:
@@ -1124,8 +1122,6 @@ class Layer(NamedElement):
     def input_var(self, input_var: str):
         """str: Set the input variable name for this layer."""
         self.__input_var = input_var
-        if input_var is not None and self.__output_var is None:
-            self.__output_var = input_var
 
     @property
     def output_var(self) -> str:
@@ -4082,6 +4078,12 @@ class NN(BehaviorImplementation):
     @input_var.setter
     def input_var(self, input_var: str):
         """str: Set the input variable name for this NN."""
+        if input_var is not None:
+            if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', input_var):
+                raise ValueError(
+                    "input_var must be a valid identifier starting "
+                    "with a letter"
+                )
         self.__input_var = input_var
 
     @property
@@ -4094,6 +4096,22 @@ class NN(BehaviorImplementation):
     def return_vars(self, return_vars: str):
         """str: Set the comma-separated string of variable names 
            returned by forward/call method."""
+        if return_vars is not None:
+            parts = [part.strip() for part in return_vars.split(",")]
+
+            if not parts or any(part == "" for part in parts):
+                raise ValueError(
+                    "return_vars must be a non-empty comma-separated "
+                    "list of variable names, with no empty entries"
+                )
+
+            for part in parts:
+                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', part):
+                    raise ValueError(
+                        f"Each variable in return_vars must be a valid "
+                        f"identifier starting with a letter. "
+                        f"Invalid entry: '{part}'"
+                    )
         self.__return_vars = return_vars
 
     def add_configuration(self, configuration: Configuration) -> Self:
@@ -4160,6 +4178,7 @@ class NN(BehaviorImplementation):
         self._validate_first_module_entry_point(errors)
         self._validate_numerical_bounds(errors)
         self._validate_module_names(errors, warnings)
+        self._validate_input_output_var_chain(errors)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
         if not cycle_detected:
             self._validate_sub_nns_recursive(errors, warnings, _visited)
@@ -4221,6 +4240,54 @@ class NN(BehaviorImplementation):
                 f"NN '{self.name}': first module '{first.name}' must not "
                 f"declare a 'name_module_input' (it is the entry point)."
             )
+
+    def _validate_input_output_var_chain(self, errors: list):
+        """Validate input_var and output_var consistency
+        across the NN."""
+        if not self.modules:
+            return
+
+        # Check first module's input_var against NN's input_var
+        first = self.modules[0]
+        if self.input_var is not None:
+            first_input_var = getattr(first, 'input_var', None)
+            if first_input_var is None:
+                # Set it to match NN's input_var
+                if hasattr(first, 'input_var'):
+                    first.input_var = self.input_var
+            elif first_input_var != self.input_var:
+                errors.append(
+                    f"NN '{self.name}': first module '{first.name}' has "
+                    f"input_var '{first_input_var}' which differs from NN's "
+                    f"input_var '{self.input_var}'. They must be the same."
+                )
+
+        # Check last module's output_var against NN's return_vars
+        last = self.modules[-1]
+        last_output_var = getattr(last, 'output_var', None)
+        if self.return_vars is not None:
+            last_output_var = getattr(last, 'output_var', None)
+            if last_output_var is None:
+                last_output_var = getattr(last, "output_vars", None)
+                if last_output_var:
+                    last_output_var = ", ".join(last_output_var)
+            if last_output_var is None:
+                # Set it to match NN's return_vars
+                if (isinstance(last, TensorOp)
+                    and last.tns_type == "split"):
+                    last.output_vars = [
+                        x.strip() for x in self.return_vars.split(",")
+                    ]
+                elif hasattr(last, 'output_var'):
+                    last.output_var = self.return_vars
+            elif last_output_var != self.return_vars:
+                errors.append(
+                    f"NN '{self.name}': last module '{last.name}' has "
+                    f"output_var '{last_output_var}' which differs from NN's "
+                    f"return_vars '{self.return_vars}'. "
+                    "They must be the same."
+                )
+
     def _validate_sub_nn_acyclic(self, errors: list) -> bool:
         """Detect cycles in the sub-NN graph rooted at this NN. 
            Returns True if a cycle was found."""

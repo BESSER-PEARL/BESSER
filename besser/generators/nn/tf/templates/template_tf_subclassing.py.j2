@@ -7,7 +7,7 @@ class NeuralNetwork(tf.keras.Model):
     def __init__(self):
     {{- nn_components.print_init(modules_details) }}
 
-    def call(self, x{% if has_training_aware_dropout %}, training=False{% endif %}):
+    def call(self, {{ forward_input_var }}{% if has_training_aware_dropout %}, training=False{% endif %}):
         {{ nn_components.print_forward(modules_details, model, strip_layer_counter_suffix) }}
 
 

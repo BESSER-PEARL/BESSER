@@ -8,7 +8,7 @@ class NeuralNetwork(nn.Module):
         {{- nn_components.print_init(modules_details) }}
 
 
-    def forward(self, x):
+    def forward(self, {{ forward_input_var }}):
     {{ nn_components.print_forward(modules_details, strip_layer_counter_suffix, model) }}
 
 {% if model.train_data is not none %}

@@ -771,22 +771,30 @@ def initialize_layer_vars(layer: Layer):
     """
     out_var_actv, in_var_actv = None, None
 
-    # Prefer layer attributes
+    # Determine input_var
+    if layer.input_var is not None:
+        in_var_layer = layer.input_var
+    elif layer.input_reused is True:
+        in_var_layer = "x"
+    else:
+        in_var_layer = "x"
+
+    # Determine output_var (follow same logic as get_layer_vars)
     if layer.output_var is not None:
         out_var_layer = layer.output_var
-        in_var_layer = layer.input_var if layer.input_var else "x"
-        # Set activation variables when layer has
-        # activation function
-        if layer.actv_func is not None:
-            out_var_actv, in_var_actv = out_var_layer, out_var_layer
     elif layer.input_reused is True:
-        out_var_layer, in_var_layer = "x_1", "x"
-        if layer.actv_func is not None:
-            out_var_actv, in_var_actv = "x_1", "x_1"
+        out_var_layer = "x_1"
     else:
-        out_var_layer, in_var_layer = "x", "x"
-        if layer.actv_func is not None:
-            out_var_actv, in_var_actv = "x", "x"
+        # If input != "x", use input var as output
+        # (same logic as intermediate modules)
+        if in_var_layer != "x":
+            out_var_layer = in_var_layer
+        else:
+            out_var_layer = "x"
+
+    if layer.actv_func is not None:
+        out_var_actv, in_var_actv = out_var_layer, out_var_layer
+
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
 

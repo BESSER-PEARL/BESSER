@@ -111,7 +111,7 @@ class NNCodeGenerator(GeneratorInterface):
         errors = []
 
         # Validate each module consumes from exactly the previous one
-        for i in range(1, len(self.model.modules)):
+        for i in range(2, len(self.model.modules)):
             module = self.model.modules[i]
             prev_name = module_names[i - 1]
             module_type = module.__class__.__name__
@@ -178,7 +178,7 @@ class NNCodeGenerator(GeneratorInterface):
                     if source != prev_name:
                         errors.append(
                             f"Layer '{module.name}' at position {i} consumes "
-                            "from non-adjacent module '{source}' "
+                            f"from non-adjacent module '{source}' "
                             f"(via input_var), breaks sequential flow"
                         )
                 # Else: auto-consumes previous (sequential)
@@ -529,11 +529,19 @@ class NNCodeGenerator(GeneratorInterface):
 
         template = env.get_template(self.template_name)
 
+        # Extract first module's input_var for forward signature
+        forward_input_var = "x"
+        if self.modules_details:
+            first_module_data = next(iter(self.modules_details.values()))
+            if len(first_module_data) >= 3:
+                forward_input_var = first_module_data[2]
+
         generated_code = template.render(
             model=self.model, modules_details=self.modules_details,
             generation_type=self.generation_type,
             strip_layer_counter_suffix=self.strip_layer_counter_suffix,
-            has_training_aware_dropout=self.has_training_aware_dropout)
+            has_training_aware_dropout=self.has_training_aware_dropout,
+            forward_input_var=forward_input_var)
 
         # Post-process: clean excessive blank lines
         generated_code = self._clean_generated_code(generated_code)

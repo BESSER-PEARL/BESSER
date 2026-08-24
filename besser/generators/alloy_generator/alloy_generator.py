@@ -2,7 +2,6 @@
 
 import os
 import re
-import sys
 from collections import defaultdict
 
 from jinja2 import Environment, FileSystemLoader
@@ -128,14 +127,7 @@ class AlloyGenerator(GeneratorInterface):
 
     def generate(self) -> None:
         """Render all templates and write the ``.als`` file to *output_dir*."""
-        caller_full_path = sys.argv[0]
-        caller_name = os.path.splitext(os.path.basename(caller_full_path))[0]
-        final_file_name = f"{caller_name}_spec.als"
-        model_file_name = "model.als"
-
-
-        file_path = self.build_generation_path(file_name=final_file_name)
-        file_path_model = self.build_generation_path(file_name=model_file_name)
+        file_path = self.build_generation_path(file_name="model.als")
 
         spec: list[str] = []
         data: dict = defaultdict(list)
@@ -255,10 +247,3 @@ class AlloyGenerator(GeneratorInterface):
             archivo.writelines(spec)
             facts_r = "\n" + "\n".join(facts_rules)
             archivo.writelines(facts_r)
-
-        with open(file_path_model, "w") as archivo2:
-            archivo2.writelines(spec)
-            facts_r = "\n" + "\n".join(facts_rules)
-            archivo2.writelines(facts_r)
-
-        

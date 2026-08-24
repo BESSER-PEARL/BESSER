@@ -34,7 +34,7 @@ def main():
 
     # 3. El .als lo genera step_1 en <directorio_modelo>/output/
     directorio_output_modelo = directorio_modelo / "output"
-    archivo_als = directorio_output_modelo / f"{nombre_base}_spec.als"
+    archivo_als = directorio_output_modelo / "model.als"
 
     # 4. Alloy genera los XMLs intermedios en una carpeta <nombre>_spec/
     #    junto al .als, es decir, dentro de directorio_output_modelo

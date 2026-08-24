@@ -50,6 +50,7 @@ def generate_alloy(input_model: str) -> bool:
 
 def _find_als(model_dir: Path, model_name: str) -> Path | None:
     candidates = [
+        model_dir / "output" / "model.als",
         model_dir / "output" / f"{model_name}.als",
         model_dir / f"{model_name}.als",
         model_dir / f"{model_name}_spec.als",

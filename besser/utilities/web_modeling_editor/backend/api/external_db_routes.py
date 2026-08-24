@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from besser.utilities.web_modeling_editor.backend.services.external_db_service import get_database_metadata
-from besser.utilities.web_modeling_editor.backend.services.converters.db_metadata_to_buml import parse_metadata_to_buml
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.external_db_service import get_database_metadata
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.db_metadata_to_buml import parse_metadata_to_buml
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import class_buml_to_json
 
 router = APIRouter()

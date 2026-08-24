@@ -1,1 +1,3 @@
 from .csv_reverse import csv_to_domain_model as csv_to_domain_model
+from .external_db_service import get_database_metadata as get_database_metadata
+from .db_metadata_to_buml import parse_metadata_to_buml as parse_metadata_to_buml

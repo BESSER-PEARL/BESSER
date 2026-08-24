@@ -135,6 +135,39 @@ _IMPORT_TO_REQUIREMENT = {
 }
 
 
+# Languages / frameworks BESSER has NO code generator for. An explicitly-named
+# one must be built from scratch by the LLM (Phase 2) rather than scaffolded by
+# the nearest built-in generator — otherwise a "C++ classes" request scaffolds
+# Python and the customise loop yields a Python/C++ mishmash. Kept in sync with
+# the modeling-agent classifier guard (unified_classifier._names_unsupported_stack).
+_UNSUPPORTED_STACK_RE = _re.compile(
+    r"\b(rust|kotlin|swift|scala|elixir|golang|ruby|php|dart|perl|haskell|zig|"
+    r"nim|crystal|cpp|csharp|dotnet|fsharp|rails|nestjs|nextjs|express|"
+    r"springboot|spring|laravel|symfony|angular|vue|svelte|nuxt|flutter|"
+    r"objective-?c)\b",
+    _re.I,
+)
+_UNSUPPORTED_STACK_LITERALS = ("c++", "c#", ".net", "f#")
+_BARE_LANG_RE = _re.compile(
+    r"\b(?:c|go)\b[\s\-]{0,3}(?:classes|class|code|program|programs|language|"
+    r"structs?|headers?|files?|app|application)\b",
+    _re.I,
+)
+
+
+def _names_unsupported_stack(instructions: str) -> bool:
+    """True when the request explicitly names a language/stack BESSER has no
+    generator for, so Phase 1 must be skipped and the LLM builds from scratch."""
+    low = (instructions or "").lower()
+    if any(tok in low for tok in _UNSUPPORTED_STACK_LITERALS):
+        return True
+    if _UNSUPPORTED_STACK_RE.search(low):
+        return True
+    if _BARE_LANG_RE.search(low):
+        return True
+    return False
+
+
 def _ensure_requirements_txt(docker_dir: str) -> bool:
     """Write a sensible requirements.txt next to a Dockerfile when it's missing.
 
@@ -1339,6 +1372,17 @@ class LLMOrchestrator:
                 self.target_generator,
             )
             return self.target_generator
+
+        # Hard override: an explicitly-named language/stack BESSER has no
+        # generator for (Rust, C, C++, Kotlin, Go, ...) must build from scratch.
+        # The LLM selector below is unreliable here — it picks the nearest
+        # built-in (Python/Java) — so decide this deterministically first.
+        if _names_unsupported_stack(instructions):
+            logger.info(
+                "Phase 1: request names an unsupported-for-BESSER stack — "
+                "building from scratch (no deterministic generator)"
+            )
+            return None
 
         # LLM decides first
         llm_result = self._select_generator_with_llm(instructions)

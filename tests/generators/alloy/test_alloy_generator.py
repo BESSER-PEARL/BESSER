@@ -95,9 +95,9 @@ def team_player_model():
 def _generated_als_path(output_dir):
     """Locate the single .als file produced in output_dir.
     """
-    matches = glob.glob(os.path.join(output_dir, "*_spec.als"))
+    matches = glob.glob(os.path.join(output_dir, "model.als"))
     assert len(matches) == 1, (
-        f"Expected exactly one *_spec.als file in {output_dir}, found {matches}"
+        f"Expected exactly one model.als file in {output_dir}, found {matches}"
     )
     return matches[0]
 

@@ -240,3 +240,39 @@ def test_normalize_llm_block_keeps_known_provider():
     raw = {"system": {"llm": {"provider": "openai", "model": "gpt-5-mini"}}}
     out = normalize_recommended_agent_config(raw, None)
     assert out["system"]["llm"] == {"provider": "openai", "model": "gpt-5-mini"}
+
+
+# ---------------------------------------------------------------------------
+# New provider families — all 10 must be accepted by the allow-list
+# ---------------------------------------------------------------------------
+
+_NEW_PROVIDERS_AND_MODELS = [
+    ("mistral", "mistral-small-latest"),
+    ("deepseek", "deepseek-chat"),
+    ("google", "gemini-2.5-flash"),
+    ("meta", "Llama-3.3-70B-Instruct"),
+    ("anthropic", "claude-sonnet-4-5"),
+    ("qwen", "qwen-plus"),
+    ("xai", "grok-3-mini"),
+    ("groq", "llama-3.3-70b-versatile"),
+    ("together", "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
+    ("openrouter", "openai/gpt-4o"),
+]
+
+
+@pytest.mark.parametrize("provider,model", _NEW_PROVIDERS_AND_MODELS)
+def test_normalize_llm_block_keeps_new_providers(provider, model):
+    """New provider keys must not be coerced to {} by normalize_recommended_agent_config."""
+    raw = {"system": {"llm": {"provider": provider, "model": model}}}
+    out = normalize_recommended_agent_config(raw, None)
+    assert out["system"]["llm"] == {"provider": provider, "model": model}, (
+        f"provider '{provider}' was rejected — add it to RECOMMENDATION_ALLOWED_VALUES['llmProvider']"
+    )
+
+
+@pytest.mark.parametrize("provider,_model", _NEW_PROVIDERS_AND_MODELS)
+def test_new_providers_in_recommendation_allowed_values(provider, _model):
+    """Every new provider key must appear in the RECOMMENDATION_ALLOWED_VALUES allow-list."""
+    assert provider in RECOMMENDATION_ALLOWED_VALUES["llmProvider"], (
+        f"'{provider}' missing from RECOMMENDATION_ALLOWED_VALUES['llmProvider']"
+    )

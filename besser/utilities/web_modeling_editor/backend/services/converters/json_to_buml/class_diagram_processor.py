@@ -399,6 +399,30 @@ def _process_classes(
     return class_id_to_class, method_id_to_method
 
 
+def _dedupe_end_name(name: str, owner_class, reserved: set[str] = frozenset()) -> str:
+    """Return *name* made unique among *owner_class*'s association-end names.
+
+    A class cannot have two association ends with the same name -- the metamodel
+    raises a hard ``ValueError`` otherwise. ``owner_class`` is the class that
+    navigates *via* the end being named, i.e. the class on the opposite side of
+    the end's own type (see :meth:`Class.association_ends`, which drops the end
+    whose ``type`` is the class itself). ``reserved`` lets a caller also avoid
+    names claimed by a sibling end in the same (self-)association that hasn't been
+    attached to the model yet.
+
+    Because ``owner_class.all_association_ends()`` reflects associations already
+    added earlier in the processing loop, calling this incrementally as each
+    association is built keeps every class's end names unique.
+    """
+    taken = {e.name for e in owner_class.all_association_ends()} | set(reserved)
+    if name not in taken:
+        return name
+    counter = 1
+    while f"{name}_{counter}" in taken:
+        counter += 1
+    return f"{name}_{counter}"
+
+
 def _process_relationships(
     relationships: dict[str, Any],
     elements: dict[str, Any],
@@ -504,16 +528,23 @@ def _process_relationships(
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
-            source_role = source.get("role")
-            if not source_role:
-                source_role = source_class.name.lower()
-                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
+            # Association-end names must be unique per *owning* class, else the
+            # metamodel raises a hard ValueError. The owner of an end is the class
+            # on the opposite side of the end's own type: the source end (typed by
+            # source_class) is owned by target_class, and vice versa. The frontend
+            # -- or an LLM assembling a spec-driven model -- can legitimately hand
+            # us two associations that give one class an end with the same role
+            # name (e.g. two Loan->Member links both rolled "member"). Suffix such
+            # collisions deterministically so generation never crashes. Covers both
+            # explicit roles and the auto-derived (class-name) fallbacks.
+            source_role = source.get("role") or source_class.name.lower()
+            target_role = target.get("role") or target_class.name.lower()
 
-                if source_role in existing_roles:
-                    counter = 1
-                    while f"{source_role}_{counter}" in existing_roles:
-                        counter += 1
-                    source_role = f"{source_role}_{counter}"
+            source_role = _dedupe_end_name(source_role, target_class)
+            # For a self-association both ends are owned by the same class, so the
+            # target end must also avoid the name we just assigned the source end.
+            reserved = {source_role} if source_class is target_class else set()
+            target_role = _dedupe_end_name(target_role, source_class, reserved)
 
             source_property = Property(
                 name=source_role,
@@ -521,17 +552,6 @@ def _process_relationships(
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
-
-            target_role = target.get("role")
-            if not target_role:
-                target_role = target_class.name.lower()
-                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
-
-                if target_role in existing_roles:
-                    counter = 1
-                    while f"{target_role}_{counter}" in existing_roles:
-                        counter += 1
-                    target_role = f"{target_role}_{counter}"
 
             target_property = Property(
                 name=target_role,

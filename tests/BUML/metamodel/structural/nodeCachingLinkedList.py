@@ -3,12 +3,9 @@
 ####################
 
 from besser.BUML.metamodel.structural import (
-    Class, Property, Method, Parameter,
-    BinaryAssociation, Generalization, DomainModel,
-    Enumeration, EnumerationLiteral, Multiplicity,
-    StringType, IntegerType, FloatType, BooleanType,
-    TimeType, DateType, DateTimeType, TimeDeltaType,
-    AnyType, Constraint, AssociationClass, Metadata
+    Class, Property, BinaryAssociation, DomainModel,
+    Multiplicity,
+    IntegerType, Constraint, Metadata
 )
 
 # Classes
@@ -24,8 +21,16 @@ NodeCachingLinkedList_modCount: Property = Property(name="modCount", type=Intege
 
 NodeCachingLinkedList_maximumCacheSize: Property = Property(name="maximumCacheSize", type=IntegerType)
 
-NodeCachingLinkedList_DEFAULT_MAXIMUM_CACHE_SIZE: Property = Property(name="DEFAULT_MAXIMUM_CACHE_SIZE", type=IntegerType)
-NodeCachingLinkedList.attributes={NodeCachingLinkedList_maximumCacheSize,NodeCachingLinkedList_DEFAULT_MAXIMUM_CACHE_SIZE, NodeCachingLinkedList_cacheSize, NodeCachingLinkedList_listSize, NodeCachingLinkedList_modCount}
+NodeCachingLinkedList_DEFAULT_MAXIMUM_CACHE_SIZE: Property = Property(
+    name="DEFAULT_MAXIMUM_CACHE_SIZE", type=IntegerType
+)
+NodeCachingLinkedList.attributes = {
+    NodeCachingLinkedList_maximumCacheSize,
+    NodeCachingLinkedList_DEFAULT_MAXIMUM_CACHE_SIZE,
+    NodeCachingLinkedList_cacheSize,
+    NodeCachingLinkedList_listSize,
+    NodeCachingLinkedList_modCount
+}
 
 # LinkedListNode class attributes and methods
     #LinkedListNode_value: Property = Property(name="value", type=IntegerType)
@@ -155,7 +160,8 @@ inv_5: Constraint = Constraint(
 inv_6: Constraint = Constraint(
     name="inv_6",
     context=NodeCachingLinkedList,
-    expression="context NodeCachingLinkedList inv : (self.size) = self.header->closure(next)->excluding(null) -> size()-1",
+    expression="context NodeCachingLinkedList inv : "
+               "(self.size) = self.header->closure(next)->excluding(null) -> size()-1",
     language="OCL"
 )
 
@@ -164,7 +170,8 @@ inv_6: Constraint = Constraint(
 inv_7: Constraint = Constraint(
     name="inv_7",
     context=NodeCachingLinkedList,
-    expression="context NodeCachingLinkedList inv : self.cacheSize = self.firstCachedNode->closure(next)->excluding(null) -> size()",
+    expression="context NodeCachingLinkedList inv : "
+               "self.cacheSize = self.firstCachedNode->closure(next)->excluding(null) -> size()",
     language="OCL"
 )
 
@@ -186,7 +193,9 @@ inv_8: Constraint = Constraint(
 inv_83: Constraint = Constraint(
     name="inv_83",
     context=NodeCachingLinkedList,
-    expression="context NodeCachingLinkedList inv : self.firstCachedNode->closure(next)->excluding(null)->forAll(n:LinkedListNode|  n.value=null)",
+    expression="context NodeCachingLinkedList inv : "
+               "self.firstCachedNode->closure(next)->excluding(null)"
+               "->forAll(n:LinkedListNode|  n.value=null)",
     language="OCL"
 )
 
@@ -217,8 +226,10 @@ inv_8_1: Constraint = Constraint(
 inv_9: Constraint = Constraint(
     name="inv_9",
     context=NodeCachingLinkedList,
-    expression="context NodeCachingLinkedList inv : self.header->closure(next)" \
-    "->excluding(null)->forAll(n:LinkedListNode |((n<>null and n.next<>null) and (n.previous<>null and n.next.previous=n)) and (n.previous.next=n))",
+    expression="context NodeCachingLinkedList inv : self.header->closure(next)"
+               "->excluding(null)->forAll(n:LinkedListNode |"
+               "((n<>null and n.next<>null) and (n.previous<>null and n.next.previous=n)) "
+               "and (n.previous.next=n))",
     language="OCL"
 )
 
@@ -245,7 +256,6 @@ domain_model = DomainModel(
 ######################
 
 from besser.BUML.metamodel.project import Project
-from besser.BUML.metamodel.structural.structural import Metadata
 
 metadata = Metadata(description="The OCL invariant may be redundant.")
 project = Project(

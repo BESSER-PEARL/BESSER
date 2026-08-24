@@ -9,12 +9,10 @@ with ASGITransport is used because the installed starlette/httpx versions
 do not support the legacy TestClient(app=...) pattern.
 """
 
-import io
 import json
 import os
 import asyncio
-from functools import wraps
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import pytest
 import httpx
@@ -401,6 +399,103 @@ class TestGenerateOutput:
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
 
+    def test_generate_alloy_rejects_self_allinstances_with_informative_error(self):
+        """Alloy generation of an OCL constraint that calls allInstances() on an
+        instance (``self``) must fail with a clear message the frontend can show
+        in the error toast."""
+        payload = {
+            "title": "AlloySelfAllInstances",
+            "model": {
+                "type": "ClassDiagram",
+                "elements": {
+                    "cls-employee": {
+                        "id": "cls-employee", "name": "Employee", "type": "Class",
+                        "attributes": [], "methods": [],
+                    },
+                    "ocl-constraint": {
+                        "id": "ocl-constraint", "type": "ClassOCLConstraint",
+                        "constraint": "context Employee inv adult: self.allInstances()->size() > 0",
+                    },
+                },
+                "relationships": {
+                    "r-ocl": {
+                        "id": "r-ocl", "type": "ClassOCLLink",
+                        "source": {"element": "ocl-constraint"},
+                        "target": {"element": "cls-employee"},
+                    },
+                },
+            },
+            "generator": "alloy",
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "allInstances()" in detail
+        assert "type-level operation" in detail
+        assert "class/type name" in detail
+
+    def _self_allinstances_payload(self):
+        """Payload with an OCL constraint calling allInstances() on ``self``."""
+        return {
+            "title": "AlloySelfAllInstances",
+            "model": {
+                "type": "ClassDiagram",
+                "elements": {
+                    "cls-employee": {
+                        "id": "cls-employee", "name": "Employee", "type": "Class",
+                        "attributes": [], "methods": [],
+                    },
+                    "ocl-constraint": {
+                        "id": "ocl-constraint", "type": "ClassOCLConstraint",
+                        "constraint": "context Employee inv adult: self.allInstances()->size() > 0",
+                    },
+                },
+                "relationships": {
+                    "r-ocl": {
+                        "id": "r-ocl", "type": "ClassOCLLink",
+                        "source": {"element": "ocl-constraint"},
+                        "target": {"element": "cls-employee"},
+                    },
+                },
+            },
+        }
+
+    def test_check_alloy_consistency_stream_self_allinstances_informative_message(self):
+        """The streaming SAT check must emit the informative allInstances()
+        message as an SSE event the frontend shows in the toast."""
+        response = client.post("/besser_api/check-alloy-consistency-stream",
+                               json=self._self_allinstances_payload())
+        assert response.status_code == 200
+        body = response.text
+        assert '"done": true' in body
+        assert "allInstances()" in body
+        assert "type-level operation" in body
+        assert "class/type name" in body
+
+    def test_generate_alloy_do_stream_reports_informative_error(self):
+        """The streaming Object Diagram generation must emit the informative
+        allInstances() message as an SSE event the frontend shows in the toast."""
+        response = client.post("/besser_api/generate-alloy-do-stream",
+                               json=self._self_allinstances_payload())
+        assert response.status_code == 200
+        body = response.text
+        assert '"done": true' in body
+        assert "allInstances()" in body
+        assert "type-level operation" in body
+        assert "class/type name" in body
+
+    def test_generate_alloy_do_non_streaming_reports_informative_error(self):
+        """The non-streaming /generate-alloy-do must return a single JSON
+        document (not SSE) with the informative allInstances() message."""
+        response = client.post("/besser_api/generate-alloy-do",
+                               json=self._self_allinstances_payload())
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("done") is True
+        assert "allInstances()" in data.get("message", "")
+        assert "type-level operation" in data.get("message", "")
+        assert "class/type name" in data.get("message", "")
+
 
 # ---------------------------------------------------------------------------
 # Validation Endpoint -- POST /besser_api/validate-diagram
@@ -435,6 +530,61 @@ class TestValidateDiagram:
         assert response.status_code == 200
         data = response.json()
         assert data["isValid"] is True
+
+    def test_validate_ocl_constraint_with_unknown_enum_literal(self):
+        """A constraint referencing a missing enum literal yields a warning, not an error."""
+        payload = {
+            "title": "EnumOclModel",
+            "model": {
+                "type": "ClassDiagram",
+                "elements": {
+                    "cls-employee": {
+                        "id": "cls-employee", "name": "Employee", "type": "Class",
+                        "attributes": ["attr-category"], "methods": [],
+                        "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+                    },
+                    "attr-category": {
+                        "id": "attr-category", "name": "category",
+                        "type": "ClassAttribute", "owner": "cls-employee",
+                        "visibility": "public", "attributeType": "TCategory",
+                        "bounds": {"x": 0, "y": 40, "width": 159, "height": 30},
+                    },
+                    "enum-tcategory": {
+                        "id": "enum-tcategory", "name": "TCategory",
+                        "type": "Enumeration", "attributes": ["lit-enero", "lit-febrero"],
+                        "methods": [],
+                        "bounds": {"x": 300, "y": 0, "width": 160, "height": 100},
+                    },
+                    "lit-enero": {
+                        "id": "lit-enero", "name": "ENERO", "type": "ClassAttribute",
+                        "owner": "enum-tcategory",
+                    },
+                    "lit-febrero": {
+                        "id": "lit-febrero", "name": "FEBRERO", "type": "ClassAttribute",
+                        "owner": "enum-tcategory",
+                    },
+                    "ocl-constraint": {
+                        "id": "ocl-constraint", "type": "ClassOCLConstraint",
+                        "constraint": "context Employee inv validCategory: self.category = TCategory::JUNIO",
+                    },
+                },
+                "relationships": {
+                    "r-ocl": {
+                        "id": "r-ocl", "type": "ClassOCLLink",
+                        "source": {"element": "ocl-constraint"},
+                        "target": {"element": "cls-employee"},
+                    },
+                },
+            },
+        }
+        response = client.post("/besser_api/validate-diagram", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["isValid"] is True
+        assert any("TCategory::JUNIO" in w for w in data["warnings"])
+        assert any(
+            "TCategory::JUNIO" in w for w in data["warning_constraints"]
+        )
 
     def test_validate_invalid_class_name_with_spaces(self):
         """A class name containing spaces triggers a validation error."""

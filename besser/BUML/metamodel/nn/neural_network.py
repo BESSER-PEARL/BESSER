@@ -801,6 +801,8 @@ class TensorOp(NamedElement):
                     "with a letter"
                 )
         self.__input_var = input_var
+        if input_var is not None and self.__output_var is None:
+            self.__output_var = input_var
 
     @property
     def output_var(self) -> str:
@@ -1122,6 +1124,8 @@ class Layer(NamedElement):
     def input_var(self, input_var: str):
         """str: Set the input variable name for this layer."""
         self.__input_var = input_var
+        if input_var is not None and self.__output_var is None:
+            self.__output_var = input_var
 
     @property
     def output_var(self) -> str:

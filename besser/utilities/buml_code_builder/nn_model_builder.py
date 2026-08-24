@@ -177,7 +177,12 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
                                name_prefix=main_var)
 
         f.write(f"# Neural Network: {_safe_comment(model.name)}\n")
-        f.write(f"{main_var} = NN(name='{_esc(model.name)}')\n")
+        params = [f"name='{_esc(model.name)}'"]
+        if model.input_var:
+            params.append(f"input_var='{_esc(model.input_var)}'")
+        if model.return_vars:
+            params.append(f"return_vars='{_esc(model.return_vars)}'")
+        f.write(f"{main_var} = NN({', '.join(params)})\n")
 
         # Add modules in order (sub_nns, layers, tensor_ops)
         # Using model.modules preserves the order from the diagram's NNNext relationships
@@ -299,7 +304,12 @@ def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None,
         sub_nn_vars[id(sub_nn)] = var_name
 
         f.write(f"# Sub-Network: {_safe_comment(sub_nn.name)}\n")
-        f.write(f"{var_name} = NN(name='{_esc(sub_nn.name)}')\n")
+        params = [f"name='{_esc(sub_nn.name)}'"]
+        if sub_nn.input_var:
+            params.append(f"input_var='{_esc(sub_nn.input_var)}'")
+        if sub_nn.return_vars:
+            params.append(f"return_vars='{_esc(sub_nn.return_vars)}'")
+        f.write(f"{var_name} = NN({', '.join(params)})\n")
 
         # Add modules in order (preserves NNNext relationship order)
         if sub_nn.modules:

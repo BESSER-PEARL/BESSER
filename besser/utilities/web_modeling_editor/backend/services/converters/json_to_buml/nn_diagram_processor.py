@@ -542,13 +542,15 @@ def process_nn_diagram(json_data):
     elements = model_data.get('elements', {})
     relationships = model_data.get('relationships', {})
 
-    # Step 1: Identify all NNContainers and their names
-    containers = {}  # container_id -> container_name
+    # Step 1: Identify all NNContainers and their names + attributes
+    containers = {}  # container_id -> (container_name, input_var, return_vars)
     container_by_name = {}  # container_name -> container_id
     for elem_id, elem in elements.items():
         if elem.get('type') == 'NNContainer':
             name = sanitize_name(elem.get('name', 'Neural_Network'))
-            containers[elem_id] = name
+            input_var = elem.get('input_var')
+            return_vars = elem.get('return_vars')
+            containers[elem_id] = (name, input_var, return_vars)
             container_by_name[name] = elem_id
 
     # Step 2: Identify NNReference elements and what they reference
@@ -658,7 +660,7 @@ def process_nn_diagram(json_data):
     # Build a reference graph (container_name -> set of referenced container_names)
     # so we can order containers by dependency: referenced containers must be
     # created before the containers that reference them, at any depth.
-    name_by_id = dict(containers.items())
+    name_by_id = {cid: cdata[0] for cid, cdata in containers.items()}  # cid -> name
     ref_graph = {cname: set() for cname in name_by_id.values()}
     for c_id, refs in refs_by_container.items():
         c_name = name_by_id.get(c_id)
@@ -698,8 +700,9 @@ def process_nn_diagram(json_data):
     name_to_id = {cname: cid for cid, cname in name_by_id.items()}
     container_order = [(name_to_id[cname], cname) for cname in dep_order]
 
-    for container_id, container_name in container_order:
-        nn = NN(name=container_name)
+    for container_id in [cid for cid, _ in container_order]:
+        container_name, input_var, return_vars = containers[container_id]
+        nn = NN(name=container_name, input_var=input_var, return_vars=return_vars)
         nn_by_name[container_name] = nn
 
         # Get all modules (layers + tensor_ops + refs) for this container
@@ -765,7 +768,7 @@ def process_nn_diagram(json_data):
 
     # Step 6: Determine the main NN to return.
     # The main NN is the one that is NOT referenced by any NNReference.
-    top_level = [cname for _, cname in containers.items() if cname not in referenced_names]
+    top_level = [cdata[0] for _, cdata in containers.items() if cdata[0] not in referenced_names]
     if len(top_level) > 1:
         raise ValueError(
             f"NN diagram contains {len(top_level)} top-level NNContainers "

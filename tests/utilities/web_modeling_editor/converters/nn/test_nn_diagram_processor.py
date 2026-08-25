@@ -4,13 +4,21 @@ Tests for the NN diagram processor (web editor JSON to B-UML NN metamodel).
 
 import json
 import pathlib
-import pytest
 
-from besser.BUML.metamodel.nn import NN, Conv1D, Conv2D, PoolingLayer, FlattenLayer, LinearLayer, DropoutLayer, EmbeddingLayer, GRULayer, LSTMLayer, Dataset, Image
+import pytest
+from besser.BUML.metamodel.nn import (
+    NN,
+    Conv2D,
+    Dataset,
+    DropoutLayer,
+    Image,
+    LinearLayer,
+    PoolingLayer,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+    create_dataset,
     process_nn_diagram,
     topological_sort,
-    create_dataset,
 )
 
 

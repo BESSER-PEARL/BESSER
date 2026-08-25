@@ -13,13 +13,11 @@ import json
 from pathlib import Path
 
 import pytest
-
 from besser.BUML.metamodel.nn import NN
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     nn_model_to_json,
     process_nn_diagram,
 )
-
 
 _TEMPLATE_DIR = (
     Path(__file__).resolve().parents[5]

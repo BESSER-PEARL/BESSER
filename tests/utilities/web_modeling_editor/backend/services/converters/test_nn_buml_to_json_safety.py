@@ -8,11 +8,9 @@ of node types, so these probes must be rejected.
 """
 
 import pytest
-
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
     nn_buml_to_json,
 )
-
 
 LEGITIMATE_BUML = """
 from besser.BUML.metamodel.nn import (
@@ -180,7 +178,11 @@ def test_builder_output_roundtrips_through_ast_parser(tmp_path):
     layer types. Exercises the real round-trip that ``/export-buml`` →
     ``/get-json-model`` would see."""
     from besser.BUML.metamodel.nn import (
-        NN, Conv2D, LinearLayer, FlattenLayer, Configuration,
+        NN,
+        Configuration,
+        Conv2D,
+        FlattenLayer,
+        LinearLayer,
     )
     from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 

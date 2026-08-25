@@ -473,43 +473,48 @@ class NNCodeGenerator(GeneratorInterface):
 
         return modules_details
 
+
     def _clean_generated_code(self, code: str) -> str:
         """Clean excessive blank lines from generated code.
         Remove all blank lines from forward/call methods and normalize
         spacing throughout the file."""
-
         # First pass: clean forward/call methods (subclassing only)
-        pattern = (
-            r'(    def (?:forward|call)\([^)]*\):.*?\n)'
-            r'((?:.*?\n)*?)('
-            r'        return .*?\n)'
-            r'((?=    def |def |class |\nif __name__|$))'
-        )
-        def remove_blank_lines(match):
-            header = match.group(1)
-            body = match.group(2)
-            return_line = match.group(3)
-            next_section = match.group(4)
+        lines = code.split('\n')
+        cleaned_lines = []
+        inside_forward = False
 
-            lines = body.split('\n')
-            cleaned_lines = [line for line in lines if line.strip() != '']
-            cleaned_body = '\n'.join(cleaned_lines)
-            if cleaned_body:
-                cleaned_body += '\n'
+        for line in lines:
+            # Detect entry into forward/call method
+            if line.startswith('    def ') and ('forward(' in line or 'call(' in line):
+                inside_forward = True
+            # Detect exit from forward/call method after return statement
+            elif inside_forward and line.strip().startswith('return '):
+                cleaned_lines.append(line)
+                inside_forward = False
+                continue
+            # Detect exit via new block (safety fallback)
+            elif inside_forward and (
+                line.startswith('    def ')
+                or line.startswith('def ')
+                or line.startswith('class ')
+                or line.startswith('if __name__')
+            ):
+                inside_forward = False
 
-            return header + cleaned_body + return_line + '\n\n' + next_section
+            # Skip blank lines inside forward/call
+            if inside_forward and line.strip() == '':
+                continue
 
-        code = re.sub(
-            pattern, remove_blank_lines, code, flags=re.DOTALL | re.MULTILINE
-        )
+            cleaned_lines.append(line)
+
+        code = '\n'.join(cleaned_lines)
 
         # Second pass: normalize excessive blank lines globally (both modes)
         code = re.sub(r'\n\n\n+', '\n\n', code)
-
         # Clean up leading/trailing blank lines
         code = code.strip() + '\n'
-
         return code
+
 
     def generate(self, *args):
         """
@@ -541,8 +546,11 @@ class NNCodeGenerator(GeneratorInterface):
         forward_input_var = "x"
         if self.modules_details:
             first_module_data = next(iter(self.modules_details.values()))
-            if len(first_module_data) >= 3:
-                forward_input_var = first_module_data[2]
+            if isinstance(first_module_data, dict) and 'in_out_variable' in first_module_data:
+                forward_input_var = first_module_data['in_out_variable']
+            elif isinstance(first_module_data, list) and len(first_module_data) >= 3:
+                forward_input_var = first_module_data[1]
+
 
         generated_code = template.render(
             model=self.model, modules_details=self.modules_details,

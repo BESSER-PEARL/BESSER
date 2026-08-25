@@ -5,30 +5,33 @@ This module converts Neural Network diagram JSON from the web editor
 to BESSER's B-UML NN metamodel (NN, Layer, TensorOp, Configuration).
 """
 
+import ast
+import bisect
+
 from besser.BUML.metamodel.nn import (
     NN,
+    BatchNormLayer,
     Configuration,
-    TensorOp,
     Conv1D,
     Conv2D,
     Conv3D,
+    Dataset,
+    DropoutLayer,
+    EmbeddingLayer,
+    FlattenLayer,
+    GRULayer,
+    Image,
+    LayerNormLayer,
+    LinearLayer,
+    LSTMLayer,
     PoolingLayer,
     SimpleRNNLayer,
-    LSTMLayer,
-    GRULayer,
-    LinearLayer,
-    FlattenLayer,
-    EmbeddingLayer,
-    DropoutLayer,
-    LayerNormLayer,
-    BatchNormLayer,
-    Dataset,
-    Image,
+    TensorOp,
 )
-import bisect
-import ast
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import (
+    sanitize_name,
+)
 
 # Keep these aligned with the whitelists the NN metamodel setters enforce
 # (besser/BUML/metamodel/nn/neural_network.py). Re-asserting them here lets
@@ -635,7 +638,7 @@ def process_nn_diagram(json_data):
     outgoing_connections = {}  # source_id -> [target_ids]
     incoming_connections = {}  # target_id -> [source_ids]
 
-    for _, rel in relationships.items():
+    for rel in relationships.values():
         rel_type = rel.get('type', '')
         if rel_type == 'NNNext':
             source_id = rel.get('source', {}).get('element')
@@ -713,7 +716,7 @@ def process_nn_diagram(json_data):
         # Build set of all module IDs in this container (including refs)
         all_module_ids = (set(container_layers.keys()) |
                          set(container_tensor_ops.keys()) |
-                         set(ref_id for ref_id, _ in container_refs))
+                         {ref_id for ref_id, _ in container_refs})
 
         # Topologically sort modules based on NNNext within this container.
         # Tie-break by module name so two zero-in-degree starts produce a
@@ -1080,7 +1083,7 @@ def create_pooling_layer(element, elements):
     kernel_dim = parse_list_of_ints(kernel_dim_raw)
 
     # If kernel_dim not provided and it's not adaptive/global pooling, use default
-    if kernel_dim is None and not (pooling_type.startswith("adaptive") or pooling_type.startswith("global")):
+    if kernel_dim is None and not pooling_type.endswith(("adaptive", "global")):
         if dimension == "1D":
             kernel_dim = [2]
         elif dimension == "2D":
@@ -1738,7 +1741,7 @@ def create_tensor_op(element, elements):
                 subscript_indices = ast.literal_eval(subscript_indices_raw)
             else:
                 subscript_indices = subscript_indices_raw
-        except:
+        except (ValueError, TypeError):
             subscript_indices = None
 
     repeat_dim = get_element_attribute(element, 'RepeatDimAttribute', elements)
@@ -1767,7 +1770,7 @@ def create_tensor_op(element, elements):
                 pad_amount = ast.literal_eval(pad_amount_raw)
             else:
                 pad_amount = pad_amount_raw
-        except:
+        except (ValueError, TypeError):
             pad_amount = None
 
     pad_mode = get_element_attribute(element, 'PadModeAttribute', elements)
@@ -1797,10 +1800,10 @@ def create_tensor_op(element, elements):
                 split_sizes = parsed[0]
             else:
                 split_sizes = parsed
-        except:
+        except (ValueError, TypeError):
             try:
                 split_sizes = parse_tuple_or_int(split_sizes_raw)
-            except:
+            except (ValueError, TypeError):
                 split_sizes = None
 
     output_vars_raw = get_element_attribute(element, 'OutputVarsAttribute', elements)
@@ -2025,7 +2028,7 @@ def create_configuration(element, elements):
     elif isinstance(metrics_str, list):
         metrics = [m.strip("'\"") if isinstance(m, str) else m for m in metrics_str]
     else:
-        raise ValueError("Configuration 'metrics' attribute has invalid format")
+        raise TypeError("Configuration 'metrics' attribute has invalid format")
     invalid_metrics = [m for m in metrics if m not in _ALLOWED_METRICS]
     if invalid_metrics:
         raise ValueError(

@@ -6,7 +6,7 @@ of layers in TensorFlow, while `get_tensorop_syntax` defines the
 tensorOps.
 """
 
-from besser.BUML.metamodel.nn import TensorOp, Layer
+from besser.BUML.metamodel.nn import Layer, TensorOp
 from besser.generators.nn import utils_nn as utils
 
 
@@ -116,7 +116,6 @@ class SetupLayerSyntax:
         self.modules_details[name_ac] = [syntax, out_var, in_var, self.layer]
 
         # Return None to signal handle_layer not to add _layer entry
-        return None
 
     def _get_permute_dims_tf(self, dim: str, permute_in: bool):
         """Calculate permute dimensions for TensorFlow transpose."""
@@ -604,13 +603,16 @@ def _check_2d_tensor_sources(tensorop, modules_details):
                     if (hasattr(layer_obj, 'return_type') and
                             layer_obj.return_type in ('hidden', 'both')):
                         return True
-                # FlattenLayer
-                elif 'Flatten' in class_name:
+                # FlattenLayer or LinearLayer
+                elif (
+                    'Flatten' in class_name
+                    or (
+                        'Linear' in class_name
+                        and _check_linear_input_2d(layer_obj, modules_details)
+                    )
+                ):
                     return True
-                # LinearLayer
-                elif 'Linear' in class_name:
-                    if _check_linear_input_2d(layer_obj, modules_details):
-                        return True
+
     return False
 
 
@@ -630,7 +632,7 @@ def _check_linear_input_2d(layer_obj, modules_details):
             return True
 
     # Check if input is from RNN hidden state
-    if input_source.endswith('__hidden') or input_source.endswith('__cell'):
+    if input_source.endswith(("__hidden", "__cell")):
         return True
 
     # Check if input is from another 2D-producing layer
@@ -652,7 +654,7 @@ def _check_linear_input_2d(layer_obj, modules_details):
 
 def _determine_concat_axis_for_conv(modules_details):
     """Determine concat axis based on Conv layer dimension."""
-    for key, val in modules_details.items():
+    for val in modules_details.values():
         if isinstance(val, list) and len(val) > 3 and val[3]:
             layer_obj = val[3]
             if hasattr(layer_obj, '__class__'):
@@ -824,12 +826,12 @@ def _is_rnn_hidden_squeeze(tensorop, modules_details, prev_out_var):
     layer_obj = layer_details[3] if len(layer_details) > 3 else None
     hidden_var = layer_details[4]
     rnns = ['SimpleRNNLayer', 'LSTMLayer', 'GRULayer']
-    if (layer_obj and hasattr(layer_obj, '__class__') and
-            layer_obj.__class__.__name__ in rnns and
-            prev_out_var == hidden_var):
-        return True
-
-    return False
+    return (
+        layer_obj
+        and hasattr(layer_obj, '__class__')
+        and layer_obj.__class__.__name__ in rnns
+        and (prev_out_var == hidden_var)
+    )
 
 
 def _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis):
@@ -861,9 +863,11 @@ def _adjust_squeeze_axis_for_pooling(tensorop, modules_details, axis):
     # Check if source is a concat op from 1D pooling
     elif source_layer + "_op" in modules_details:
         op_details = modules_details[source_layer + "_op"]
-        if len(op_details) > 0 and isinstance(op_details[0], str):
-            if 'tf.concat' in op_details[0]:
-                return 1
+        if (
+            len(op_details) > 0 and isinstance(op_details[0], str)
+            and 'tf.concat' in op_details[0]
+        ):
+            return 1
 
     return axis
 

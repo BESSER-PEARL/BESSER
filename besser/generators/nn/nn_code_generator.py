@@ -6,19 +6,22 @@ networks based on the B-UML model.
 
 import os
 import re
-from typing import Callable
-from jinja2 import Environment, FileSystemLoader
+from collections.abc import Callable
+
 from besser.BUML.metamodel.nn import NN
 from besser.generators import GeneratorInterface
-from besser.generators.nn.tf.utils_tf import (
-    SetupLayerSyntax as SetupLayerTF
-)
 from besser.generators.nn.pytorch.utils_pytorch import (
-    SetupLayerSyntax as SetupLayerTorch
+    SetupLayerSyntax as SetupLayerTorch,
 )
 from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_name
-from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
-    add_in_out_var_to_subnn, renumber_tensorop_variables
+from besser.generators.nn.tf.utils_tf import SetupLayerSyntax as SetupLayerTF
+from besser.generators.nn.utils_nn import (
+    add_in_out_var_to_subnn,
+    handle_layer,
+    handle_tensorop,
+    renumber_tensorop_variables,
+)
+from jinja2 import Environment, FileSystemLoader
 
 
 class NNCodeGenerator(GeneratorInterface):
@@ -55,7 +58,7 @@ class NNCodeGenerator(GeneratorInterface):
                  setup_layer: SetupLayerTF | SetupLayerTorch,
                  get_tensorop_syntax: Callable, generation_type: str,
                  template_dir: str, channel_last: bool | None = None,
-                 file_name: str = "nn.py", output_dir: str = None,
+                 file_name: str = "nn.py", output_dir: str | None = None,
                  strip_layer_counter_suffix: bool = False):
 
         super().__init__(model, output_dir)
@@ -185,7 +188,7 @@ class NNCodeGenerator(GeneratorInterface):
 
         if errors:
             raise ValueError(
-                f"Sequential generation requires linear flow. Violations:\n" +
+                "Sequential generation requires linear flow. Violations:\n" +
                 "\n".join(f"  - {e}" for e in errors)
             )
 
@@ -228,22 +231,22 @@ class NNCodeGenerator(GeneratorInterface):
                     needs_lambda = True
 
                 # Check if it's a binary op with tensor + scalar
-                elif (t_type and module.tns_type.startswith('binop_')):
-                    if getattr(module, 'layers_of_tensors', None):
-                        lot = module.layers_of_tensors
-                        has_string = any(isinstance(x, str) for x in lot)
-                        has_scalar = any(not isinstance(x, str) for x in lot)
-                        if has_string and has_scalar:
-                            needs_lambda = True
-
-                # Check if it's multiply with tensor + scalar
-                elif t_type and module.tns_type == 'multiply':
-                    if getattr(module, 'layers_of_tensors', None):
-                        lot = module.layers_of_tensors
-                        has_string = any(isinstance(x, str) for x in lot)
-                        has_scalar = any(not isinstance(x, str) for x in lot)
-                        if has_string and has_scalar:
-                            needs_lambda = True
+                # or multiply with tensor + scalar
+                elif (
+                    (
+                        t_type and module.tns_type.startswith('binop_')
+                        and getattr(module, 'layers_of_tensors', None)
+                    )
+                    or (
+                        t_type and module.tns_type == 'multiply'
+                        and getattr(module, 'layers_of_tensors', None)
+                    )
+                ):
+                    lot = module.layers_of_tensors
+                    has_string = any(isinstance(x, str) for x in lot)
+                    has_scalar = any(not isinstance(x, str) for x in lot)
+                    if has_string and has_scalar:
+                        needs_lambda = True
 
                 # Apply lambda wrapping to the syntax
                 if needs_lambda and module_details and prev_out_var:
@@ -284,7 +287,6 @@ class NNCodeGenerator(GeneratorInterface):
     def _validate_dropout_for_sequential(self, module):
         """Hook for framework-specific dropout validation
         in sequential mode."""
-        pass
 
     def _cleanup_lambda_syntax(self, module, syntax, prev_out_var):
         """Hook for framework-specific variable extraction, mapping,
@@ -335,13 +337,15 @@ class NNCodeGenerator(GeneratorInterface):
         """Check if model has any dropout tensorop with
         training_aware=True."""
         for module in self.model.modules:
-            if module.__class__.__name__ == "TensorOp":
-                if (
+            if (
+                module.__class__.__name__ == "TensorOp"
+                and (
                     hasattr(module, 'tns_type')
                     and module.tns_type == 'dropout'
                     and getattr(module, 'dropout_training_aware', False)
-                ):
-                    return True
+                )
+            ):
+                return True
         return False
 
     def _detect_module_reuse(self):
@@ -351,14 +355,16 @@ class NNCodeGenerator(GeneratorInterface):
         referenced_tensorops = set()
 
         for module in self.model.modules:
-            if module.__class__.__name__ == "TensorOp":
-                if getattr(module, 'layers_of_tensors', None):
-                    for item in module.layers_of_tensors:
-                        if isinstance(item, str):
-                            cnt = module_usage_count.get(item, 0) + 1
-                            module_usage_count[item] = cnt
-                            if item.startswith("op_"):
-                                referenced_tensorops.add(item)
+            if (
+                module.__class__.__name__ == "TensorOp"
+                and getattr(module, 'layers_of_tensors', None)
+            ):
+                for item in module.layers_of_tensors:
+                    if isinstance(item, str):
+                        cnt = module_usage_count.get(item, 0) + 1
+                        module_usage_count[item] = cnt
+                        if item.startswith("op_"):
+                            referenced_tensorops.add(item)
 
         return module_usage_count, referenced_tensorops
 
@@ -366,19 +372,21 @@ class NNCodeGenerator(GeneratorInterface):
         """Second pass: mark tensorops using multi-use inputs with
         input_reused=True."""
         for module in self.model.modules:
-            if module.__class__.__name__ == "TensorOp":
-                if getattr(module, 'layers_of_tensors', None):
-                    for input_module in module.layers_of_tensors:
+            if (
+                module.__class__.__name__ == "TensorOp"
+                and getattr(module, 'layers_of_tensors', None)
+            ):
+                for input_module in module.layers_of_tensors:
+                    if (
+                        isinstance(input_module, str)
+                        and module_usage_count.get(input_module, 0) > 1
+                    ):
                         if (
-                            isinstance(input_module, str)
-                            and module_usage_count.get(input_module, 0) > 1
+                            not hasattr(module, 'input_reused')
+                            or not module.input_reused
                         ):
-                            if (
-                                not hasattr(module, 'input_reused')
-                                or not module.input_reused
-                            ):
-                                module.input_reused = True
-                            break
+                            module.input_reused = True
+                        break
 
     def _process_module(self, module, modules_details, actv_func, is_seq,
                         counter_subnn, referenced_tensorops):

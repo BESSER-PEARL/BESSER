@@ -3,12 +3,13 @@ This module defines the neural network metamodel.
 """
 
 from __future__ import annotations
+
 import keyword
 import re
-from typing import List, Self, Union
-from besser.BUML.metamodel.structural import (
-    BehaviorImplementation, NamedElement
-)
+from typing import Self
+
+from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
+
 
 class TensorOp(NamedElement):
     """
@@ -21,12 +22,12 @@ class TensorOp(NamedElement):
         concatenate_dim (int): The dimension along which the tensors
             will be concatenated. Only relevant for concatenate
             operation.
-        layers_of_tensors (List[Union[str, float]]): The list that
+        layers_of_tensors (list[str | float]): The list that
             defines the inputs of the tensor op. Elements can be layer
             names or scalar values.
-        reshape_dim (List[int]): New shape for reshape operation.
-        transpose_dim (List[int]): Transpose dimension specification.
-        permute_dim (List[int]): Desired ordering of dimensions for
+        reshape_dim (list[int]): New shape for reshape operation.
+        transpose_dim (list[int]): Transpose dimension specification.
+        permute_dim (list[int]): Desired ordering of dimensions for
             permute.
         reduce_dim (int): Dimension for reduction operations like max 
             or mean.
@@ -35,16 +36,16 @@ class TensorOp(NamedElement):
         shape_dim (int): Dimension index to extract from shape.
         input_reused (bool): Whether input is reused by another
             operation.
-        actual_vars (List[str]): Component type labels for each input
+        actual_vars (list[str]): Component type labels for each input
             in concatenate and binary operations. Each element is
             either "output" or "hidden", indicating which component to
             reference from the corresponding layer. Used when layers
             have multiple output components (e.g., RNN layers with
             separate output and hidden states) to generate correct
             variable references during code generation.
-        subscript_indices (List[dict]): A list of dictionaries
+        subscript_indices (list[dict]): A list of dictionaries
             containing indices for subscript operations.
-        repeat_dim (List[Union[int, str]]): Repetition counts for
+        repeat_dim (list[int | str]): Repetition counts for
             repeat operation. Each element specifies how many times to
             repeat along that dimension. Elements can be integers for
             fixed counts (e.g., 2, 3) or strings representing
@@ -58,7 +59,7 @@ class TensorOp(NamedElement):
             'nearest', 'linear', 'bilinear', 'bicubic', 'trilinear',
             'area', 'nearest-exact', 'lanczos3', 'lanczos5',
             'gaussian', 'mitchellcubic'. Default: 'bilinear'.
-        pad_amount (List[List[int]]): Padding amounts as nested list.
+        pad_amount (list[list[int]]): Padding amounts as nested list.
             Each inner list contains [before, after] padding for one
             dimension. Example: [[1, 1], [2, 2]] pads first dim by 1
             on each side, second dim by 2.
@@ -71,7 +72,7 @@ class TensorOp(NamedElement):
             between training and inference modes. Default: False.
         split_dim (int): Dimension along which to split (supports
             negative indexing). Default: 0.
-        split_sizes (Union[int, List[int]]): Number of equal chunks
+        split_sizes (int | list[int]): Number of equal chunks
             (int) or size per chunk (list). Required.
         permute_in (bool): Whether to permute input dimensions for
             spatial ops.
@@ -80,27 +81,27 @@ class TensorOp(NamedElement):
         input_var (str): Input variable name for this tensor operation.
         output_var (str): Output variable name for this tensor
             operation.
-        output_vars (List[str]): Output variable names for multi-output 
+        output_vars (list[str]): Output variable names for multi-output 
             operations (split/chunk).
 
     Attributes:
         name (str): The name of the tensor operation.
         tns_type (str): The type of the tensor operation.
         concatenate_dim (int): Concatenation dimension.
-        layers_of_tensors (List[Union[str, float]]): Input layers or
+        layers_of_tensors (list[str | float]): Input layers or
             scalars.
-        reshape_dim (List[int]): Reshape target shape.
-        transpose_dim (List[int]): Transpose dimensions.
-        permute_dim (List[int]): Permute dimension ordering.
+        reshape_dim (list[int]): Reshape target shape.
+        transpose_dim (list[int]): Transpose dimensions.
+        permute_dim (list[int]): Permute dimension ordering.
         reduce_dim (int): Reduction dimension.
         reduce_keepdims (bool): Keep dimensions after reduction.
         shape_dim (int): Shape dimension to extract.
         input_reused (bool): Input reuse flag.
-        actual_vars (List[str]): Component type labels ("output" 
+        actual_vars (list[str]): Component type labels ("output" 
             or "hidden") for each input. Used to select the correct
             component when layers have multiple outputs.
-        subscript_indices (List[dict]): Subscript indices.
-        repeat_dim (List[Union[int, str]]): Repetition counts for
+        subscript_indices (list[dict]): Subscript indices.
+        repeat_dim (list[int | str]): Repetition counts for
             repeat operation. Each element specifies how many times
             to repeat along that dimension. Elements can be integers
             for fixed counts (e.g., 2, 3) or strings representing
@@ -110,7 +111,7 @@ class TensorOp(NamedElement):
             tuple.
         interpolate_scale (float): Interpolation scale.
         interpolate_mode (str): Interpolation mode. Default 'bilinear'.
-        pad_amount (List[List[int]]): Nested list of padding amounts
+        pad_amount (list[list[int]]): Nested list of padding amounts
             per dimension.
         pad_mode (str): Padding mode ('constant', 'reflect',
             'replicate').
@@ -120,48 +121,52 @@ class TensorOp(NamedElement):
             Default: False.
         split_dim (int): Split dimension (supports negative indexing).
             Default: 0.
-        split_sizes (Union[int, List[int]]): Number of equal chunks
+        split_sizes (int | list[int]): Number of equal chunks
             (int) or size per chunk (list).
         permute_in (bool): Input permute flag.
         permute_out (bool): Output permute flag.
         input_var (str): Input variable name for this tensor operation.
         output_var (str): Output variable name for this tensor
             operation.
-        output_vars (List[str]): Output variable names for multi-output 
+        output_vars (list[str]): Output variable names for multi-output 
             operations (split/chunk).
     """
-    def __init__(self, name: str, tns_type: str, concatenate_dim: int = None,
-                 layers_of_tensors: List[Union[str, float]] = None,
-                 reshape_dim: List[int] = None,
-                 transpose_dim: List[int] = None,
-                 permute_dim: List[int] = None, reduce_dim: int = None,
-                 reduce_keepdims: bool = False, shape_dim: int = None,
-                 input_reused: bool = False, actual_vars: List[str] = None,
-                 subscript_indices: list[dict] = None,
-                 repeat_dim: List[Union[int, str]] = None,
-                 interpolate_size: tuple = None,
-                 interpolate_scale: float = None,
-                 interpolate_mode: str = 'bilinear', pad_amount = None,
+    def __init__(self, name: str, tns_type: str,
+                 concatenate_dim: int | None = None,
+                 layers_of_tensors: list[str | float] | None = None,
+                 reshape_dim: list[int] | None = None,
+                 transpose_dim: list[int] | None = None,
+                 permute_dim: list[int] | None = None,
+                 reduce_dim: int | None = None,
+                 reduce_keepdims: bool = False, shape_dim: int | None = None,
+                 input_reused: bool = False,
+                 actual_vars: list[str] | None = None,
+                 subscript_indices: list[dict] | None = None,
+                 repeat_dim: list[int | str] | None = None,
+                 interpolate_size: tuple | None = None,
+                 interpolate_scale: float | None = None,
+                 interpolate_mode: str = 'bilinear',
+                 pad_amount : list[list[int]] | None = None,
                  pad_mode: str = 'constant', pad_value: float = 0.0,
-                 dropout_rate: float = None,
+                 dropout_rate: float | None = None,
                  dropout_training_aware: bool = True, split_dim: int = 0,
-                 split_sizes: Union[int, List[int]] = None,
+                 split_sizes: int | list[int] | None = None,
                  permute_in: bool = False, permute_out: bool = False,
-                 input_var: str = None, output_var: str = None,
-                 output_vars: List[str] = None):
+                 input_var: str | None = None, output_var: str | None = None,
+                 output_vars: list[str] | None = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
-        self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
-        self.reshape_dim: List[int] = reshape_dim
-        self.transpose_dim: List[int] = transpose_dim
-        self.permute_dim: List[int] = permute_dim
+        self.layers_of_tensors: list[str | float] = layers_of_tensors
+        self.reshape_dim: list[int] = reshape_dim
+        self.transpose_dim: list[int] = transpose_dim
+        self.permute_dim: list[int] = permute_dim
         self.reduce_dim: int = reduce_dim
         self.reduce_keepdims: bool = reduce_keepdims
         self.shape_dim: int = shape_dim
         self.input_reused: bool = input_reused
-        self.actual_vars: List[str] = actual_vars
+        self.actual_vars: list[str] = actual_vars
         self.subscript_indices: list[dict] = subscript_indices
-        self.repeat_dim: List[Union[int, str]] = repeat_dim
+        self.repeat_dim: list[int | str] = repeat_dim
         self.interpolate_size = interpolate_size
         self.interpolate_scale: float = interpolate_scale
         self.interpolate_mode: str = interpolate_mode
@@ -171,12 +176,12 @@ class TensorOp(NamedElement):
         self.dropout_rate: float = dropout_rate
         self.dropout_training_aware: bool = dropout_training_aware
         self.split_dim: int = split_dim
-        self.split_sizes: Union[int, List[int]] = split_sizes
+        self.split_sizes: int | list[int] = split_sizes
         self.permute_in: bool = permute_in
         self.permute_out: bool = permute_out
         self.input_var: str = input_var
         self.output_var: str = output_var
-        self.output_vars: List[str] = output_vars
+        self.output_vars: list[str] = output_vars
         self.tns_type: str = tns_type
 
     @property
@@ -226,18 +231,20 @@ class TensorOp(NamedElement):
         int: Set the dimension along which the tensors will be
         concatenated with the cat operation.
         """
-        if concatenate_dim is not None:
-            if not isinstance(concatenate_dim, int):
-                raise TypeError(
-                    "concatenate_dim must be int, got "
-                    f"{type(concatenate_dim).__name__}"
-                )
+        if (
+            concatenate_dim is not None
+            and (not isinstance(concatenate_dim, int))
+        ):
+            raise TypeError(
+                "concatenate_dim must be int, got "
+                f"{type(concatenate_dim).__name__}"
+            )
         self.__concatenate_dim = concatenate_dim
 
     @property
-    def layers_of_tensors(self) -> List[Union[str, float]]:
+    def layers_of_tensors(self) -> list[str | float]:
         """
-        List[Union[str, float]]: Get the list that defines the inputs
+        list[str | float]: Get the list that defines the inputs
         of the tensor op. Elements of the list can be either names
         of layers from which the tensors originate (str) or scalar
         values (float) for binary operations with constants.
@@ -245,9 +252,9 @@ class TensorOp(NamedElement):
         return self.__layers_of_tensors
 
     @layers_of_tensors.setter
-    def layers_of_tensors(self, layers_of_tensors: List[Union[str, float]]):
+    def layers_of_tensors(self, layers_of_tensors: list[str | float]):
         """
-        List[Union[str, float]]: Set the list of layers names from
+        list[str | float]: Set the list of layers names from
         which the tensors, on which tensor ops are performed,
         originate. Can include scalar values (float) for binary
         operations with constants.
@@ -267,17 +274,17 @@ class TensorOp(NamedElement):
         self.__layers_of_tensors = layers_of_tensors
 
     @property
-    def reshape_dim(self) -> List[int]:
+    def reshape_dim(self) -> list[int]:
         """
-        List[int]: Get the list specifying the new shape of the tensor
+        list[int]: Get the list specifying the new shape of the tensor
         after reshaping with the view operation.
         """
         return self.__reshape_dim
 
     @reshape_dim.setter
-    def reshape_dim(self, reshape_dim: List[int]):
+    def reshape_dim(self, reshape_dim: list[int]):
         """
-        List[int]: Set the list specifying the new shape of the tensor
+        list[int]: Set the list specifying the new shape of the tensor
         after reshaping with the view operation.
         """
         if reshape_dim is not None:
@@ -291,16 +298,16 @@ class TensorOp(NamedElement):
         self.__reshape_dim = reshape_dim
 
     @property
-    def transpose_dim(self) -> List[int]:
+    def transpose_dim(self) -> list[int]:
         """
-        List[int]: Get the list specifying the transpose dimensions.
+        list[int]: Get the list specifying the transpose dimensions.
         """
         return self.__transpose_dim
 
     @transpose_dim.setter
-    def transpose_dim(self, transpose_dim: List[int]):
+    def transpose_dim(self, transpose_dim: list[int]):
         """
-        List[int]: Set the list specifying the transpose dimensions.
+        list[int]: Set the list specifying the transpose dimensions.
         """
         if transpose_dim is not None:
             if not isinstance(transpose_dim, list):
@@ -318,17 +325,17 @@ class TensorOp(NamedElement):
         self.__transpose_dim = transpose_dim
 
     @property
-    def permute_dim(self) -> List[int]:
+    def permute_dim(self) -> list[int]:
         """
-        List[int]: Get the list containing the desired ordering of
+        list[int]: Get the list containing the desired ordering of
         dimensions for permute operation.
         """
         return self.__permute_dim
 
     @permute_dim.setter
-    def permute_dim(self, permute_dim: List[int]):
+    def permute_dim(self, permute_dim: list[int]):
         """
-        List[int]: Set the list containing the desired ordering of
+        list[int]: Set the list containing the desired ordering of
         dimensions for permute operation.
         """
         if permute_dim is not None:
@@ -349,12 +356,10 @@ class TensorOp(NamedElement):
     @shape_dim.setter
     def shape_dim(self, shape_dim: int):
         """int: Set the dimension index for shape extraction."""
-        if shape_dim is not None:
-            if not isinstance(shape_dim, int):
-                raise TypeError(
-                    "shape_dim must be int, got "
-                    f"{type(shape_dim).__name__}"
-                )
+        if shape_dim is not None and (not isinstance(shape_dim, int)):
+            raise TypeError(
+                f"shape_dim must be int, got {type(shape_dim).__name__}"
+            )
         self.__shape_dim = shape_dim
 
     @property
@@ -371,12 +376,11 @@ class TensorOp(NamedElement):
         bool: Set whether the input to this layer is reused as input to
         another layer.
         """
-        if input_reused is not None:
-            if not isinstance(input_reused, bool):
-                raise TypeError(
-                    "input_reused must be bool, got "
-                    f"{type(input_reused).__name__}"
-                )
+        if input_reused is not None and (not isinstance(input_reused, bool)):
+            raise TypeError(
+                "input_reused must be bool, got "
+                f"{type(input_reused).__name__}"
+            )
         self.__input_reused = input_reused
 
     @property
@@ -387,12 +391,10 @@ class TensorOp(NamedElement):
     @reduce_dim.setter
     def reduce_dim(self, reduce_dim: int):
         """int: Set the dimension for reduction operations."""
-        if reduce_dim is not None:
-            if not isinstance(reduce_dim, int):
-                raise TypeError(
-                    "reduce_dim must be int, got "
-                    f"{type(reduce_dim).__name__}"
-                )
+        if (reduce_dim is not None and (not isinstance(reduce_dim, int))):
+            raise TypeError(
+                f"reduce_dim must be int, got {type(reduce_dim).__name__}"
+            )
         self.__reduce_dim = reduce_dim
 
     @property
@@ -403,18 +405,20 @@ class TensorOp(NamedElement):
     @reduce_keepdims.setter
     def reduce_keepdims(self, reduce_keepdims: bool):
         """bool: Set whether to keep dimensions after reduction."""
-        if reduce_keepdims is not None:
-            if not isinstance(reduce_keepdims, bool):
-                raise TypeError(
-                    "reduce_keepdims must be bool, got "
-                    f"{type(reduce_keepdims).__name__}"
-                )
+        if (
+            reduce_keepdims is not None
+            and not isinstance(reduce_keepdims, bool)
+        ):
+            raise TypeError(
+                "reduce_keepdims must be bool, got "
+                f"{type(reduce_keepdims).__name__}"
+            )
         self.__reduce_keepdims = reduce_keepdims
 
     @property
-    def actual_vars(self) -> List[str]:
+    def actual_vars(self) -> list[str]:
         """
-        List[str]: Get component type labels for each input.
+        list[str]: Get component type labels for each input.
         Returns a list of strings ("output" or "hidden") indicating
         which component each input in layers_of_tensors refers to.
         Used by the code generator to emit correct variable references
@@ -424,9 +428,9 @@ class TensorOp(NamedElement):
         return self.__actual_vars
 
     @actual_vars.setter
-    def actual_vars(self, actual_vars: List[str]):
+    def actual_vars(self, actual_vars: list[str]):
         """
-        List[str]: Set component type labels for each input.
+        list[str]: Set component type labels for each input.
         Each element should be "output" or "hidden", corresponding
         to inputs in layers_of_tensors. Used to determine which
         component variable to reference during code generation.
@@ -449,12 +453,12 @@ class TensorOp(NamedElement):
 
     @property
     def subscript_indices(self) -> list[dict]:
-        """List[dict]: Get the indices for subscript operations."""
+        """list[dict]: Get the indices for subscript operations."""
         return self.__subscript_indices
 
     @subscript_indices.setter
     def subscript_indices(self, subscript_indices: list[dict]):
-        """List[dict]: Set the indices for subscript operations."""
+        """list[dict]: Set the indices for subscript operations."""
         # subscript_indices: list of dicts
         # (variable length based on tensor dimensions)
         if subscript_indices is not None:
@@ -506,9 +510,9 @@ class TensorOp(NamedElement):
         self.__subscript_indices = subscript_indices
 
     @property
-    def repeat_dim(self) -> List[Union[int, str]]:
+    def repeat_dim(self) -> list[int | str]:
         """
-        List[Union[int, str]]: Get repetition counts for repeat
+        list[int | str]: Get repetition counts for repeat
         operation. Each element specifies how many times to repeat
         along that dimension. Elements can be integers for fixed
         counts (e.g., 2, 3) or strings representing variable/tensorop
@@ -518,9 +522,9 @@ class TensorOp(NamedElement):
         return self.__repeat_dim
 
     @repeat_dim.setter
-    def repeat_dim(self, repeat_dim: List[Union[int, str]]):
+    def repeat_dim(self, repeat_dim: list[int | str]):
         """
-        List[Union[int, str]]: Set repetition counts for repeat
+        list[int | str]: Set repetition counts for repeat
         operation. Each element specifies how many times to repeat
         along that dimension. Elements can be integers for fixed
         counts or strings representing variable/tensorop names that
@@ -609,7 +613,7 @@ class TensorOp(NamedElement):
 
     @property
     def pad_amount(self):
-        """List[List[int]]: Get padding amounts as nested list 
+        """list[list[int]]: Get padding amounts as nested list 
            [[before, after], ...] per dimension."""
         return self.__pad_amount
 
@@ -701,12 +705,14 @@ class TensorOp(NamedElement):
     @dropout_training_aware.setter
     def dropout_training_aware(self, dropout_training_aware: bool):
         """Set whether dropout is training aware. Must be bool."""
-        if dropout_training_aware is not None:
-            if not isinstance(dropout_training_aware, bool):
-                raise TypeError(
-                    "dropout_training_aware must be bool, got "
-                    f"{type(dropout_training_aware).__name__}"
-                )
+        if (
+            dropout_training_aware is not None
+            and not isinstance(dropout_training_aware, bool)
+        ):
+            raise TypeError(
+                "dropout_training_aware must be bool, got "
+                f"{type(dropout_training_aware).__name__}"
+            )
         self.__dropout_training_aware = dropout_training_aware
 
     @property
@@ -725,13 +731,13 @@ class TensorOp(NamedElement):
         self.__split_dim = split_dim
 
     @property
-    def split_sizes(self) -> Union[int, List[int]]:
-        """Union[int, List[int]]: Get number of splits or
+    def split_sizes(self) -> int | list[int]:
+        """int | list[int]: Get number of splits or
         list of split sizes."""
         return self.__split_sizes
 
     @split_sizes.setter
-    def split_sizes(self, split_sizes: Union[int, List[int]]):
+    def split_sizes(self, split_sizes: int | list[int]):
         """Set number of splits (int) or size per chunk
         (list of ints)."""
         if split_sizes is not None:
@@ -760,12 +766,10 @@ class TensorOp(NamedElement):
     @permute_in.setter
     def permute_in(self, permute_in: bool):
         """bool: Set whether to permute input dimensions."""
-        if permute_in is not None:
-            if not isinstance(permute_in, bool):
-                raise TypeError(
-                    "permute_in must be bool, got "
-                    f"{type(permute_in).__name__}"
-                )
+        if (permute_in is not None and (not isinstance(permute_in, bool))):
+            raise TypeError(
+                f"permute_in must be bool, got {type(permute_in).__name__}"
+            )
         self.__permute_in = permute_in
 
     @property
@@ -776,12 +780,10 @@ class TensorOp(NamedElement):
     @permute_out.setter
     def permute_out(self, permute_out: bool):
         """bool: Set whether to permute output dimensions."""
-        if permute_out is not None:
-            if not isinstance(permute_out, bool):
-                raise TypeError(
-                    "permute_out must be bool, got "
-                    f"{type(permute_out).__name__}"
-                )
+        if (permute_out is not None and (not isinstance(permute_out, bool))):
+            raise TypeError(
+                f"permute_out must be bool, got {type(permute_out).__name__}"
+            )
         self.__permute_out = permute_out
 
     @property
@@ -794,12 +796,13 @@ class TensorOp(NamedElement):
     def input_var(self, input_var: str):
         """str: Set the input variable name for this tensor
         operation."""
-        if input_var is not None:
-            if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', input_var):
-                raise ValueError(
-                    "input_var must be a valid identifier starting "
-                    "with a letter"
-                )
+        if (
+            input_var is not None
+            and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', input_var)
+        ):
+            raise ValueError(
+                "input_var must be a valid identifier starting with a letter"
+            )
         self.__input_var = input_var
 
     @property
@@ -812,23 +815,24 @@ class TensorOp(NamedElement):
     def output_var(self, output_var: str):
         """str: Set the output variable name for this tensor
         operation."""
-        if output_var is not None:
-            if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', output_var):
-                raise ValueError(
-                    "output_var must be a valid identifier starting "
-                    "with a letter"
-                )
+        if (
+            output_var is not None
+            and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', output_var)
+        ):
+            raise ValueError(
+                "output_var must be a valid identifier starting with a letter"
+            )
         self.__output_var = output_var
 
     @property
-    def output_vars(self) -> List[str]:
-        """List[str]: Get the output variable names for multi-output 
+    def output_vars(self) -> list[str]:
+        """list[str]: Get the output variable names for multi-output 
         operations (split/chunk)."""
         return self.__output_vars
 
     @output_vars.setter
-    def output_vars(self, output_vars: List[str]):
-        """List[str]: Set the output variable names for multi-output 
+    def output_vars(self, output_vars: list[str]):
+        """list[str]: Set the output variable names for multi-output 
         operations (split/chunk)."""
         if output_vars is not None:
             if not isinstance(output_vars, list):
@@ -954,15 +958,17 @@ class TensorOp(NamedElement):
                     "layers_of_tensors parameter should "
                     f"be provided for {self.tns_type} operations"
                 )
-        elif self.tns_type in [
-            'max', 'mean', 'normalize', 'repeat', 'reshape', 'shape_dim', 
-            'split', 'squeeze', 'transpose', 'unsqueeze', 'zeros_like'
-        ]:
-            if self.layers_of_tensors is None and self.input_var is None:
-                raise ValueError(
-                    "Either layers_of_tensors or input_var parameter should "
-                    f"be provided for {self.tns_type} operations"
-                )
+        elif (
+            self.tns_type in ['max', 'mean', 'normalize', 'repeat', 'reshape',
+                              'shape_dim', 'split', 'squeeze', 'transpose',
+                              'unsqueeze', 'zeros_like']
+            and self.layers_of_tensors is None
+            and self.input_var is None
+        ):
+            raise ValueError(
+                "Either layers_of_tensors or input_var parameter should "
+                f"be provided for {self.tns_type} operations"
+            )
 
     def __repr__(self):
         return (
@@ -1024,11 +1030,11 @@ class Layer(NamedElement):
         input_var (str): Input variable name for this layer.
         output_var (str): Output variable name for this layer.
     """
-    def __init__(self, name: str, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+    def __init__(self, name: str, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  is_layer_call: bool = False, permute_in: bool = False,
-                 permute_out: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 permute_out: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name)
         self.actv_func: str = actv_func
         self.name_module_input: str = name_module_input
@@ -1149,10 +1155,10 @@ class CNN(Layer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling (i.e., [depth,
             height, width]).
         padding_amount (int): The amount of padding added to the input.
@@ -1177,10 +1183,10 @@ class CNN(Layer):
             the layer.
         actv_func (str): Inherited from Layer. It represents the type
             of the activation function.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling (i.e., [depth,
             height, width]).
         padding_amount (int): The amount of padding added to the input.
@@ -1203,39 +1209,39 @@ class CNN(Layer):
             for this layer.
     """
 
-    def __init__(self, name: str, kernel_dim: List[int],
-                 stride_dim: List[int], padding_amount: int = 0,
-                 padding_type: str = "valid", actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+    def __init__(self, name: str, kernel_dim: list[int],
+                 stride_dim: list[int], padding_amount: int = 0,
+                 padding_type: str = "valid", actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, actv_func, name_module_input, input_reused,
                          is_layer_call, permute_in, permute_out, input_var,
                          output_var)
-        self.kernel_dim: List[int] = kernel_dim
-        self.stride_dim: List[int] = stride_dim
+        self.kernel_dim: list[int] = kernel_dim
+        self.stride_dim: list[int] = stride_dim
         self.padding_amount: int = padding_amount
         self.padding_type: str = padding_type
 
     @property
-    def kernel_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the kernel."""
+    def kernel_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the kernel."""
         return self.__kernel_dim
 
     @kernel_dim.setter
-    def kernel_dim(self, kernel_dim: List[int]):
-        """List[int]: Set the list of dimensions of the kernel."""
+    def kernel_dim(self, kernel_dim: list[int]):
+        """list[int]: Set the list of dimensions of the kernel."""
         self.__kernel_dim = kernel_dim
 
     @property
-    def stride_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the stride."""
+    def stride_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the stride."""
         return self.__stride_dim
 
     @stride_dim.setter
-    def stride_dim(self, stride_dim: List[int]):
-        """List[int]: Set the list of dimensions of the stride."""
+    def stride_dim(self, stride_dim: list[int]):
+        """list[int]: Set the list of dimensions of the stride."""
         if stride_dim is None:
             self.__stride_dim = self.kernel_dim
         else:
@@ -1307,10 +1313,10 @@ class ConvolutionalLayer(CNN):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling (i.e., [depth,
             height, width]).
         in_channels (int): The number of channels in the input image.
@@ -1318,7 +1324,7 @@ class ConvolutionalLayer(CNN):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
-        dilation (List[int]): Spacing between kernel elements.
+        dilation (list[int]): Spacing between kernel elements.
             Default is [1].
         groups (int): Number of blocked connections from input 
             to output channels. Default is 1.
@@ -1342,10 +1348,10 @@ class ConvolutionalLayer(CNN):
             the layer.
         actv_func (str): Inherited from Layer. It represents the type
             of the activation function.
-        kernel_dim (List[int]): Inherited from CNN. A list containing
+        kernel_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the convolving or pooling kernel (i.e.,
             [depth, height, width]).
-        stride_dim (List[int]): Inherited from CNN. A list containing
+        stride_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         in_channels (int): The number of channels in the input image.
@@ -1355,7 +1361,7 @@ class ConvolutionalLayer(CNN):
             added to the input.
         padding_type (str): Inherited from CNN. The type of padding
             applied to the input.
-        dilation (List[int]): Spacing between kernel elements.
+        dilation (list[int]): Spacing between kernel elements.
         groups (int): Number of blocked connections from input 
             to output channels.
         bias (bool): If True, adds a learnable bias to the output.
@@ -1379,22 +1385,22 @@ class ConvolutionalLayer(CNN):
             for this layer.
     """
 
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
-                 stride_dim: List[int], in_channels: int = None,
+    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
+                 stride_dim: list[int], in_channels: int | None = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: List[int] = None, groups: int = 1,
-                 bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+                 dilation: list[int] | None = None, groups: int = 1,
+                 bias: bool = True, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
                          input_reused, permute_in, permute_out, is_layer_call,
                          input_var, output_var)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
-        self.dilation: List[int] = dilation if dilation is not None else [1]
+        self.dilation: list[int] = dilation if dilation is not None else [1]
         self.groups: int = groups
         self.bias: bool = bias
 
@@ -1421,13 +1427,13 @@ class ConvolutionalLayer(CNN):
         self.__out_channels = out_channels
 
     @property
-    def dilation(self) -> List[int]:
-        """List[int]: Get the spacing between kernel elements."""
+    def dilation(self) -> list[int]:
+        """list[int]: Get the spacing between kernel elements."""
         return self.__dilation
 
     @dilation.setter
-    def dilation(self, dilation: List[int]):
-        """List[int]: Set the spacing between kernel elements."""
+    def dilation(self, dilation: list[int]):
+        """list[int]: Set the spacing between kernel elements."""
         self.__dilation = dilation
 
     @property
@@ -1472,10 +1478,10 @@ class Conv1D(ConvolutionalLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling (i.e., [depth,
             height, width]).
         in_channels (int): The number of channels in the input image.
@@ -1483,7 +1489,7 @@ class Conv1D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
-        dilation (List[int]): Spacing between kernel elements.
+        dilation (list[int]): Spacing between kernel elements.
             Default is [1].
         groups (int): Number of blocked connections from input to
             output channels. Default is 1.
@@ -1507,10 +1513,10 @@ class Conv1D(ConvolutionalLayer):
             the layer.
         actv_func (str): Inherited from Layer. It represents the type
             of the activation function.
-        kernel_dim (List[int]): Inherited from CNN. A list containing
+        kernel_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the convolving or pooling kernel
             (i.e., [depth, height, width]).
-        stride_dim (List[int]): Inherited from CNN. A list containing
+        stride_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         in_channels (int): Inherited from ConvolutionalLayer. It
@@ -1522,7 +1528,7 @@ class Conv1D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type
             of padding applied to the input.
-        dilation (List[int]): Inherited from ConvolutionalLayer. 
+        dilation (list[int]): Inherited from ConvolutionalLayer. 
             Spacing between kernel elements.
         groups (int): Inherited from ConvolutionalLayer. 
             Number of blocked connections from input to output channels.
@@ -1547,15 +1553,15 @@ class Conv1D(ConvolutionalLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
-                 stride_dim: List[int] = None, in_channels: int = None,
+    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
+                 stride_dim: list[int] | None = None, in_channels: int | None = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: List[int] = None, groups: int = 1,
-                 bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+                 dilation: list[int] | None = None, groups: int = 1,
+                 bias: bool = True, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         if stride_dim is None:
             stride_dim = [1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
@@ -1565,13 +1571,13 @@ class Conv1D(ConvolutionalLayer):
                          input_var, output_var)
 
     @property
-    def kernel_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the kernel."""
+    def kernel_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the kernel."""
         return self.__kernel_dim
 
     @kernel_dim.setter
-    def kernel_dim(self, kernel_dim: List[int]):
-        """List[int]: Set the list of dimensions of the kernel.
+    def kernel_dim(self, kernel_dim: list[int]):
+        """list[int]: Set the list of dimensions of the kernel.
         An error is raised if the list contains more than 1 element
         (dimension)."""
         if len(kernel_dim) != 1:
@@ -1582,13 +1588,13 @@ class Conv1D(ConvolutionalLayer):
         self.__kernel_dim = kernel_dim
 
     @property
-    def stride_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the stride."""
+    def stride_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the stride."""
         return self.__stride_dim
 
     @stride_dim.setter
-    def stride_dim(self, stride_dim: List[int]):
-        """List[int]: Set the list of dimensions of the stride.
+    def stride_dim(self, stride_dim: list[int]):
+        """list[int]: Set the list of dimensions of the stride.
         An error is raised if the list contains more than 1 element
         (dimension)."""
         if len(stride_dim) != 1:
@@ -1616,10 +1622,10 @@ class Conv2D(ConvolutionalLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         in_channels (int): The number of channels in the input image.
@@ -1627,7 +1633,7 @@ class Conv2D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
-        dilation (List[int]): Spacing between kernel elements.
+        dilation (list[int]): Spacing between kernel elements.
             Default is [1].
         groups (int): Number of blocked connections from input 
             to output channels. Default is 1.
@@ -1651,10 +1657,10 @@ class Conv2D(ConvolutionalLayer):
             layer.
         actv_func (str): Inherited from Layer. It represents the type
             of the activation function.
-        kernel_dim (List[int]): Inherited from CNN. A list containing
+        kernel_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the convolving or pooling kernel
             (i.e., [depth, height, width]).
-        stride_dim (List[int]): Inherited from CNN. A list containing
+        stride_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         in_channels (int): Inherited from ConvolutionalLayer. It
@@ -1666,7 +1672,7 @@ class Conv2D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the
             type of padding applied to the input.
-        dilation (List[int]): Inherited from ConvolutionalLayer. 
+        dilation (list[int]): Inherited from ConvolutionalLayer. 
             Spacing between kernel elements.
         groups (int): Inherited from ConvolutionalLayer. Number of 
             blocked connections from input to output channels.
@@ -1691,15 +1697,15 @@ class Conv2D(ConvolutionalLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
-                 stride_dim: List[int] = None, in_channels: int = None,
+    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
+                 stride_dim: list[int] | None = None, in_channels: int | None = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: List[int] = None, groups: int = 1,
-                 bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+                 dilation: list[int] | None = None, groups: int = 1,
+                 bias: bool = True, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         if stride_dim is None:
             stride_dim = [1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
@@ -1709,13 +1715,13 @@ class Conv2D(ConvolutionalLayer):
                          input_var, output_var)
 
     @property
-    def kernel_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the kernel."""
+    def kernel_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the kernel."""
         return self.__kernel_dim
 
     @kernel_dim.setter
-    def kernel_dim(self, kernel_dim: List[int]):
-        """List[int]: Set the list of dimensions of the kernel.
+    def kernel_dim(self, kernel_dim: list[int]):
+        """list[int]: Set the list of dimensions of the kernel.
         An error is raised if the list contains more than 2 elements
         (dimensions)."""
         if len(kernel_dim) != 2:
@@ -1726,13 +1732,13 @@ class Conv2D(ConvolutionalLayer):
         self.__kernel_dim = kernel_dim
 
     @property
-    def stride_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the stride."""
+    def stride_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the stride."""
         return self.__stride_dim
 
     @stride_dim.setter
-    def stride_dim(self, stride_dim: List[int]):
-        """List[int]: Set the list of dimensions of the stride.
+    def stride_dim(self, stride_dim: list[int]):
+        """list[int]: Set the list of dimensions of the stride.
         An error is raised if the list contains more than 2 elements
         (dimensions)."""
         if len(stride_dim) != 2:
@@ -1759,10 +1765,10 @@ class Conv3D(ConvolutionalLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         in_channels (int): The number of channels in the input image.
@@ -1770,7 +1776,7 @@ class Conv3D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
-        dilation (List[int]): Spacing between kernel elements.
+        dilation (list[int]): Spacing between kernel elements.
             Default is [1].
         groups (int): Number of blocked connections from input to 
             output channels. Default is 1.
@@ -1794,10 +1800,10 @@ class Conv3D(ConvolutionalLayer):
             the layer.
         actv_func (str): Inherited from Layer. It represents the type
             of the activation function.
-        kernel_dim (List[int]): Inherited from CNN. A list containing
+        kernel_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the convolving or pooling kernel
             (i.e., [depth, height, width]).
-        stride_dim (List[int]): Inherited from CNN. A list containing
+        stride_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         in_channels (int): Inherited from ConvolutionalLayer. It
@@ -1809,7 +1815,7 @@ class Conv3D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type
             of padding applied to the input.
-        dilation (List[int]): Inherited from ConvolutionalLayer. 
+        dilation (list[int]): Inherited from ConvolutionalLayer. 
             Spacing between kernel elements.
         groups (int): Inherited from ConvolutionalLayer. Number of
             blocked connections from input to output channels.
@@ -1834,15 +1840,15 @@ class Conv3D(ConvolutionalLayer):
         output_var (str): Inherited from Layer. Output variable name
             for this layer.
     """
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
-                 stride_dim: List[int] = None, in_channels: int = None,
+    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
+                 stride_dim: list[int] | None = None, in_channels: int | None = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: List[int] = None, groups: int = 1,
-                 bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+                 dilation: list[int] | None = None, groups: int = 1,
+                 bias: bool = True, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         if stride_dim is None:
             stride_dim = [1, 1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
@@ -1852,13 +1858,13 @@ class Conv3D(ConvolutionalLayer):
                          input_var, output_var)
 
     @property
-    def kernel_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the kernel."""
+    def kernel_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the kernel."""
         return self.__kernel_dim
 
     @kernel_dim.setter
-    def kernel_dim(self, kernel_dim: List[int]):
-        """List[int]: Set the list of dimensions of the kernel.
+    def kernel_dim(self, kernel_dim: list[int]):
+        """list[int]: Set the list of dimensions of the kernel.
         An error is raised if the list does not contains exactly 3
         elements (dimensions)."""
         if len(kernel_dim) != 3:
@@ -1868,13 +1874,13 @@ class Conv3D(ConvolutionalLayer):
         self.__kernel_dim = kernel_dim
 
     @property
-    def stride_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the stride."""
+    def stride_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the stride."""
         return self.__stride_dim
 
     @stride_dim.setter
-    def stride_dim(self, stride_dim: List[int]):
-        """List[int]: Set the list of dimensions of the stride.
+    def stride_dim(self, stride_dim: list[int]):
+        """list[int]: Set the list of dimensions of the stride.
         An error is raised if the list does not contains exactly
         3 elements (dimensions)."""
         if len(stride_dim) != 3:
@@ -1903,16 +1909,16 @@ class PoolingLayer(CNN):
         actv_func (str): The type of the activation function.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the
             pooling operation.
-        kernel_dim (List[int]): A list containing the dimensions of
+        kernel_dim (list[int]): A list containing the dimensions of
             the convolving or pooling kernel (i.e., [depth, height,
             width]).
-        stride_dim (List[int]): A list containing the dimensions of
+        stride_dim (list[int]): A list containing the dimensions of
             the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.
         pooling_type (str): The type of pooling. Either average or max.
-        output_dim (List[int]): The output dimensions of the adaptive
+        output_dim (list[int]): The output dimensions of the adaptive
             pooling operation. Only relevant for adaptive pooling.
         permute_in (bool): Whether the dimensions of the input need
             to be permuted. Relevant for PyTorch. It is used to make
@@ -1936,10 +1942,10 @@ class PoolingLayer(CNN):
             of the activation function.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the
             pooling operation.
-        kernel_dim (List[int]): Inherited from CNN. A list containing
+        kernel_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the convolving or pooling kernel
             (i.e., [depth, height, width]).
-        stride_dim (List[int]): Inherited from CNN. A list containing
+        stride_dim (list[int]): Inherited from CNN. A list containing
             the dimensions of the stride of the convolution or pooling
             (i.e., [depth, height, width]).
         padding_amount (int): Inherited from CNN. It represents the
@@ -1947,7 +1953,7 @@ class PoolingLayer(CNN):
         padding_type (str): Inherited from CNN. It represents the type
             of padding applied to the input.
         pooling_type (str): The type of pooling. Either average or max.
-        output_dim (List[int]): The output dimensions of the adaptive
+        output_dim (list[int]): The output dimensions of the adaptive
             pooling operation. Only relevant for adaptive pooling.
         permute_in (bool): Inherited from CNN. Whether the dimensions
             of the input need to be permuted. Relevant for PyTorch.
@@ -1969,16 +1975,16 @@ class PoolingLayer(CNN):
             for this layer.
     """
     def __init__(self, name: str, pooling_type: str, dimension: str,
-                 kernel_dim: List[int] = None, stride_dim: List[int] = None,
+                 kernel_dim: list[int] | None = None, stride_dim: list[int] | None = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 output_dim: List[int] = None, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
+                 output_dim: list[int] | None = None, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
                  permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
-        self.output_dim: List[int] = output_dim
+        self.output_dim: list[int] = output_dim
         if output_dim is None:
             output_dim = []
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
@@ -1987,13 +1993,13 @@ class PoolingLayer(CNN):
                          input_var, output_var)
 
     @property
-    def kernel_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the kernel."""
+    def kernel_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the kernel."""
         return self.__kernel_dim
 
     @kernel_dim.setter
-    def kernel_dim(self, kernel_dim: List[int]):
-        """List[int]: Set the list of dimensions of the kernel.
+    def kernel_dim(self, kernel_dim: list[int]):
+        """list[int]: Set the list of dimensions of the kernel.
         An error is raised if the length of the list does not match
         the dimensionality of the pooling operation."""
         if not (self.pooling_type.startswith("adaptive") or
@@ -2015,13 +2021,13 @@ class PoolingLayer(CNN):
         self.__kernel_dim = kernel_dim
 
     @property
-    def stride_dim(self) -> List[int]:
-        """List[int]: Get the list of dimensions of the stride."""
+    def stride_dim(self) -> list[int]:
+        """list[int]: Get the list of dimensions of the stride."""
         return self.__stride_dim
 
     @stride_dim.setter
-    def stride_dim(self, stride_dim: List[int]):
-        """List[int]: Set the list of dimensions of the stride.
+    def stride_dim(self, stride_dim: list[int]):
+        """list[int]: Set the list of dimensions of the stride.
         An error is raised if the length of the list does not match
         the dimensionality of the pooling operation."""
         if (
@@ -2092,14 +2098,14 @@ class PoolingLayer(CNN):
         self.__dimension = dimension
 
     @property
-    def output_dim(self) -> List[int]:
-        """List[int]: Get the output dimensions
+    def output_dim(self) -> list[int]:
+        """list[int]: Get the output dimensions
         of the adaptive pooling."""
         return self.__output_dim
 
     @output_dim.setter
-    def output_dim(self, output_dim: List[int]):
-        """List[int]: Set the output dimensions
+    def output_dim(self, output_dim: list[int]):
+        """list[int]: Set the output dimensions
         of the adaptive pooling."""
         self.__output_dim = output_dim
 
@@ -2201,9 +2207,9 @@ class NormalizationLayer(LayerModifier):
     """
     def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
                  permute_in: bool = False, permute_out: bool = False,
-                 actv_func: str = None, name_module_input: str = None,
+                 actv_func: str | None = None, name_module_input: str | None = None,
                  input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str = None, output_var: str = None):
+                 input_var: str | None = None, output_var: str | None = None):
         super().__init__(name, actv_func, name_module_input, input_reused,
                          is_layer_call, permute_in, permute_out, input_var,
                          output_var)
@@ -2310,10 +2316,10 @@ class BatchNormLayer(NormalizationLayer):
                  eps: float = 1e-5, momentum: float = 0.1,
                  affine: bool = True, track_running_stats: bool = True,
                  permute_in: bool = False, permute_out: bool = False,
-                 actv_func: str = None, name_module_input: str = None,
+                 actv_func: str | None = None, name_module_input: str | None = None,
                  input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str = None,
-                 output_var: str = None):
+                 input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, eps, affine, permute_in, permute_out,
                          actv_func, name_module_input, input_reused,
                          is_layer_call, input_var, output_var)
@@ -2392,7 +2398,7 @@ class LayerNormLayer(NormalizationLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        normalized_shape (List[int]): A list of integers specifying 
+        normalized_shape (list[int]): A list of integers specifying 
             the shape of the trailing dimensions over which layer 
             normalization is applied. These correspond to the last N 
             dimensions of the input tensor.
@@ -2412,7 +2418,7 @@ class LayerNormLayer(NormalizationLayer):
             the layer.
         actv_func (str): Inherited from Layer. It represents the type
             of the activation function.
-        normalized_shape (List[int]): A list of integers specifying 
+        normalized_shape (list[int]): A list of integers specifying 
             the shape of the trailing dimensions over which layer 
             normalization is applied. These correspond to the last N 
             dimensions of the input tensor.
@@ -2431,25 +2437,25 @@ class LayerNormLayer(NormalizationLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, normalized_shape: List[int],
+    def __init__(self, name: str, normalized_shape: list[int],
                  eps: float = 1e-5, affine: bool = True,
-                 actv_func: str = None, name_module_input: str = None,
+                 actv_func: str | None = None, name_module_input: str | None = None,
                  input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str = None, output_var: str = None):
+                 input_var: str | None = None, output_var: str | None = None):
         super().__init__(name, eps, affine, False, False, actv_func,
                          name_module_input, input_reused, is_layer_call,
                          input_var, output_var)
-        self.normalized_shape: List[int] = normalized_shape
+        self.normalized_shape: list[int] = normalized_shape
 
     @property
-    def normalized_shape(self) -> List[int]:
-        """List[int]: Get the list containing the dimensions or axis
+    def normalized_shape(self) -> list[int]:
+        """list[int]: Get the list containing the dimensions or axis
         indices over which layer normalization is applied."""
         return self.__normalized_shape
 
     @normalized_shape.setter
-    def normalized_shape(self, normalized_shape: List[int]):
-        """List[int]: Set the list containing the dimensions or axis
+    def normalized_shape(self, normalized_shape: list[int]):
+        """list[int]: Set the list containing the dimensions or axis
         indices over which layer normalization is applied."""
         self.__normalized_shape = normalized_shape
 
@@ -2509,9 +2515,9 @@ class DropoutLayer(LayerModifier):
     """
     def __init__(self, name: str, rate: float, dimension: str | None = None,
                  permute_in: bool = False, permute_out: bool = False,
-                 name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 name_module_input: str | None = None, input_reused: bool = False,
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, None, name_module_input, input_reused,
                          is_layer_call, permute_in, permute_out, input_var,
                          output_var)
@@ -2637,16 +2643,16 @@ class RNN(Layer):
             subscript assignment (e.g., 'x' in 'x = h').
     """
     def __init__(self, name: str, hidden_size: int, return_type: str = "full",
-                 input_size: int = None, bidirectional: bool = False,
+                 input_size: int | None = None, bidirectional: bool = False,
                  dropout: float = 0.0, batch_first: bool = True,
-                 bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
-                 hx_source: str = None, is_layer_call: bool = False,
-                 hidden_state_var: str = None, cell_state_var: str = None,
+                 bias: bool = True, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
+                 hx_source: str | None = None, is_layer_call: bool = False,
+                 hidden_state_var: str | None = None, cell_state_var: str | None = None,
                  hidden_unused: bool = False, cell_unused: bool = False,
-                 hidden_subscript_source: str = None,
-                 hidden_subscript_target: str = None, input_var: str = None,
-                 output_var: str = None):
+                 hidden_subscript_source: str | None = None,
+                 hidden_subscript_target: str | None = None, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, actv_func, name_module_input, input_reused,
                          is_layer_call, False, False, input_var, output_var)
         self.bidirectional: bool = bidirectional
@@ -3228,11 +3234,11 @@ class LinearLayer(GeneralLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, out_features: int, in_features: int = None,
-                 bias: bool = True, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+    def __init__(self, name: str, out_features: int, in_features: int | None = None,
+                 bias: bool = True, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, actv_func, name_module_input, input_reused,
                          is_layer_call, False, False, input_var, output_var)
         self.in_features: int = in_features
@@ -3315,9 +3321,9 @@ class FlattenLayer(GeneralLayer):
             for this layer.
     """
     def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
-                 actv_func: str = None, name_module_input: str = None,
+                 actv_func: str | None = None, name_module_input: str | None = None,
                  input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str = None, output_var: str = None):
+                 input_var: str | None = None, output_var: str | None = None):
         super().__init__(name, actv_func, name_module_input, input_reused,
                          is_layer_call, False, False, input_var, output_var)
         self.start_dim: int = start_dim
@@ -3401,11 +3407,11 @@ class EmbeddingLayer(GeneralLayer):
             for this layer.
     """
     def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
-                 padding_idx: int = None, permute_in: bool = False,
-                 permute_out: bool = False, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False,
-                 is_layer_call: bool = False, input_var: str = None,
-                 output_var: str = None):
+                 padding_idx: int | None = None, permute_in: bool = False,
+                 permute_out: bool = False, actv_func: str | None = None,
+                 name_module_input: str | None = None, input_reused: bool = False,
+                 is_layer_call: bool = False, input_var: str | None = None,
+                 output_var: str | None = None):
         super().__init__(name, actv_func, name_module_input, input_reused,
                          is_layer_call, False, False, input_var, output_var)
         self.num_embeddings: int = num_embeddings
@@ -3485,7 +3491,7 @@ class Label:
         label_name (str): The name of a label in the dataset. If
             the prediction task is regression, it can be omitted.
     """
-    def __init__(self, col_name: str, label_name: str = None):
+    def __init__(self, col_name: str, label_name: str | None = None):
         self.col_name: str = col_name
         self.label_name: str = label_name
 
@@ -3531,21 +3537,21 @@ class Image(Feature):
             to zero mean and unit standard deviation.
 
     """
-    def __init__(self, shape: List[int] = None,
+    def __init__(self, shape: list[int] | None = None,
                  normalize: bool = False):
         if shape is None:
             shape = [256, 256]
-        self.shape: List[int] = shape
+        self.shape: list[int] = shape
         self.normalize: bool = normalize
 
     @property
-    def shape(self) -> List[int]:
-        """List[int]: Get the shape of the image."""
+    def shape(self) -> list[int]:
+        """list[int]: Get the shape of the image."""
         return self.__shape
 
     @shape.setter
-    def shape(self, shape: List[int]):
-        """List[int]: Set the shape of the image."""
+    def shape(self, shape: list[int]):
+        """list[int]: Set the shape of the image."""
         self.__shape = shape
 
     @property
@@ -3610,9 +3616,9 @@ class Dataset(NamedElement):
             to 'images'.
         labels (set[Label]): The set of labels in the dataset.
     """
-    def __init__(self, name: str, path_data: str, task_type: str = None,
-                 input_format: str = None, image: Image = None,
-                 labels: set[Label] = None):
+    def __init__(self, name: str, path_data: str, task_type: str | None = None,
+                 input_format: str | None = None, image: Image | None = None,
+                 labels: set[Label] | None = None):
         if labels is None:
             labels = set()
         super().__init__(name)
@@ -3622,8 +3628,8 @@ class Dataset(NamedElement):
         # values. The setters validate against allowlists and so cannot
         # accept ``None``; assign to the mangled attribute directly
         # to bypass setter validation.
-        self.__task_type: str = None
-        self.__input_format: str = None
+        self.__task_type: str | None = None
+        self.__input_format: str | None = None
         if task_type is not None:
             self.task_type = task_type
         if input_format is not None:
@@ -3738,7 +3744,7 @@ class Configuration:
         loss_function (str): The method used to calculate the
             difference between predicted and actual values, guiding
             the model towards better predictions.
-        metrics List[str]: Quantitative measures used to evaluate
+        metrics list[str]: Quantitative measures used to evaluate
             the performance of NN models.
         weight_decay (float): It represents the strength of L2
             regularisation applied to the model's parameters during
@@ -3761,7 +3767,7 @@ class Configuration:
         loss_function (str): The method used to calculate the
             difference between predicted and actual values, guiding
             the model towards better predictions.
-        metrics List[str]: Quantitative measures used to evaluate
+        metrics list[str]: Quantitative measures used to evaluate
             the performance of NN models.
         weight_decay (float): It represents the strength of L2
             regularisation applied to the model's parameters during
@@ -3771,14 +3777,14 @@ class Configuration:
             gradients to smooth out updates.
     """
     def __init__(self, batch_size: int, epochs: int, learning_rate: float,
-                 optimizer: str, loss_function: str, metrics: List[str],
+                 optimizer: str, loss_function: str, metrics: list[str],
                  weight_decay: float = 0, momentum: float = 0):
         self.batch_size: int = batch_size
         self.epochs: int = epochs
         self.learning_rate: float = learning_rate
         self.optimizer: str = optimizer
         self.loss_function: str = loss_function
-        self.metrics: List[str] = metrics
+        self.metrics: list[str] = metrics
         self.weight_decay: float = weight_decay
         self.momentum: float = momentum
 
@@ -3868,15 +3874,15 @@ class Configuration:
         self.__loss_function = loss_function
 
     @property
-    def metrics(self) -> List[str]:
-        """List[str]: Get the measures for evaluating the performance
+    def metrics(self) -> list[str]:
+        """list[str]: Get the measures for evaluating the performance
         of the model."""
         return self.__metrics
 
     @metrics.setter
-    def metrics(self, metrics: List[str]):
+    def metrics(self, metrics: list[str]):
         """
-        List[str]: Set the measures for evaluating the performance
+        list[str]: Set the measures for evaluating the performance
             of the model.
 
         Raises:
@@ -3955,28 +3961,28 @@ class NN(BehaviorImplementation):
         return_vars (str): Comma-separated string of variable names
             returned by the forward/call method (e.g., "rep, recon").
     """
-    def __init__(self, name: str, configuration: Configuration = None,
-                 train_data: Dataset = None, test_data: Dataset = None,
-                 input_var: str = None, return_vars: str = None):
+    def __init__(self, name: str, configuration: Configuration | None = None,
+                 train_data: Dataset | None = None, test_data: Dataset | None = None,
+                 input_var: str | None = None, return_vars: str | None = None):
         super().__init__(name)
         self.configuration: Configuration = configuration
-        self.__sub_nns: List[NN] = []
-        self.__layers: List[Layer] = []
-        self.__tensor_ops: List[TensorOp] = []
-        self.__modules: List[Union[NN, Layer, TensorOp]] = []
+        self.__sub_nns: list[NN] = []
+        self.__layers: list[Layer] = []
+        self.__tensor_ops: list[TensorOp] = []
+        self.__modules: list[NN | Layer | TensorOp] = []
         self.train_data: Dataset = train_data
         self.test_data: Dataset = test_data
         self.input_var: str = input_var
         self.return_vars: str = return_vars
 
     @property
-    def sub_nns(self) -> List[NN]:
-        """List[NN]: Get the sub NN models list of the main model."""
+    def sub_nns(self) -> list[NN]:
+        """list[NN]: Get the sub NN models list of the main model."""
         return self.__sub_nns
 
     @sub_nns.setter
-    def sub_nns(self, sub_nns: List[NN]):
-        """List[NN]: Set the sub NN models list of the main model."""
+    def sub_nns(self, sub_nns: list[NN]):
+        """list[NN]: Set the sub NN models list of the main model."""
         raise AttributeError("sub_nns attribute is read-only")
 
     def add_sub_nn(self, sub_nn: NN):
@@ -3985,17 +3991,17 @@ class NN(BehaviorImplementation):
             self.__sub_nns.append(sub_nn)
             self.__modules.append(sub_nn)
         else:
-            raise ValueError("'sub_nn' must be of type NN.")
+            raise TypeError("'sub_nn' must be of type NN.")
         return self
 
     @property
-    def layers(self) -> List[Layer]:
-        """List[Layer]: Get the list of layers."""
+    def layers(self) -> list[Layer]:
+        """list[Layer]: Get the list of layers."""
         return self.__layers
 
     @layers.setter
-    def layers(self, layers: List[Layer]):
-        """List[Layer]: Set the list of layers."""
+    def layers(self, layers: list[Layer]):
+        """list[Layer]: Set the list of layers."""
         raise AttributeError("layers attribute is read-only")
 
     def add_layer(self, layer: Layer) -> Self:
@@ -4004,17 +4010,17 @@ class NN(BehaviorImplementation):
             self.__layers.append(layer)
             self.__modules.append(layer)
         else:
-            raise ValueError("'layer' must be of type Layer.")
+            raise TypeError("'layer' must be of type Layer.")
         return self
 
     @property
-    def tensor_ops(self) -> List[TensorOp]:
-        """List[TensorOp]: Get the list of tensor Ops."""
+    def tensor_ops(self) -> list[TensorOp]:
+        """list[TensorOp]: Get the list of tensor Ops."""
         return self.__tensor_ops
 
     @tensor_ops.setter
-    def tensor_ops(self, tensor_ops: List[TensorOp]):
-        """List[TensorOp]: Set the list of tensor Ops ."""
+    def tensor_ops(self, tensor_ops: list[TensorOp]):
+        """list[TensorOp]: Set the list of tensor Ops ."""
         raise AttributeError("tensor_ops attribute is read-only")
 
     def add_tensor_op(self, tensor_op: TensorOp) -> Self:
@@ -4023,18 +4029,18 @@ class NN(BehaviorImplementation):
             self.__tensor_ops.append(tensor_op)
             self.__modules.append(tensor_op)
         else:
-            raise ValueError("'tensor_op' must be of type TensorOp.")
+            raise TypeError("'tensor_op' must be of type TensorOp.")
         return self
 
     @property
-    def modules(self) -> List[Union[NN, Layer, TensorOp]]:
-        """List[Union[NN, Layer, TensorOp]]: Get the modules list
+    def modules(self) -> list[NN | Layer | TensorOp]:
+        """list[NN | Layer | TensorOp]: Get the modules list
         of the main model."""
         return self.__modules
 
     @modules.setter
-    def modules(self, modules: List[Union[NN, Layer, TensorOp]]):
-        """List[Union[NN, Layer, TensorOp]]: Set the modules list
+    def modules(self, modules: list[NN | Layer | TensorOp]):
+        """list[NN | Layer | TensorOp]: Set the modules list
         of the main model."""
         self.__modules = modules
 
@@ -4078,12 +4084,14 @@ class NN(BehaviorImplementation):
     @input_var.setter
     def input_var(self, input_var: str):
         """str: Set the input variable name for this NN."""
-        if input_var is not None:
-            if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', input_var):
-                raise ValueError(
-                    "input_var must be a valid identifier starting "
-                    "with a letter"
-                )
+        if (
+            input_var is not None
+            and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', input_var)
+        ):
+            raise ValueError(
+                "input_var must be a valid identifier starting "
+                "with a letter"
+            )
         self.__input_var = input_var
 
     @property
@@ -4137,7 +4145,7 @@ class NN(BehaviorImplementation):
             )
 
     def validate(self, raise_exception: bool = True,
-                 _visited: set = None) -> dict:
+                 _visited: set | None = None) -> dict:
         """
         Validate the neural network model.
 
@@ -4309,10 +4317,10 @@ class NN(BehaviorImplementation):
             return True
         return False
 
-    def _validate_sub_nns_recursive(self, errors: list, warnings: list, 
+    def _validate_sub_nns_recursive(self, errors: list, warnings: list,
                                     _visited: set):
         for sub in self.sub_nns:
-            sub_result = sub.validate(raise_exception=False, 
+            sub_result = sub.validate(raise_exception=False,
                                       _visited=_visited)
             errors.extend(sub_result["errors"])
             warnings.extend(sub_result["warnings"])
@@ -4343,12 +4351,15 @@ class NN(BehaviorImplementation):
                 f"NN '{self.name}': train input_format '{train_fmt}' differs "
                 f"from test input_format '{test_fmt}'."
             )
-        if train.image is not None and test.image is not None:
-            if train.image.shape != test.image.shape:
-                warnings.append(
-                    f"NN '{self.name}': train image shape {train.image.shape}"
-                    f" differs from test image shape {test.image.shape}."
-                )
+        if (
+            train.image is not None
+            and test.image is not None
+            and train.image.shape != test.image.shape
+        ):
+            warnings.append(
+                f"NN '{self.name}': train image shape {train.image.shape}"
+                f" differs from test image shape {test.image.shape}."
+            )
 
     def _validate_module_names(self, errors: list, warnings: list):
         """Reject names that aren't valid Python identifiers; warn
@@ -4399,8 +4410,7 @@ class NN(BehaviorImplementation):
             cls_name = type(layer).__name__
             label = f"NN '{self.name}': {cls_name} '{layer.name}'"
 
-            if isinstance(layer, DropoutLayer):
-                if not 0 <= layer.rate < 1:
+            if isinstance(layer, DropoutLayer) and (not 0 <= layer.rate < 1):
                     errors.append(
                         f"{label} rate must be in [0, 1), got {layer.rate}."
                     )
@@ -4467,21 +4477,20 @@ class NN(BehaviorImplementation):
                         f"{label} stride_dim entries must all be > 0, "
                         f"got {layer.stride_dim}."
                     )
-            if isinstance(layer, BatchNormLayer):
-                if layer.num_features <= 0:
-                    errors.append(
-                        f"{label} num_features must be > 0, got "
-                        f"{layer.num_features}."
-                    )
-            if isinstance(layer, LayerNormLayer):
-                if (
-                    layer.normalized_shape is not None
-                    and any(d <= 0 for d in layer.normalized_shape)
-                ):
-                    errors.append(
-                        f"{label} normalized_shape entries must all be > 0, "
-                        f"got {layer.normalized_shape}."
-                    )
+            if isinstance(layer, BatchNormLayer) and layer.num_features <= 0:
+                errors.append(
+                    f"{label} num_features must be > 0, got "
+                    f"{layer.num_features}."
+                )
+            if (
+                isinstance(layer, LayerNormLayer)
+                and layer.normalized_shape is not None
+                and any(d <= 0 for d in layer.normalized_shape)
+            ):
+                errors.append(
+                    f"{label} normalized_shape entries must all be > 0, "
+                    f"got {layer.normalized_shape}."
+                )
             if isinstance(layer, EmbeddingLayer):
                 if layer.num_embeddings <= 0:
                     errors.append(
@@ -4497,9 +4506,12 @@ class NN(BehaviorImplementation):
             ("train_data", self.train_data),
             ("test_data", self.test_data)
         ):
-            if ds is not None and ds.image is not None:
-                if any(d <= 0 for d in ds.image.shape):
-                    errors.append(
-                        f"NN '{self.name}': {ds_label} image shape entries "
-                        f"must all be > 0, got {ds.image.shape}."
-                    )
+            if (
+                ds is not None
+                and ds.image is not None
+                and any(d <= 0 for d in ds.image.shape)
+            ):
+                errors.append(
+                    f"NN '{self.name}': {ds_label} image shape entries "
+                    f"must all be > 0, got {ds.image.shape}."
+                )

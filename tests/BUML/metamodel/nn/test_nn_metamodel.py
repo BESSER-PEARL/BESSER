@@ -3,11 +3,26 @@ Module to test the NN metamodel
 """
 
 import pytest
-
-from besser.BUML.metamodel.nn import TensorOp, LinearLayer, EmbeddingLayer, \
-    FlattenLayer, SimpleRNNLayer, Conv1D, Conv2D, Conv3D, PoolingLayer, \
-    DropoutLayer, BatchNormLayer, LayerNormLayer, Dataset, Label, Image, \
-    Structured, Configuration, NN
+from besser.BUML.metamodel.nn import (
+    NN,
+    BatchNormLayer,
+    Configuration,
+    Conv1D,
+    Conv2D,
+    Conv3D,
+    Dataset,
+    DropoutLayer,
+    EmbeddingLayer,
+    FlattenLayer,
+    Image,
+    Label,
+    LayerNormLayer,
+    LinearLayer,
+    PoolingLayer,
+    SimpleRNNLayer,
+    Structured,
+    TensorOp,
+)
 
 
 def run_tests():
@@ -17,10 +32,10 @@ def run_tests():
 # Test tensorops
 def test_tensorop():
     """Test tensorop"""
-    l1: LinearLayer = LinearLayer(name="l1", actv_func="relu",
-                                  in_features=10, out_features=20)
-    l2: LinearLayer = LinearLayer(name="l22", actv_func="relu",
-                                  in_features=10, out_features=20)
+    #l1: LinearLayer = LinearLayer(name="l1", actv_func="relu",
+    #                              in_features=10, out_features=20)
+    #l2: LinearLayer = LinearLayer(name="l22", actv_func="relu",
+    #                              in_features=10, out_features=20)
     reshape: TensorOp = TensorOp(name="reshape", tns_type="reshape",
                                  reshape_dim=[2, 2], layers_of_tensors=["l2"])
     permute: TensorOp = TensorOp(name="permute", tns_type="permute",
@@ -188,7 +203,7 @@ def test_pooling_layer():
 def test_cnn_padding():
     """Test cnn layers padding"""
     with pytest.raises(ValueError) as excinfo:
-        conv1_layer: Conv1D = Conv1D(
+        Conv1D(
             name="conv1_layer", actv_func="relu", padding_type="my_padding",
             out_channels=6, kernel_dim=[3], stride_dim=[2], in_channels=3
         )
@@ -198,7 +213,7 @@ def test_cnn_padding():
 def test_pooling_type():
     """Test pooling type"""
     with pytest.raises(ValueError) as excinfo:
-        pool_avg1_layer: PoolingLayer = PoolingLayer(
+        PoolingLayer(
             name="pool_avg1_layer", actv_func="relu", kernel_dim=[3],
             stride_dim=[2], pooling_type="my_type", dimension="1D"
         )
@@ -208,7 +223,7 @@ def test_pooling_type():
 def test_pooling_dimension():
     """Test pooling dimension"""
     with pytest.raises(ValueError) as excinfo:
-        pool_avg1_layer: PoolingLayer = PoolingLayer(
+        PoolingLayer(
             name="pool_avg1_layer", actv_func="relu", kernel_dim=[3],
             stride_dim=[2], pooling_type="average", dimension="my_dimension"
         )
@@ -243,7 +258,7 @@ def test_normalization_layer():
 def test_batch_norm_dimension():
     """Test batch norm dimension"""
     with pytest.raises(ValueError) as excinfo:
-        batch_norm_layer: BatchNormLayer = BatchNormLayer(
+        BatchNormLayer(
             name="batch_norm_layer", actv_func="relu",
             num_features=3, dimension="my_dimension"
         )
@@ -282,7 +297,7 @@ def test_dataset():
 def test_data_task_type():
     """Test data task type"""
     with pytest.raises(ValueError) as excinfo:
-        training_data: Dataset = Dataset(
+        Dataset(
             name="training_data", path_data="c/my/path1",
             task_type="my_task", input_format="csv"
         )
@@ -333,7 +348,7 @@ def test_configuration():
 def test_optimizer_type():
     """Test optimizer type"""
     with pytest.raises(ValueError) as excinfo:
-        my_configuration: Configuration = Configuration(
+        Configuration(
             batch_size=16, epochs=20, learning_rate=0.01,
             optimizer="my_optimizer", loss_function="crossentropy",
             metrics=["f1-score"], weight_decay=0.001
@@ -345,7 +360,7 @@ def test_optimizer_type():
 def test_loss_function_type():
     """Test loss function type"""
     with pytest.raises(ValueError) as excinfo:
-        my_configuration: Configuration = Configuration(
+        Configuration(
             batch_size=16, epochs=20, learning_rate=0.01, optimizer="sgd",
             loss_function="my_loss_function", metrics=["f1-score"],
             weight_decay=0.001
@@ -357,7 +372,7 @@ def test_loss_function_type():
 def test_metrics():
     """Test metrics"""
     with pytest.raises(ValueError) as excinfo:
-        my_configuration: Configuration = Configuration(
+        Configuration(
             batch_size=16, epochs=20, learning_rate=0.01, optimizer="sgd",
             loss_function="crossentropy", metrics=["my_metric"],
             weight_decay=0.001

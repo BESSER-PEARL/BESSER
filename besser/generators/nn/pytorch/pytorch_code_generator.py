@@ -3,15 +3,24 @@ This module defines the `PyTorchGenerator` class that generates
 PyTorch code for neural networks based on the B-UML model.
 """
 
-from typing import Callable
 import re
+from collections.abc import Callable
+
 from besser.BUML.metamodel.nn import NN
 from besser.BUML.metamodel.nn.neural_network import (
-    LinearLayer, Conv1D, Conv2D, Conv3D, SimpleRNNLayer, LSTMLayer, GRULayer
+    Conv1D,
+    Conv2D,
+    Conv3D,
+    GRULayer,
+    LinearLayer,
+    LSTMLayer,
+    SimpleRNNLayer,
 )
-from besser.generators.nn.pytorch.utils_pytorch import SetupLayerSyntax, \
-    get_tensorop_syntax
 from besser.generators.nn.nn_code_generator import NNCodeGenerator
+from besser.generators.nn.pytorch.utils_pytorch import (
+    SetupLayerSyntax,
+    get_tensorop_syntax,
+)
 
 
 class PytorchGenerator(NNCodeGenerator):
@@ -85,13 +94,9 @@ class PytorchGenerator(NNCodeGenerator):
                          'zeros_like', 'split', 'dropout'}:
             syntax = re.sub(r'\([a-zA-Z_]\w*\b', '(x', syntax, count=1)
 
-        # Binary operations (var op value)
+        # Binary operations (var op value) and Subscript (var[...])
         elif tns_type in {'binop_add', 'binop_subtract', 'binop_multiply',
-                         'binop_divide', 'binop_floor_divide'}:
-            syntax = re.sub(r'^[a-zA-Z_]\w*\b', 'x', syntax)
-
-        # Subscript (var[...])
-        elif tns_type == 'subscript':
+                         'binop_divide', 'binop_floor_divide', 'subscript'}:
             syntax = re.sub(r'^[a-zA-Z_]\w*\b', 'x', syntax)
 
         else:
@@ -126,10 +131,11 @@ class PytorchGenerator(NNCodeGenerator):
                         "with in_channels=None."
                     )
 
-            elif isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer)):
-                if module.input_size is None:
-                    raise ValueError(
-                        f"PyTorch RNN layer '{module.name}' requires "
-                        "'input_size' to be set. Cannot generate code "
-                        "with input_size=None."
-                    )
+            elif (
+                isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer))
+                and module.input_size is None
+            ):
+                raise ValueError(
+                    f"PyTorch RNN layer '{module.name}' requires 'input_size'"
+                    " to be set. Cannot generate code with input_size=None."
+                )

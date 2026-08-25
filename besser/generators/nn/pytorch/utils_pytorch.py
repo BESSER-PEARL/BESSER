@@ -7,7 +7,7 @@ of layers in PyTorch, while `get_tensorop_syntax` defines the
 tensorOps.
 """
 
-from besser.BUML.metamodel.nn import TensorOp, Layer
+from besser.BUML.metamodel.nn import Layer, TensorOp
 from besser.generators.nn import utils_nn as utils
 
 

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 try:
     from PIL import Image
 except ImportError:
-    Image = None 
+    Image = None
 
 try:
     import numpy as np
@@ -29,7 +29,7 @@ except ImportError:
             pass
     nn = _NNNamespace()
 
-from besser.BUML.metamodel.nn import TensorOp, Layer
+from besser.BUML.metamodel.nn import Layer, TensorOp
 
 if TYPE_CHECKING:
     from besser.generators.nn.nn_code_generator import NNCodeGenerator
@@ -151,14 +151,14 @@ def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var):
             len(layer_details) > 4
             and hasattr(layer_details[3], 'return_type')
             and layer_details[3].return_type == "hidden"
+            and hasattr(layer_details[3], 'hidden_state_var')
+            and prev_out_var == layer_details[3].hidden_state_var
         ):
-            if (
-                hasattr(layer_details[3], 'hidden_state_var')
-                and prev_out_var == layer_details[3].hidden_state_var
-            ):
-                return prev_out_var
-        if hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden:
-            if len(layer_details) > 4:
+            return prev_out_var
+        if (
+            hasattr(layer, 'use_rnn_hidden') and layer.use_rnn_hidden
+            and len(layer_details) > 4
+        ):
                 return layer_details[4]
         return layer_details[1]
 
@@ -293,24 +293,25 @@ def add_in_out_var_to_subnn(modules_details: dict, subnn_obj=None):
 
     # Extract the base module name (remove _nn suffix)
     # e.g., "encoder_nn" -> "encoder"
-    if last_module.endswith("_nn"):
-        base_module_name = last_module[:-3]  # Remove "_nn"
+    #if last_module.endswith("_nn"):
+        #base_module_name = last_module[:-3]  # Remove "_nn"
 
         # First check subnn_obj attributes
-        if (
-            subnn_obj and hasattr(subnn_obj, 'input_var') 
-            and subnn_obj.input_var is not None
-        ):
-            input_var = subnn_obj.input_var
-            output_var = getattr(subnn_obj, 'output_var', None)
-            if output_var is not None:
-                # Store both input and output separately
-                modules_details[last_module]["subnn_input"] = input_var
-                modules_details[last_module]["subnn_output"] = output_var
-                # Keep in_out_variable for backward compatibility
-                # (sequential case where input==output)
-                modules_details[last_module]["in_out_variable"] = output_var
-                return
+    if (
+        last_module.endswith("_nn")
+        and subnn_obj and hasattr(subnn_obj, 'input_var')
+        and subnn_obj.input_var is not None
+    ):
+        input_var = subnn_obj.input_var
+        output_var = getattr(subnn_obj, 'output_var', None)
+        if output_var is not None:
+            # Store both input and output separately
+            modules_details[last_module]["subnn_input"] = input_var
+            modules_details[last_module]["subnn_output"] = output_var
+            # Keep in_out_variable for backward compatibility
+            # (sequential case where input==output)
+            modules_details[last_module]["in_out_variable"] = output_var
+            return
 
     if len(modules_details) == 1:
         in_out_var = "x"
@@ -536,9 +537,11 @@ def _handle_bidirectional_concat(layer_name, modules_details):
         if len(layer_details) > 4 and layer_details[4]:
             return layer_details[4]
         layer_obj = layer_details[3] if len(layer_details) > 3 else None
-        if layer_obj and hasattr(layer_obj, 'return_type'):
-            if layer_obj.return_type == "hidden":
-                return layer_details[1]
+        if (
+            layer_obj and hasattr(layer_obj, 'return_type')
+            and layer_obj.return_type == "hidden"
+        ):
+            return layer_details[1]
         if len(layer_details) > 1:
             return layer_details[1]
     return "x"
@@ -552,7 +555,7 @@ def _handle_tensorop(layer_name, modules_details):
 
 
 def get_layers_output_for_tensorops(layers_names: list, modules_details: dict,
-                                     actual_vars: list = None):
+                                     actual_vars: list | None = None):
     """
     It retrieves the output variables of the layers in `layers_name`
     list to use them as input of the tensorop.
@@ -671,7 +674,7 @@ def initialize_tensorop_var(tensorop: TensorOp):
 def _collect_used_x_numbers(modules_details):
     """Collect all used x_N variable numbers from modules_details."""
     used_nums = set()
-    for key, module_details in modules_details.items():
+    for module_details in modules_details.values():
         if isinstance(module_details, list) and len(module_details) > 1:
             var = module_details[1]  # Index 1 is the output variable
             if isinstance(var, str) and var.startswith('x_'):
@@ -691,7 +694,8 @@ def _find_next_available_x_number(used_nums):
     return num
 
 
-def get_out_var_input_reused(prev_out_var: str, modules_details: dict = None):
+def get_out_var_input_reused(prev_out_var: str,
+                             modules_details: dict | None = None):
     """
     It sets the output variable of the module in the case the output
     of the previous module is reused (therefore, they need to be
@@ -802,8 +806,9 @@ def initialize_layer_vars(layer: Layer):
 def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
                      layer: Layer, modules_details: dict,
                      actv_func_synt: str | bool,
-                     out_var: str = None, in_var: str = None,
-                     is_subnn: bool = False, original_layer_name: str = None):
+                     out_var: str | None = None, in_var: str | None = None,
+                     is_subnn: bool = False,
+                     original_layer_name: str | None = None):
     """
     It retrieves the syntax of the layer (and the activation
     function in the case of PyTorch) from the ´setup_layer_cls´ class.
@@ -1039,7 +1044,7 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
         None, but stores the layer details in the modules_details dict.
 
     """
-    (out_layer, in_layer, out_actv, in_actv), prev_module = (
+    (out_layer, in_layer, out_actv, in_actv), _ = (
         _initialize_layer_variables(layer, modules_details)
     )
 
@@ -1048,7 +1053,6 @@ def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
     # Save original name to restore after syntax is created
     original_name = layer.name
     if strip_counter_suffix:
-        import re
         layer.name = re.sub(r'_c\d+$', '', layer.name)
 
     layer_synt, actv_func_syntax, setup = get_layer_syntax(
@@ -1539,7 +1543,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict,
 
 
 def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str,
-                         modules_details: dict = None):
+                         modules_details: dict | None = None):
     """
     It sets the output variable of tensorop.
 
@@ -1646,12 +1650,15 @@ def _update_skip_source_layer(ts_op_synt, out_var, tensorop, modules_details):
     if not (isinstance(ts_op_synt, str) and ts_op_synt.startswith("SKIP:")):
         return
 
-    if (tensorop.output_var is not None and out_var != ts_op_synt[5:]):
-        if getattr(tensorop, 'layers_of_tensors', None):
-            source_layer_name = tensorop.layers_of_tensors[0]
-            layer_key = source_layer_name + "_layer"
-            if layer_key in modules_details:
-                modules_details[layer_key][1] = out_var
+    if (
+        tensorop.output_var is not None
+        and out_var != ts_op_synt[5:]
+        and getattr(tensorop, 'layers_of_tensors', None)
+    ):
+        source_layer_name = tensorop.layers_of_tensors[0]
+        layer_key = source_layer_name + "_layer"
+        if layer_key in modules_details:
+            modules_details[layer_key][1] = out_var
 
 
 def _add_tensorop_output_permute(tensorop, modules_details,
@@ -1812,9 +1819,7 @@ def _collect_op_and_temp_vars(modules_details):
     for module_name, module_data in modules_details.items():
         out_var = None
 
-        if module_name.endswith("_op"):
-            out_var = module_data[1]
-        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
+        if module_name.endswith(("_op", "_layer", "_activ")):
             out_var = module_data[1]
 
         if out_var:
@@ -1860,7 +1865,7 @@ def _create_op_renaming_map(op_names_in_use):
     for old_name in sorted_op_names:
         match = re.match(r'^(op_)(\d+)(_\d+)?$', old_name)
         if match:
-            prefix, old_num, suffix = match.groups()
+            _, old_num, suffix = match.groups()
             base_old_name = f"op_{old_num}"
 
             if base_old_name != last_base_op:
@@ -1926,18 +1931,22 @@ def _apply_variable_renaming(modules_details, old_to_new):
             # (migration stores vars here)
             if len(module_data) > 2:
                 tensorop = module_data[2]
-                if getattr(tensorop, 'output_var', None) is not None:
-                    if isinstance(tensorop.output_var, str):
-                        tensorop.output_var = old_to_new.get(
-                            tensorop.output_var, tensorop.output_var
-                        )
-                if getattr(tensorop, 'input_var', None) is not None:
-                    if isinstance(tensorop.input_var, str):
-                        tensorop.input_var = old_to_new.get(
-                            tensorop.input_var, tensorop.input_var
-                        )
+                if (
+                    getattr(tensorop, 'output_var', None) is not None
+                    and isinstance(tensorop.output_var, str)
+                ):
+                    tensorop.output_var = old_to_new.get(
+                        tensorop.output_var, tensorop.output_var
+                    )
+                if (
+                    getattr(tensorop, 'input_var', None) is not None
+                    and isinstance(tensorop.input_var, str)
+                ):
+                    tensorop.input_var = old_to_new.get(
+                        tensorop.input_var, tensorop.input_var
+                    )
 
-        elif module_name.endswith("_layer") or module_name.endswith("_activ"):
+        elif module_name.endswith(("_layer", "_activ")):
             syntax = module_data[0]
             if isinstance(syntax, str):
                 for old_name, new_name in old_to_new.items():
@@ -1958,16 +1967,20 @@ def _apply_variable_renaming(modules_details, old_to_new):
             # Update layer object's attributes
             if len(module_data) > 3:
                 layer_obj = module_data[3]
-                if getattr(layer_obj, 'output_var', None) is not None:
-                    if isinstance(layer_obj.output_var, str):
-                        layer_obj.output_var = old_to_new.get(
-                            layer_obj.output_var, layer_obj.output_var
-                        )
-                if getattr(layer_obj, 'input_var', None) is not None:
-                    if isinstance(layer_obj.input_var, str):
-                        layer_obj.input_var = old_to_new.get(
-                            layer_obj.input_var, layer_obj.input_var
-                        )
+                if (
+                    getattr(layer_obj, 'output_var', None) is not None
+                    and isinstance(layer_obj.output_var, str)
+                ):
+                    layer_obj.output_var = old_to_new.get(
+                        layer_obj.output_var, layer_obj.output_var
+                    )
+                if (
+                    getattr(layer_obj, 'input_var', None) is not None
+                    and isinstance(layer_obj.input_var, str)
+                ):
+                    layer_obj.input_var = old_to_new.get(
+                        layer_obj.input_var, layer_obj.input_var
+                    )
 
 
 def renumber_tensorop_variables(modules_details):

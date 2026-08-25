@@ -74,6 +74,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_ma
 from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
     generate_user_profile_document as _generate_user_profile_document,
     normalize_user_model_output as _normalize_user_model_output,
+    extract_user_profile_names as _extract_user_profile_names,
     safe_path as _safe_path,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
@@ -824,7 +825,21 @@ async def _handle_user_diagram_generation(
     generator_instance = generator_class(object_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
 
-    _normalize_user_model_output(object_model, temp_dir)
+    # A UserDiagram canvas may hold several profiles (one `User` box each).
+    # `normalize_user_model_output` folds each into its own file and returns
+    # every basename it wrote: one for a single profile, several otherwise.
+    # Names come from each profile's `name` attribute ("Frenchguy"), read from
+    # the raw diagram since object-model conversion drops it.
+    profile_names = _extract_user_profile_names(json_data)
+    written = _normalize_user_model_output(object_model, temp_dir, profile_names)
+
+    if len(written) > 1:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for basename in written:
+                archive.write(_safe_path(temp_dir, basename), arcname=basename)
+        zip_buffer.seek(0)
+        return _streaming_zip(zip_buffer, "user_object_models.zip")
 
     return _create_file_response(temp_dir, generator_type)
 

@@ -60,6 +60,79 @@ def sanitize_object_model_filename(name: Optional[str]) -> str:
     return cleaned or "object_model"
 
 
+# Root class name of the user metamodel — the box that heads a profile.
+_ROOT_CLASS_NAME = "User"
+# Identity attribute on the root `User` box that names the profile.
+_USER_NAME_ATTRIBUTE = "name"
+# Mirror of the frontend `criterionValue` regex (user-profile-graph.ts): splits
+# a criterion string "attr <op> value" into (attr, value) on the first operator.
+_CRITERION_RE = re.compile(r"^(.*?)(?:<=|>=|==|=|<|>)(.*)$")
+
+
+def _criterion_value(raw: str, attribute_name: str) -> Optional[str]:
+    """Return the value of a named criterion (e.g. ``name = Frenchguy`` → ``Frenchguy``).
+
+    Returns ``None`` when the criterion is for a different attribute, matching
+    the frontend reader so backend file names track what the user typed.
+    """
+    text = raw or ""
+    match = _CRITERION_RE.match(text)
+    name = (match.group(1) if match else text).strip()
+    if name != attribute_name:
+        return None
+    return (match.group(2) if match else "").strip()
+
+
+def extract_user_profile_names(json_data: Dict[str, Any]) -> Dict[str, str]:
+    """Map each ``User`` box's object name to its human profile name.
+
+    The profile name is carried by a ``name`` ``UserModelAttribute`` on the
+    ``User`` box (e.g. "Frenchguy"). It is not a domain property, so
+    object-model conversion drops it — we read it straight from the raw diagram
+    so output files can be named after the profile ("Frenchguy.json") instead
+    of the auto-generated box id ("user_1.json").
+
+    Keyed by the box ``name``, which becomes the generated object's ``id`` and
+    thus the ``model.id`` that ``normalize_user_model_output`` matches on. Boxes
+    without a filled-in ``name`` attribute are omitted (callers fall back).
+    """
+    names: Dict[str, str] = {}
+    if not isinstance(json_data, dict):
+        return names
+    model_data = json_data.get("model", {})
+    if not isinstance(model_data, dict):
+        return names
+    elements = model_data.get("elements", {})
+    if not elements and isinstance(model_data.get("model"), dict):
+        elements = model_data["model"].get("elements", {})
+    if not isinstance(elements, dict):
+        return names
+
+    for element in elements.values():
+        if not isinstance(element, dict):
+            continue
+        if (
+            element.get("type") != "UserModelName"
+            or element.get("className") != _ROOT_CLASS_NAME
+        ):
+            continue
+        object_name = element.get("name")
+        if not object_name:
+            continue
+        attribute_ids = element.get("attributes")
+        if not isinstance(attribute_ids, list):
+            continue
+        for attr_id in attribute_ids:
+            attr = elements.get(attr_id)
+            if not isinstance(attr, dict) or attr.get("type") != "UserModelAttribute":
+                continue
+            value = _criterion_value(attr.get("name", ""), _USER_NAME_ATTRIBUTE)
+            if value:
+                names[object_name] = value
+                break
+    return names
+
+
 def build_user_model_node(
     object_id: str,
     objects_by_id: Dict[str, Dict[str, Any]],
@@ -121,10 +194,18 @@ def build_user_model_node(
         path.remove(object_id)
 
 
-def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def build_user_model_hierarchies(document: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build one normalized model tree per ``User`` instance in the document.
+
+    A single UserDiagram canvas can hold several user profiles — one ``User``
+    object each. Each becomes its own normalized document (the shared metadata
+    of ``document`` minus its flat ``objects`` list, plus a ``model`` tree
+    rooted on that ``User``). Callers emit one file per entry, zipping when
+    there is more than one.
+    """
     objects = document.get("objects")
     if not isinstance(objects, list):
-        return None
+        return []
 
     objects_by_id: Dict[str, Dict[str, Any]] = {}
     for obj in objects:
@@ -135,44 +216,118 @@ def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, A
             objects_by_id[object_id] = obj
 
     if not objects_by_id:
-        return None
+        return []
 
-    root_id = next(
-        (obj_id for obj_id, obj in objects_by_id.items() if obj.get("class") == "User"),
-        None,
-    )
-    if not root_id:
-        return None
+    user_ids = [
+        obj_id for obj_id, obj in objects_by_id.items() if obj.get("class") == "User"
+    ]
+    if not user_ids:
+        return []
 
-    root_model = build_user_model_node(root_id, objects_by_id, include_identity=True, path=set())
-    if root_model is None:
-        return None
+    hierarchies: List[Dict[str, Any]] = []
+    for root_id in user_ids:
+        root_model = build_user_model_node(
+            root_id, objects_by_id, include_identity=True, path=set()
+        )
+        if root_model is None:
+            continue
+        normalized_document = {
+            key: value for key, value in document.items() if key != "objects"
+        }
+        normalized_document["model"] = root_model
+        hierarchies.append(normalized_document)
+    return hierarchies
 
-    normalized_document = {key: value for key, value in document.items() if key != "objects"}
-    normalized_document["model"] = root_model
-    return normalized_document
+
+def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Backward-compatible single-root variant: the first ``User`` hierarchy."""
+    hierarchies = build_user_model_hierarchies(document)
+    return hierarchies[0] if hierarchies else None
 
 
-def normalize_user_model_output(object_model, temp_dir: str) -> None:
-    """Rewrite the generated JSON so the ``objects`` list is folded into a
-    hierarchical ``model`` tree rooted on the ``User`` instance."""
+def normalize_user_model_output(
+    object_model,
+    temp_dir: str,
+    profile_names: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """Rewrite the generated JSON so the flat ``objects`` list is folded into a
+    hierarchical ``model`` tree rooted on each ``User`` instance.
+
+    Returns the list of JSON basenames written to ``temp_dir``:
+
+    * A single ``User`` (the common case, including every stored single-profile
+      diagram) rewrites the generated file in place and returns ``[basename]``.
+    * Multiple ``User`` instances (several profiles on one canvas) replace the
+      combined file with one file per profile, named after the profile — its
+      ``name`` attribute value when known (via ``profile_names``, keyed by the
+      root ``model.id``), else the ``model`` name/id — sanitized and then
+      de-duplicated with ``_2``, ``_3`` …; returns all basenames so callers zip
+      when there is >1.
+
+    Returns ``[]`` when there is nothing to fold (missing/unreadable file, or no
+    ``User`` root), leaving whatever the generator wrote untouched.
+    """
+    profile_names = profile_names or {}
     file_name = sanitize_object_model_filename(getattr(object_model, "name", None))
     json_path = safe_path(temp_dir, f"{file_name}.json")
     if not os.path.isfile(json_path):
-        return
+        return []
 
     try:
         with open(json_path, "r", encoding="utf-8") as source:
             document = json.load(source)
     except (OSError, json.JSONDecodeError):
-        return
+        return []
 
-    normalized_document = build_user_model_hierarchy(document)
-    if not normalized_document:
-        return
+    hierarchies = build_user_model_hierarchies(document)
+    if not hierarchies:
+        return []
 
-    with open(json_path, "w", encoding="utf-8") as target:
-        json.dump(normalized_document, target, indent=2, ensure_ascii=False)
+    # Single profile: keep the original filename and rewrite in place so stored
+    # single-User diagrams and existing callers see no behavioral change.
+    if len(hierarchies) == 1:
+        with open(json_path, "w", encoding="utf-8") as target:
+            json.dump(hierarchies[0], target, indent=2, ensure_ascii=False)
+        return [f"{file_name}.json"]
+
+    # Multiple profiles: drop the combined file and emit one file per profile,
+    # named by the profile's own root name/id so downloads are self-describing.
+    try:
+        os.remove(json_path)
+    except OSError:
+        pass
+
+    written: List[str] = []
+    used_names: Set[str] = set()
+    for index, hierarchy in enumerate(hierarchies):
+        model = hierarchy.get("model") if isinstance(hierarchy, dict) else None
+        raw_name = None
+        if isinstance(model, dict):
+            # Prefer the profile's `name` attribute (e.g. "Frenchguy"), read
+            # from the raw diagram since conversion drops it; then the model's
+            # own name/id (the auto-generated box id, e.g. "user_1").
+            raw_name = (
+                profile_names.get(model.get("id"))
+                or model.get("name")
+                or model.get("id")
+            )
+        base = sanitize_object_model_filename(raw_name or f"user_{index + 1}")
+
+        # De-duplicate names so two profiles never overwrite the same file.
+        candidate = base
+        suffix = 2
+        while candidate in used_names:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        used_names.add(candidate)
+
+        basename = f"{candidate}.json"
+        out_path = safe_path(temp_dir, basename)
+        with open(out_path, "w", encoding="utf-8") as target:
+            json.dump(hierarchy, target, indent=2, ensure_ascii=False)
+        written.append(basename)
+
+    return written
 
 
 def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[str, Any]:

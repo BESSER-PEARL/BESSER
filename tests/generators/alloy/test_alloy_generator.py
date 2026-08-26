@@ -34,8 +34,8 @@ from besser.BUML.metamodel.structural import (
     TimeDeltaType,
     TimeType,
 )
-from besser.generators.alloy_generator.alloy_generator import (
-    AlloyGenerator,
+from besser.generators.alloy_generator.alloy_generator import AlloyGenerator
+from besser.generators.alloy_generator.utils_alloy import (
     build_consistency_rule,
     sanitize_alloy_name,
 )

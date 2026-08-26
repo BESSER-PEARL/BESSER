@@ -460,10 +460,10 @@ class TestGenerateOutput:
             },
         }
 
-    def test_check_alloy_consistency_stream_self_allinstances_informative_message(self):
+    def test_semantic_consistency_check_self_allinstances_informative_message(self):
         """The streaming SAT check must emit the informative allInstances()
         message as an SSE event the frontend shows in the toast."""
-        response = client.post("/besser_api/check-alloy-consistency-stream",
+        response = client.post("/besser_api/semantic-consistency-check",
                                json=self._self_allinstances_payload())
         assert response.status_code == 200
         body = response.text

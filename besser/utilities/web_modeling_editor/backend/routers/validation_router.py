@@ -57,8 +57,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/besser_api", tags=["validation"])
 
 
-@router.post("/check-alloy-consistency-stream")
-async def check_alloy_consistency_stream_endpoint(input_data: DiagramInput) -> StreamingResponse:
+@router.post("/semantic-consistency-check")
+async def semantic_consistency_check_endpoint(input_data: DiagramInput) -> StreamingResponse:
     """Stream SAT consistency-check progress events for a class diagram (SSE)."""
     return StreamingResponse(
         check_alloy_consistency_stream(input_data),

@@ -1,11 +1,9 @@
 """SAT consistency checker for Alloy-based validation."""
 
 import asyncio
-import copy
 import json
 import logging
 import os
-import subprocess
 import tempfile
 from collections.abc import AsyncGenerator, Iterable
 from contextlib import nullcontext
@@ -13,11 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from besser.BUML.metamodel.structural import DomainModel
-from besser.generators.alloy_generator import AlloyGenerator
+from besser.generators.alloy_generator.instance_generator.alloy_solver import AlloySolver
 from besser.generators.alloy_generator.step_3_alloy_to_buml import (
     AlloyToBesserConverter,
 )
-from besser.generators.alloy_generator.translate_ocl_alloy import EnumReferenceError
 from besser.utilities.web_modeling_editor.backend.models.diagram import DiagramInput
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
@@ -33,26 +30,6 @@ logger = logging.getLogger(__name__)
 
 SCOPE_STEPS = [5, 8, 9, 10]  # Scopes to try in order.
 TIMEOUT_SECONDS = 50
-TIMEOUT_CALL_ALLOY = 40
-
-
-
-def _resolve_alloy_jar_path() -> str | None:
-    """Resolve Alloy CLI jar path from env var or fixed project location."""
-    env_path = os.getenv("BESSER_ALLOY_JAR")
-    if env_path:
-        candidate = Path(env_path).expanduser().resolve()
-        if candidate.exists() and candidate.is_file():
-            return str(candidate)
-        logger.warning("BESSER_ALLOY_JAR points to a missing file: %s", env_path)
-
-    project_root = Path(__file__).resolve().parents[6]
-    candidate = project_root / "besser" / "BUML" / "notations" / "ocl" / "consistency" / "alloy.jar"
-    if candidate.exists() and candidate.is_file():
-        return str(candidate)
-
-    logger.warning("Alloy jar not found. Set BESSER_ALLOY_JAR or place alloy.jar in a known location.")
-    return None
 
 
 def _resolve_first_instance_xml(exec_output_dir: str, solutions: list[dict[str, Any]]) -> str | None:
@@ -141,107 +118,6 @@ def validate_buml_structure(buml_model: DomainModel) -> tuple[list[str], list[st
 
 #----------------------------------------------------------------------
 
-def generate_als_file(buml_model: DomainModel, temp_dir: str, scope: int = 5) -> str:
-    """Step 3: Run AlloyGenerator to produce the .als file.
-
-    Returns the absolute path to model.als inside temp_dir.
-    """
-    generator = AlloyGenerator(copy.deepcopy(buml_model), output_dir=temp_dir, scope=scope)
-    generator.generate()
-    return os.path.join(temp_dir, "model.als")
-
-
-def execute_alloy_analyzer(
-    als_path: str,
-    exec_output_dir: str,
-    output_type: str = "json",
-) -> tuple[subprocess.CompletedProcess | None, dict[str, Any] | None]:
-    """Step 4: Execute the Alloy Analyzer CLI (subcommand 'exec').
-    Returns (result, error_response).
-    - On success: (CompletedProcess, None)
-    - On missing JAR: (None, dict)
-    """
-    jar_path = _resolve_alloy_jar_path()
-    if not jar_path:
-        return None, {
-            "sat": None,
-            "isValid": False,
-            "message": "Could not determine satisfiability (Alloy jar not found).",
-            "errors": ["Alloy JAR not found. Set BESSER_ALLOY_JAR or place alloy.jar in a known location."],
-            "warnings": [],
-        }
-    try:
-        result = subprocess.run(
-            [
-                "java", "-jar", jar_path, "exec", "-n", "-f",
-                "-o", exec_output_dir, "-t", output_type, "-r", "5", als_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_CALL_ALLOY,
-        )
-    except subprocess.TimeoutExpired:
-        return None, {
-            "sat": None,
-            "isValid": False,
-            "message": (
-                f"Alloy execution timed out after {TIMEOUT_CALL_ALLOY} seconds "
-                "— model may be unsatisfiable or too complex."
-            ),
-            "errors": [f"Alloy execution timed out after {TIMEOUT_CALL_ALLOY} seconds."],
-            "warnings": [],
-        }
-    return result, None
-
-#----------------------------------------------------------------------
-def parse_receipt(
-    exec_output_dir: str,
-    result: subprocess.CompletedProcess,
-    structural_warnings: list[str] | None = None,
-) -> tuple[tuple[Any, ...] | None, dict[str, Any] | None]:
-    """Step 5: Parse receipt.json to determine SAT / UNSAT.
-
-    Returns (parsed_data, error_response).
-    - On success: ((sat, first_command_name, solutions), None)
-    - On missing receipt or empty commands: (None, dict)
-
-    structural_warnings is forwarded into any error response so the
-    caller never loses warnings accumulated before this step.
-    """
-    warnings = structural_warnings or []
-    receipt_path = os.path.join(exec_output_dir, "receipt.json")
-
-    if not os.path.exists(receipt_path):
-        output = result.stdout + result.stderr
-        logger.warning("Alloy exec produced no receipt.json. Output: %s", output[:500])
-        return None, {
-            "sat": None,
-            "isValid": False,
-            "message": "Could not determine satisfiability (no receipt.json produced).",
-            "errors": [output[:500]],
-            "warnings": warnings,
-        }
-
-    with open(receipt_path, "r", encoding="utf-8") as f:
-        receipt = json.load(f)
-
-    commands = receipt.get("commands", {})
-    if not commands:
-        return None, {
-            "sat": None,
-            "isValid": False,
-            "message": "No commands were executed in the Alloy model.",
-            "errors": ["The generated .als file contains no run/check commands."],
-            "warnings": warnings,
-        }
-
-    first_command_name = next(iter(commands))
-    first_command = commands[first_command_name]
-    solutions = first_command.get("solution", [])
-    sat = any(sol.get("instances") for sol in solutions)
-    return (sat, first_command_name, solutions), None
-
-#----------------------------------------------------------------------
 def validate_ocl_constraints(
     buml_model: DomainModel,
     structural_warnings: list[str] | None = None,
@@ -290,48 +166,19 @@ def run_alloy_sat_validation(
 ) -> tuple[tuple[Any, ...] | None, dict[str, Any] | None, str]:
     """Steps 4-6: Generate Alloy input, execute the analyzer, and parse SAT output.
 
+    Delegates to AlloySolver.run_sat_validation().
     Returns (parsed_data, error_response, exec_output_dir).
-    - On success: ((sat, first_command_name, solutions), None, exec_output_dir)
-    - On failure: (None, dict, exec_output_dir)
-
-    output_type selects the Alloy CLI output format ("json" or "xml").
-    temp_dir, when provided, lets the caller own the temp directory lifetime
-    (so XML instances remain readable after return); when None an internal
-    TemporaryDirectory is used and cleaned up before returning.
     """
     warnings = all_warnings or []
-
     cm = tempfile.TemporaryDirectory() if temp_dir is None else nullcontext(temp_dir)
     with cm as td:
-        exec_output_dir = os.path.join(td, "alloy_exec_output")
-        try:
-            als_path = generate_als_file(buml_model, td, scope=scope)
-        except EnumReferenceError as exc:
-            return None, {
-                "sat": None,
-                "isValid": False,
-                "message": str(exc),
-                "errors": [str(exc)],
-                "warnings": warnings,
-            }, exec_output_dir
-        except ValueError as exc:
-            return None, {
-                "sat": None,
-                "isValid": False,
-                "message": str(exc),
-                "errors": [str(exc)],
-                "warnings": warnings,
-            }, exec_output_dir
-        result, error = execute_alloy_analyzer(als_path, exec_output_dir, output_type=output_type)
+        solver = AlloySolver(buml_model, scope=scope, output_dir=td)
+        parsed, error, exec_output_dir = solver.run_sat_validation(
+            structural_warnings=warnings, output_type=output_type, temp_dir=td,
+        )
         if error:
             return None, {**error, "warnings": warnings}, exec_output_dir
-
-        parsed, parse_error = parse_receipt(exec_output_dir, result, warnings)
-        if parse_error:
-            return None, parse_error, exec_output_dir
-
         return parsed, None, exec_output_dir
-#---------------------
 
 async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
     """Stream SAT check results trying increasing scopes.
@@ -374,7 +221,7 @@ async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGener
             parsed, error, _ = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda s=scope: _run_sat_sync(buml_model, all_warnings, s)
+                    lambda s=scope: run_alloy_sat_validation(buml_model, all_warnings, scope=s)
                 ),
                 timeout=TIMEOUT_SECONDS,
             )
@@ -586,15 +433,6 @@ async def generate_alloy_do_stream(input_data: DiagramInput) -> AsyncGenerator[s
             "errors": [],
             "warnings": all_warnings,
         })
-
-
-def _run_sat_sync(
-    buml_model: DomainModel,
-    all_warnings: list[str],
-    scope: int,
-) -> tuple[tuple[Any, ...] | None, dict[str, Any] | None, str]:
-    """Synchronous wrapper around run_alloy_sat_validation for executor execution."""
-    return run_alloy_sat_validation(buml_model, all_warnings, scope=scope)
 
 
 def _sse(data: dict[str, Any]) -> str:

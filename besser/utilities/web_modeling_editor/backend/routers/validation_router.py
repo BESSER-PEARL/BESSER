@@ -59,13 +59,25 @@ router = APIRouter(prefix="/besser_api", tags=["validation"])
 
 @router.post("/semantic-consistency-check")
 async def semantic_consistency_check_endpoint(input_data: DiagramInput) -> StreamingResponse:
-    """Stream SAT consistency-check progress events for a class diagram (SSE)."""
+    """Checks semantic consistency of a class diagram by resorting to SAT solving, via an Alloy translation.
+
+    This is the unified semantic consistency check endpoint that:
+
+    1. Translates the class diagram, including its OCL constraints, into an Alloy model.
+    2. Checks the consistency of the class diagram by a satisfiability check on the Alloy model.
+	    Since the SAT based consistency check is performed up to a given scope, the check is performed
+	    on increasingly larger scopes until a SAT outcome is found, a max. scope is reached, or a timeout expires.
+
+    The translation and checking are encapsulated in check_alloy_consistency_stream from the sat_checker validator.
+    (see imports).
+
+    In order to gradually inform about the progress of the check, the result is channeled into a StreamingResponse."""
     return StreamingResponse(
         check_alloy_consistency_stream(input_data),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # importante para nginx
+            "X-Accel-Buffering": "no",  # important for nginx
         },
     )
 
@@ -292,7 +304,11 @@ async def check_ocl(input_data: DiagramInput) -> dict:
 
 @router.post("/generate-object-diagram")
 async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
-    """Stream Object Diagram generation progress from Alloy SAT solving (SSE).
+    """Generates a semantically consistent object diagram, complying with the class diagram’s constraints,
+    including OCL constraints.
+
+    The obtained object diagram is produced by translating the class diagram into Alloy, generating an 
+    instance from the Alloy specification, and translating this instance back into an object diagram.
 
     Alias of :func:`generate_alloy_do_stream_endpoint`, exposed under the
     name expected by the current frontend (semantic generation action).
@@ -302,7 +318,7 @@ async def generate_object_diagram_endpoint(input_data: DiagramInput) -> Streamin
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # importante para nginx
+            "X-Accel-Buffering": "no",  # important for nginx
         },
     )
 

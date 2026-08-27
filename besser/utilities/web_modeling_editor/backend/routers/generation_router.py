@@ -179,10 +179,14 @@ async def recommend_agent_config_llm(
     profile_document = _generate_user_profile_document(user_profile_model)
     default_config = load_default_agent_recommendation_config()
 
+    # Provider choice and every per-provider model list are excluded: this prompt
+    # flow does not recommend the LLM provider, so shipping the model catalogues
+    # would only add noise. Matching on the "Models" suffix keeps this correct as
+    # new providers are added, instead of a hand-maintained key list.
     allowed_values_payload = {
         key: value
         for key, value in RECOMMENDATION_ALLOWED_VALUES.items()
-        if key not in {"llmProvider", "openaiModels"}
+        if key != "llmProvider" and not key.endswith("Models")
     }
 
     system_prompt = (

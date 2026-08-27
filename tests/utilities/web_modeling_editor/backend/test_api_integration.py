@@ -9,13 +9,13 @@ with ASGITransport is used because the installed starlette/httpx versions
 do not support the legacy TestClient(app=...) pattern.
 """
 
+import asyncio
 import json
 import os
-import asyncio
-from typing import Any, Dict
+from typing import Any
 
-import pytest
 import httpx
+import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -472,10 +472,10 @@ class TestGenerateOutput:
         assert "type-level operation" in body
         assert "class/type name" in body
 
-    def test_generate_alloy_do_stream_reports_informative_error(self):
+    def test_generate_object_diagram_reports_informative_error(self):
         """The streaming Object Diagram generation must emit the informative
         allInstances() message as an SSE event the frontend shows in the toast."""
-        response = client.post("/besser_api/generate-alloy-do-stream",
+        response = client.post("/besser_api/generate-object-diagram",
                                json=self._self_allinstances_payload())
         assert response.status_code == 200
         body = response.text
@@ -483,18 +483,6 @@ class TestGenerateOutput:
         assert "allInstances()" in body
         assert "type-level operation" in body
         assert "class/type name" in body
-
-    def test_generate_alloy_do_non_streaming_reports_informative_error(self):
-        """The non-streaming /generate-alloy-do must return a single JSON
-        document (not SSE) with the informative allInstances() message."""
-        response = client.post("/besser_api/generate-alloy-do",
-                               json=self._self_allinstances_payload())
-        assert response.status_code == 200
-        data = response.json()
-        assert data.get("done") is True
-        assert "allInstances()" in data.get("message", "")
-        assert "type-level operation" in data.get("message", "")
-        assert "class/type name" in data.get("message", "")
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +762,9 @@ class TestValidateDiagram:
 
     def test_validate_user_diagram_runs_ocl_check(self, monkeypatch):
         """UserDiagram validation should execute OCL checking with object model context."""
-        from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            validation_router as vr,
+        )
 
         class _DummyObjectModel:
             objects = []
@@ -1243,12 +1233,16 @@ class TestRecommendationEndpoints:
     @pytest.fixture(autouse=True)
     def _bypass_github_auth(self, monkeypatch):
         """Neutralize the GitHub OAuth gate so the test can drive real logic."""
-        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
         monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
 
     def test_recommend_agent_config_llm_success_normalizes_output(self, monkeypatch):
         """LLM recommendation endpoint returns normalized config payload."""
-        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
 
         def _fake_profile_document(_model):
             return {"profile": {"age": 34, "notes": "test"}}
@@ -1314,7 +1308,9 @@ class TestRecommendationEndpoints:
 
     def test_recommend_agent_config_llm_parse_error_returns_500(self, monkeypatch):
         """Invalid LLM text should surface as a parse failure mapped to 500."""
-        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
 
         monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {}})
         monkeypatch.setattr(gr, "call_openai_chat", lambda *_args, **_kwargs: "not-json")
@@ -1333,7 +1329,9 @@ class TestRecommendationEndpoints:
 
     def test_recommend_agent_config_llm_runtime_error_returns_400(self, monkeypatch):
         """Runtime errors from the LLM client should map to HTTP 400."""
-        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
 
         def _raise_runtime_error(*_args, **_kwargs):
             raise RuntimeError("Missing OpenAI API key")
@@ -1368,7 +1366,9 @@ class TestRecommendationEndpoints:
 
     def test_recommend_agent_config_mapping_success(self, monkeypatch):
         """Manual recommendation endpoint returns config and matching metadata."""
-        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
 
         monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {"age": 70}})
 
@@ -1417,7 +1417,7 @@ class TestRecommendationEndpoints:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _build_user_profile_diagram_payload(age: int) -> Dict[str, Any]:
+    def _build_user_profile_diagram_payload(age: int) -> dict[str, Any]:
         """Return a real UserDiagram JSON with a User root and a Personal_Information
         child object holding ``age``. The reference user_buml_model.User class
         looks up children via the ``Personal_Information_end`` association, so
@@ -1616,7 +1616,7 @@ class TestStandaloneChatbotDeploy:
     """Behavioral test for the chatbot deploy path with mocked PyGithub."""
 
     @staticmethod
-    def _minimal_agent_diagram() -> Dict[str, Any]:
+    def _minimal_agent_diagram() -> dict[str, Any]:
         """Return a minimal valid AgentDiagram (StateInitialNode + AgentState
         connected by AgentStateTransitionInit). Element ids are strings to
         match the frontend's Apollon JSON shape.
@@ -1653,18 +1653,18 @@ class TestStandaloneChatbotDeploy:
         mocked PyGithub helper must be called with a render.yaml that
         contains ``python -u "<slug>.py"`` (the chatbot startCommand).
         """
-        from besser.utilities.web_modeling_editor.backend.services.deployment import (
-            github_deploy_api as deploy_mod,
-        )
         from besser.utilities.web_modeling_editor.backend.routers import (
             generation_router as gr,
+        )
+        from besser.utilities.web_modeling_editor.backend.services.deployment import (
+            github_deploy_api as deploy_mod,
         )
 
         # Auth gate: pass through to the chatbot path with a fake token.
         monkeypatch.setattr(deploy_mod, "get_user_token", lambda _session: "fake-token")
         monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
 
-        captured: Dict[str, Any] = {
+        captured: dict[str, Any] = {
             "create_calls": 0,
             "push_calls": [],
             "render_yaml_content": None,

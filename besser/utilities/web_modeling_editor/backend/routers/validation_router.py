@@ -288,9 +288,15 @@ async def check_ocl(input_data: DiagramInput) -> dict:
     return await validate_diagram(input_data)
 
 
-@router.post("/generate-alloy-do-stream")
-async def generate_alloy_do_stream_endpoint(input_data: DiagramInput) -> StreamingResponse:
-    """Stream Object Diagram generation progress from Alloy SAT solving (SSE)."""
+
+
+@router.post("/generate-object-diagram")
+async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Stream Object Diagram generation progress from Alloy SAT solving (SSE).
+
+    Alias of :func:`generate_alloy_do_stream_endpoint`, exposed under the
+    name expected by the current frontend (semantic generation action).
+    """
     return StreamingResponse(
         generate_alloy_do_stream(input_data),
         media_type="text/event-stream",
@@ -301,26 +307,3 @@ async def generate_alloy_do_stream_endpoint(input_data: DiagramInput) -> Streami
     )
 
 
-@router.post("/generate-alloy-do")
-@handle_endpoint_errors("generate_alloy_do")
-async def generate_alloy_do_endpoint(input_data: DiagramInput) -> dict:
-    """Non-streaming variant of /generate-alloy-do-stream.
-
-    Collects the SSE events from the streaming generator and returns the final
-    SAT result as a single JSON document, so the set-based "Generate Objects
-    with Sat" action can consume it with a plain ``fetch`` + ``response.json()``.
-    """
-    final_result = None
-    async for event in generate_alloy_do_stream(input_data):
-        if event.startswith("data: "):
-            final_result = json.loads(event[len("data: "):].strip())
-    if final_result is None:
-        final_result = {
-            "sat": False,
-            "isValid": False,
-            "done": True,
-            "message": "No result produced.",
-            "errors": [],
-            "warnings": [],
-        }
-    return final_result

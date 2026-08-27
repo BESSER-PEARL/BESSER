@@ -1,4 +1,11 @@
-"""SAT consistency checker for Alloy-based validation."""
+"""
+SAT based semantic consistency checker for UML-BESSER class diagrams.
+
+This module contains functions that:
+- implement the translation from UML-BESSER class diagrams and OCL constraints into Alloy,
+- use Alloy to generate bounded instances as witnesses of satisfiability/consistency
+- translate Alloy instances into UML object diagrams.
+"""
 
 import asyncio
 import json
@@ -28,11 +35,15 @@ from besser.utilities.web_modeling_editor.backend.services.validators.ocl_checke
 
 logger = logging.getLogger(__name__)
 
-SCOPE_STEPS = [5, 8, 9, 10]  # Scopes to try in order.
+SCOPE_STEPS = [5, 8, 9, 10]  # Scopes to be used when checking semantic consistency
 TIMEOUT_SECONDS = 50
 
 
 def _resolve_first_instance_xml(exec_output_dir: str, solutions: list[dict[str, Any]]) -> str | None:
+    """
+    Retrieves the first instance, resulting from an Alloy satisfiability check, in XML format, None if
+    no such instance exists.
+    """
     base_path = Path(exec_output_dir)
 
     def _iter_solution_xml_paths() -> Iterable[Path]:
@@ -63,7 +74,11 @@ def _resolve_first_instance_xml(exec_output_dir: str, solutions: list[dict[str, 
 
 
 def _first_instance_source(solutions: list[dict[str, Any]] | None) -> str | dict | None:
-    """Return the first Alloy instance (XML file path or inlined JSON dict)."""
+    """
+    Returns the first of a list of instances, resulting from an Alloy satisfiability check. 
+    Result is retrieved as XML file path or inlined JSON dict, depending on how input is provided.
+    None is returned if no such instance exists.
+    """
     for solution in solutions or []:
         for instance in solution.get("instances", []) or []:
             if isinstance(instance, str):
@@ -80,7 +95,12 @@ def _first_instance_source(solutions: list[dict[str, Any]] | None) -> str | dict
 def _alloy_xml_to_frontend_object_model(
     xml_instance_path: str, reference_class_model: dict[str, Any]
 ) -> dict[str, Any]:
-    """Convert an Alloy XML instance into the frontend ObjectDiagram JSON format."""
+    """
+    Converts an Alloy instance into an object diagram.
+    
+    The Alloy instance is received in XML format. The result is provided
+    in the JSON format for ObjectDiagram, expected by the frontend.
+    """ 
     converter = AlloyToBesserConverter(xml_instance_path)
     converter.parse_xml()
     object_buml_code = converter.generate_object_diagram_code()
@@ -88,8 +108,11 @@ def _alloy_xml_to_frontend_object_model(
 
 #----------------------------------------------------------------------
 def convert_json_to_buml(input_data: DiagramInput) -> DomainModel | dict[str, Any]:
-    """Step 1: Convert diagram JSON to BUML model.
-    Returns BUML DomainModel on success, or a dict error response.
+    """
+    Converts a diagram in JSON format to a corresponding BUML model.
+
+    If the provided diagram is not a class diagram, no conversion is performed, 
+    and a dictionary containing an unsupported operation message is produced.
     """
     diagram_type = input_data.model.get("type") if input_data.model else None
     if diagram_type != "ClassDiagram":
@@ -105,10 +128,13 @@ def convert_json_to_buml(input_data: DiagramInput) -> DomainModel | dict[str, An
 
 #----------------------------------------------------------------------
 def validate_buml_structure(buml_model: DomainModel) -> tuple[list[str], list[str]]:
-    """Step 2: Run structural validation on the BUML model.
+    """
+    Checks the structural (syntactic) consistency of a BUML model. 
 
-    Returns (errors, warnings). Never raises — exceptions are caught and
-    returned as errors so callers always get a consistent (list, list) tuple.
+    Delegates the checking into buml_model.validate() functionality.
+
+    When validation does not raise exceptions, the obtained errors and warnings is returned.
+    If exceptions are thrown, a message indicating structural validation error is produced. 
     """
     try:
         result = buml_model.validate(raise_exception=False)
@@ -122,11 +148,16 @@ def validate_ocl_constraints(
     buml_model: DomainModel,
     structural_warnings: list[str] | None = None,
 ) -> tuple[list[str], dict[str, Any] | None]:
-    """Step 3: Validate OCL constraints through the BOCL-based pipeline.
+    """
+    Validates the syntax of OCL constraints, resorting to check_ocl_constraint() 
+    functionality.
 
-    Returns (all_warnings, error_response).
-    - On success: (warnings, None)
-    - On invalid OCL: (warnings, dict)
+    Since semantic consistency check requires the OCL syntax checking to fully pass,
+    all errors and warnings of the syntactic check are treated as errors.
+
+    Result is a dictionary with errors and warnings if validation failed, 
+    None if validation passed.
+    Parameter structural_warnings is streamed into the output too. 
     """
     ocl_result = check_ocl_constraint(buml_model, object_model=None)
     ocl_errors = list(ocl_result.get("invalid_constraints", []))
@@ -143,7 +174,7 @@ def validate_ocl_constraints(
     ]
     ocl_errors.extend(blocking_ocl_conversion_issues)
 
-    if not ocl_result.get("success", True) and not ocl_errors:
+    if not ocl_result.get("success", True) or ocl_errors:
         ocl_errors.append(ocl_result.get("message", "OCL validation failed."))
     all_warnings = structural_warnings or []
     if ocl_errors:
@@ -164,10 +195,18 @@ def run_alloy_sat_validation(
     output_type: str = "json",
     temp_dir: str | None = None,
 ) -> tuple[tuple[Any, ...] | None, dict[str, Any] | None, str]:
-    """Steps 4-6: Generate Alloy input, execute the analyzer, and parse SAT output.
+    """
+    Translates UMLB class diagram and OCL constraints into Alloy specification,
+    executes Alloy Analyzer to check for consistency, 
+    and parses the Alloy consistency check result. 
 
-    Delegates to AlloySolver.run_sat_validation().
-    Returns (parsed_data, error_response, exec_output_dir).
+    Delegates consistency checkint to AlloySolver.run_sat_validation().
+
+    Result is (parsed_data, error_response, exec_output_dir), where
+    - parsed_data indicates sat/unsat outcome,
+    - error_response contains errors when validation fails,
+    - exec_output_dir is the directory where the obtained SAT instances are placed
+    by the Alloy Analyzer.
     """
     warnings = all_warnings or []
     cm = tempfile.TemporaryDirectory() if temp_dir is None else nullcontext(temp_dir)
@@ -181,10 +220,18 @@ def run_alloy_sat_validation(
         return parsed, None, exec_output_dir
 
 async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
-    """Stream SAT check results trying increasing scopes.
+    """
+    Performs semantic satisfiability check of a BUML class diagram.
 
-    Yields SSE-formatted strings. Stops when SAT is found, timeout is reached,
-    or all scopes are exhausted.
+    The semantic satisfiability check involves:
+    - syntactic check of the structure of the class diagram
+    - syntactic check of the OCL constraints, if present
+    - translation of class diagram and OCL constraints into an Alloy specification
+    - Checks for consistency of the Alloy specification for increasingly larger
+    scopes, stopping when SAT is found, timeout is reached, or all scopes are 
+    exhausted.
+
+    Result is yielded as SSE-formatted strings. 
     """
     buml_model = convert_json_to_buml(input_data)
     if isinstance(buml_model, dict):
@@ -277,7 +324,11 @@ def _run_alloy_do_scope(
     scope: int,
     temp_dir: str,
 ) -> tuple[tuple[Any, ...] | None, dict[str, Any] | None, str]:
-    """Run Alloy (XML output) for a single scope inside a caller-owned temp_dir.
+    """
+    Executes Alloy Analyzer to check consistency of a BUML model for a specific scope (bound). 
+
+    A called-owned temporary directory to run Alloy Analyzer and place output
+    must be provided.
 
     Wraps run_alloy_sat_validation in XML mode so the caller keeps access to
     the XML instances after return.
@@ -289,7 +340,19 @@ def _run_alloy_do_scope(
 
 
 async def generate_alloy_do_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
-    """Stream Object Diagram generation trying increasing scopes.
+    """
+    Generates object diagram that complies with constraints of a BUML class diagram,
+    incluing OCL constraints, if present.
+
+    The generation of the semantically consistent object diagram involves:
+    - syntactic check of the structure of the class diagram
+    - syntactic check of the OCL constraints, if present
+    - translation of class diagram and OCL constraints into an Alloy specification
+    - Checks for consistency of the Alloy specification for increasingly larger
+    scopes, stopping when SAT is found, timeout is reached, or all scopes are
+    exhausted.
+    - Translation of one (the first) Alloy instance back into a front-end object 
+    diagram.
 
     Yields SSE-formatted progress events per scope. Stops at the first SAT
     instance (converting it to a frontend Object Diagram), on timeout, or when
@@ -436,5 +499,7 @@ async def generate_alloy_do_stream(input_data: DiagramInput) -> AsyncGenerator[s
 
 
 def _sse(data: dict[str, Any]) -> str:
-    """Format a dict as an SSE data line."""
+    """
+    Formats a dict as an SSE data line.
+    """
     return f"data: {json.dumps(data)}\n\n"

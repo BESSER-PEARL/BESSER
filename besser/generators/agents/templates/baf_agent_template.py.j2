@@ -279,7 +279,8 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
     k={{ rag.k if rag.k is not none else 4 }},
     num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
 )
-{{ rag_var }}.load_pdfs('./{{ rag_slug }}')
+if os.path.exists('./{{ rag_slug }}'):
+    {{ rag_var }}.load_pdfs('./{{ rag_slug }}')
 
 {% endfor %}
 {% endif %}

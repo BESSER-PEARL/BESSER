@@ -1991,12 +1991,28 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                 comment_y += 130
 
+        # Split elements into canvas elements (stay in "elements") and off-canvas
+        # components (go into the new "components" section without bounds).
+        _COMPONENT_TYPES = {
+            'AgentIntent', 'AgentIntentBody', 'AgentRagElement',
+            'AgentTool', 'AgentSkill', 'AgentWorkspace', 'AgentLLM', 'AgentGUI',
+        }
+        canvas_elements: Dict[str, Any] = {}
+        component_elements: Dict[str, Any] = {}
+        for eid, el in elements.items():
+            if el.get('type') in _COMPONENT_TYPES:
+                # Strip canvas-only "bounds" – components are not positioned on canvas
+                component_elements[eid] = {k: v for k, v in el.items() if k != 'bounds'}
+            else:
+                canvas_elements[eid] = el
+
         result = {
             "version": "3.0.0",
             "type": "AgentDiagram",
             "size": default_size,
             "interactive": {"elements": {}, "relationships": {}},
-            "elements": elements,
+            "elements": canvas_elements,
+            "components": component_elements,
             "relationships": relationships,
             "assessments": {},
         }
@@ -2006,12 +2022,25 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
     except Exception:
         logger.exception("Error converting agent BUML to JSON; returning partial diagram")
+        # On error return partial results, also split into canvas / components
+        _COMPONENT_TYPES_FALLBACK = {
+            'AgentIntent', 'AgentIntentBody', 'AgentRagElement',
+            'AgentTool', 'AgentSkill', 'AgentWorkspace', 'AgentLLM', 'AgentGUI',
+        }
+        canvas_elements_fb: Dict[str, Any] = {}
+        component_elements_fb: Dict[str, Any] = {}
+        for eid, el in elements.items():
+            if el.get('type') in _COMPONENT_TYPES_FALLBACK:
+                component_elements_fb[eid] = {k: v for k, v in el.items() if k != 'bounds'}
+            else:
+                canvas_elements_fb[eid] = el
         return {
             "version": "3.0.0",
             "type": "AgentDiagram",
             "size": default_size,
             "interactive": {"elements": {}, "relationships": {}},
-            "elements": elements,
+            "elements": canvas_elements_fb,
+            "components": component_elements_fb,
             "relationships": relationships,
             "assessments": {},
         }

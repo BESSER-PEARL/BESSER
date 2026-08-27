@@ -393,9 +393,15 @@ def process_agent_diagram(json_data):
     model_data = json_data.get('model') or {}
     elements = model_data.get('elements') or {}
     relationships = model_data.get('relationships') or {}
-    # Agent components (LLMs, intents, tools, skills, workspaces, RAGs) are stored
-    # separately from the canvas model to keep the canvas clean.
-    elements = {**elements, **(json_data.get('agentComponents') or {})}
+    # Agent components (LLMs, intents, tools, skills, workspaces, RAGs) may be stored in:
+    #   - model.components  (new schema – preferred)
+    #   - top-level agentComponents (legacy schema)
+    #   - model.elements itself (old template / backward-compat format)
+    # Merge all sources; model.components wins over agentComponents for duplicate keys.
+    legacy_agent_components = json_data.get('agentComponents') or {}
+    model_components = model_data.get('components') or {}
+    all_components = {**legacy_agent_components, **model_components}
+    elements = {**elements, **all_components}
 
     # Track states and bodies for later reference
     states_by_id = {}
@@ -491,8 +497,10 @@ def process_agent_diagram(json_data):
             intent_name = element.get("name")
             training_sentences = []
             intent_description = element.get("intent_description", None)
-            # Collect training sentences — AgentIntent still uses "bodies" for sentence IDs.
-            for body_id in element.get("bodies", []):
+            # Collect training sentences — IDs stored under "bodies" (canonical) or
+            # "ownedElements" (legacy: diagrams saved by an older panel version).
+            body_id_list = element.get("bodies") or element.get("ownedElements") or []
+            for body_id in body_id_list:
                 body_element = elements.get(body_id)
                 if body_element:
                     training_sentence = sanitize_text(body_element.get("name", ""))

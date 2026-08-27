@@ -14,15 +14,10 @@ services:
     environment:
       - PYTHONPATH=/app
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
-      - AGENT_SIMULATION_URL=http://besser-agent-simulation:8001
-      - AGENT_SIMULATION_REQUIRE_AUTH=${AGENT_SIMULATION_REQUIRE_AUTH:-true}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network
-      - besser_internal
-    depends_on:
-      - besser-agent-simulation
 
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
@@ -37,32 +32,6 @@ services:
       - besser_network
     ports:
       - "8080:8080"
-
-  besser-agent-simulation:
-    build:
-      context: ./besser/utilities/web_modeling_editor/agent-simulation
-      dockerfile: Dockerfile
-    container_name: besser-agent-simulation
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:size=512m,mode=1777
-    environment:
-      - PYTHONUNBUFFERED=1
-    cpus: 2.0
-    mem_limit: 4g
-    pids_limit: 128
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 4G
-    restart: unless-stopped
-    networks:
-      - besser_internal
 
   # besser-wme-modeling-agent:
   #   image: artefacts.list.lu/besser/web_modeling_editor/modeling_agent:latest
@@ -82,13 +51,18 @@ services:
   #   depends_on:
   #     - besser_redis
 
+  besser-wme-agent-simulator:
+    image: artefacts.list.lu/besser/web_modeling_editor/agent_simulator:latest
+    container_name: besser-wme-agent-simulator
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    networks:
+      - besser_network
+
 volumes: {}
 
 networks:
   besser_network:
     name: besser_network
     driver: bridge
-  besser_internal:
-    name: besser_internal
-    driver: bridge
-    # internal: true

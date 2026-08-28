@@ -798,10 +798,12 @@ class TensorOp(NamedElement):
         operation."""
         if (
             input_var is not None
-            and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', input_var)
+            and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*$', input_var)
         ):
             raise ValueError(
-                "input_var must be a valid identifier starting with a letter"
+                "input_var must be a valid identifier, or a comma-separated "
+                "list of identifiers, each starting with a letter "
+                "or underscore"
             )
         self.__input_var = input_var
 
@@ -821,6 +823,7 @@ class TensorOp(NamedElement):
         ):
             raise ValueError(
                 "output_var must be a valid identifier starting with a letter"
+                "or underscore"
             )
         self.__output_var = output_var
 

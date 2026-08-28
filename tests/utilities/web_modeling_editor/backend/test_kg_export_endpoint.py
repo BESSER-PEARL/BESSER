@@ -11,9 +11,6 @@ from pathlib import Path
 
 import pytest
 import rdflib
-from starlette.testclient import TestClient
-
-from besser.utilities.web_modeling_editor.backend.backend import app
 
 
 TTL_FIXTURE = """
@@ -31,11 +28,6 @@ TTL_FIXTURE = """
 """.strip()
 
 
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    return TestClient(app)
-
-
 @pytest.fixture
 def ttl_path(tmp_path: Path) -> Path:
     p = tmp_path / "tiny.ttl"
@@ -44,7 +36,7 @@ def ttl_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def kg_diagram_payload(client: TestClient, ttl_path: Path) -> dict:
+def kg_diagram_payload(client, ttl_path: Path) -> dict:
     """Import the fixture via /import-owl and reshape into a DiagramInput."""
     with ttl_path.open("rb") as fh:
         resp = client.post(
@@ -56,7 +48,7 @@ def kg_diagram_payload(client: TestClient, ttl_path: Path) -> dict:
     return {"title": body["title"], "model": body["model"]}
 
 
-def test_export_kg_ttl_returns_turtle(client: TestClient, kg_diagram_payload: dict):
+def test_export_kg_ttl_returns_turtle(client, kg_diagram_payload: dict):
     resp = client.post("/besser_api/export-kg-rdf/ttl", json=kg_diagram_payload)
     assert resp.status_code == 200, resp.text
     assert "text/turtle" in resp.headers.get("content-type", "")
@@ -65,7 +57,7 @@ def test_export_kg_ttl_returns_turtle(client: TestClient, kg_diagram_payload: di
     assert len(g) > 0
 
 
-def test_export_kg_owl_returns_rdfxml(client: TestClient, kg_diagram_payload: dict):
+def test_export_kg_owl_returns_rdfxml(client, kg_diagram_payload: dict):
     resp = client.post("/besser_api/export-kg-rdf/owl", json=kg_diagram_payload)
     assert resp.status_code == 200, resp.text
     assert "application/rdf+xml" in resp.headers.get("content-type", "")
@@ -74,13 +66,13 @@ def test_export_kg_owl_returns_rdfxml(client: TestClient, kg_diagram_payload: di
     assert len(g) > 0
 
 
-def test_export_kg_unsupported_format_returns_400(client: TestClient, kg_diagram_payload: dict):
+def test_export_kg_unsupported_format_returns_400(client, kg_diagram_payload: dict):
     resp = client.post("/besser_api/export-kg-rdf/json", json=kg_diagram_payload)
     assert resp.status_code == 400
     assert "owl" in resp.json()["detail"] or "ttl" in resp.json()["detail"]
 
 
-def test_export_kg_rejects_non_kg_payload(client: TestClient):
+def test_export_kg_rejects_non_kg_payload(client):
     class_payload = {
         "title": "NotKG",
         "model": {
@@ -95,7 +87,7 @@ def test_export_kg_rejects_non_kg_payload(client: TestClient):
     assert "KnowledgeGraphDiagram" in resp.json()["detail"]
 
 
-def test_export_kg_filename_uses_diagram_title(client: TestClient, kg_diagram_payload: dict):
+def test_export_kg_filename_uses_diagram_title(client, kg_diagram_payload: dict):
     payload = {**kg_diagram_payload, "title": "My Ontology"}
     resp = client.post("/besser_api/export-kg-rdf/ttl", json=payload)
     assert resp.status_code == 200
@@ -103,7 +95,7 @@ def test_export_kg_filename_uses_diagram_title(client: TestClient, kg_diagram_pa
     assert "My_Ontology.ttl" in cd or "my_ontology.ttl" in cd.lower()
 
 
-def test_round_trip_via_endpoints(client: TestClient, ttl_path: Path, tmp_path: Path):
+def test_round_trip_via_endpoints(client, ttl_path: Path, tmp_path: Path):
     """Import → export → re-import should preserve node/edge counts."""
     with ttl_path.open("rb") as fh:
         first = client.post(

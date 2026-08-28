@@ -11,20 +11,9 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-import pytest
-from fastapi.testclient import TestClient
-
-from besser.utilities.web_modeling_editor.backend.backend import app
-
 
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 EX = "http://example.org/"
-
-
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    with TestClient(app) as c:
-        yield c
 
 
 def _kg_diagram() -> Dict[str, Any]:
@@ -67,7 +56,7 @@ class _FakeResp:
 # --------------------------------------------------------------------------
 
 
-def test_llm_clean_kg_returns_issue_list(client: TestClient, monkeypatch):
+def test_llm_clean_kg_returns_issue_list(client, monkeypatch):
     suggestion = {
         "code": "LLM_DROP_CLASS",
         "description": "Car is unrelated to a people-tracking system.",
@@ -106,7 +95,7 @@ def test_llm_clean_kg_returns_issue_list(client: TestClient, monkeypatch):
     assert isinstance(body["kgSignature"], str) and body["kgSignature"]
 
 
-def test_llm_clean_kg_rejects_empty_description(client: TestClient):
+def test_llm_clean_kg_rejects_empty_description(client):
     response = client.post(
         "/besser_api/llm-clean-kg",
         data={
@@ -118,7 +107,7 @@ def test_llm_clean_kg_rejects_empty_description(client: TestClient):
     assert response.status_code == 400
 
 
-def test_llm_clean_kg_rejects_non_kg_payload(client: TestClient, monkeypatch):
+def test_llm_clean_kg_rejects_non_kg_payload(client, monkeypatch):
     payload = {
         "title": "NotAKG",
         "model": {"type": "ClassDiagram", "elements": {}, "relationships": {}},
@@ -134,7 +123,7 @@ def test_llm_clean_kg_rejects_non_kg_payload(client: TestClient, monkeypatch):
     assert response.status_code == 400
 
 
-def test_llm_clean_kg_propagates_openai_error(client: TestClient, monkeypatch):
+def test_llm_clean_kg_propagates_openai_error(client, monkeypatch):
     def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
         return _FakeResp({"error": {"message": "rate limit"}}, status_code=429)
 
@@ -179,7 +168,7 @@ def _llm_refine_payload(**overrides: Any) -> Dict[str, Any]:
     return payload
 
 
-def test_apply_kg_refinement_llm_skip_is_a_noop(client: TestClient):
+def test_apply_kg_refinement_llm_skip_is_a_noop(client):
     payload = _llm_refine_payload(
         llmIssues=[_issue_payload("Car")],
         resolutions=[{"issueId": "issue-1", "decision": "skip"}],
@@ -190,7 +179,7 @@ def test_apply_kg_refinement_llm_skip_is_a_noop(client: TestClient):
     assert "Car" in node_ids
 
 
-def test_apply_kg_refinement_llm_missing_issues_400(client: TestClient):
+def test_apply_kg_refinement_llm_missing_issues_400(client):
     # Without llmIssues the endpoint cannot reconstruct the KGIssue the
     # decision refers to, so it must reject rather than silently do nothing.
     payload = _llm_refine_payload(resolutions=[{"issueId": "issue-1", "decision": "accept"}])
@@ -198,7 +187,7 @@ def test_apply_kg_refinement_llm_missing_issues_400(client: TestClient):
     assert response.status_code == 400
 
 
-def test_apply_kg_refinement_llm_no_decisions_returns_unchanged(client: TestClient):
+def test_apply_kg_refinement_llm_no_decisions_returns_unchanged(client):
     response = client.post("/besser_api/apply-kg-refinement", json=_llm_refine_payload())
     assert response.status_code == 200
     node_ids = {n["id"] for n in response.json()["model"]["nodes"]}
@@ -230,7 +219,7 @@ def _kg_with_orphan_diagram() -> Dict[str, Any]:
     }
 
 
-def test_apply_kg_refinement_static_drops_orphans_on_accept(client: TestClient):
+def test_apply_kg_refinement_static_drops_orphans_on_accept(client):
     diagram = _kg_with_orphan_diagram()
     pre = client.post(
         "/besser_api/analyze-kg-for-buml-conversion",
@@ -256,7 +245,7 @@ def test_apply_kg_refinement_static_drops_orphans_on_accept(client: TestClient):
     assert "Car" in node_ids
 
 
-def test_apply_kg_refinement_static_skip_defers_to_llm(client: TestClient):
+def test_apply_kg_refinement_static_skip_defers_to_llm(client):
     diagram = _kg_with_orphan_diagram()
     pre = client.post(
         "/besser_api/analyze-kg-for-buml-conversion",
@@ -283,7 +272,7 @@ def test_apply_kg_refinement_static_skip_defers_to_llm(client: TestClient):
     assert body["pendingOrphanClassification"]["kgSignature"] == body["kgSignature"]
 
 
-def test_apply_kg_refinement_llm_path_drops_class(client: TestClient):
+def test_apply_kg_refinement_llm_path_drops_class(client):
     diagram = _kg_diagram()
     payload = {
         **diagram,
@@ -299,7 +288,7 @@ def test_apply_kg_refinement_llm_path_drops_class(client: TestClient):
     assert "Car" not in node_ids
 
 
-def test_apply_kg_refinement_invalid_source_returns_4xx(client: TestClient):
+def test_apply_kg_refinement_invalid_source_returns_4xx(client):
     """Pydantic's Literal validation rejects unknown ``source`` values with 422."""
     diagram = _kg_diagram()
     payload = {**diagram, "source": "bogus"}
@@ -307,7 +296,7 @@ def test_apply_kg_refinement_invalid_source_returns_4xx(client: TestClient):
     assert resp.status_code in (400, 422)
 
 
-def test_apply_kg_refinement_signature_mismatch_returns_400(client: TestClient):
+def test_apply_kg_refinement_signature_mismatch_returns_400(client):
     diagram = _kg_with_orphan_diagram()
     payload = {
         **diagram,
@@ -324,7 +313,7 @@ def test_apply_kg_refinement_signature_mismatch_returns_400(client: TestClient):
 # --------------------------------------------------------------------------
 
 
-def test_classify_orphans_with_llm_returns_per_node_issues(client: TestClient, monkeypatch):
+def test_classify_orphans_with_llm_returns_per_node_issues(client, monkeypatch):
     diagram = _kg_with_orphan_diagram()
     suggestion = {
         "code": "LLM_TYPE_INDIVIDUAL",
@@ -365,7 +354,7 @@ def test_classify_orphans_with_llm_returns_per_node_issues(client: TestClient, m
     assert by_target["ghost2"]["recommendedAction"]["key"] == "drop_node"
 
 
-def test_classify_orphans_with_llm_rejects_empty_node_ids(client: TestClient):
+def test_classify_orphans_with_llm_rejects_empty_node_ids(client):
     diagram = _kg_with_orphan_diagram()
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
@@ -379,7 +368,7 @@ def test_classify_orphans_with_llm_rejects_empty_node_ids(client: TestClient):
     assert response.status_code == 400
 
 
-def test_classify_orphans_with_llm_rejects_missing_api_key(client: TestClient):
+def test_classify_orphans_with_llm_rejects_missing_api_key(client):
     diagram = _kg_with_orphan_diagram()
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
@@ -393,7 +382,7 @@ def test_classify_orphans_with_llm_rejects_missing_api_key(client: TestClient):
     assert response.status_code == 400
 
 
-def test_classify_orphans_with_llm_rejects_invalid_node_ids_json(client: TestClient):
+def test_classify_orphans_with_llm_rejects_invalid_node_ids_json(client):
     diagram = _kg_with_orphan_diagram()
     response = client.post(
         "/besser_api/classify-orphans-with-llm",

@@ -15,20 +15,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
-from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.converters import kg_to_json
 
 
 FIXTURE = Path(__file__).resolve().parents[3] / "fixtures" / "complex_kg.ttl"
-
-
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    with TestClient(app) as c:
-        yield c
 
 
 @pytest.fixture(scope="module")
@@ -43,7 +35,7 @@ def kg_payload() -> dict:
     }
 
 
-def test_analyze_surfaces_expected_issue_codes(client: TestClient, kg_payload: dict):
+def test_analyze_surfaces_expected_issue_codes(client, kg_payload: dict):
     resp = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -73,7 +65,7 @@ def test_analyze_surfaces_expected_issue_codes(client: TestClient, kg_payload: d
         assert issue["skipAction"] is not None, issue
 
 
-def test_class_diagram_with_all_accepts(client: TestClient, kg_payload: dict):
+def test_class_diagram_with_all_accepts(client, kg_payload: dict):
     pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload).json()
     resolutions = [{"issueId": i["id"], "decision": "accept"} for i in pre["issues"]]
     resp = client.post(
@@ -90,7 +82,7 @@ def test_class_diagram_with_all_accepts(client: TestClient, kg_payload: dict):
     assert "Pet" in class_names
 
 
-def test_class_diagram_with_skip_drops_property(client: TestClient, kg_payload: dict):
+def test_class_diagram_with_skip_drops_property(client, kg_payload: dict):
     """When the user skips PROPERTY_NO_DOMAIN, the :likes property is dropped."""
     pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload).json()
     resolutions = []
@@ -108,7 +100,7 @@ def test_class_diagram_with_skip_drops_property(client: TestClient, kg_payload: 
     assert "likes" not in rel_names
 
 
-def test_class_diagram_with_all_skips(client: TestClient, kg_payload: dict):
+def test_class_diagram_with_all_skips(client, kg_payload: dict):
     """Skipping every issue must still convert cleanly.
 
     The all-accept case above only exercises each issue's *recommended* action.
@@ -126,7 +118,7 @@ def test_class_diagram_with_all_skips(client: TestClient, kg_payload: dict):
     assert resp.json()["diagramType"] == "ClassDiagram"
 
 
-def test_stale_signature_blocks_conversion(client: TestClient, kg_payload: dict):
+def test_stale_signature_blocks_conversion(client, kg_payload: dict):
     resp = client.post(
         "/besser_api/kg-to-class-diagram",
         json={**kg_payload, "kgSignature": "deadbeef00000000"},

@@ -6,21 +6,12 @@ frontend depends on.
 """
 
 import pytest
-from fastapi.testclient import TestClient
-
-from besser.utilities.web_modeling_editor.backend.backend import app
 
 
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 EX = "http://example.org/"
-
-
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    with TestClient(app) as c:
-        yield c
 
 
 @pytest.fixture()
@@ -63,7 +54,7 @@ def kg_payload() -> dict:
     }
 
 
-def test_class_endpoint_returns_class_diagram(client: TestClient, kg_payload: dict):
+def test_class_endpoint_returns_class_diagram(client, kg_payload: dict):
     response = client.post("/besser_api/kg-to-class-diagram", json=kg_payload)
     assert response.status_code == 200, response.text
     body = response.json()
@@ -81,7 +72,7 @@ def test_class_endpoint_returns_class_diagram(client: TestClient, kg_payload: di
     assert "ClassInheritance" in rel_types     # Employee → Person
 
 
-def test_endpoints_reject_non_kg_payload(client: TestClient):
+def test_endpoints_reject_non_kg_payload(client):
     response = client.post(
         "/besser_api/kg-to-class-diagram",
         json={"title": "wrong", "model": {"type": "ClassDiagram"}},
@@ -90,7 +81,7 @@ def test_endpoints_reject_non_kg_payload(client: TestClient):
     assert "KnowledgeGraphDiagram" in response.json()["detail"]
 
 
-def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client: TestClient):
+def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client):
     """A KG carrying a properly-linked NodeConstraint/PropertyConstraint pair
     must come back with a ClassOCLConstraint element — regression test for
     the OCL-generation pipeline, which previously had no HTTP-level coverage

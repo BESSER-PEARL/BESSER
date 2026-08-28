@@ -12,10 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from starlette.testclient import TestClient
 
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
-from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     kg_to_json,
     process_kg_diagram,
@@ -72,8 +70,7 @@ def test_kg_json_round_trip(ttl_path: Path):
     assert j1 == j2
 
 
-def test_import_owl_endpoint_and_validation(ttl_path: Path):
-    client = TestClient(app)
+def test_import_owl_endpoint_and_validation(client, ttl_path: Path):
     with ttl_path.open("rb") as fh:
         resp = client.post(
             "/besser_api/import-owl",
@@ -100,10 +97,9 @@ def test_import_owl_endpoint_and_validation(ttl_path: Path):
     assert any("BLANK_NODE_INSTANCE" in e for e in payload["errors"])
 
 
-def test_import_owl_rejects_unsupported_extension(tmp_path: Path):
+def test_import_owl_rejects_unsupported_extension(client, tmp_path: Path):
     p = tmp_path / "bad.txt"
     p.write_text("not an ontology", encoding="utf-8")
-    client = TestClient(app)
     with p.open("rb") as fh:
         resp = client.post(
             "/besser_api/import-owl",
@@ -117,7 +113,7 @@ def test_import_owl_rejects_unsupported_extension(tmp_path: Path):
 # ----------------------------------------------------------------------
 
 
-def test_single_diagram_buml_round_trip(ttl_path: Path):
+def test_single_diagram_buml_round_trip(client, ttl_path: Path):
     """A lone KG must survive /export-buml -> /get-json-model.
 
     Every other diagram type round-trips at both the project *and* the
@@ -125,28 +121,27 @@ def test_single_diagram_buml_round_trip(ttl_path: Path):
     fell through to "Unsupported or missing diagram type" and
     /get-json-model's type sniffing had no KG branch at all.
     """
-    with TestClient(app) as client:
-        imported = client.post(
-            "/besser_api/import-owl",
-            files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
-        )
-        assert imported.status_code == 200, imported.text
-        model = imported.json()["model"]
+    imported = client.post(
+        "/besser_api/import-owl",
+        files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
+    )
+    assert imported.status_code == 200, imported.text
+    model = imported.json()["model"]
 
-        exported = client.post(
-            "/besser_api/export-buml",
-            json={"title": "Tiny KG", "model": model, "generator": "buml"},
-        )
-        assert exported.status_code == 200, exported.text
-        source = exported.content.decode("utf-8")
-        assert "KnowledgeGraph(" in source
+    exported = client.post(
+        "/besser_api/export-buml",
+        json={"title": "Tiny KG", "model": model, "generator": "buml"},
+    )
+    assert exported.status_code == 200, exported.text
+    source = exported.content.decode("utf-8")
+    assert "KnowledgeGraph(" in source
 
-        reimported = client.post(
-            "/besser_api/get-json-model",
-            files={"buml_file": ("knowledge_graph.py", source.encode("utf-8"), "text/x-python")},
-        )
-        assert reimported.status_code == 200, reimported.text
-        body = reimported.json()
+    reimported = client.post(
+        "/besser_api/get-json-model",
+        files={"buml_file": ("knowledge_graph.py", source.encode("utf-8"), "text/x-python")},
+    )
+    assert reimported.status_code == 200, reimported.text
+    body = reimported.json()
 
     assert body["diagramType"] == "KnowledgeGraphDiagram"
     assert body["model"]["type"] == "KnowledgeGraphDiagram"
@@ -154,13 +149,12 @@ def test_single_diagram_buml_round_trip(ttl_path: Path):
     assert {e["id"] for e in body["model"]["edges"]} == {e["id"] for e in model["edges"]}
 
 
-def test_export_buml_rejects_unknown_diagram_type():
+def test_export_buml_rejects_unknown_diagram_type(client):
     """The terminal else-branch must still reject genuinely unknown types."""
-    with TestClient(app) as client:
-        resp = client.post(
-            "/besser_api/export-buml",
-            json={"title": "x", "model": {"type": "NotADiagram"}, "generator": "buml"},
-        )
+    resp = client.post(
+        "/besser_api/export-buml",
+        json={"title": "x", "model": {"type": "NotADiagram"}, "generator": "buml"},
+    )
     assert resp.status_code == 400
     assert "NotADiagram" in resp.json()["detail"]
 

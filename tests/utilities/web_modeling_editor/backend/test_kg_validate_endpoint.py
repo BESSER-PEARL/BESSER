@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-from starlette.testclient import TestClient
 
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
-from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.converters import kg_to_json
 
 
@@ -57,11 +54,6 @@ DISJOINT_TTL = """
 """.strip()
 
 
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
-
-
 def _payload(ttl: str, tmp_path: Path) -> dict:
     path = tmp_path / "graph.ttl"
     path.write_text(ttl, encoding="utf-8")
@@ -71,7 +63,7 @@ def _payload(ttl: str, tmp_path: Path) -> dict:
     return {"title": "Graph", "model": model}
 
 
-def _validate(client: TestClient, ttl: str, tmp_path: Path) -> dict:
+def _validate(client, ttl: str, tmp_path: Path) -> dict:
     response = client.post("/besser_api/validate-diagram", json=_payload(ttl, tmp_path))
     assert response.status_code == 200, response.text
     return response.json()

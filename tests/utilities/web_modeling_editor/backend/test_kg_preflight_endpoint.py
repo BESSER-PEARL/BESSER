@@ -8,23 +8,12 @@ parameters}``) still work for backward compat.
 
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
-
-from besser.utilities.web_modeling_editor.backend.backend import app
-
 
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 OWL = "http://www.w3.org/2002/07/owl#"
 EX = "http://example.org/"
-
-
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    with TestClient(app) as c:
-        yield c
 
 
 def _kg_payload(nodes, edges, title="PreflightTest") -> dict:
@@ -42,7 +31,7 @@ def _kg_payload(nodes, edges, title="PreflightTest") -> dict:
 # -- analyze endpoint -------------------------------------------------------
 
 
-def test_preflight_returns_no_domain_issue(client: TestClient):
+def test_preflight_returns_no_domain_issue(client):
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
         {"id": "likes", "nodeType": "property", "label": "likes", "iri": EX + "likes"},
@@ -71,7 +60,7 @@ def test_preflight_returns_no_domain_issue(client: TestClient):
     assert isinstance(body["kgSignature"], str) and body["kgSignature"]
 
 
-def test_preflight_clean_kg_returns_no_issues(client: TestClient):
+def test_preflight_clean_kg_returns_no_issues(client):
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
         {"id": "name", "nodeType": "property", "label": "name", "iri": EX + "name"},
@@ -90,7 +79,7 @@ def test_preflight_clean_kg_returns_no_issues(client: TestClient):
     assert body["issueCount"] == 0
 
 
-def test_preflight_rejects_non_kg_payload(client: TestClient):
+def test_preflight_rejects_non_kg_payload(client):
     resp = client.post(
         "/besser_api/analyze-kg-for-buml-conversion",
         json={"title": "wrong", "model": {"type": "ClassDiagram"}},
@@ -101,7 +90,7 @@ def test_preflight_rejects_non_kg_payload(client: TestClient):
 # -- /kg-to-class-diagram backward compat ----------------------------------
 
 
-def test_class_diagram_without_resolutions_still_works(client: TestClient):
+def test_class_diagram_without_resolutions_still_works(client):
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
         {"id": "name", "nodeType": "property", "label": "name", "iri": EX + "name"},
@@ -119,7 +108,7 @@ def test_class_diagram_without_resolutions_still_works(client: TestClient):
 # -- v2 payload: accept / skip decisions -----------------------------------
 
 
-def test_class_diagram_with_accept_decision(client: TestClient):
+def test_class_diagram_with_accept_decision(client):
     """The recommended action (attach_to_thing) attaches the property to a synthetic Thing."""
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
@@ -155,7 +144,7 @@ def test_class_diagram_with_accept_decision(client: TestClient):
     assert "Thing" in class_names
 
 
-def test_class_diagram_with_skip_decision(client: TestClient):
+def test_class_diagram_with_skip_decision(client):
     """Skip drops the property entirely."""
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
@@ -192,7 +181,7 @@ def test_class_diagram_with_skip_decision(client: TestClient):
 # -- Stale signature -------------------------------------------------------
 
 
-def test_stale_kg_signature_returns_400(client: TestClient):
+def test_stale_kg_signature_returns_400(client):
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
         {"id": "name", "nodeType": "property", "label": "name", "iri": EX + "name"},
@@ -210,7 +199,7 @@ def test_stale_kg_signature_returns_400(client: TestClient):
 # -- v1 backward compat -----------------------------------------------------
 
 
-def test_v1_resolution_payload_still_works(client: TestClient):
+def test_v1_resolution_payload_still_works(client):
     """v1 payload {issueId, choice, parameters} routes through the legacy applier."""
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
@@ -232,7 +221,7 @@ def test_v1_resolution_payload_still_works(client: TestClient):
     assert resp.status_code == 200
 
 
-def test_unknown_resolution_choice_returns_400(client: TestClient):
+def test_unknown_resolution_choice_returns_400(client):
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
     ]
@@ -244,7 +233,7 @@ def test_unknown_resolution_choice_returns_400(client: TestClient):
     assert resp.status_code == 400
 
 
-def test_unknown_decision_string_returns_400(client: TestClient):
+def test_unknown_decision_string_returns_400(client):
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
         {"id": "likes", "nodeType": "property", "label": "likes", "iri": EX + "likes"},

@@ -193,13 +193,27 @@ def run_alloy_sat_validation(
     warnings = all_warnings or []
     cm = tempfile.TemporaryDirectory() if temp_dir is None else nullcontext(temp_dir)
     with cm as td:
-        solver = AlloySolver(buml_model, scope=scope, output_dir=td)
-        parsed, error, exec_output_dir = solver.run_sat_validation(
-            structural_warnings=warnings, output_type=output_type, temp_dir=td,
-        )
-        if error:
-            return None, {**error, "warnings": warnings}, exec_output_dir
-        return parsed, None, exec_output_dir
+        try:
+            solver = AlloySolver(buml_model, scope=scope, output_dir=td)
+            parsed, error, exec_output_dir = solver.run_sat_validation(
+                structural_warnings=warnings, output_type=output_type, temp_dir=td,
+            )
+            if error:
+                return None, {**error, "warnings": warnings}, exec_output_dir
+            return parsed, None, exec_output_dir
+        except ValueError as exc:
+            # OCL-to-Alloy translation errors (e.g. self.allInstances()) surface
+            # during AlloySolver construction / generation. Surface them as a
+            # regular error response so the SSE streams can report them instead
+            # of letting the exception escape the async generator.
+            msg = str(exc)
+            return None, {
+                "sat": None,
+                "isValid": False,
+                "message": msg,
+                "errors": [msg] if msg else [],
+                "warnings": warnings,
+            }, str(td)
 
 async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
     """
@@ -300,27 +314,6 @@ async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGener
     })
 
 
-def _run_alloy_do_scope(
-    buml_model: DomainModel,
-    all_warnings: list[str],
-    scope: int,
-    temp_dir: str,
-) -> tuple[tuple[Any, ...] | None, dict[str, Any] | None, str]:
-    """
-    Executes Alloy Analyzer to check consistency of a BUML model for a specific scope (bound). 
-
-    A called-owned temporary directory to run Alloy Analyzer and place output
-    must be provided.
-
-    Wraps run_alloy_sat_validation in XML mode so the caller keeps access to
-    the XML instances after return.
-    """
-    return run_alloy_sat_validation(
-        buml_model, all_warnings, scope=scope,
-        output_type="xml", temp_dir=os.path.join(temp_dir, f"scope_{scope}"),
-    )
-
-
 async def generate_alloy_do_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
     """
     Generates object diagram that complies with constraints of a BUML class diagram,
@@ -377,7 +370,10 @@ async def generate_alloy_do_stream(input_data: DiagramInput) -> AsyncGenerator[s
                 parsed, error, exec_output_dir = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(
                         None,
-                        lambda s=scope: _run_alloy_do_scope(buml_model, all_warnings, s, temp_dir)
+                        lambda s=scope: run_alloy_sat_validation(
+                            buml_model, all_warnings, scope=s, output_type="xml",
+                            temp_dir=os.path.join(temp_dir, f"scope_{s}"),
+                        )
                     ),
                     timeout=TIMEOUT_SECONDS,
                 )

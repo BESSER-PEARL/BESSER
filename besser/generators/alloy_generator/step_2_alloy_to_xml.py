@@ -60,12 +60,12 @@ def ensure_run_command(als_path: Path) -> Path:
         print("  The .als file already contains a 'run' or 'check' command.")
         return als_path
 
-    # Agregar run por defecto
-    print("  El .als no tiene comando 'run'. Agregando: run {} for 5")
+    # Add a default run command
+    print("  .als file does not contain a 'run' command. Adding: run {} for 5")
     patched_content = content + "\nrun {} for 5\n"
     patched_path = als_path.parent / (als_path.stem + "_patched.als")
     patched_path.write_text(patched_content, encoding="utf-8")
-    print(f"  Archivo parcheado: {patched_path}")
+    print(f"  Patched file: {patched_path}")
     return patched_path
 
 
@@ -74,7 +74,7 @@ def run_alloy(als_file: str, alloy_jar: str | None = None) -> bool:
     current_working_dir = Path.cwd()
 
     if not als_path.exists():
-        print(f"✗ No se encontró el archivo .als: {als_file}")
+        print(f"✗ .als file not found: {als_file}")
         return False
 
     jar_path = find_alloy_jar(alloy_jar)
@@ -87,48 +87,48 @@ def run_alloy(als_file: str, alloy_jar: str | None = None) -> bool:
 
     als_to_run = ensure_run_command(als_path, output_dir)
 
-    print(f"Ejecutando Alloy sobre: {als_to_run}")
+    print(f"Running Alloy on: {als_to_run}")
     cmd = ["java", "-jar", str(jar_path), "exec", str(als_to_run)]
     result = _run_cmd(cmd, cwd=output_dir)
 
-    # --- DETECCIÓN DE UNSAT ---
+    # --- UNSAT check ---
     combined_output = (result.stdout or "") + (result.stderr or "")
     unsat_keywords = [
         "No instance found",
         "unsatisfiable",
-        "No counterexample found",   # para comandos 'check'
+        "No counterexample found",   # for 'check' commands
         "Predicate may be inconsistent",
     ]
     if any(kw.lower() in combined_output.lower() for kw in unsat_keywords):
-        print("\n⚠ UNSAT: Alloy no encontró instancias satisfacibles.")
-        print(f"  Mensaje de Alloy: {combined_output.strip()}")
-        # Crear un archivo de reporte en lugar del XML
+        print("\n⚠ UNSAT: Alloy did not find any satisfiable instances.")
+        print(f"  Alloy output: {combined_output.strip()}")
+        # Create a report file instead of XML
         unsat_report = output_dir / "unsat_report.txt"
         unsat_report.write_text(
-            f"RESULTADO: UNSAT\n"
-            f"Archivo: {als_to_run}\n"
-            f"Salida de Alloy:\n{combined_output.strip()}\n",
+            f"RESULT: UNSAT\n"
+            f"File: {als_to_run}\n"
+            f"Alloy output:\n{combined_output.strip()}\n",
             encoding="utf-8"
         )
-        print(f"  Reporte guardado en: {unsat_report}")
+        print(f"  Report saved to: {unsat_report}")
         return False
 
-    # Renombrar si fue generado con otro nombre
+    # Rename the generated XML if it has a different name
     generated_xml = list(output_dir.glob("*.xml"))
     if generated_xml and not xml_output.exists():
         generated_xml[0].rename(xml_output)
 
     if not xml_output.exists():
-        print("\n✗ No se generó el archivo XML (error desconocido)")
-        print(f"  Salida de Alloy: {combined_output.strip()}")
+        print("\n✗ XML file not generated (unknown error)")
+        print(f"  Alloy output: {combined_output.strip()}")
         return False
 
-    print(f"\n✓ Instancia generada: {xml_output}")
+    print(f"\n✓ Instance generated: {xml_output}")
     return True
 
 
 def _run_cmd(cmd: list, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    print(f"  Comando: {' '.join(str(c) for c in cmd)}")
+    print(f"  Command: {' '.join(str(c) for c in cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=cwd, check=False)
     if result.stdout.strip():
         print(result.stdout.strip())
@@ -140,18 +140,18 @@ def _run_cmd(cmd: list, cwd: Path | None = None) -> subprocess.CompletedProcess:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Paso 2: ejecuta Alloy y genera instance_0.xml",
+        description="Step 2: runs Alloy and generates instance_0.xml",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Ejemplos:
+Examples:
   python alloy_to_xml.py output/team3.als
-  python alloy_to_xml.py output/team3.als --alloy-jar /ruta/a/org.alloytools.alloy.dist.jar
+  python alloy_to_xml.py output/team3.als --alloy-jar /path/to/org.alloytools.alloy.dist.jar
         """
     )
-    parser.add_argument("als_file", help="Archivo .als a ejecutar")
+    parser.add_argument("als_file", help=".als file to analyze")
     parser.add_argument(
         "--alloy-jar",
-        help=f"Ruta al JAR de Alloy (por defecto busca {DEFAULT_JAR_NAME} junto a este script)"
+        help=f"Path to Alloy JAR file (by default, it looks for {DEFAULT_JAR_NAME} where this script is located)"
     )
 
     args = parser.parse_args()

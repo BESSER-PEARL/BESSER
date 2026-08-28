@@ -72,25 +72,7 @@ def _resolve_first_instance_xml(exec_output_dir: str, solutions: list[dict[str, 
 
     return None
 
-
-def _first_instance_source(solutions: list[dict[str, Any]] | None) -> str | dict | None:
-    """
-    Returns the first of a list of instances, resulting from an Alloy satisfiability check. 
-    Result is retrieved as XML file path or inlined JSON dict, depending on how input is provided.
-    None is returned if no such instance exists.
-    """
-    for solution in solutions or []:
-        for instance in solution.get("instances", []) or []:
-            if isinstance(instance, str):
-                return instance
-            if isinstance(instance, dict):
-                for key in ("xml", "path", "file", "instance", "filename"):
-                    value = instance.get(key)
-                    if isinstance(value, str):
-                        return value
-                return instance
-    return None
-
+#----------------------------------------------------------------------
 
 def _alloy_xml_to_frontend_object_model(
     xml_instance_path: str, reference_class_model: dict[str, Any]

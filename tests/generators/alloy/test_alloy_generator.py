@@ -44,7 +44,7 @@ from besser.generators.alloy_generator.step_3_alloy_to_buml import (
 )
 from besser.generators.alloy_generator.translate_ocl_alloy import (
     EnumReferenceError,
-    EstadoTraductor,
+    TranslatorState,
     encode_date,
     generate_dates_and_order,
     is_date,
@@ -575,7 +575,7 @@ def test_ocl_to_alloy_validates_enum_references():
     data = {"Person": ["name:str", "category:TCategory"]}
     inherits_from = {"Person": "_"}
     enums = {"TCategory": {"JUNIOR"}}
-    estado = EstadoTraductor()
+    estado = TranslatorState()
 
     with pytest.raises(EnumReferenceError) as excinfo:
         ocl_to_alloy(
@@ -592,7 +592,7 @@ def test_ocl_to_alloy_skips_validation_when_enums_is_none():
     and does not raise."""
     data = {"Person": ["name:str", "category:TCategory"]}
     inherits_from = {"Person": "_"}
-    estado = EstadoTraductor()
+    estado = TranslatorState()
 
     result = ocl_to_alloy(
         inherits_from, data,
@@ -607,7 +607,7 @@ def test_ocl_to_alloy_translates_set_union():
     bogus ``.union`` method fallback."""
     data = {"Person": ["spouse:Person", "parents:Person"]}
     inherits_from = {"Person": "_"}
-    estado = EstadoTraductor()
+    estado = TranslatorState()
 
     result = ocl_to_alloy(
         inherits_from, data,
@@ -623,7 +623,7 @@ def test_ocl_to_alloy_translates_set_intersection():
     (``&``), not the bogus ``.intersection`` method fallback."""
     data = {"Person": ["spouse:Person", "parents:Person"]}
     inherits_from = {"Person": "_"}
-    estado = EstadoTraductor()
+    estado = TranslatorState()
 
     result = ocl_to_alloy(
         inherits_from, data,
@@ -1329,14 +1329,14 @@ class TestBuildConsistencyRule:
     def test_one_to_one_both_navigable_no_cardinality_facts(self):
         rule = build_consistency_rule(
             "Team", "players", [1, 1], "Player", "team", [1, 1],
-            flecha_a_b=True, flecha_b_a=True,
+            arrow_a_b=True, arrow_b_a=True,
         )
         assert "#(" not in rule
 
     def test_min_and_max_bounds_emitted_for_3_4(self):
         rule = build_consistency_rule(
             "Team", "players", [3, 4], "Player", "team", [1, 1],
-            flecha_a_b=True, flecha_b_a=True,
+            arrow_a_b=True, arrow_b_a=True,
         )
         assert "#(a.Team_players)>=3" in rule
         assert "#(a.Team_players)<=4" in rule
@@ -1345,7 +1345,7 @@ class TestBuildConsistencyRule:
         # UNLIMITED_MAX_MULTIPLICITY is 9999; anything below it is a real bound.
         rule = build_consistency_rule(
             "Team", "players", [3, 9999], "Player", "team", [1, 1],
-            flecha_a_b=True, flecha_b_a=True,
+            arrow_a_b=True, arrow_b_a=True,
         )
         assert "#(a.Team_players)>=3" in rule
         assert "<=" not in rule
@@ -1356,7 +1356,7 @@ class TestBuildConsistencyRule:
         field, instead of the missing ``Team_players`` navigation."""
         rule = build_consistency_rule(
             "Team", "players", [3, 4], "Player", "team", [1, 1],
-            flecha_a_b=False, flecha_b_a=True,
+            arrow_a_b=False, arrow_b_a=True,
         )
         assert "Team_players" not in rule
         assert "#(Player_team.a)>=3" in rule
@@ -1368,7 +1368,7 @@ class TestBuildConsistencyRule:
         least 3 A's, expressed through the reverse of the ``A_bs`` field."""
         rule = build_consistency_rule(
             "A", "bs", [0, 9999], "B", "as", [3, 9999],
-            flecha_a_b=True, flecha_b_a=False,
+            arrow_a_b=True, arrow_b_a=False,
         )
         assert "#(A_bs.b)>=3" in rule
         assert "b.B_as" not in rule

@@ -1,17 +1,18 @@
-"""translate_ocl_alloy.py
-========================
-Traduce restricciones OCL (sobre un modelo BESSER/BUML) a facts de Alloy.
+"""
+translate_ocl_alloy.py
 
-Punto de entrada principal:
+Translates OCL constraints (on a BESSER/BUML model) to Alloy facts.
+
+Main entry point:
     ocl_to_alloy(inherits_from, data, ocl, context_name, estado, enums) -> str
 
-Flujo interno:
+Internal flow:
     OCL (str)
-      └─ parse_ocl_expression()   →  árbol ANTLR
-      └─ tokenize_tree()          →  lista de Token  (tipo, valor)
-      └─ write_prefix_ocl()       →  tokens con prefijos de clase resueltos
-      └─ parse_predicate()        →  AST propio
-      └─ ast_to_alloy()           →  string Alloy (fact)
+      └─ parse_ocl_expression()   →  ANTLR tree
+      └─ tokenize_tree()          →  list of tokens (type, value)
+      └─ write_prefix_ocl()       →  tokens with resolved class prefixes
+      └─ parse_predicate()        →  own AST
+      └─ ast_to_alloy()           →  string (Alloy fact)
 """
 
 # ── Standard library ─────────────────────────────────────────────────────────
@@ -38,8 +39,9 @@ Token = tuple[str, str]
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class EstadoTraductor:
-    """Accumulates state during the translation of OCL constraints for one model.
+class TranslatorState:
+    """
+    Accumulates state during the translation of OCL constraints for one model.
 
     A single instance is shared across every constraint of a model (see
     ``AlloyGenerator.generate``), so anything that is model-wide rather than
@@ -48,7 +50,7 @@ class EstadoTraductor:
 
     Attributes:
         cont_select:     Counter for generating unique select/reject function names.
-        fechas:          ``dMMDDYYYY`` sig ids already emitted, so identical
+        dates:          ``dMMDDYYYY`` sig ids already emitted, so identical
                          date literals are only declared once across the model.
         buffer_pred_aux: Auxiliary predicates (select, reject) accumulated so far.
         is_set_origin:   True when the current collection is a flat set (not a relation).
@@ -59,14 +61,14 @@ class EstadoTraductor:
     """
 
     cont_select: int = 0
-    fechas: list = field(default_factory=list)
+    dates: list = field(default_factory=list)
     buffer_pred_aux: list = field(default_factory=list)
     is_set_origin: bool = True
     enums: dict[str, set[str]] = field(default_factory=dict)
     data: dict = field(default_factory=dict)
     _enum_token_index: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
-    def iniciar_constraint(self) -> None:
+    def init_constraint(self) -> None:
         """Reset mutable state before processing a new constraint.
 
         Deliberately does NOT touch ``enums``/the enum index: those are
@@ -75,16 +77,21 @@ class EstadoTraductor:
         self.is_set_origin = True
         self.buffer_pred_aux.clear()
 
-    def escribir_pred_aux(self, texto: str) -> None:
-        """Append *texto* to the auxiliary-predicate buffer."""
-        self.buffer_pred_aux.append(texto)
+    def write_aux_pred(self, text: str) -> None:
+        """
+        Appends *text* to the auxiliary-predicate buffer.
+        """
+        self.buffer_pred_aux.append(text)
 
-    def leer_pred_aux(self) -> str:
-        """Return all accumulated auxiliary predicates joined by newlines."""
+    def read_aux_pred(self) -> str:
+        """
+        Returns all accumulated auxiliary predicates joined by newlines.
+        """
         return "\n".join(self.buffer_pred_aux)
 
     def set_enums(self, enums: dict[str, set[str]] | None) -> None:
-        """Register the model's enumeration catalog and (re)build its index.
+        """
+        Registers the model's enumeration catalog and (re)builds its index.
 
         Building the ``ENUM_<Enum>_<Literal> -> <Enum>`` lookup is O(total
         literals) and only needs to happen once per model: every constraint
@@ -104,12 +111,15 @@ class EstadoTraductor:
         }
 
     def resolve_enum_token(self, token_value: str) -> str | None:
-        """Return the owning enum name for a normalized ``ENUM_...`` token, or ``None``."""
+        """
+        Returns the owning enum name for a normalized ``ENUM_...`` token, or ``None``.
+        """
         return self._enum_token_index.get(token_value)
 
 
 class EnumReferenceError(ValueError):
-    """Raised when an OCL constraint references an unknown enumeration type
+    """
+    Raised when an OCL constraint references an unknown enumeration type
     or a literal that is not declared in the target enumeration.
 
     This prevents the Alloy generator from emitting facts that reference
@@ -209,7 +219,9 @@ class IteratorOp:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def parse_ocl_expression(ocl_input: str):
-    """Invoke ANTLR and return ``(tree, parser)``."""
+    """
+    Invokes ANTLR and return ``(tree, parser)``.
+    """
     input_stream = InputStream(ocl_input)
     lexer = BOCLLexer(input_stream)
     token_stream = CommonTokenStream(lexer)
@@ -219,7 +231,8 @@ def parse_ocl_expression(ocl_input: str):
 
 
 def tokenize_tree(tree, parser) -> list[Token]:
-    """Walk the ANTLR tree and produce a list of ``Token`` (type, value).
+    """
+    Walks the ANTLR tree and produces a list of ``Token`` (type, value).
 
     At the end normalises the pattern ``Class::EnumVal`` into a single
     ``('enum', 'ENUM_Class_Val')`` token.
@@ -237,7 +250,9 @@ def tokenize_tree(tree, parser) -> list[Token]:
     _PUNCTUATION = {"(", ")", "{", "}", ",", ":"}
 
     def _classify_terminal(txt: str) -> None:
-        """Classify a single ANTLR terminal and append the corresponding token."""
+        """
+        Classifies a single ANTLR terminal and appends the corresponding token.
+        """
         if txt == "::":
             tokens.append(("::", "::"))
             return
@@ -331,7 +346,9 @@ def tokenize_tree(tree, parser) -> list[Token]:
 
 
 def _normalize_enum_pattern(tokens: list[Token]) -> list[Token]:
-    """Collapse ``('id','Class') ('::', '::') ('enum','Val')`` into ``('enum', 'ENUM_Class_Val')``."""
+    """
+    Collapses ``('id','Class') ('::', '::') ('enum','Val')`` into ``('enum', 'ENUM_Class_Val')``.
+    """
     result: list[Token] = []
     i = 0
     while i < len(tokens):
@@ -354,7 +371,8 @@ def _describe_unknown_enum_token(
     enums: dict[str, set[str]],
     context_name: str,
 ) -> EnumReferenceError:
-    """Build a precise :class:`EnumReferenceError` for an unrecognized enum token.
+    """
+    Builds a precise :class:`EnumReferenceError` for an unrecognized enum token.
 
     Only called on the error path (the token already failed the O(1) index
     lookup), so the linear scan over ``enums`` here costs nothing in the
@@ -381,10 +399,11 @@ def _describe_unknown_enum_token(
 
 def validate_enum_references(
     toks: list[Token],
-    estado: "EstadoTraductor",
+    state: "TranslatorState",
     context_name: str,
 ) -> None:
-    """Validate OCL enumeration references against the model's enumerations.
+    """
+    Validates OCL enumeration references against the model's enumerations.
 
     OCL references of the form ``EnumType::Literal`` are normalized to
     ``ENUM_<EnumType>_<Literal>`` tokens.  This function checks that the
@@ -394,13 +413,13 @@ def validate_enum_references(
     signatures (e.g. after a literal was renamed or removed), which Alloy
     would otherwise reject with a cryptic "name cannot be found" error.
 
-    The enum catalog lives on ``estado`` (see ``EstadoTraductor.set_enums``),
+    The enum catalog lives on ``state`` (see ``TranslatorState.set_enums``),
     so each token is checked with a single dict lookup instead of scanning
     every enumeration for a prefix match.
 
     Args:
         toks:         Token list produced by :func:`tokenize_tree`.
-        estado:       Shared translator state carrying the enum catalog.
+        state:       Shared translator state carrying the enum catalog.
                       An empty/unset catalog disables the check (backward
                       compatibility with callers that don't pass ``enums``).
         context_name: Name of the OCL constraint context class, used only
@@ -409,56 +428,57 @@ def validate_enum_references(
     Raises:
         EnumReferenceError: If an enum type or literal is unknown.
     """
-    if not estado.enums:
+    if not state.enums:
         return
 
     for t, v in toks:
         if t != "enum":
             continue
-        if estado.resolve_enum_token(v) is None:
-            raise _describe_unknown_enum_token(v, estado.enums, context_name)
+        if state.resolve_enum_token(v) is None:
+            raise _describe_unknown_enum_token(v, state.enums, context_name)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. CLASS PREFIX RESOLUTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _buscar_campo(clase: str, campo: str, data: dict) -> str:
-    """Return the type of *campo* in *clase*, or ``''`` if not found."""
-    for entry in data.get(clase, []):
-        nombre, tipo = entry.split(":", 1)
-        if nombre == campo:
-            return tipo
+def _search_field(subject_class: str, field: str, data: dict) -> str:
+    """Returns the type of *field* in *subject_class*, or ``''`` if not found."""
+    for entry in data.get(subject_class, []):
+        field_name, field_type = entry.split(":", 1)
+        if field_name == field:
+            return field_type
     return ""
 
 
-def _iter_parent_chain(clase: str, inherits_from: dict):
-    """Yield *clase* and then its first-parent chain until the root marker."""
-    actual = clase
-    while actual:
-        yield actual
-        padres = inherits_from.get(actual, "_")
-        if padres in ("_", None, []):
+def _iter_parent_chain(subject_class: str, inherits_from: dict):
+    """Yields *subject_class* and then its first-parent chain until the root marker."""
+    curr_class = subject_class
+    while curr_class:
+        yield curr_class
+        parents = inherits_from.get(curr_class, "_")
+        if parents in ("_", None, []):
             break
-        actual = padres[0]
+        curr_class = parents[0]
 
 
-def _resolver_campo_con_herencia(clase: str, campo: str, data: dict, inherits_from: dict):
-    """Return ``(owner_class, field_type)`` for *campo* searching *clase* and parents."""
-    for candidata in _iter_parent_chain(clase, inherits_from):
-        tipo_campo = _buscar_campo(candidata, campo, data)
-        if tipo_campo:
-            return candidata, tipo_campo
+def _resolve_field_with_inheritance(subject_class: str, subject_field: str, data: dict, inherits_from: dict):
+    """Returns ``(owner_class, field_type)`` for *subject_field* searching *subject_class* and parents."""
+    for candidate in _iter_parent_chain(subject_class, inherits_from):
+        field_type = _search_field(candidate, subject_field, data)
+        if field_type:
+            return candidate, field_type
     return "", ""
 
 
-def _registrar_vars_iterador(
+def _record_vars_iterator(
     toks: list[Token],
     i_iter: int,
-    tipo_actual: str,
+    curr_type: str,
     var_types: dict[str, str],
 ) -> dict[str, str]:
-    """Register iterator variables (forAll/exists/select/reject/collect).
+    """
+    Records iterator variables (forAll/exists/select/reject/collect).
 
     Supports both untyped and typed declarations, e.g.:
         forAll(e | ...)
@@ -491,7 +511,7 @@ def _registrar_vars_iterador(
         j += 1
 
     for var in pending_vars:
-        scope[var] = tipo_actual
+        scope[var] = curr_type
 
     var_types.update(scope)
     return scope
@@ -503,10 +523,11 @@ def write_prefix_ocl(
     inherits_from: dict,
     context_name: str,
 ) -> list[Token]:
-    """Resolve class prefixes for each attribute/relation identifier.
+    """
+    Resolves class prefixes for each attribute/relation identifier.
 
-    For example, if ``name`` is an attribute of ``Persona``, the token
-    ``'name'`` becomes ``'Persona_name'``.  Navigates the inheritance
+    For example, if ``name`` is an attribute of ``Person``, the token
+    ``'name'`` becomes ``'Person_name'``.  Navigates the inheritance
     hierarchy when the field is not found in the current class.
 
     Args:
@@ -518,21 +539,22 @@ def write_prefix_ocl(
     Returns:
         The mutated token list with class-prefixed identifiers.
     """
-    tipo = context_name
-    paso = False
+    subject_type = context_name
+    is_traversed = False
     paren_depth = 0
     var_types: dict[str, str] = {}
     scope_stack: list[dict[str, str]] = [{}]
     iterator_scope_depths: list[int] = []
 
-    def _lookup_var_type(nombre: str) -> str | None:
+    def _lookup_var_type(name: str) -> str | None:
         for scope in reversed(scope_stack):
-            if nombre in scope:
-                return scope[nombre]
+            if name in scope:
+                return scope[name]
         return None
 
     def _collapse_possible_allInstances(toks: list[Token]) -> list[Token]:
-        """Collapse ``Class.allInstances()`` into a single token.
+        """
+        Collapses ``Class.allInstances()`` into a single token.
         This is a special case of navigation that is not a field, so it
         does not get prefixed with the class name.  Instead, it becomes
         a single token of type ``allInstances`` with value ``allInstances``.
@@ -569,7 +591,7 @@ def write_prefix_ocl(
             continue
 
         if t == "dot":
-            paso = True
+            is_traversed = True
             continue
 
         if t == "null" and v.lower() == "null":
@@ -577,47 +599,47 @@ def write_prefix_ocl(
             continue
 
         if t == "self":
-            tipo = context_name
-            paso = False
+            subject_type = context_name
+            is_traversed = False
             continue
 
         if t == "class":
-            tipo = v
-            paso = False
+            subject_type = v
+            is_traversed = False
             continue
 
         if t == "iterator_op":
-            iter_scope = _registrar_vars_iterador(toks, i, tipo, var_types)
+            iter_scope = _record_vars_iterator(toks, i, subject_type, var_types)
             scope_stack.append(iter_scope)
             iterator_scope_depths.append(paren_depth + 1)
-            paso = False
+            is_traversed = False
             continue
 
         if t == "call" and v == "closure":
-            paso = True
+            is_traversed = True
             continue
 
         if t in {"call", "if", "then", "else", "endif"}:
-            paso = False
+            is_traversed = False
             continue
 
-        if t == "id" and not paso:
+        if t == "id" and not is_traversed:
             siguiente = toks[i + 1][0] if i + 1 < len(toks) else None
             tipo_var = _lookup_var_type(v)
             if siguiente == "dot" and tipo_var:
-                tipo = tipo_var
+                subject_type = tipo_var
             continue
 
-        if t == "id" and paso:
-            paso = False
-            owner, tipo_campo = _resolver_campo_con_herencia(tipo, v, data, inherits_from)
+        if t == "id" and is_traversed:
+            is_traversed = False
+            owner, tipo_campo = _resolve_field_with_inheritance(subject_type, v, data, inherits_from)
             if not owner:
                 continue
 
             toks[i] = (t, f"{owner}_{v}")
             # If the field type is a known class, continue navigation from that class.
             # Otherwise remain in the class where the field is declared.
-            tipo = tipo_campo if tipo_campo in data else owner
+            subject_type = tipo_campo if tipo_campo in data else owner
 
     return toks
 
@@ -627,7 +649,8 @@ def write_prefix_ocl(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def parse_predicate(tokens: list[Token]):
-    """Recursive-descent parser over the token list from :func:`tokenize_tree`.
+    """
+    Recursive-descent parser over the token list from :func:`tokenize_tree`.
 
     Returns the root node of the own AST.
     """
@@ -650,14 +673,14 @@ def parse_predicate(tokens: list[Token]):
         return tok
 
     def _collect_until(stop_type: str) -> list[Token]:
-        """Consume tokens until one of *stop_type* is found (exclusive)."""
+        """Consumes tokens until one of *stop_type* is found (exclusive)."""
         buf: list[Token] = []
         while peek() and peek()[0] != stop_type:
             buf.append(consume())
         return buf
 
     def _collect_args() -> list:
-        """Consume arguments of a call between already-opened parentheses."""
+        """Consumes arguments of a call between already-opened parentheses."""
         depth = 1
         current: list[Token] = []
         args = []
@@ -868,17 +891,20 @@ def parse_predicate(tokens: list[Token]):
 # 6. DATE HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-_TIPOS_FECHA = {"date", "datetime", "time", "timedelta"}
+_DATE_TYPES = {"date", "datetime", "time", "timedelta"}
 
-_PATRON_FECHA = re.compile(
+_DATE_PATTERN = re.compile(
     r"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$"
     r"|^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:,\s+\d{4})?$",
     re.IGNORECASE,
 )
 
+_YEAR_START = 1970
+
+_YEAR_END = 2038
 
 def parse_ocl_date(s: str) -> date:
-    """Convert ``'dMMDDYYYY'`` -> ``date``. E.g. ``'d10131977'`` -> ``date(1977, 10, 13)``."""
+    """Converts ``'dMMDDYYYY'`` -> ``date``. E.g. ``'d10131977'`` -> ``date(1977, 10, 13)``."""
     mm = int(s[1:3])
     dd = int(s[3:5])
     yyyy = int(s[5:9])
@@ -886,29 +912,27 @@ def parse_ocl_date(s: str) -> date:
 
 
 def encode_date(d: date) -> str:
-    """Convert ``date`` -> ``'dMMDDYYYY'``."""
+    """Converts ``date`` -> ``'dMMDDYYYY'``."""
     return 'd' + d.strftime('%m%d%Y')
 
 
 def random_date(start: date, end: date) -> date:
-    """Generate a random date between *start* and *end* (inclusive)."""
+    """Generates a random date between *start* and *end* (inclusive)."""
     delta = end - start
     random_days = random.randint(0, delta.days)
     return start + timedelta(days=random_days)
-YEAR_START = 1970
-YEAR_END = 2038
 
 
 def generate_dates_and_order(
     ocl_dates: list[str],
     scope: int,
-    start: date = date(YEAR_START, 1, 1),
-    end: date = date(YEAR_END, 1, 1),
+    start: date = date(_YEAR_START, 1, 1),
+    end: date = date(_YEAR_END, 1, 1),
     max_attempts: int = 10000,
 ) -> str:
     """
-    Fill *ocl_dates* up to *scope* with new unique dates, emit a
-    ``one sig ... extends date {}`` line for each new date, then append
+    Fills *ocl_dates* up to *scope* with new unique dates, emits a
+    ``one sig ... extends date {}`` line for each new date, then appends
     a fact fixing the total order of all dates from smallest to largest.
     """
     dates_set = set(ocl_dates)
@@ -950,47 +974,49 @@ def generate_dates_and_order(
 
 
 def is_date(s: str) -> str | None:
-    """Detect whether *s* is a date literal and return its Alloy id (``dMMDDYYYY``) or ``None``.
+    """
+    Detects whether *s* is a date literal and returns its Alloy id (``dMMDDYYYY``) or ``None``.
 
     The whole content (after stripping single/double quotes) must be a date, so
     arbitrary strings that merely contain a date-like substring (e.g.
-    ``'fecha 2024-01-01 x'``) are left untouched.
+    ``'date 2024-01-01 x'``) are left untouched.
     """
-    contenido = s.strip().strip("'").strip('"').strip()
-    if not _PATRON_FECHA.match(contenido):
+    contents = s.strip().strip("'").strip('"').strip()
+    if not _DATE_PATTERN.match(contents):
         return None
     try:
-        fecha = dateutil_parser.parse(contenido)
-        return encode_date(fecha)
+        curr_date = dateutil_parser.parse(contents)
+        return encode_date(curr_date)
     except (ValueError, OverflowError):
         return None
 
 
-def parse_date(s: str, estado: EstadoTraductor) -> str:
-    """Parse *s* as a date and emit its Alloy ``one sig`` (like strings).
+def parse_date(s: str, state: TranslatorState) -> str:
+    """
+    Parses *s* as a date and emits its Alloy ``one sig`` (like strings).
 
     Emits ``one sig <id> extends date{}`` per unique date value and records
-    the ``dMMDDYYYY`` sig id on *estado* so identical literals are only
+    the ``dMMDDYYYY`` sig id on *state* so identical literals are only
     declared once across the whole model.  Returns the generated Alloy code.
 
     Raises:
         ValueError: If *s* cannot be interpreted as a date.
     """
-    contenido = s.strip().strip("'").strip('"').strip()
+    contents = s.strip().strip("'").strip('"').strip()
     try:
-        fecha = dateutil_parser.parse(contenido)
+        curr_date = dateutil_parser.parse(contents)
     except (ValueError, OverflowError):
-        raise ValueError(f"Fecha inválida en la constraint OCL: {s!r}") from None
-    sig_id = encode_date(fecha)
+        raise ValueError(f"Invalid date in OCL constraint: {s!r}") from None
+    sig_id = encode_date(curr_date)
     res = ""
-    if sig_id not in estado.fechas:
+    if sig_id not in state.dates:
         res += f"one sig {sig_id} extends date{{}}\n"
-        estado.fechas.append(sig_id)
+        state.dates.append(sig_id)
     return res
 
 
-def _es_atributo_fecha(cadena: str, data: dict) -> bool:
-    """Return ``True`` if *cadena* references a date-typed attribute.
+def _is_date_field(subject_field: str, data: dict) -> bool:
+    """Returns ``True`` if *subject_field* references a date-typed attribute.
 
     Attribute references appear class-prefixed (``Class_field``) in the
     translated Alloy string (see :func:`write_prefix_ocl`), so they can be
@@ -998,40 +1024,40 @@ def _es_atributo_fecha(cadena: str, data: dict) -> bool:
     """
     if not data:
         return False
-    for clase, campos in data.items():
-        for campo in campos:
-            nombre, tipo = campo.split(":", 1)
-            if tipo in _TIPOS_FECHA and f"{clase}_{nombre}" in cadena:
+    for curr_class, fields in data.items():
+        for curr_field in fields:
+            field_name, field_type = curr_field.split(":", 1)
+            if field_type in _DATE_TYPES and f"{curr_class}_{field_name}" in subject_field:
                 return True
     return False
 
 
-def process_string_types(cade: str) -> str:
-    """Extract string literals from *cade* and generate a ``one sig`` per unique value.
+def process_string_types(input_string: str) -> str:
+    """Extracts string literals from *input_string* and generates a ``one sig`` per unique value.
 
     Removes surrounding single-quotes from the generated code.
     """
-    values = list(dict.fromkeys(re.findall(r"'([^']*)'", cade)))
+    values = list(dict.fromkeys(re.findall(r"'([^']*)'", input_string)))
     sigs = "".join(f"one sig {v} extends str{{}}\n" for v in values)
-    return sigs + cade.replace("'", "")
+    return sigs + input_string.replace("'", "")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 7. INHERITANCE HIERARCHY UTILITIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-def is_child(hija: str, padre: str, inherits_from: dict) -> bool:
-    """Return ``True`` if *hija* is a descendant of *padre* in the hierarchy."""
-    if padre in inherits_from[hija]:
+def is_child(child: str, parent: str, inherits_from: dict) -> bool:
+    """Returns ``True`` if *child* is a descendant of *parent* in the hierarchy."""
+    if parent in inherits_from[child]:
         return True
-    if inherits_from[hija] == "_" or inherits_from[hija] == ["_"]:
+    if inherits_from[child] == "_" or inherits_from[child] == ["_"]:
         return False
-    return any(is_child(p, padre, inherits_from) for p in inherits_from[hija])
+    return any(is_child(p, parent, inherits_from) for p in inherits_from[child])
 
 
-def subtypes(clase: str, inherits_from: dict) -> list[str]:
-    """Return the list of direct and indirect subtypes of *clase*."""
-    return [e for e in inherits_from if is_child(e, clase, inherits_from)]
+def subtypes(subject_class: str, inherits_from: dict) -> list[str]:
+    """Return the list of direct and indirect subtypes of *subject_class*."""
+    return [e for e in inherits_from if is_child(e, subject_class, inherits_from)]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1040,7 +1066,7 @@ def subtypes(clase: str, inherits_from: dict) -> list[str]:
 
 # ── 8a. Simple nodes ──────────────────────────────────────────────────────────
 
-def _traducir_simple(node) -> str:
+def _translate_simple(node) -> str:
     if isinstance(node, BLiteral):
         return "isTrue[True]" if node.val == "True" else "isFalse[False]"
     if isinstance(node, Literal):
@@ -1051,15 +1077,15 @@ def _traducir_simple(node) -> str:
         return node.name
     if isinstance(node, Nav):
         return ".".join(node.parts)
-    raise TypeError(f"Unrecognised node in _traducir_simple: {type(node)}")
+    raise TypeError(f"Unrecognized node in _simple_translate: {type(node)}")
 
 
 # ── 8b. if-then-else ─────────────────────────────────────────────────────────
 
-def _traducir_ifthenelse(node: IfThenElse, inherits_from: dict, estado: EstadoTraductor) -> str:
-    cond = ast_to_alloy(node.cond, inherits_from, estado)
-    then_part = ast_to_alloy(node.then_expr, inherits_from, estado)
-    else_part = ast_to_alloy(node.else_expr, inherits_from, estado)
+def _translate_ifthenelse(node: IfThenElse, inherits_from: dict, state: TranslatorState) -> str:
+    cond = ast_to_alloy(node.cond, inherits_from, state)
+    then_part = ast_to_alloy(node.then_expr, inherits_from, state)
+    else_part = ast_to_alloy(node.else_expr, inherits_from, state)
     return (
         f"(({cond}) implies ({then_part})) "
         f"and ((not ({cond})) implies ({else_part}))"
@@ -1071,7 +1097,7 @@ def _traducir_ifthenelse(node: IfThenElse, inherits_from: dict, estado: EstadoTr
 _MAP_OPS: dict[str, str] = {"<>": "!=", "!=": "!=", "and": "&&", "or": "||", "implies": "=>"}
 
 
-def _normalizar_booleano(val: str, op: str) -> str:
+def _normalize_boolean(val: str, op: str) -> str:
     if op in {"=", "!="} and val == "isTrue[True]":
         return "True"
     if op in {"=", "!="} and val == "isFalse[False]":
@@ -1079,15 +1105,15 @@ def _normalizar_booleano(val: str, op: str) -> str:
     return val
 
 
-def _traducir_binaryop_fecha(
+def _translate_binaryop_date(
     op: str,
     left: str,
     right: str,
-    es_lit_izq: bool,
-    es_lit_der: bool,
-    estado: EstadoTraductor,
+    is_left_lit: bool,
+    is_right_lit: bool,
+    state: TranslatorState,
 ) -> str:
-    """Translate a comparison that involves at least one date operand.
+    """Translates a comparison that involves at least one date operand.
 
     *left*/*right* may be date literals (declared as ``one sig`` and replaced
     by their ``dMMDDYYYY`` id) or date-typed attributes (kept as-is).  Ordered
@@ -1095,16 +1121,16 @@ def _traducir_binaryop_fecha(
     whenever the model has date-typed attributes or date literals.
     """
     extra = ""
-    if es_lit_izq:
-        extra += parse_date(left, estado)
-    if es_lit_der:
-        extra += parse_date(right, estado)
-    estado.escribir_pred_aux(extra)
+    if is_left_lit:
+        extra += parse_date(left, state)
+    if is_right_lit:
+        extra += parse_date(right, state)
+    state.write_aux_pred(extra)
 
-    left_val = is_date(left) if es_lit_izq else left
-    right_val = is_date(right) if es_lit_der else right
+    left_val = is_date(left) if is_left_lit else left
+    right_val = is_date(right) if is_right_lit else right
 
-    ops_fecha = {
+    date_ops = {
         "=":  f"({left_val} = {right_val})",
         ">=": f"(gte[{left_val},{right_val}])",
         "<=": f"(lte[{left_val},{right_val}])",
@@ -1112,30 +1138,29 @@ def _traducir_binaryop_fecha(
         "<":  f"(lt[{left_val},{right_val}])",
         "!=": f"({left_val} != {right_val})",
     }
-    return ops_fecha.get(op, "")
+    return date_ops.get(op, "")
 
 
-def _traducir_binaryop(node: BinaryOp, inherits_from: dict, estado: EstadoTraductor) -> str:
+def _translate_binaryop(node: BinaryOp, inherits_from: dict, state: TranslatorState) -> str:
     op = _MAP_OPS.get(node.op, node.op)
-    left = _normalizar_booleano(ast_to_alloy(node.left, inherits_from, estado), op)
-    right = _normalizar_booleano(ast_to_alloy(node.right, inherits_from, estado), op)
+    left = _normalize_boolean(ast_to_alloy(node.left, inherits_from, state), op)
+    right = _normalize_boolean(ast_to_alloy(node.right, inherits_from, state), op)
 
-    lit_izq = is_date(left)
-    lit_der = is_date(right)
-    es_fecha_izq = bool(lit_izq) or _es_atributo_fecha(left, estado.data)
-    es_fecha_der = bool(lit_der) or _es_atributo_fecha(right, estado.data)
+    left_lit = is_date(left)
+    right_lit = is_date(right)
+    is_left_date = bool(left_lit) or _is_date_field(left, state.data)
+    is_right_date = bool(right_lit) or _is_date_field(right, state.data)
 
     if (
         op in (">", ">=", "<", "<=", "=", "!=")
-        and (es_fecha_izq or es_fecha_der)
+        and (is_left_date or is_right_date)
         and "null" not in (left, right)
     ):
-        return _traducir_binaryop_fecha(op, left, right, bool(lit_izq), bool(lit_der), estado)
+        return _translate_binaryop_date(op, left, right, bool(left_lit), bool(right_lit), state)
 
     if op == "-":
         return left if right.lower() == "null" else f"minus[{left}, {right}]"
-  
-    #comentario
+
     if op == "+":
         return f"add[{left}, {right}]"
 
@@ -1153,61 +1178,63 @@ def _traducir_binaryop(node: BinaryOp, inherits_from: dict, estado: EstadoTraduc
 
 # ── 8d. Calls ─────────────────────────────────────────────────────────────────
 
-def _apply_asset(expr: str, estado: EstadoTraductor) -> str:
-    """Translate ``->asSet()`` to Alloy.
+def _apply_asset(expr: str, state: TranslatorState) -> str:
+    """
+    Translates ``->asSet()`` to Alloy.
 
     When the source is a relation (``univ -> univ``), wraps in ``image[...]``
     to obtain the flat set of values.  Either way, marks the result as a set
     so that any subsequent chained operation (``->size()``, ``->union()``, etc.)
     treats it as ``set univ`` instead of ``univ -> univ``.
     """
-    if not estado.is_set_origin:
-        estado.is_set_origin = True
+    if not state.is_set_origin:
+        state.is_set_origin = True
         return f"image[{expr}]"
     return expr
 
 
 def _build_call_handlers() -> dict[str, callable]:
-    """Build the handler dict for OCL collection operations.
+    """
+    Builds the handler dict for OCL collection operations.
 
-    Each handler has signature: ``(expr: str, args: list[str], estado) -> str``.
+    Each handler has signature: ``(expr: str, args: list[str], state) -> str``.
     """
     return {
-        "size":           lambda expr, args, estado: f"#({expr})",
-        "excluding":      lambda expr, args, estado: (
+        "size":           lambda expr, args, state: f"#({expr})",
+        "excluding":      lambda expr, args, state: (
             f"({expr})" if args[0].lower() == "null" else f"({expr} - {args[0]})"
         ),
-        "including":      lambda expr, args, estado: (
+        "including":      lambda expr, args, state: (
             f"({expr})" if args[0].lower() == "null" else f"({expr} + {args[0]})"
         ),
-        "union":          lambda expr, args, estado: f"({expr} + {args[0]})",
-        "intersection":   lambda expr, args, estado: f"({expr} & {args[0]})",
-        "isempty":        lambda expr, args, estado: f"(#({expr}) = 0)",
-        "notempty":       lambda expr, args, estado: f"(#({expr}) > 0)",
-        "closure":        lambda expr, args, estado: f"{expr}.*{args[0]}",
-        "oclisundefined": lambda expr, args, estado: f"no ({expr})",
-        "includes":       lambda expr, args, estado: (
-            f"{args[0]} in image[{expr}]" if not estado.is_set_origin else f"{args[0]} in {expr}"
+        "union":          lambda expr, args, state: f"({expr} + {args[0]})",
+        "intersection":   lambda expr, args, state: f"({expr} & {args[0]})",
+        "isempty":        lambda expr, args, state: f"(#({expr}) = 0)",
+        "notempty":       lambda expr, args, state: f"(#({expr}) > 0)",
+        "closure":        lambda expr, args, state: f"{expr}.*{args[0]}",
+        "oclisundefined": lambda expr, args, state: f"no ({expr})",
+        "includes":       lambda expr, args, state: (
+            f"{args[0]} in image[{expr}]" if not state.is_set_origin else f"{args[0]} in {expr}"
         ),
-        "excludes":       lambda expr, args, estado: (
-            f"not({args[0]} in image[{expr}])" if not estado.is_set_origin
+        "excludes":       lambda expr, args, state: (
+            f"not({args[0]} in image[{expr}])" if not state.is_set_origin
             else f"not({args[0]} in {expr})"
         ),
-        "includesall":    lambda expr, args, estado: (
-            f"({args[0]} in image[{expr}])" if not estado.is_set_origin else f"({args[0]} in {expr})"
+        "includesall":    lambda expr, args, state: (
+            f"({args[0]} in image[{expr}])" if not state.is_set_origin else f"({args[0]} in {expr})"
         ),
-        "excludesall":    lambda expr, args, estado: (
-            f"no ({args[0]} & image[{expr}])" if not estado.is_set_origin
+        "excludesall":    lambda expr, args, state: (
+            f"no ({args[0]} & image[{expr}])" if not state.is_set_origin
             else f"no ({args[0]} & {expr})"
         ),
-        "asset":          lambda expr, args, estado: _apply_asset(expr, estado),
+        "asset":          lambda expr, args, state: _apply_asset(expr, state),
     }
 
 
 CALL_HANDLERS: dict[str, callable] = _build_call_handlers()
 
 
-def _traducir_call(node: Call, inherits_from: dict, estado: EstadoTraductor) -> str:
+def _translate_call(node: Call, inherits_from: dict, estado: TranslatorState) -> str:
     name = node.callname.lower()
     expr = ast_to_alloy(node.expr, inherits_from, estado)
     args = [ast_to_alloy(a, inherits_from, estado) for a in node.args]
@@ -1231,36 +1258,36 @@ def _traducir_call(node: Call, inherits_from: dict, estado: EstadoTraductor) -> 
 
 # ── 8e. Iterators ─────────────────────────────────────────────────────────────
 
-def _traducir_forall_exists(
+def _translate_forall_exists(
     node: IteratorOp,
     coll: str,
     expr: str,
-    estado: EstadoTraductor,
+    state: TranslatorState,
 ) -> str:
     vars_str = ", ".join(node.varnames or ["x"])
     keyword = "all" if node.kind.lower() == "forall" else "some"
-    coleccion = coll if estado.is_set_origin else f"image[{coll}]"
+    coleccion = coll if state.is_set_origin else f"image[{coll}]"
     return f"{keyword} {vars_str} : {coleccion} | {expr}"
 
 
-def _traducir_select_reject(
+def _translate_select_reject(
     node: IteratorOp,
     coll: str,
     inherits_from: dict,
-    estado: EstadoTraductor,
+    state: TranslatorState,
 ) -> str:
     var = node.varnames[0] if node.varnames else "x"
     es_reject = node.kind.lower() == "reject"
 
     if not node.generated:
-        node.select_id = estado.cont_select
-        estado.cont_select += 1
+        node.select_id = state.cont_select
+        state.cont_select += 1
 
     id_sel = node.select_id
     neg_open = "not(" if es_reject else ""
     neg_close = ")" if es_reject else ""
 
-    if estado.is_set_origin:
+    if state.is_set_origin:
         template = (
             f"fun select{id_sel}[suva:set univ]: set univ "
             f"{{{{ ___x___:univ | ___x___ in suva and {neg_open}<expre_select>{neg_close} }}}}"
@@ -1270,19 +1297,19 @@ def _traducir_select_reject(
             f"fun select{id_sel}[suva:univ->univ]: univ->univ "
             f"{{{{ a,___x___:univ | (a->___x___) in suva and {neg_open}<expre_select>{neg_close} }}}}"
         )
-        estado.is_set_origin = False
+        state.is_set_origin = False
 
-    expr_body = ast_to_alloy(node.expr, inherits_from, estado).replace(var + ".", "___x___.")
+    expr_body = ast_to_alloy(node.expr, inherits_from, state).replace(var + ".", "___x___.")
     s = template.replace("<expre_select>", expr_body)
 
     if not node.generated:
-        estado.escribir_pred_aux("\n" + s)
+        state.write_aux_pred("\n" + s)
         node.generated = True
 
     return f"{{select{id_sel}[{coll}]}}"
 
 
-def _traducir_collect(node: IteratorOp, coll: str, expr: str) -> str:
+def _translate_collect(node: IteratorOp, coll: str, expr: str) -> str:
     var = node.varnames[0] if node.varnames else "x"
     e = expr.replace(var + ".", "", 1)
     col = coll.replace(".", ",", 1)
@@ -1291,47 +1318,47 @@ def _traducir_collect(node: IteratorOp, coll: str, expr: str) -> str:
     return f" toSeq[{col},{e}]"
 
 
-def _traducir_iteratorop(node: IteratorOp, inherits_from: dict, estado: EstadoTraductor) -> str:
-    coll = ast_to_alloy(node.collection, inherits_from, estado)
-    expr = ast_to_alloy(node.expr, inherits_from, estado)
+def _translate_iteratorop(node: IteratorOp, inherits_from: dict, state: TranslatorState) -> str:
+    coll = ast_to_alloy(node.collection, inherits_from, state)
+    expr = ast_to_alloy(node.expr, inherits_from, state)
     kind = node.kind.lower()
 
     if kind in ("forall", "exists"):
-        return _traducir_forall_exists(node, coll, expr, estado)
+        return _translate_forall_exists(node, coll, expr, state)
     if kind in ("select", "reject"):
-        return _traducir_select_reject(node, coll, inherits_from, estado)
+        return _translate_select_reject(node, coll, inherits_from, state)
     if kind == "collect":
-        estado.is_set_origin = False
-        return _traducir_collect(node, coll, expr)
+        state.is_set_origin = False
+        return _translate_collect(node, coll, expr)
 
     return f"{node.kind}({coll})"
 
 
-def _traducir_unaryop(node: UnaryOp, inherits_from: dict, estado: EstadoTraductor) -> str:
-    inner = ast_to_alloy(node.operand, inherits_from, estado)
+def _translate_unaryop(node: UnaryOp, inherits_from: dict, state: TranslatorState) -> str:
+    inner = ast_to_alloy(node.operand, inherits_from, state)
     if node.op == "not":
         return f"not ({inner})"
     if node.op == "-":
         return f"minus[0, {inner}]"
-    raise ValueError(f"Unrecognised unary operator: {node.op}")
+    raise ValueError(f"Unrecognized unary operator: {node.op}")
 
 
 # ── 8f. Main dispatcher ───────────────────────────────────────────────────────
 
-def ast_to_alloy(node, inherits_from: dict, estado: EstadoTraductor) -> str:
-    """Visit *node* and return the equivalent Alloy string."""
+def ast_to_alloy(node, inherits_from: dict, state: TranslatorState) -> str:
+    """Visits *node* and returns the equivalent Alloy string."""
     if isinstance(node, (BLiteral, Literal, Var, Enumeration, Nav)):
-        return _traducir_simple(node)
+        return _translate_simple(node)
     if isinstance(node, IfThenElse):
-        return _traducir_ifthenelse(node, inherits_from, estado)
+        return _translate_ifthenelse(node, inherits_from, state)
     if isinstance(node, Call):
-        return _traducir_call(node, inherits_from, estado)
+        return _translate_call(node, inherits_from, state)
     if isinstance(node, BinaryOp):
-        return _traducir_binaryop(node, inherits_from, estado)
+        return _translate_binaryop(node, inherits_from, state)
     if isinstance(node, UnaryOp):
-        return _traducir_unaryop(node, inherits_from, estado)
+        return _translate_unaryop(node, inherits_from, state)
     if isinstance(node, IteratorOp):
-        return _traducir_iteratorop(node, inherits_from, estado)
+        return _translate_iteratorop(node, inherits_from, state)
     raise TypeError(f"Unknown node type: {type(node)}")
 
 
@@ -1340,13 +1367,13 @@ def ast_to_alloy(node, inherits_from: dict, estado: EstadoTraductor) -> str:
 def predicate_tokens_to_str(
     tokens: list[Token],
     inherits_from: dict,
-    estado: EstadoTraductor,
+    state: TranslatorState,
 ) -> str:
-    """Convert a token list directly to Alloy (parse + codegen)."""
+    """Converts a token list directly to Alloy (parse + codegen)."""
     if not tokens:
         return ""
     ast = parse_predicate(tokens)
-    return ast_to_alloy(ast, inherits_from, estado)
+    return ast_to_alloy(ast, inherits_from, state)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1358,17 +1385,17 @@ def ocl_to_alloy(
     data: dict,
     ocl: str,
     context_name: str = "",
-    estado: EstadoTraductor | None = None,
+    state: TranslatorState | None = None,
     enums: dict[str, set[str]] | None = None,
 ) -> str:
-    """Translate an OCL expression to an Alloy fact.
+    """Translates an OCL expression to an Alloy fact.
 
     Args:
         inherits_from: ``{ClassName: [Parent, ...] | '_'}`` hierarchy map.
         data:          ``{ClassName: ['field:Type', ...]}`` attribute map.
         ocl:           OCL expression as a string.
         context_name:  Name of the class the constraint applies to.
-        estado:        Shared state between constraints (created if ``None``).
+        state:        Shared state between constraints (created if ``None``).
         enums:         ``{EnumName: {Literal, ...}}`` mapping used to
                        validate ``EnumType::Literal`` references before
                        translation. ``None`` (default) skips the check.
@@ -1381,17 +1408,17 @@ def ocl_to_alloy(
         EnumReferenceError: If *enums* is provided and the OCL references an
             unknown enumeration type or an undeclared literal.
     """
-    if estado is None:
-        estado = EstadoTraductor()
-    estado.set_enums(enums)
-    estado.data = data
-    estado.iniciar_constraint()
+    if state is None:
+        state = TranslatorState()
+    state.set_enums(enums)
+    state.data = data
+    state.init_constraint()
 
     tree, parser = parse_ocl_expression(ocl)
     toks = tokenize_tree(tree, parser)
-    validate_enum_references(toks, estado, context_name)
+    validate_enum_references(toks, state, context_name)
     toks = write_prefix_ocl(toks, data, inherits_from, context_name)
-    invariante = predicate_tokens_to_str(toks, inherits_from, estado)
-    pred_aux = estado.leer_pred_aux()
+    invariante = predicate_tokens_to_str(toks, inherits_from, state)
+    pred_aux = state.read_aux_pred()
     result = pred_aux + f"fact{{ all self:this/{context_name}|{invariante}}}"
     return process_string_types(result)

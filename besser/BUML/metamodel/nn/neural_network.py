@@ -817,7 +817,7 @@ class TensorOp(NamedElement):
         operation."""
         if (
             output_var is not None
-            and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', output_var)
+            and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', output_var)
         ):
             raise ValueError(
                 "output_var must be a valid identifier starting with a letter"

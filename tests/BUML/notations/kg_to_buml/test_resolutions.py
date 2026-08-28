@@ -9,9 +9,12 @@ from pathlib import Path
 import pytest
 
 from besser.BUML.notations.kg_to_buml import (
+    DeferredOrphanClassification,
     KGResolution,
     ResolutionError,
+    analyze_kg_for_class_diagram,
     apply_resolutions,
+    dispatch_decision,
     kg_to_class_diagram,
 )
 from besser.BUML.metamodel.kg import KGPropertyConstraint
@@ -339,3 +342,49 @@ def test_empty_resolutions_returns_same_kg_object(tmp_path: Path):
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     same = apply_resolutions(kg, [])
     assert same is kg
+
+
+# --- every recommended/skip action is dispatchable --------------------------
+
+
+_COMPLEX_KG = Path(__file__).resolve().parents[3] / "fixtures" / "complex_kg.ttl"
+_BIBO = Path(__file__).parent / "fixtures" / "bibo" / "bibo.ttl"
+
+
+@pytest.mark.parametrize("fixture", [_COMPLEX_KG, _BIBO], ids=["complex_kg", "bibo"])
+@pytest.mark.parametrize("decision", ["accept", "skip"])
+def test_every_preflight_action_dispatches(fixture: Path, decision: str):
+    """Both actions on every issue must run without blowing up.
+
+    ``preflight`` hands the frontend a pre-filled recommended *and* skip action
+    per issue, and the user can pick either on any row — so every handler in
+    ``resolutions._HANDLERS`` that preflight can name is reachable from the UI.
+    Asserting only on the action *key* (as the preflight tests do) leaves the
+    handler bodies unexercised: that is how ``keep_first_only`` shipped with an
+    undefined ``KGLiteral``, raising ``NameError`` and surfacing as an HTTP 500.
+
+    ``DeferredOrphanClassification`` is the one legitimate escape — it is the
+    by-design signal that a batch of orphans goes to the LLM classifier
+    instead of mutating the KG, and ``_apply_v2_decisions`` catches it.
+    """
+    assert fixture.exists(), f"Fixture missing: {fixture}"
+    kg = owl_file_to_knowledge_graph(str(fixture))
+    report = analyze_kg_for_class_diagram(kg)
+    assert report.issues, "fixture is expected to raise at least one preflight issue"
+
+    failures = []
+    for issue in report.issues:
+        try:
+            # A deep copy per dispatch: decisions are independent, and applying
+            # them cumulatively would let an early one dissolve the elements a
+            # later one names.
+            dispatch_decision(copy.deepcopy(kg), issue, decision)
+        except DeferredOrphanClassification:
+            continue
+        except Exception as exc:  # noqa: BLE001 — the point is to catch anything
+            action = issue.recommended_action if decision == "accept" else issue.skip_action
+            failures.append(
+                f"{issue.code}/{decision} (handler {getattr(action, 'key', '?')!r}): "
+                f"{type(exc).__name__}: {exc}"
+            )
+    assert not failures, "undispatchable actions:\n" + "\n".join(failures)

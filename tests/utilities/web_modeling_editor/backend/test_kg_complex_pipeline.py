@@ -108,6 +108,24 @@ def test_class_diagram_with_skip_drops_property(client: TestClient, kg_payload: 
     assert "likes" not in rel_names
 
 
+def test_class_diagram_with_all_skips(client: TestClient, kg_payload: dict):
+    """Skipping every issue must still convert cleanly.
+
+    The all-accept case above only exercises each issue's *recommended* action.
+    The modal lets the user skip any row, so the skip handlers are equally
+    reachable — and one of them (``keep_first_only``, behind MULTIVALUED_LITERAL)
+    shipped raising ``NameError``, which this endpoint turns into a 500.
+    """
+    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload).json()
+    resolutions = [{"issueId": i["id"], "decision": "skip"} for i in pre["issues"]]
+    resp = client.post(
+        "/besser_api/kg-to-class-diagram",
+        json={**kg_payload, "kgSignature": pre["kgSignature"], "resolutions": resolutions},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["diagramType"] == "ClassDiagram"
+
+
 def test_stale_signature_blocks_conversion(client: TestClient, kg_payload: dict):
     resp = client.post(
         "/besser_api/kg-to-class-diagram",

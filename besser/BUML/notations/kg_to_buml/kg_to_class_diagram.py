@@ -25,7 +25,7 @@ node-and-edge representation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from besser.BUML.metamodel.kg import KnowledgeGraph
 from besser.BUML.metamodel.structural import (
@@ -40,6 +40,9 @@ from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import build_uml_model
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.kg_to_buml.to_buml import lower_to_buml
+
+if TYPE_CHECKING:  # avoids the import cycle the lazy import below sidesteps
+    from besser.BUML.notations.kg_to_buml.resolutions import KGResolution
 
 __all__ = ["ClassConversionResult", "kg_to_class_diagram"]
 

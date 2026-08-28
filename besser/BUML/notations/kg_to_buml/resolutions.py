@@ -24,6 +24,7 @@ from besser.BUML.metamodel.kg import (
     KGClass,
     KGEdge,
     KGIndividual,
+    KGLiteral,
     KGNode,
     KGProperty,
     KnowledgeGraph,

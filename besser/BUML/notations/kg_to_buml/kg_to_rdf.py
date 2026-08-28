@@ -32,7 +32,7 @@ authored directly in the KG editor, which never had raw edges at all.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import rdflib
 from rdflib import Literal, URIRef

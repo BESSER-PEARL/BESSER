@@ -87,13 +87,17 @@ def test_import_owl_endpoint_and_validation(ttl_path: Path):
     assert isinstance(model["nodes"], list) and len(model["nodes"]) >= 6
     assert isinstance(model["edges"], list) and len(model["edges"]) == 11
 
-    # Validation endpoint must accept the KG payload (no-op branch).
+    # The validation endpoint runs the same checks as the Refine KG modal.
+    # This fixture deliberately contains `_:b0 a :Person`, so it reports a
+    # BLANK_NODE_INSTANCE finding rather than passing.
     valid_resp = client.post(
         "/besser_api/validate-diagram",
         json={"title": body["title"], "model": model},
     )
     assert valid_resp.status_code == 200
-    assert valid_resp.json()["isValid"] is True
+    payload = valid_resp.json()
+    assert payload["isValid"] is False
+    assert any("BLANK_NODE_INSTANCE" in e for e in payload["errors"])
 
 
 def test_import_owl_rejects_unsupported_extension(tmp_path: Path):

@@ -1135,13 +1135,48 @@ async def kg_to_object_diagram_endpoint(input_data: DiagramInput):
     Accepts the same optional ``resolutions`` and ``kgSignature`` as
     ``/kg-to-class-diagram``, but the resolutions are interpreted against
     the *object-diagram* preflight report.
+
+    ``rootIndividualIds`` scopes the result to the neighbourhood of the chosen
+    individuals — the whole ABox becomes unreadable past a few dozen of them —
+    with ``maxDepth`` bounding how far the traversal walks (omit it for the
+    full connected component). Without ``rootIndividualIds`` the entire ABox is
+    converted, as before.
     """
     kg, _json_data = _kg_payload_to_kg(input_data)
     _enforce_signature(input_data, kg)
     base_title = (input_data.title or kg.name or "Knowledge Graph")
     resolved_kg = _resolve_kg(kg, input_data, analyze_kg_for_object_diagram)
+
+    if input_data.maxDepth is not None and input_data.maxDepth < 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"maxDepth must be 1 or greater, got {input_data.maxDepth}.",
+        )
+    if input_data.rootIndividualIds is not None and not input_data.rootIndividualIds:
+        raise HTTPException(
+            status_code=400,
+            detail="rootIndividualIds must name at least one individual when present.",
+        )
+
+    # The class diagram is always derived from the *unscoped* graph and passed
+    # in explicitly: scoping prunes only the ABox, so the full class diagram
+    # stays correct, and it is also what gets serialised as the object
+    # diagram's referenceDiagramData. Letting the converter recompute it from
+    # the scoped graph would risk the two disagreeing, since
+    # kg_to_class_diagram reads the ABox when widening multiplicities.
     class_result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
-    object_result = kg_to_object_diagram_buml(resolved_kg, class_result=class_result, model_name=base_title)
+    try:
+        object_result = kg_to_object_diagram_buml(
+            resolved_kg,
+            class_result=class_result,
+            model_name=base_title,
+            root_individual_ids=input_data.rootIndividualIds,
+            max_depth=input_data.maxDepth,
+        )
+    except ValueError as exc:
+        # Bad root ids: an empty diagram would leave the caller unable to tell
+        # a typo from a genuinely isolated individual.
+        raise ConversionError(str(exc)) from exc
     domain_json = class_buml_to_json(class_result.domain_model)
     domain_json = {**domain_json, "type": "ClassDiagram"}
     diagram_json = object_model_to_json(object_result.object_model, domain_json)

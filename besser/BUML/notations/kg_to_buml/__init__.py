@@ -24,6 +24,7 @@ from besser.BUML.notations.kg_to_buml.kg_to_class_diagram import (
 from besser.BUML.notations.kg_to_buml.kg_to_object_diagram import (
     ObjectConversionResult,
     kg_to_object_diagram,
+    scope_abox,
 )
 from besser.BUML.notations.kg_to_buml.llm_cleanup import (
     LLM_ALLOWED_KEYS,
@@ -55,6 +56,7 @@ __all__ = [
     "ObjectConversionResult",
     "kg_to_class_diagram",
     "kg_to_object_diagram",
+    "scope_abox",
     "KGAction",
     "KGIssue",
     "KGPreflightReport",

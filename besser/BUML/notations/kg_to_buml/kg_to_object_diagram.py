@@ -7,6 +7,12 @@ from the same KG (via :func:`kg_to_class_diagram`) as the typing reference.
 Blank nodes are skipped entirely — no Object is created for a KGBlank,
 and any edge whose source or target is a KGBlank is dropped. A single
 ``BLANK_SKIPPED`` warning summarises the count.
+
+Passing ``root_individual_ids`` restricts the result to the neighbourhood of
+the chosen individuals. Scoping happens on the KG *before* conversion and
+touches the ABox only: every class, property and constraint node survives, so
+the class diagram that types the objects stays complete while the object
+diagram shrinks to the part the user asked about. See :func:`scope_abox`.
 """
 
 from __future__ import annotations
@@ -67,12 +73,133 @@ class ObjectConversionResult:
     warnings: List[KGConversionWarning] = field(default_factory=list)
 
 
+def scope_abox(
+    kg: KnowledgeGraph,
+    root_individual_ids: List[str],
+    *,
+    max_depth: Optional[int] = None,
+    warnings: Optional[List[KGConversionWarning]] = None,
+) -> KnowledgeGraph:
+    """Return a copy of ``kg`` whose ABox is limited to a neighbourhood.
+
+    Converting a whole ontology's ABox produces an unreadable diagram once a
+    dataset has more than a few dozen individuals, so the editor lets the user
+    name a starting individual instead. Pruning happens here, on the KG, rather
+    than by filtering the resulting :class:`ObjectModel`: the conversion then
+    runs unchanged, and no dangling ``Link`` has to be cleaned up afterwards.
+
+    Only the ABox is pruned. Every :class:`KGClass`, :class:`KGProperty` and
+    constraint node is kept, along with every edge between kept non-individual
+    nodes, so :func:`kg_to_class_diagram` still sees the complete TBox and the
+    surviving objects keep their types.
+
+    What is kept:
+
+    * the roots themselves;
+    * individuals reachable from a root over individual-to-individual edges,
+      followed in **both** directions — an individual that points *at* the root
+      is related to it just as much as one the root points at;
+    * for every kept individual, its ``rdf:type`` edges and its literal
+      targets, which carry the object's attribute slots. These are depth-0
+      attachments and never extend the frontier.
+
+    Args:
+        kg: The graph to scope. Left untouched; a deep copy is returned.
+        root_individual_ids: Ids of the individuals to start from.
+        max_depth: Hops to follow. ``None`` (default) means the full connected
+            component; ``1`` means direct neighbours only.
+        warnings: Optional sink; an ``ABOX_SCOPED`` warning reporting how many
+            individuals survived is appended when given.
+
+    Raises:
+        ValueError: if an id is absent from the graph or does not name a
+            :class:`KGIndividual`. Returning an empty diagram instead would
+            leave the caller unable to tell a bad id from a genuinely isolated
+            individual.
+    """
+    nodes_by_id = {n.id: n for n in kg.nodes}
+
+    roots: List[str] = []
+    for node_id in root_individual_ids:
+        node = nodes_by_id.get(node_id)
+        if node is None:
+            raise ValueError(f"Unknown node id {node_id!r}.")
+        if not isinstance(node, KGIndividual):
+            raise ValueError(
+                f"Node {node_id!r} is a {type(node).__name__}, not an individual; "
+                "an object diagram can only be rooted at an individual."
+            )
+        if node_id not in roots:
+            roots.append(node_id)
+
+    # Adjacency over individual-to-individual edges only, in both directions.
+    neighbours: Dict[str, Set[str]] = defaultdict(set)
+    for edge in kg.edges:
+        if normalize_predicate(edge.iri) == RDF_TYPE:
+            continue
+        if isinstance(edge.source, KGIndividual) and isinstance(edge.target, KGIndividual):
+            neighbours[edge.source.id].add(edge.target.id)
+            neighbours[edge.target.id].add(edge.source.id)
+
+    kept_individuals: Set[str] = set(roots)
+    frontier: Set[str] = set(roots)
+    depth = 0
+    while frontier and (max_depth is None or depth < max_depth):
+        nxt: Set[str] = set()
+        for node_id in frontier:
+            nxt |= neighbours.get(node_id, set()) - kept_individuals
+        kept_individuals |= nxt
+        frontier = nxt
+        depth += 1
+
+    total_individuals = sum(1 for n in kg.nodes if isinstance(n, KGIndividual))
+
+    # Everything that is not an individual is TBox and always survives.
+    keep_ids: Set[str] = {
+        n.id for n in kg.nodes if not isinstance(n, KGIndividual) and not isinstance(n, KGLiteral)
+    }
+    keep_ids |= kept_individuals
+
+    # Literals are kept only where they hang off a kept individual, so an
+    # excluded individual does not drag its attribute values along.
+    for edge in kg.edges:
+        if isinstance(edge.target, KGLiteral) and edge.source.id in keep_ids:
+            keep_ids.add(edge.target.id)
+        if isinstance(edge.source, KGLiteral) and edge.target.id in keep_ids:
+            keep_ids.add(edge.source.id)
+
+    scoped = KnowledgeGraph(name=kg.name)
+    for node in sorted_by_id(kg.nodes):
+        if node.id in keep_ids:
+            scoped.add_node(node)
+    for edge in sorted_by_id(kg.edges):
+        if edge.source.id in keep_ids and edge.target.id in keep_ids:
+            scoped.add_edge(edge)
+    for axiom in kg.axioms:
+        scoped.add_axiom(axiom)
+
+    if warnings is not None:
+        root_labels = ", ".join(
+            repr(nodes_by_id[r].label or nodes_by_id[r].iri or r) for r in roots
+        )
+        add_warning(
+            warnings,
+            "ABOX_SCOPED",
+            f"{len(kept_individuals)} of {total_individuals} individual(s) included, "
+            f"rooted at {root_labels}.",
+        )
+
+    return scoped
+
+
 def kg_to_object_diagram(
     kg: KnowledgeGraph,
     class_result: Optional[ClassConversionResult] = None,
     *,
     model_name: Optional[str] = None,
     resolutions: Optional[List["KGResolution"]] = None,
+    root_individual_ids: Optional[List[str]] = None,
+    max_depth: Optional[int] = None,
 ) -> ObjectConversionResult:
     """Convert a :class:`KnowledgeGraph` into an :class:`ObjectModel`.
 
@@ -81,7 +208,27 @@ def kg_to_object_diagram(
     derive from the same resolved KG. To keep them perfectly in sync, the
     caller may compute the class diagram once with resolutions and pass it
     via ``class_result``.
+
+    Args:
+        root_individual_ids: When given, only these individuals and the ones
+            reachable from them are turned into Objects. ``None`` (the
+            default) keeps the whole ABox.
+        max_depth: How many individual-to-individual hops to follow from the
+            roots. ``None`` means the full connected component. Ignored when
+            ``root_individual_ids`` is ``None``.
     """
+    scope_warnings: List[KGConversionWarning] = []
+    if root_individual_ids is not None:
+        # Scope first, so both the resolution pass and the conversion below
+        # see the same graph. Only the ABox is pruned, so ``class_result``
+        # (if the caller supplied one) stays valid.
+        kg = scope_abox(
+            kg,
+            root_individual_ids,
+            max_depth=max_depth,
+            warnings=scope_warnings,
+        )
+
     if resolutions and class_result is None:
         # Forward the resolutions to the class diagram pass and use the
         # same resolved KG for the object diagram pass.
@@ -91,7 +238,7 @@ def kg_to_object_diagram(
     if class_result is None:
         class_result = kg_to_class_diagram(kg)
 
-    warnings: List[KGConversionWarning] = list(class_result.warnings)
+    warnings: List[KGConversionWarning] = list(class_result.warnings) + scope_warnings
     indexes = build_indexes(kg)
 
     domain_model = class_result.domain_model
@@ -436,4 +583,4 @@ def _type_matches(actual: Class, expected) -> bool:
     return False
 
 
-__all__ = ["ObjectConversionResult", "kg_to_object_diagram"]
+__all__ = ["ObjectConversionResult", "kg_to_object_diagram", "scope_abox"]

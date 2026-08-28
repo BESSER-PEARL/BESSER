@@ -41,14 +41,12 @@ from besser.BUML.notations.kg_to_buml import (
     KGResolution,
     ResolutionError,
     analyze_kg_for_class_diagram,
-    analyze_kg_for_object_diagram,
     analyze_kg_with_description,
     apply_resolutions,
     classify_orphan_nodes_with_llm,
     dispatch_decision,
     kg_signature,
     kg_to_class_diagram as kg_to_class_diagram_buml,
-    kg_to_object_diagram as kg_to_object_diagram_buml,
 )
 from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
 from dataclasses import asdict as _dataclass_asdict
@@ -89,7 +87,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     state_machine_to_json,
     agent_buml_to_json,
     gui_buml_to_json,
-    object_model_to_json,
     project_to_json,
     nn_buml_to_json,
     bpmn_buml_to_json,
@@ -945,7 +942,7 @@ def _enforce_signature(input_data: DiagramInput, kg) -> None:
         )
 
 
-def _apply_v2_decisions(kg, decisions, analyzer, *, deferred_orphan_node_ids=None):
+def _apply_v2_decisions(kg, decisions, *, deferred_orphan_node_ids=None):
     """Apply v2-style ``[{issueId, decision}]`` choices.
 
     Re-runs the preflight on ``kg``, looks up each issue by id, dispatches its
@@ -956,10 +953,10 @@ def _apply_v2_decisions(kg, decisions, analyzer, *, deferred_orphan_node_ids=Non
     are accumulated into the list and the orphans stay in the KG so the AI
     tab can classify them next. Without that argument the deferred handler
     raises and the request fails (preserving back-compat with the legacy
-    ``/kg-to-class-diagram`` / ``/kg-to-object-diagram`` paths, which
-    don't surface the deferred branch to the user).
+    ``/kg-to-class-diagram`` path, which doesn't surface the deferred
+    branch to the user).
     """
-    report = analyzer(kg)
+    report = analyze_kg_for_class_diagram(kg)
     issues_by_id = {i.id: i for i in report.issues}
     resolved_kg = kg
     for entry in decisions:
@@ -992,7 +989,7 @@ def _apply_v2_decisions(kg, decisions, analyzer, *, deferred_orphan_node_ids=Non
         except ResolutionError as exc:
             raise ConversionError(str(exc)) from exc
         # Refresh the issues map after each apply: the topology has shifted.
-        report = analyzer(resolved_kg)
+        report = analyze_kg_for_class_diagram(resolved_kg)
         issues_by_id = {i.id: i for i in report.issues}
     return resolved_kg
 
@@ -1015,7 +1012,7 @@ def _apply_v1_resolutions(kg, raw_list):
         raise ConversionError(str(exc)) from exc
 
 
-def _resolve_kg(kg, input_data: DiagramInput, analyzer):
+def _resolve_kg(kg, input_data: DiagramInput):
     """Apply ``input_data.resolutions`` to ``kg``. Auto-detects the payload shape:
     v2 entries have ``decision``; v1 entries have ``choice``."""
     if not input_data.resolutions:
@@ -1026,7 +1023,7 @@ def _resolve_kg(kg, input_data: DiagramInput, analyzer):
         for r in raw_list
     )
     if is_v2:
-        return _apply_v2_decisions(kg, raw_list, analyzer)
+        return _apply_v2_decisions(kg, raw_list)
     return _apply_v1_resolutions(kg, raw_list)
 
 
@@ -1082,23 +1079,15 @@ async def check_kg_consistency_endpoint(input_data: DiagramInput):
 
 @router.post("/analyze-kg-for-buml-conversion")
 @handle_endpoint_errors("analyze_kg_for_buml_conversion")
-async def analyze_kg_for_buml_conversion_endpoint(
-    input_data: DiagramInput,
-    diagramType: str = "ClassDiagram",
-):
+async def analyze_kg_for_buml_conversion_endpoint(input_data: DiagramInput):
     """Run the KG → BUML preflight and return a structured list of issues.
 
-    The ``diagramType`` query parameter selects the analyzer:
-    ``ClassDiagram`` (default) or ``ObjectDiagram``. Each issue carries a
-    pre-filled ``recommendedAction`` and ``skipAction``; the frontend
-    renders one row per issue with a checkbox + 2 buttons.
+    Each issue carries a pre-filled ``recommendedAction`` and
+    ``skipAction``; the frontend renders one row per issue with a
+    checkbox + 2 buttons.
     """
     kg, _json_data = _kg_payload_to_kg(input_data)
-    if (diagramType or "").lower() == "objectdiagram":
-        report = analyze_kg_for_object_diagram(kg)
-    else:
-        report = analyze_kg_for_class_diagram(kg)
-    return _report_to_response(report)
+    return _report_to_response(analyze_kg_for_class_diagram(kg))
 
 
 @router.post("/kg-to-class-diagram", response_model=DiagramExportResponse)
@@ -1114,7 +1103,7 @@ async def kg_to_class_diagram_endpoint(input_data: DiagramInput):
     kg, _json_data = _kg_payload_to_kg(input_data)
     _enforce_signature(input_data, kg)
     base_title = (input_data.title or kg.name or "Knowledge Graph")
-    resolved_kg = _resolve_kg(kg, input_data, analyze_kg_for_class_diagram)
+    resolved_kg = _resolve_kg(kg, input_data)
     result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
     diagram_json = class_buml_to_json(result.domain_model)
     return {
@@ -1122,69 +1111,6 @@ async def kg_to_class_diagram_endpoint(input_data: DiagramInput):
         "model": {**diagram_json, "type": "ClassDiagram"},
         "diagramType": "ClassDiagram",
         "warnings": [w.__dict__ for w in result.warnings],
-        "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "version": API_VERSION,
-    }
-
-
-@router.post("/kg-to-object-diagram", response_model=DiagramExportResponse)
-@handle_endpoint_errors("kg_to_object_diagram")
-async def kg_to_object_diagram_endpoint(input_data: DiagramInput):
-    """Transform a Knowledge Graph diagram into a BUML Object Diagram (ABox).
-
-    Accepts the same optional ``resolutions`` and ``kgSignature`` as
-    ``/kg-to-class-diagram``, but the resolutions are interpreted against
-    the *object-diagram* preflight report.
-
-    ``rootIndividualIds`` scopes the result to the neighbourhood of the chosen
-    individuals — the whole ABox becomes unreadable past a few dozen of them —
-    with ``maxDepth`` bounding how far the traversal walks (omit it for the
-    full connected component). Without ``rootIndividualIds`` the entire ABox is
-    converted, as before.
-    """
-    kg, _json_data = _kg_payload_to_kg(input_data)
-    _enforce_signature(input_data, kg)
-    base_title = (input_data.title or kg.name or "Knowledge Graph")
-    resolved_kg = _resolve_kg(kg, input_data, analyze_kg_for_object_diagram)
-
-    if input_data.maxDepth is not None and input_data.maxDepth < 1:
-        raise HTTPException(
-            status_code=400,
-            detail=f"maxDepth must be 1 or greater, got {input_data.maxDepth}.",
-        )
-    if input_data.rootIndividualIds is not None and not input_data.rootIndividualIds:
-        raise HTTPException(
-            status_code=400,
-            detail="rootIndividualIds must name at least one individual when present.",
-        )
-
-    # The class diagram is always derived from the *unscoped* graph and passed
-    # in explicitly: scoping prunes only the ABox, so the full class diagram
-    # stays correct, and it is also what gets serialised as the object
-    # diagram's referenceDiagramData. Letting the converter recompute it from
-    # the scoped graph would risk the two disagreeing, since
-    # kg_to_class_diagram reads the ABox when widening multiplicities.
-    class_result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
-    try:
-        object_result = kg_to_object_diagram_buml(
-            resolved_kg,
-            class_result=class_result,
-            model_name=base_title,
-            root_individual_ids=input_data.rootIndividualIds,
-            max_depth=input_data.maxDepth,
-        )
-    except ValueError as exc:
-        # Bad root ids: an empty diagram would leave the caller unable to tell
-        # a typo from a genuinely isolated individual.
-        raise ConversionError(str(exc)) from exc
-    domain_json = class_buml_to_json(class_result.domain_model)
-    domain_json = {**domain_json, "type": "ClassDiagram"}
-    diagram_json = object_model_to_json(object_result.object_model, domain_json)
-    return {
-        "title": f"{base_title} (Object Diagram)",
-        "model": diagram_json,
-        "diagramType": "ObjectDiagram",
-        "warnings": [w.__dict__ for w in object_result.warnings],
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
     }
@@ -1339,17 +1265,13 @@ async def llm_clean_kg_endpoint(
 
 @router.post("/apply-kg-refinement")
 @handle_endpoint_errors("apply_kg_refinement")
-async def apply_kg_refinement_endpoint(
-    input_data: DiagramInput,
-    diagramType: str = "ClassDiagram",
-):
+async def apply_kg_refinement_endpoint(input_data: DiagramInput):
     """Apply Refine-KG decisions and return the cleaned KG.
 
     Single endpoint serving both tabs of the unified Refine KG modal:
 
-    - ``source="static"``: re-runs the static analyzer (selected via the
-      ``diagramType`` query parameter, default ``ClassDiagram``) and
-      dispatches each accept/skip decision. Orphan-issue ``skip`` choices
+    - ``source="static"``: re-runs the static analyzer and dispatches
+      each accept/skip decision. Orphan-issue ``skip`` choices
       raise :class:`DeferredOrphanClassification`; the carried node ids
       are accumulated into ``pendingOrphanClassification.nodeIds`` and
       returned to the client so the AI tab can call
@@ -1375,15 +1297,9 @@ async def apply_kg_refinement_endpoint(
     deferred_orphan_node_ids: List[str] = []
 
     if source == "static":
-        analyzer = (
-            analyze_kg_for_object_diagram
-            if (diagramType or "").lower() == "objectdiagram"
-            else analyze_kg_for_class_diagram
-        )
         resolved_kg = _apply_v2_decisions(
             kg,
             input_data.resolutions or [],
-            analyzer,
             deferred_orphan_node_ids=deferred_orphan_node_ids,
         )
     else:  # source == "llm"

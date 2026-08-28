@@ -1,7 +1,7 @@
-"""End-to-end tests for the KG → Class/Object diagram endpoints.
+"""End-to-end tests for the KG → Class diagram endpoint.
 
-Posts a hand-built KnowledgeGraphDiagram payload to ``/besser_api/kg-to-class-diagram``
-and ``/besser_api/kg-to-object-diagram`` and asserts the response shape the
+Posts a hand-built KnowledgeGraphDiagram payload to
+``/besser_api/kg-to-class-diagram`` and asserts the response shape the
 frontend depends on.
 """
 
@@ -81,26 +81,6 @@ def test_class_endpoint_returns_class_diagram(client: TestClient, kg_payload: di
     assert "ClassInheritance" in rel_types     # Employee → Person
 
 
-def test_object_endpoint_returns_object_diagram_with_reference(client: TestClient, kg_payload: dict):
-    response = client.post("/besser_api/kg-to-object-diagram", json=kg_payload)
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["diagramType"] == "ObjectDiagram"
-    model = body["model"]
-    assert model["type"] == "ObjectDiagram"
-    assert "referenceDiagramData" in model
-    assert model["referenceDiagramData"].get("type") == "ClassDiagram"
-    elements = model["elements"]
-    rel_types = {r["type"] for r in model["relationships"].values()}
-    obj_names = {e["name"] for e in elements.values() if e.get("type") == "ObjectName"}
-    assert {"alice", "acme"} <= obj_names
-    assert "ObjectLink" in rel_types
-    # Each ObjectName element points to its class via classId.
-    for elem in elements.values():
-        if elem.get("type") == "ObjectName":
-            assert elem.get("classId")
-
-
 def test_endpoints_reject_non_kg_payload(client: TestClient):
     response = client.post(
         "/besser_api/kg-to-class-diagram",
@@ -108,13 +88,6 @@ def test_endpoints_reject_non_kg_payload(client: TestClient):
     )
     assert response.status_code == 400
     assert "KnowledgeGraphDiagram" in response.json()["detail"]
-
-
-def test_blank_skipped_warning_propagates(client: TestClient, kg_payload: dict):
-    response = client.post("/besser_api/kg-to-object-diagram", json=kg_payload)
-    body = response.json()
-    codes = {w["code"] for w in (body.get("warnings") or [])}
-    assert "BLANK_SKIPPED" in codes
 
 
 def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client: TestClient):
@@ -167,128 +140,3 @@ def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client: T
     assert "ClassOCLConstraint" in types
     ocl_texts = [e["constraint"] for e in elements.values() if e["type"] == "ClassOCLConstraint"]
     assert any("self.name" in c for c in ocl_texts)
-
-
-# --------------------------------------------------------------------------
-# Individual-scoped object diagrams
-# --------------------------------------------------------------------------
-
-
-def _object_names(body: dict) -> set:
-    """Object diagram elements carry the object name; associations do not."""
-    elements = body["model"].get("elements", {})
-    return {
-        el.get("name", "").split(":")[0].strip()
-        for el in elements.values()
-        if el.get("type") == "ObjectName"
-    }
-
-
-def _with_unrelated_individual(kg_payload: dict) -> dict:
-    """Add a Person who is connected to nobody, so scoping has something to drop."""
-    model = {
-        **kg_payload["model"],
-        "nodes": kg_payload["model"]["nodes"] + [
-            {"id": "zoe", "nodeType": "individual", "label": "zoe", "iri": EX + "zoe"},
-        ],
-        "edges": kg_payload["model"]["edges"] + [
-            {"id": "tz", "source": "zoe", "target": "Person", "iri": RDF + "type"},
-        ],
-    }
-    return {**kg_payload, "model": model}
-
-
-def test_object_diagram_scoped_to_one_individual(client: TestClient, kg_payload: dict):
-    payload = _with_unrelated_individual(kg_payload)
-    response = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**payload, "rootIndividualIds": ["acme"], "maxDepth": 1},
-    )
-    assert response.status_code == 200, response.text
-    body = response.json()
-
-    # acme and alice are linked by :worksFor, so both survive at depth 1;
-    # zoe is connected to nobody and must be dropped.
-    names = _object_names(body)
-    assert names == {"acme", "alice"}
-
-    codes = {w["code"] for w in body.get("warnings") or []}
-    assert "ABOX_SCOPED" in codes
-
-
-def test_unscoped_request_keeps_every_individual(client: TestClient, kg_payload: dict):
-    payload = _with_unrelated_individual(kg_payload)
-    response = client.post("/besser_api/kg-to-object-diagram", json=payload)
-    assert response.status_code == 200
-    assert _object_names(response.json()) == {"acme", "alice", "zoe"}
-
-
-def test_scoping_does_not_shrink_the_reference_class_diagram(
-    client: TestClient, kg_payload: dict
-):
-    """The reference class diagram must not move when the ABox is scoped.
-
-    It is what the object diagram's slots and links resolve against, so a
-    scoped diagram that also lost classes would mistype its own objects.
-    """
-    full = client.post("/besser_api/kg-to-object-diagram", json=kg_payload)
-    scoped = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**kg_payload, "rootIndividualIds": ["acme"], "maxDepth": 1},
-    )
-    assert full.status_code == 200 and scoped.status_code == 200
-
-    def classes(body):
-        ref = body["model"].get("referenceDiagramData") or {}
-        return {
-            el.get("name")
-            for el in (ref.get("elements") or {}).values()
-            if el.get("type") == "Class"
-        }
-
-    full_classes = classes(full.json())
-    assert full_classes, "reference class diagram was empty; the assertion below would be vacuous"
-    assert classes(scoped.json()) == full_classes
-
-
-def test_unscoped_request_is_unchanged(client: TestClient, kg_payload: dict):
-    response = client.post("/besser_api/kg-to-object-diagram", json=kg_payload)
-    assert response.status_code == 200
-    names = _object_names(response.json())
-    assert {"alice", "acme"} <= names
-    codes = {w["code"] for w in response.json().get("warnings") or []}
-    assert "ABOX_SCOPED" not in codes
-
-
-def test_unknown_root_individual_returns_400(client: TestClient, kg_payload: dict):
-    response = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**kg_payload, "rootIndividualIds": ["nobody"]},
-    )
-    assert response.status_code == 400
-    assert "nobody" in response.json()["detail"]
-
-
-def test_root_that_is_not_an_individual_returns_400(client: TestClient, kg_payload: dict):
-    response = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**kg_payload, "rootIndividualIds": ["Person"]},
-    )
-    assert response.status_code == 400
-    assert "not an individual" in response.json()["detail"]
-
-
-def test_empty_root_list_returns_400(client: TestClient, kg_payload: dict):
-    response = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**kg_payload, "rootIndividualIds": []},
-    )
-    assert response.status_code == 400
-
-
-def test_non_positive_max_depth_returns_400(client: TestClient, kg_payload: dict):
-    response = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**kg_payload, "rootIndividualIds": ["acme"], "maxDepth": 0},
-    )
-    assert response.status_code == 400

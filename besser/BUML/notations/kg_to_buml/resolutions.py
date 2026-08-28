@@ -658,50 +658,6 @@ def _h_keep_first_only(kg: KnowledgeGraph, res: KGResolution) -> None:
     _replace_graph(kg, set(kg.nodes), surviving)
 
 
-def _h_assign_thing_class(kg: KnowledgeGraph, res: KGResolution) -> None:
-    """Add an rdf:type → Thing edge for an individual."""
-    indiv_id = res.parameters.get("individual_id")
-    if not indiv_id:
-        raise ResolutionError("'assign_thing_class' requires 'individual_id'.")
-    indiv = kg.get_node(indiv_id)
-    if indiv is None:
-        return
-    thing = _ensure_thing_class(kg)
-    kg.add_edge(KGEdge(
-        id=_next_edge_id(kg, "type"),
-        source=indiv, target=thing,
-        label="type", iri=RDF_TYPE,
-    ))
-
-
-def _h_pick_most_specific(kg: KnowledgeGraph, res: KGResolution) -> None:
-    """Drop all rdf:type edges from `individual_id` except the one targeting `class_id`."""
-    indiv_id = res.parameters.get("individual_id")
-    class_id = res.parameters.get("class_id")
-    if not (indiv_id and class_id):
-        raise ResolutionError("'pick_most_specific' requires 'individual_id' and 'class_id'.")
-    surviving = set()
-    for e in kg.edges:
-        if (
-            e.source.id == indiv_id
-            and normalize_predicate(e.iri) == RDF_TYPE
-            and e.target.id != class_id
-        ):
-            continue
-        surviving.add(e)
-    _replace_graph(kg, set(kg.nodes), surviving)
-
-
-def _h_drop_slot(kg: KnowledgeGraph, res: KGResolution) -> None:
-    """Drop the edges targeting a literal node (and the literal node itself)."""
-    literal_id = res.parameters.get("literal_id")
-    if not literal_id:
-        raise ResolutionError("'drop_slot' requires 'literal_id'.")
-    surviving_edges = {e for e in kg.edges if e.source.id != literal_id and e.target.id != literal_id}
-    surviving_nodes = {n for n in kg.nodes if n.id != literal_id}
-    _replace_graph(kg, surviving_nodes, surviving_edges)
-
-
 def _h_drop_link(kg: KnowledgeGraph, res: KGResolution) -> None:
     """Drop a single edge by id."""
     edge_id = res.parameters.get("edge_id")
@@ -1047,9 +1003,6 @@ _HANDLERS: Dict[str, Any] = {
     "drop_references": _h_drop_references,
     "treat_as_string": _h_treat_as_string,
     "keep_first_only": _h_keep_first_only,
-    "assign_thing_class": _h_assign_thing_class,
-    "pick_most_specific": _h_pick_most_specific,
-    "drop_slot": _h_drop_slot,
     "drop_link": _h_drop_link,
     "rename_with_suffix": _h_rename_with_suffix,
     "prefer_class": _h_prefer_class,
@@ -1071,8 +1024,6 @@ _HANDLERS: Dict[str, Any] = {
     "keep_as_single": _h_noop,
     "ignore": _h_noop,
     "bump_to_unbounded": _h_noop,           # converter already bumps via ABox heuristic
-    "coerce_to_string": _h_noop,            # converter already coerces
-    "coerce_to_string_link": _h_noop,       # the link is preserved as raw edge
     "record_as_description": _h_noop,       # writer can read restriction metadata
 }
 

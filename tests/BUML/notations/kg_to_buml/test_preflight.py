@@ -17,7 +17,6 @@ from besser.BUML.notations.kg_to_buml import (
     KGIssue,
     KGPreflightReport,
     analyze_kg_for_class_diagram,
-    analyze_kg_for_object_diagram,
     kg_signature,
 )
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
@@ -602,59 +601,6 @@ def test_multivalued_literal(tmp_path: Path):
     assert issue.skip_action.key == "keep_first_only"
 
 
-# --- Object-diagram detectors ---------------------------------------------
-
-
-def test_object_diagram_blank_node(tmp_path: Path):
-    ttl = """
-    @prefix : <http://ex.org/> .
-    @prefix owl: <http://www.w3.org/2002/07/owl#> .
-
-    :Person a owl:Class .
-    _:b1 a :Person .
-    """
-    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    report = analyze_kg_for_object_diagram(kg)
-    codes = {i.code for i in report.issues}
-    assert "BLANK_NODE_AS_OBJECT" in codes
-
-
-def test_orphan_individuals_suppress_individual_no_type(tmp_path: Path):
-    """Individuals with no class anchoring at all are flagged as orphans, and
-    the INDIVIDUAL_NO_TYPE detector is suppressed for them so the user sees a
-    single, drop-or-classify decision instead of two competing issues."""
-    ttl = """
-    @prefix : <http://ex.org/> .
-    @prefix owl: <http://www.w3.org/2002/07/owl#> .
-
-    :Person a owl:Class .
-    :alice :knows :bob .
-    """
-    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    report = analyze_kg_for_object_diagram(kg)
-    codes = {i.code for i in report.issues}
-    assert "ORPHAN_NODE_NO_CLASS_LINK" in codes
-    assert "INDIVIDUAL_NO_TYPE" not in codes
-
-
-def test_object_diagram_does_not_run_class_detectors(tmp_path: Path):
-    """Class-diagram-only issues (PROPERTY_NO_DOMAIN) must not appear in the
-    object-diagram report."""
-    ttl = """
-    @prefix : <http://ex.org/> .
-    @prefix owl: <http://www.w3.org/2002/07/owl#> .
-
-    :Person a owl:Class .
-    :likes  a owl:ObjectProperty .
-    :alice  a :Person ; :likes :bob .
-    :bob    a :Person .
-    """
-    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    report = analyze_kg_for_object_diagram(kg)
-    codes = {i.code for i in report.issues}
-    assert "PROPERTY_NO_DOMAIN" not in codes
-
-
 # --- Signature & report basics --------------------------------------------
 
 
@@ -688,18 +634,6 @@ def test_clean_kg_has_empty_report(tmp_path: Path):
     assert report.issue_count == 0
     assert report.diagram_type == "ClassDiagram"
     assert isinstance(report.kg_signature, str) and len(report.kg_signature) >= 8
-
-
-def test_object_diagram_report_type(tmp_path: Path):
-    ttl = """
-    @prefix : <http://ex.org/> .
-    @prefix owl: <http://www.w3.org/2002/07/owl#> .
-
-    :Person a owl:Class .
-    """
-    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    report = analyze_kg_for_object_diagram(kg)
-    assert report.diagram_type == "ObjectDiagram"
 
 
 # --- ORPHAN_NODE_NO_CLASS_LINK ---------------------------------------------
@@ -855,7 +789,6 @@ def test_orphan_literal_attached_to_class_not_flagged(tmp_path: Path):
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
     assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(analyze_kg_for_class_diagram(kg))
-    assert "ORPHAN_NODE_NO_CLASS_LINK" not in _codes(analyze_kg_for_object_diagram(kg))
 
 
 def test_orphan_literal_attached_to_property_not_flagged(tmp_path: Path):

@@ -510,22 +510,3 @@ def test_model_round_trips_through_the_editor(result):
     # Nothing is unreadable for any reason other than the known grammar gap.
     for block in unreadable:
         assert _UNSUPPORTED_OCL.search(block), block
-
-
-def test_object_diagram_builds_on_the_same_result(result, combined_ttl: str):
-    """BIBO declares 14 named individuals — the degrees, the document statuses
-    and its own authors — so the object diagram is not empty.
-
-    Only the *number* of objects is asserted. ``kg_to_object_diagram`` is not
-    yet hash-seed independent: both an object's name (``bdarcus`` vs the
-    ``foaf:name`` literal ``Bruce D'Arcus``) and the classifier it is bound to
-    (``DocumentStatus`` vs the ``owl:Thing`` fallback) vary with
-    ``PYTHONHASHSEED``, so asserting either would be flaky. The class diagram,
-    which is what ``test_determinism.py`` covers, does not have this problem.
-    """
-    from besser.BUML.notations.kg_to_buml import kg_to_object_diagram
-
-    kg = owl_file_to_knowledge_graph(combined_ttl)
-    object_result = kg_to_object_diagram(kg, class_result=result, model_name="Bibo")
-    assert object_result.object_model is not None
-    assert len(object_result.object_model.objects) == 23

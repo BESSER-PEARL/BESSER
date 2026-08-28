@@ -90,25 +90,6 @@ def test_preflight_clean_kg_returns_no_issues(client: TestClient):
     assert body["issueCount"] == 0
 
 
-def test_preflight_object_diagram_via_query_param(client: TestClient):
-    nodes = [
-        {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
-        {"id": "blank1", "nodeType": "blank", "label": "_:b1"},
-    ]
-    edges = [
-        {"id": "t1", "source": "blank1", "target": "Person", "iri": RDF + "type"},
-    ]
-    resp = client.post(
-        "/besser_api/analyze-kg-for-buml-conversion?diagramType=ObjectDiagram",
-        json=_kg_payload(nodes, edges),
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["diagramType"] == "ObjectDiagram"
-    codes = {i["code"] for i in body["issues"]}
-    assert "BLANK_NODE_AS_OBJECT" in codes
-
-
 def test_preflight_rejects_non_kg_payload(client: TestClient):
     resp = client.post(
         "/besser_api/analyze-kg-for-buml-conversion",
@@ -206,42 +187,6 @@ def test_class_diagram_with_skip_decision(client: TestClient):
     body = resp.json()
     rel_types = {r.get("name") for r in body["model"]["relationships"].values()}
     assert "likes" not in rel_types  # property dropped
-
-
-# -- Object diagram conversion with decisions ------------------------------
-
-
-def test_object_diagram_with_accept_decision(client: TestClient):
-    """Object-diagram path with a blank node: accept decides to materialize it."""
-    nodes = [
-        {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
-        {"id": "blank1", "nodeType": "blank", "label": "_:b1"},
-    ]
-    edges = [
-        {"id": "t1", "source": "blank1", "target": "Person", "iri": RDF + "type"},
-    ]
-    payload = _kg_payload(nodes, edges)
-    pre = client.post(
-        "/besser_api/analyze-kg-for-buml-conversion?diagramType=ObjectDiagram",
-        json=payload,
-    ).json()
-    sig = pre["kgSignature"]
-    blank_issue = next(i for i in pre["issues"] if i["code"] == "BLANK_NODE_AS_OBJECT")
-
-    payload2 = {
-        **payload,
-        "kgSignature": sig,
-        "resolutions": [
-            {"issueId": blank_issue["id"], "decision": "accept"},
-        ],
-    }
-    resp = client.post("/besser_api/kg-to-object-diagram", json=payload2)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    obj_names = {e["name"] for e in body["model"]["elements"].values() if e.get("type") == "ObjectName"}
-    # The materialised individual carries a synthetic name; just verify that at
-    # least one object was created (it wouldn't have been without the resolution).
-    assert obj_names
 
 
 # -- Stale signature -------------------------------------------------------

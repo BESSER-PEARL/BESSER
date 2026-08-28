@@ -47,13 +47,6 @@ class DiagramInput(BaseModel):
     # send to the per-node LLM classifier instead of dropping. Populated
     # by ``/classify-orphans-with-llm`` request bodies.
     orphanNodeIds: Optional[List[str]] = None
-    # KG -> Object Diagram scoping: ``rootIndividualIds`` names the
-    # individuals the diagram is built around, and ``maxDepth`` how many
-    # individual-to-individual hops to follow from them (``None`` = the full
-    # connected component). Omitting ``rootIndividualIds`` converts the whole
-    # ABox, which is the historical behaviour.
-    rootIndividualIds: Optional[List[str]] = None
-    maxDepth: Optional[int] = None
     # KG RDF export: which constraint vocabularies to emit. ``"owl"`` emits
     # only ``owl:Restriction`` blank nodes; ``"shacl"`` emits only
     # ``sh:NodeShape`` / ``sh:PropertyShape``; ``"both"`` (default) emits

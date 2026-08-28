@@ -2,11 +2,10 @@
 
 Imports the ``tests/fixtures/complex_kg.ttl`` fixture (which intentionally
 triggers most preflight issues), runs the analyze endpoint, then converts
-to a Class Diagram and to an Object Diagram with a mix of accept/skip
-decisions. Verifies that:
+to a Class Diagram with a mix of accept/skip decisions. Verifies that:
 
 * The analyze endpoint surfaces every expected issue code.
-* Conversions produce a valid BUML diagram with the user-chosen behaviour
+* The conversion produces a valid BUML diagram with the user-chosen behaviour
   (accept = recommended fix applied; skip = element dropped).
 * The kgSignature is enforced (mismatched signature returns 400).
 """
@@ -107,32 +106,6 @@ def test_class_diagram_with_skip_drops_property(client: TestClient, kg_payload: 
     relationships = body["model"]["relationships"]
     rel_names = {r.get("name") for r in relationships.values()}
     assert "likes" not in rel_names
-
-
-def test_object_diagram_pipeline(client: TestClient, kg_payload: dict):
-    """Object-diagram preflight + accept-everything conversion produces objects."""
-    pre = client.post(
-        "/besser_api/analyze-kg-for-buml-conversion?diagramType=ObjectDiagram",
-        json=kg_payload,
-    ).json()
-    assert pre["diagramType"] == "ObjectDiagram"
-    codes = {i["code"] for i in pre["issues"]}
-    # Object-only issues should appear; class-only ones should not.
-    assert "BLANK_NODE_AS_OBJECT" in codes
-    assert "PROPERTY_NO_DOMAIN" not in codes  # class-only
-    resolutions = [{"issueId": i["id"], "decision": "accept"} for i in pre["issues"]]
-    resp = client.post(
-        "/besser_api/kg-to-object-diagram",
-        json={**kg_payload, "kgSignature": pre["kgSignature"], "resolutions": resolutions},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["diagramType"] == "ObjectDiagram"
-    obj_names = {
-        e["name"] for e in body["model"]["elements"].values() if e.get("type") == "ObjectName"
-    }
-    # alice and bob (and rex) are individuals in the fixture.
-    assert {"alice", "bob"} <= obj_names
 
 
 def test_stale_signature_blocks_conversion(client: TestClient, kg_payload: dict):

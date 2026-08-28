@@ -1,7 +1,7 @@
 """KG → BUML preflight: surface every non-1-to-1 mapping for user review.
 
-The deterministic ``kg_to_class_diagram`` / ``kg_to_object_diagram``
-converters happily produce a BUML model from any KG, but several KG
+The deterministic ``kg_to_class_diagram`` converter happily produces a
+BUML model from any KG, but several KG
 elements don't have a clean 1-to-1 mapping into BUML (blank nodes used
 as instances, properties without a domain, multi-valued literals,
 unsupported restrictions, …). For each such element we emit a
@@ -52,10 +52,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     sanitize_python_identifier,
     sorted_by_id,
 )
-from besser.BUML.notations.kg_to_buml.datatype_mapping import (
-    parse_literal,
-    xsd_to_primitive,
-)
+from besser.BUML.notations.kg_to_buml.datatype_mapping import xsd_to_primitive
 from besser.BUML.notations.kg_to_buml._common import (
     all_datatype_refs as _all_datatype_refs,
     looks_like_datatype_iri as _looks_like_datatype_iri,
@@ -67,7 +64,6 @@ __all__ = [
     "KGIssue",
     "KGPreflightReport",
     "analyze_kg_for_class_diagram",
-    "analyze_kg_for_object_diagram",
     "kg_signature",
 ]
 
@@ -117,13 +113,12 @@ class KGIssue:
 
 @dataclass
 class KGPreflightReport:
-    """Result of :func:`analyze_kg_for_class_diagram` /
-    :func:`analyze_kg_for_object_diagram`."""
+    """Result of :func:`analyze_kg_for_class_diagram`."""
 
     issues: List[KGIssue] = field(default_factory=list)
     issue_count: int = 0
     kg_signature: str = ""
-    diagram_type: str = "ClassDiagram"  # or "ObjectDiagram"
+    diagram_type: str = "ClassDiagram"
 
 
 # ----------------------------------------------------------------------
@@ -145,7 +140,7 @@ def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
     issues: List[KGIssue] = []
     indexes = build_indexes(kg)
 
-    orphan_issues, orphan_node_ids = _detect_orphan_nodes(kg, indexes)
+    orphan_issues = _detect_orphan_nodes(kg, indexes)
 
     issues.extend(_detect_blank_node_instance(kg, indexes))
     issues.extend(_detect_undeclared_class(kg, indexes))
@@ -173,31 +168,6 @@ def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
     )
 
 
-def analyze_kg_for_object_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
-    """Walk a KG and return every issue the user should review before
-    converting to an Object Diagram. Class-level issues are NOT included
-    here (they only appear when the user converts to Class Diagram)."""
-    issues: List[KGIssue] = []
-    indexes = build_indexes(kg)
-
-    orphan_issues, orphan_node_ids = _detect_orphan_nodes(kg, indexes)
-
-    issues.extend(_detect_blank_node_as_object(kg, indexes))
-    issues.extend(_detect_individual_no_type(kg, indexes, suppress_node_ids=orphan_node_ids))
-    issues.extend(_detect_multiple_types(kg, indexes))
-    issues.extend(_detect_literal_type_coerced(kg, indexes))
-    issues.extend(_detect_link_type_mismatch(kg, indexes))
-    issues.extend(_detect_multivalued_literal(kg, indexes))
-    issues.extend(orphan_issues)
-
-    return KGPreflightReport(
-        issues=issues,
-        issue_count=len(issues),
-        kg_signature=kg_signature(kg),
-        diagram_type="ObjectDiagram",
-    )
-
-
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
@@ -214,10 +184,6 @@ def _classes_in(kg: KnowledgeGraph) -> List[KGClass]:
 
 def _properties_in(kg: KnowledgeGraph) -> List[KGProperty]:
     return sorted_by_id([n for n in kg.nodes if isinstance(n, KGProperty)])
-
-
-def _individuals_in(kg: KnowledgeGraph) -> List[KGIndividual]:
-    return sorted_by_id([n for n in kg.nodes if isinstance(n, KGIndividual)])
 
 
 def _domain_targets(prop: KGProperty, indexes) -> List[Any]:
@@ -1064,240 +1030,11 @@ def _detect_multivalued_literal(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
 
 
 # ----------------------------------------------------------------------
-# Object-diagram detectors
+# Orphan-node detector
 # ----------------------------------------------------------------------
 
 
-def _detect_blank_node_as_object(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
-    out: List[KGIssue] = []
-    structural_kinds = {"restriction", "class_expression"}
-    for blank in sorted_by_id([n for n in kg.nodes if isinstance(n, KGBlank)]):
-        if blank.metadata.get("kind") in structural_kinds:
-            continue
-        out.append(KGIssue(
-            id=_issue_id("BLANK_NODE_AS_OBJECT", blank.id),
-            code="BLANK_NODE_AS_OBJECT",
-            description=(
-                f"Blank node '{blank.id}' would be silently skipped in the object diagram. "
-                f"It has no IRI to use as an object name."
-            ),
-            affected_node_ids=[blank.id],
-            recommended_action=KGAction(
-                key="materialize_as_individual",
-                parameters={"blank_id": blank.id},
-                label="Promote it to a named individual",
-            ),
-            skip_action=KGAction(
-                key="drop_node",
-                parameters={"node_id": blank.id},
-                label="Drop the blank node and its edges",
-            ),
-        ))
-    return out
-
-
-def _detect_individual_no_type(
-    kg: KnowledgeGraph,
-    indexes,
-    *,
-    suppress_node_ids: Optional[Set[str]] = None,
-) -> List[KGIssue]:
-    out: List[KGIssue] = []
-    suppressed = suppress_node_ids or set()
-    for ind in _individuals_in(kg):
-        if ind.id in suppressed:
-            continue
-        if is_meta_vocab(getattr(ind, "iri", None) or ind.id):
-            continue
-        type_edges = indexes.out_with_predicate(ind.id, RDF_TYPE)
-        if type_edges:
-            continue
-        out.append(KGIssue(
-            id=_issue_id("INDIVIDUAL_NO_TYPE", ind.id),
-            code="INDIVIDUAL_NO_TYPE",
-            description=(
-                f"Individual '{ind.id}' has no rdf:type. Without a type the converter "
-                f"can't pick a classifier."
-            ),
-            affected_node_ids=[ind.id],
-            recommended_action=KGAction(
-                key="assign_thing_class",
-                parameters={"individual_id": ind.id},
-                label="Type it as a synthetic 'Thing'",
-            ),
-            skip_action=KGAction(
-                key="drop_node",
-                parameters={"node_id": ind.id},
-                label="Drop the individual",
-            ),
-        ))
-    return out
-
-
-def _detect_multiple_types(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
-    """Individual has multiple rdf:type edges that aren't in a subclass chain."""
-    out: List[KGIssue] = []
-    parents_of: Dict[str, Set[str]] = defaultdict(set)
-    for edge in kg.edges:
-        if normalize_predicate(edge.iri) == RDFS_SUBCLASS_OF:
-            parents_of[edge.source.id].add(edge.target.id)
-
-    def _ancestors(nid: str) -> Set[str]:
-        seen: Set[str] = set()
-        stack = list(parents_of.get(nid, ()))
-        while stack:
-            x = stack.pop()
-            if x in seen:
-                continue
-            seen.add(x)
-            stack.extend(parents_of.get(x, ()))
-        return seen
-
-    for ind in _individuals_in(kg):
-        type_targets = [
-            e.target for e in indexes.out_with_predicate(ind.id, RDF_TYPE)
-            if isinstance(e.target, KGClass)
-        ]
-        if len(type_targets) <= 1:
-            continue
-        type_ids = sorted({t.id for t in type_targets})
-        # If they're all in a chain, no issue.
-        chain_ok = False
-        for t in type_targets:
-            if set(type_ids) - {t.id} <= _ancestors(t.id):
-                chain_ok = True
-                break
-        if chain_ok:
-            continue
-        most_specific = type_ids[0]  # deterministic: lex-first
-        out.append(KGIssue(
-            id=_issue_id("MULTIPLE_TYPES", ind.id),
-            code="MULTIPLE_TYPES",
-            description=(
-                f"Individual '{ind.id}' has {len(type_ids)} incomparable rdf:type values "
-                f"({type_ids}). BUML objects have a single classifier."
-            ),
-            affected_node_ids=[ind.id, *type_ids],
-            recommended_action=KGAction(
-                key="pick_most_specific",
-                parameters={"individual_id": ind.id, "class_id": most_specific},
-                label=f"Keep '{most_specific}' as the classifier",
-            ),
-            skip_action=KGAction(
-                key="drop_node",
-                parameters={"node_id": ind.id},
-                label="Drop the individual",
-            ),
-        ))
-    return out
-
-
-def _detect_literal_type_coerced(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
-    """Literal value can't parse cleanly into its declared datatype."""
-    out: List[KGIssue] = []
-    for lit in [n for n in kg.nodes if isinstance(n, KGLiteral)]:
-        if not lit.datatype or lit.datatype == _XSD_STRING:
-            continue
-        try:
-            parse_literal(lit.value, lit.datatype)
-        except Exception:
-            out.append(KGIssue(
-                id=_issue_id("LITERAL_TYPE_COERCED", lit.id),
-                code="LITERAL_TYPE_COERCED",
-                description=(
-                    f"Literal '{lit.value}' (datatype '{lit.datatype}') can't be parsed; "
-                    f"it would be coerced to a raw string."
-                ),
-                affected_node_ids=[lit.id],
-                recommended_action=KGAction(
-                    key="coerce_to_string",
-                    parameters={"literal_id": lit.id},
-                    label="Coerce the value to a plain string",
-                ),
-                skip_action=KGAction(
-                    key="drop_slot",
-                    parameters={"literal_id": lit.id},
-                    label="Drop the literal slot entirely",
-                ),
-            ))
-            continue
-        # parse_literal returns the raw string on failure too — check for that.
-        # The function never raises in practice; to be safe, we only flag on exceptions above.
-    return out
-
-
-def _detect_link_type_mismatch(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
-    """Best-effort detector: an instance edge between two individuals whose
-    types aren't connected by any property with matching domain/range."""
-    out: List[KGIssue] = []
-    # Collect property-IRI → (domain class id, range class id) pairs.
-    prop_dom_rng: Dict[str, Tuple[Set[str], Set[str]]] = {}
-    for prop in _properties_in(kg):
-        if not prop.iri:
-            continue
-        doms = {d.id for d in _domain_targets(prop, indexes) if isinstance(d, KGClass)}
-        rngs = {r.id for r in _range_targets(prop, indexes) if isinstance(r, KGClass)}
-        prop_dom_rng[prop.iri] = (doms, rngs)
-    # For each instance edge, check.
-    indiv_types: Dict[str, Set[str]] = defaultdict(set)
-    for edge in kg.edges:
-        if normalize_predicate(edge.iri) != RDF_TYPE:
-            continue
-        if isinstance(edge.source, KGIndividual) and isinstance(edge.target, KGClass):
-            indiv_types[edge.source.id].add(edge.target.id)
-    seen: Set[Tuple[str, str, str]] = set()
-    for edge in kg.edges:
-        if not isinstance(edge.source, KGIndividual) or not isinstance(edge.target, KGIndividual):
-            continue
-        if not edge.iri or edge.iri in (RDF_TYPE,):
-            continue
-        dr = prop_dom_rng.get(edge.iri)
-        if dr is None:
-            continue
-        doms, rngs = dr
-        if not (doms and rngs):
-            continue
-        src_ts = indiv_types.get(edge.source.id, set())
-        tgt_ts = indiv_types.get(edge.target.id, set())
-        if not src_ts or not tgt_ts:
-            continue
-        if (src_ts & doms) and (tgt_ts & rngs):
-            continue
-        key = (edge.iri, edge.source.id, edge.target.id)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(KGIssue(
-            id=_issue_id("LINK_TYPE_MISMATCH", edge.id),
-            code="LINK_TYPE_MISMATCH",
-            description=(
-                f"Edge '{edge.id}' ({edge.iri}) connects individuals whose types "
-                f"don't match the property's declared domain/range."
-            ),
-            affected_node_ids=[edge.source.id, edge.target.id],
-            affected_edge_ids=[edge.id],
-            recommended_action=KGAction(
-                key="coerce_to_string_link",
-                parameters={"edge_id": edge.id},
-                label="Keep the edge as a textual annotation",
-            ),
-            skip_action=KGAction(
-                key="drop_link",
-                parameters={"edge_id": edge.id},
-                label="Drop the link",
-            ),
-        ))
-    return out
-
-
-# ----------------------------------------------------------------------
-# Shared detector — orphan nodes (used by both class and object analyzers)
-# ----------------------------------------------------------------------
-
-
-def _detect_orphan_nodes(
-    kg: KnowledgeGraph, indexes
-) -> Tuple[List[KGIssue], Set[str]]:
+def _detect_orphan_nodes(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     """Find Individuals/Literals/Blanks with no transitive class-anchored link.
 
     A node is *class-anchored* if it can reach (undirected) a ``KGClass`` along
@@ -1305,9 +1042,6 @@ def _detect_orphan_nodes(
     rdfs:subClassOf}``. Anything else of kind Individual / Literal / Blank is
     orphan: it cannot contribute to a class diagram and forces the LLM
     pipeline (or the user) to decide whether to drop it or classify it.
-
-    Returns ``(issues, orphan_node_ids)`` so the caller can suppress
-    overlapping detectors (e.g. ``INDIVIDUAL_NO_TYPE``).
 
     Orphans are grouped into one issue per disconnected component (in the
     orphan-induced subgraph, edges of any predicate). Each issue exposes:
@@ -1400,7 +1134,7 @@ def _detect_orphan_nodes(
         orphan_ids.add(node.id)
 
     if not orphan_ids:
-        return [], set()
+        return []
 
     # Step 3 — orphan-induced subgraph + connected components (any predicate).
     orphan_neighbors: Dict[str, Set[str]] = {nid: set() for nid in orphan_ids}
@@ -1457,4 +1191,4 @@ def _detect_orphan_nodes(
                 label=f"Send {n} node{'s' if n != 1 else ''} to the LLM for classification",
             ),
         ))
-    return out, orphan_ids
+    return out

@@ -63,6 +63,7 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -91,6 +92,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     nn_buml_to_json,
     bpmn_buml_to_json,
     kg_to_json,
+    kg_buml_to_json,
 )
 
 # Backend services - Other services
@@ -435,6 +437,20 @@ async def export_buml(input_data: DiagramInput):
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
             )
 
+        elif elements_data.get("type") == "KnowledgeGraphDiagram":
+            kg_model = process_kg_diagram(json_data)
+            output_file_path = os.path.join(temp_dir, "knowledge_graph.py")
+            # ``model_var_name`` must stay "kg_model": ``project_to_json``'s
+            # SECTION_CONFIG keys on that name, so any other value makes the
+            # emitted section unreadable on the way back in.
+            kg_model_to_code(model=kg_model, file_path=output_file_path, model_var_name="kg_model")
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": 'attachment; filename="knowledge_graph.py"'},
+            )
+
         else:
             raise ValueError(
                 f"Unsupported or missing diagram type: {elements_data.get('type')}"
@@ -504,6 +520,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
     ])
 
+    is_kg = any(keyword in content_lower for keyword in [
+        'knowledgegraph(', 'kgclass(', 'kgproperty(', 'kgindividual('
+    ])
+
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
     # Try to parse based on detected type
@@ -528,6 +548,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                     model.get("elements")
                     or model.get("relationships")
                     or model.get("pages")
+                    or model.get("nodes")  # KnowledgeGraphDiagram
                 )
 
             def _pick_entry(dtype):
@@ -547,6 +568,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
                 "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
+                "KnowledgeGraphDiagram",
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -640,12 +662,25 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
+    elif is_kg:
+        try:
+            logger.info("Detected Knowledge Graph diagram, parsing...")
+            kg_json = kg_buml_to_json(buml_content)
+            diagram_data = {
+                "title": diagram_title,
+                "model": kg_json
+            }
+            diagram_type = "KnowledgeGraphDiagram"
+        except Exception as kg_error:
+            logger.error("Knowledge Graph diagram parsing failed: %s", str(kg_error))
+
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
-            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, "
+            "KnowledgeGraphDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend

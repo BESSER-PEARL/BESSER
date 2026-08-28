@@ -5,12 +5,14 @@ Web Modeling Editor's KG diagram and by OWL-to-KG ingestion. The metamodel
 distinguishes five node kinds (class, individual, property, literal, blank) and
 directed edges between them.
 
-There is intentionally no Python code builder for this metamodel: KG diagrams
-are stored as JSON in projects, and the typed metamodel exists to back the
-JSON round-trip converters and future KG-to-ClassDiagram / KG-to-ObjectDiagram
-transformations. Because KG identifiers (IRIs, blank-node ids, literal values)
-are not Python-identifier-safe, KGNode inherits from ``Element`` rather than
-``NamedElement``; IRIs and labels are preserved verbatim.
+KG diagrams are stored as JSON in projects; the typed metamodel backs the JSON
+round-trip converters and the KG-to-ClassDiagram / KG-to-ObjectDiagram
+transformations. Exporting a project to Python source goes through
+``besser.utilities.buml_code_builder.kg_model_builder``, whose output is read
+back by ``kg_diagram_converter.kg_buml_to_json``. Because KG identifiers (IRIs,
+blank-node ids, literal values) are not Python-identifier-safe, KGNode inherits
+from ``Element`` rather than ``NamedElement``; IRIs and labels are preserved
+verbatim, and the builder derives variable names separately.
 """
 
 from abc import ABC

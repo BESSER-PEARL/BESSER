@@ -67,7 +67,11 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
     """Execute a BUML Python snippet and serialize the resulting ``KnowledgeGraph``.
 
     Mirrors ``quantum_buml_to_json`` / ``class_buml_to_json`` — used by the
-    project round-trip pipeline.
+    project round-trip pipeline, which drops the return value straight into a
+    diagram entry's ``model`` key. It therefore returns the **bare model**
+    (``{"type", "version", "nodes", "edges", "axioms"}``), not the
+    ``{"title", "model"}`` envelope :func:`kg_to_json` builds for the HTTP
+    endpoints.
     """
     import besser.BUML.metamodel.kg as kg_module
 
@@ -118,7 +122,7 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
             break
     if kg is None:
         raise ValueError("BUML KG code did not define a KnowledgeGraph instance.")
-    return kg_to_json(kg)
+    return kg_to_json(kg)["model"]
 
 
 def _node_to_dict(n: KGNode) -> Dict[str, Any]:

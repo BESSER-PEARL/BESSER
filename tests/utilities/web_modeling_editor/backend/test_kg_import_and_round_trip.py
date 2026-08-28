@@ -4,6 +4,7 @@ Covers:
   1. rdflib → KnowledgeGraph → JSON produces the expected shape.
   2. JSON → process_kg_diagram → kg_to_json is an identity (round-trip).
   3. POST /import-owl returns a DiagramExportResponse that /validate-diagram accepts.
+  4. A project holding a KG survives project_to_code → project_to_json.
 """
 
 from __future__ import annotations
@@ -105,3 +106,60 @@ def test_import_owl_rejects_unsupported_extension(tmp_path: Path):
             files={"owl_file": ("bad.txt", fh.read(), "text/plain")},
         )
     assert resp.status_code == 415
+
+
+# ----------------------------------------------------------------------
+# Project-level round trip
+# ----------------------------------------------------------------------
+
+
+def test_project_export_preserves_knowledge_graph(tmp_path: Path):
+    """A KG in a project must survive the BUML source round trip.
+
+    Before the KG code builder existed, ``project_to_code`` had no bucket for
+    ``KnowledgeGraph`` and dropped it silently, while ``project_to_json``
+    already knew how to read a ``KNOWLEDGE_GRAPH`` section that nothing ever
+    wrote. This pins both halves together.
+    """
+    from besser.BUML.metamodel.project import Project
+    from besser.BUML.metamodel.structural import Class, DomainModel, Metadata
+    from besser.utilities.buml_code_builder.project_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        project_to_json,
+    )
+
+    kg = owl_file_to_knowledge_graph(str(_write_ttl(tmp_path)))
+    expected_nodes = len(kg.nodes)
+    expected_edges = len(kg.edges)
+
+    domain_model = DomainModel(name="dm")
+    domain_model.add_type(Class(name="Person", attributes=set()))
+
+    project = Project(
+        name="kg_project",
+        models=[domain_model, kg],
+        metadata=Metadata(description="round trip"),
+    )
+
+    out = tmp_path / "project.py"
+    project_to_code(project, str(out))
+    content = out.read_text(encoding="utf-8")
+    assert "KNOWLEDGE_GRAPH MODEL" in content
+
+    result = project_to_json(content)
+    kg_diagrams = result["diagrams"].get("KnowledgeGraphDiagram") or []
+    assert len(kg_diagrams) == 1
+
+    model = kg_diagrams[0]["model"]
+    assert model["type"] == "KnowledgeGraphDiagram"
+    assert len(model["nodes"]) == expected_nodes
+    assert len(model["edges"]) == expected_edges
+
+    # The sibling class diagram must be unaffected.
+    assert len(result["diagrams"].get("ClassDiagram") or []) == 1
+
+
+def _write_ttl(tmp_path: Path) -> Path:
+    path = tmp_path / "roundtrip.ttl"
+    path.write_text(TTL_FIXTURE, encoding="utf-8")
+    return path

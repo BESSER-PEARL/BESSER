@@ -4,6 +4,7 @@ Validation Router
 Handles all diagram validation endpoints for the BESSER web modeling editor backend.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -27,7 +28,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_kg_diagram,
 )
 from besser.BUML.notations.kg_to_buml import analyze_kg_for_class_diagram
-from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -181,7 +181,13 @@ async def validate_diagram(input_data: DiagramInput):
                 validation_errors.append(_format_kg_issue(issue.code, issue.description,
                                                           issue.affected_node_ids))
 
-            consistency = check_kg_consistency(kg)
+            # Imported here rather than at module scope: pulling in pyshacl +
+            # owlrl would otherwise make them a hard requirement to *start* the
+            # backend, even for deployments that never open a KG. Run off the
+            # event loop — it is seconds of CPU on a mid-sized ontology.
+            from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
+
+            consistency = await asyncio.to_thread(check_kg_consistency, kg)
             for issue in consistency.issues:
                 line = _format_kg_issue(
                     issue.code,

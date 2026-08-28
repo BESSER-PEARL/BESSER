@@ -48,7 +48,6 @@ from besser.BUML.notations.kg_to_buml import (
     kg_signature,
     kg_to_class_diagram as kg_to_class_diagram_buml,
 )
-from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
 from dataclasses import asdict as _dataclass_asdict
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
@@ -1099,8 +1098,15 @@ async def check_kg_consistency_endpoint(input_data: DiagramInput):
     originating constraint shape id (when resolvable). Empty issues list
     means the KG is fully conformant.
     """
+    # Imported here rather than at module scope so pyshacl + owlrl are not
+    # pulled in just to start the backend. (rdflib still is — it is core to
+    # every KG path — but pyshacl and its owlrl dependency are not.)
+    from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
+
     kg, _ = _kg_payload_to_kg(input_data)
-    report = check_kg_consistency(kg)
+    # pyshacl + owlrl is the heaviest thing this backend runs (seconds on a
+    # mid-sized ontology). Off the event loop, as the generators already do.
+    report = await asyncio.to_thread(check_kg_consistency, kg)
     return {
         "issues": [_dataclass_asdict(i) for i in report.issues],
         "issueCount": report.issue_count,

@@ -32,7 +32,7 @@ class DiagramInput(BaseModel):
     resolutions: Optional[List[Dict[str, Any]]] = None
     kgSignature: Optional[str] = None
     # LLM-cleanup round-trip: ``llmIssues`` carries the issue list returned
-    # by ``/llm-clean-kg`` so ``/apply-kg-cleanup`` can reconstruct the
+    # by ``/llm-clean-kg`` so ``/apply-kg-refinement`` can reconstruct the
     # KGIssue / KGAction objects without re-calling the LLM. ``description``
     # is the natural-language target-system description (analyse leg only).
     llmIssues: Optional[List[Dict[str, Any]]] = None

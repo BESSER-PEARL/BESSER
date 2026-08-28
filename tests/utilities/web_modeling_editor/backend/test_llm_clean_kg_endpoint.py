@@ -3,7 +3,7 @@
 We mock ``requests.post`` so no real network call is made. The tests
 exercise the full FastAPI request → response pipeline including
 multipart-form parsing for ``/llm-clean-kg`` and JSON-body parsing for
-``/apply-kg-cleanup``.
+``/apply-kg-refinement``.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def test_llm_clean_kg_propagates_openai_error(client: TestClient, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# /apply-kg-cleanup
+# LLM decision payloads, shared by the /apply-kg-refinement tests below
 # --------------------------------------------------------------------------
 
 
@@ -173,58 +173,35 @@ def _issue_payload(node_id: str = "Car") -> Dict[str, Any]:
     }
 
 
-def test_apply_kg_cleanup_drops_accepted_class(client: TestClient):
-    diagram = _kg_diagram()
-    diagram["llmIssues"] = [_issue_payload("Car")]
-    diagram["resolutions"] = [{"issueId": "issue-1", "decision": "accept"}]
+def _llm_refine_payload(**overrides: Any) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {**_kg_diagram(), "source": "llm"}
+    payload.update(overrides)
+    return payload
 
-    response = client.post("/besser_api/apply-kg-cleanup", json=diagram)
+
+def test_apply_kg_refinement_llm_skip_is_a_noop(client: TestClient):
+    payload = _llm_refine_payload(
+        llmIssues=[_issue_payload("Car")],
+        resolutions=[{"issueId": "issue-1", "decision": "skip"}],
+    )
+    response = client.post("/besser_api/apply-kg-refinement", json=payload)
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["diagramType"] == "KnowledgeGraphDiagram"
-    assert body["model"]["type"] == "KnowledgeGraphDiagram"
-    node_ids = {n["id"] for n in body["model"]["nodes"]}
-    assert "Car" not in node_ids
-    assert "Person" in node_ids
-    assert isinstance(body["kgSignature"], str)
-
-
-def test_apply_kg_cleanup_skips_noop(client: TestClient):
-    diagram = _kg_diagram()
-    diagram["llmIssues"] = [_issue_payload("Car")]
-    diagram["resolutions"] = [{"issueId": "issue-1", "decision": "skip"}]
-
-    response = client.post("/besser_api/apply-kg-cleanup", json=diagram)
-    assert response.status_code == 200, response.text
-    body = response.json()
-    node_ids = {n["id"] for n in body["model"]["nodes"]}
+    node_ids = {n["id"] for n in response.json()["model"]["nodes"]}
     assert "Car" in node_ids
 
 
-def test_apply_kg_cleanup_signature_mismatch_returns_400(client: TestClient):
-    diagram = _kg_diagram()
-    diagram["llmIssues"] = [_issue_payload("Car")]
-    diagram["resolutions"] = [{"issueId": "issue-1", "decision": "accept"}]
-    diagram["kgSignature"] = "0" * 16  # deliberately wrong
-
-    response = client.post("/besser_api/apply-kg-cleanup", json=diagram)
+def test_apply_kg_refinement_llm_missing_issues_400(client: TestClient):
+    # Without llmIssues the endpoint cannot reconstruct the KGIssue the
+    # decision refers to, so it must reject rather than silently do nothing.
+    payload = _llm_refine_payload(resolutions=[{"issueId": "issue-1", "decision": "accept"}])
+    response = client.post("/besser_api/apply-kg-refinement", json=payload)
     assert response.status_code == 400
 
 
-def test_apply_kg_cleanup_missing_issues_400(client: TestClient):
-    diagram = _kg_diagram()
-    diagram["resolutions"] = [{"issueId": "issue-1", "decision": "accept"}]
-    # No llmIssues field — endpoint must reject because it can't reconstruct the issue.
-    response = client.post("/besser_api/apply-kg-cleanup", json=diagram)
-    assert response.status_code == 400
-
-
-def test_apply_kg_cleanup_no_decisions_returns_unchanged(client: TestClient):
-    diagram = _kg_diagram()
-    response = client.post("/besser_api/apply-kg-cleanup", json=diagram)
+def test_apply_kg_refinement_llm_no_decisions_returns_unchanged(client: TestClient):
+    response = client.post("/besser_api/apply-kg-refinement", json=_llm_refine_payload())
     assert response.status_code == 200
-    body = response.json()
-    node_ids = {n["id"] for n in body["model"]["nodes"]}
+    node_ids = {n["id"] for n in response.json()["model"]["nodes"]}
     assert node_ids == {"Person", "Car", "alice", "drives"}
 
 

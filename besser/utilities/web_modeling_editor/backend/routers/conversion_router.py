@@ -1297,38 +1297,6 @@ async def llm_clean_kg_endpoint(
     return _report_to_response(report)
 
 
-@router.post("/apply-kg-cleanup")
-@handle_endpoint_errors("apply_kg_cleanup")
-async def apply_kg_cleanup_endpoint(input_data: DiagramInput):
-    """Apply the user's accept/skip decisions on LLM-cleanup suggestions.
-
-    Returns the cleaned KG diagram in the editor's JSON shape so the
-    frontend can replace the active KG. ``input_data.llmIssues`` carries
-    the round-tripped issues; ``input_data.resolutions`` carries the
-    decisions (``[{issueId, decision}]``); ``input_data.kgSignature`` (if
-    present) detects a stale graph between analyse and apply.
-
-    Backward-compat alias: this endpoint is equivalent to
-    ``/apply-kg-refinement`` with ``source="llm"``.
-    """
-    kg, _json_data = _kg_payload_to_kg(input_data)
-    _enforce_signature(input_data, kg)
-    base_title = input_data.title or kg.name or "Knowledge Graph"
-    resolved_kg = _apply_llm_decisions(kg, input_data.llmIssues, input_data.resolutions)
-    cleaned_json = kg_to_json(resolved_kg)
-    cleaned_model = cleaned_json.get("model", cleaned_json)
-    if "type" not in cleaned_model:
-        cleaned_model = {**cleaned_model, "type": "KnowledgeGraphDiagram"}
-    return {
-        "title": f"{base_title} (Cleaned)",
-        "model": cleaned_model,
-        "diagramType": "KnowledgeGraphDiagram",
-        "kgSignature": kg_signature(resolved_kg),
-        "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "version": API_VERSION,
-    }
-
-
 # ----------------------------------------------------------------------
 # Unified KG refinement (Refine KG modal)
 # ----------------------------------------------------------------------
@@ -1352,7 +1320,7 @@ async def apply_kg_refinement_endpoint(
       returned to the client so the AI tab can call
       ``/classify-orphans-with-llm`` next.
     - ``source="llm"``: reconstructs LLM-issue objects from
-      ``llmIssues`` and dispatches them. Equivalent to ``/apply-kg-cleanup``.
+      ``llmIssues`` and dispatches them.
 
     Returns the cleaned KG diagram so the frontend can replace the
     active KG. The new ``kgSignature`` is also returned for the next

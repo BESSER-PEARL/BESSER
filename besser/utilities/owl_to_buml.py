@@ -51,7 +51,6 @@ from besser.BUML.metamodel.kg import (
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
-    SH_PATH,
     SH_PROPERTY,
 )
 

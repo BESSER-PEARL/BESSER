@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Iterable, List, Literal as TypingLiteral, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal as TypingLiteral, Optional, Set, Union
 
 import rdflib
 from rdflib import BNode, Literal, Namespace, RDF, RDFS, OWL, URIRef, XSD
@@ -26,7 +26,6 @@ from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
     KGEdge,
-    KGIndividual,
     KGLiteral,
     KGNode,
     KGNodeConstraint,

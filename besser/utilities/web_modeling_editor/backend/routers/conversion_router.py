@@ -38,7 +38,6 @@ from besser.BUML.notations.kg_to_buml import (
     DeferredOrphanClassification,
     KGAction,
     KGIssue,
-    KGPreflightReport,
     KGResolution,
     ResolutionError,
     analyze_kg_for_class_diagram,
@@ -130,9 +129,6 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
-)
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
 )
 
 logger = logging.getLogger(__name__)

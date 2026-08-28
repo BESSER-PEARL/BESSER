@@ -18,13 +18,13 @@ in the in-memory graph passed to pyshacl.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pyshacl
 import rdflib
 from rdflib import BNode, Literal, RDF, URIRef, XSD
-from rdflib.namespace import OWL, RDFS
+from rdflib.namespace import OWL
 
 from besser.BUML.metamodel.kg import (
     KnowledgeGraph,

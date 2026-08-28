@@ -26,7 +26,6 @@ import requests
 from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
-    KGEdge,
     KGIndividual,
     KGLiteral,
     KGNode,

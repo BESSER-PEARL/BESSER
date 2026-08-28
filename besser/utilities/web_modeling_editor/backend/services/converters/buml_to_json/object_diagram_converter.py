@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-from besser.BUML.metamodel.object import AttributeLink, Link, Object, ObjectModel
+from besser.BUML.metamodel.object import Link, ObjectModel
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
@@ -565,7 +565,7 @@ def object_model_to_json(object_model: ObjectModel, domain_json: Dict[str, Any])
         obj_to_element_id[id(obj)] = object_id
 
     # Pass 2: Links. ``ObjectModel.links`` aggregates from each Object.
-    for link in sorted(object_model.links, key=lambda l: l.name):
+    for link in sorted(object_model.links, key=lambda lk: lk.name):
         if not isinstance(link, Link) or len(link.connections) != 2:
             continue
         end_a, end_b = link.connections[0], link.connections[1]

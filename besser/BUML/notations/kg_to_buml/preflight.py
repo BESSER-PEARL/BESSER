@@ -29,7 +29,6 @@ from besser.BUML.metamodel.kg import (
     SubPropertyOfAxiom,
     KGBlank,
     KGClass,
-    KGEdge,
     KGIndividual,
     KGLiteral,
     KGNode,
@@ -387,7 +386,7 @@ def _detect_multiple_domains(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             skip_action=KGAction(
                 key="split_per_domain",
                 parameters={"property_iri": prop.iri or prop.id},
-                label=f"Split into one property per domain",
+                label="Split into one property per domain",
             ),
         ))
     return out
@@ -598,7 +597,7 @@ def _detect_property_name_collisions(kg: KnowledgeGraph, indexes) -> List[KGIssu
             skip_action=KGAction(
                 key="drop_property",
                 parameters={"property_iri": sorted_props[-1].iri or sorted_props[-1].id},
-                label=f"Drop the last colliding property",
+                label="Drop the last colliding property",
             ),
         ))
     return out
@@ -631,7 +630,7 @@ def _detect_range_both_datatype_and_class(kg: KnowledgeGraph, indexes) -> List[K
                 skip_action=KGAction(
                     key="drop_property",
                     parameters={"property_iri": prop.iri or prop.id},
-                    label=f"Drop the property",
+                    label="Drop the property",
                 ),
             ))
     return out
@@ -692,7 +691,7 @@ def _detect_range_not_type(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             skip_action=KGAction(
                 key="drop_property",
                 parameters={"property_iri": prop.iri or prop.id},
-                label=f"Drop the property",
+                label="Drop the property",
             ),
         ))
     return out
@@ -741,7 +740,7 @@ def _detect_cyclic_subclass(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             id=_issue_id("CYCLIC_SUBCLASS", *cycle),
             code="CYCLIC_SUBCLASS",
             description=(
-                f"Multi-class rdfs:subClassOf cycle: " + " → ".join(cycle)
+                "Multi-class rdfs:subClassOf cycle: " + " → ".join(cycle)
             ),
             affected_node_ids=list(cycle),
             affected_edge_ids=edge_ids,
@@ -776,12 +775,12 @@ def _detect_no_range(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             recommended_action=KGAction(
                 key="set_range",
                 parameters={"property_iri": prop.iri or prop.id, "range_iri": _XSD_STRING},
-                label=f"Default the range to xsd:string (datatype attribute)",
+                label="Default the range to xsd:string (datatype attribute)",
             ),
             skip_action=KGAction(
                 key="drop_property",
                 parameters={"property_iri": prop.iri or prop.id},
-                label=f"Drop the property",
+                label="Drop the property",
             ),
         ))
     return out
@@ -814,7 +813,7 @@ def _detect_unmapped_datatypes(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
                 skip_action=KGAction(
                     key="drop_property",
                     parameters={"property_iri": prop.iri or prop.id},
-                    label=f"Drop the property",
+                    label="Drop the property",
                 ),
             ))
     return out

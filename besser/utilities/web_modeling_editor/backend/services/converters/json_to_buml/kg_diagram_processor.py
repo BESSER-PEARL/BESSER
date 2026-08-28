@@ -15,7 +15,6 @@ from besser.BUML.metamodel.kg import (
     HasKeyAxiom,
     ImportAxiom,
     InversePropertiesAxiom,
-    KGAxiom,
     KGBlank,
     KGClass,
     KGEdge,

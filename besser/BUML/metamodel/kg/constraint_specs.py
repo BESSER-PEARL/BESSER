@@ -13,7 +13,7 @@ table in ``constraint-catalog.ts``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Literal, Optional
 
 

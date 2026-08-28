@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 from besser.BUML.metamodel.kg import (
     KGBlank,
@@ -22,7 +22,6 @@ from besser.BUML.metamodel.kg import (
     KGEdge,
     KGIndividual,
     KGLiteral,
-    KGNode,
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.object import (
@@ -103,7 +102,6 @@ def kg_to_object_diagram(
 
     # Lookup helpers built lazily.
     name_to_attribute_per_class: Dict[int, Dict[str, Property]] = {}
-    name_to_association_per_pair: Dict[Tuple[int, int], List[BinaryAssociation]] = {}
 
     def _attrs_for(cls: Class) -> Dict[str, Property]:
         cache = name_to_attribute_per_class.get(id(cls))

@@ -135,10 +135,28 @@ Conversion
 - ``POST /csv-to-domain-model`` -- CSV files to domain model JSON
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
 
+Knowledge Graph
+^^^^^^^^^^^^^^^
+
+The KG editor's own endpoints. ``/import-owl`` and ``/export-kg-rdf`` are the
+ontology round trip; the rest support the KG-to-ClassDiagram conversion and the
+Refine KG dialog that precedes it.
+
+- ``POST /import-owl`` -- OWL/RDF ontology file (``.owl``/``.ttl``/``.rdf``/``.xml``/``.nt``/``.n3``) to KnowledgeGraphDiagram JSON
+- ``POST /export-kg-rdf/{fmt}`` -- KnowledgeGraphDiagram to Turtle (``ttl``) or RDF/XML (``owl``); the body's ``vocab`` field selects OWL restrictions, SHACL shapes, or both
+- ``POST /kg-to-class-diagram`` -- KnowledgeGraphDiagram to ClassDiagram JSON with OCL constraints, applying any preflight resolutions
+- ``POST /analyze-kg-for-buml-conversion`` -- Preflight report: every KG element with no clean 1-to-1 BUML mapping, each with a recommended and a skip action
+- ``POST /check-kg-consistency`` -- OWL 2 + SHACL validation (pyshacl with OWL2-RL inference)
+- ``POST /apply-kg-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions) and return the cleaned KG
+- ``POST /llm-clean-kg`` -- LLM-suggested cleanup targeted at a described system (requires OpenAI API key)
+- ``POST /classify-orphans-with-llm`` -- Per-node classification for orphan nodes deferred from the Refine dialog
+
 Validation
 ^^^^^^^^^^
 
 - ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
+  For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
+  consistency checks as the editor's Refine KG dialog, reporting findings only.
 
 Deployment
 ^^^^^^^^^^

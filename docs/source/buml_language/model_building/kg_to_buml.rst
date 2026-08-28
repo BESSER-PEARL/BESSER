@@ -176,3 +176,19 @@ top-level class inherit from ``Thing``, so those invariants resolve. Converting
 without accepting it is still fine; the invariants that cannot be navigated are
 dropped with an ``OCL_DROPPED_UNRESOLVED_FEATURE`` warning rather than shipped
 in a form no evaluator can read.
+
+Round-tripping a knowledge graph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A knowledge graph is a first-class project model, so it round-trips through
+B-UML source like every other diagram type — on its own via ``/export-buml``
+and ``/get-json-model``, or as one section of a whole project via
+``/export-project-as-buml`` and ``/get-project-json-model``. In Python, the
+same pair is :func:`besser.utilities.buml_code_builder.kg_model_to_code` and
+the ``kg_buml_to_json`` converter.
+
+Independently of B-UML, the graph can be written back out as RDF —
+:func:`besser.utilities.kg_to_owl.serialize_knowledge_graph` emits Turtle or
+RDF/XML, and chooses between OWL restrictions, SHACL shapes, or both. Importing
+an ontology, editing it in the graphical editor, and exporting it again is
+designed to be lossless.

@@ -5,8 +5,6 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends default-jre-headless \
-    && rm -rf /var/lib/apt/lists/*
 # No additional system dependencies needed - Python slim has everything for a basic Flask/FastAPI app
 # If you need specific system libraries (e.g., for image processing), add them here
 

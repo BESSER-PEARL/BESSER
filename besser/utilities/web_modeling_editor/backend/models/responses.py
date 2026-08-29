@@ -28,6 +28,7 @@ class ValidationResponse(BaseModel):
     message: str = ""
     valid_constraints: List[str] = []
     invalid_constraints: List[str] = []
+    warning_constraints: List[str] = []
     ocl_message: str = ""
 
 

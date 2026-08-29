@@ -15,7 +15,7 @@ from besser.BUML.metamodel.ocl.ocl import (
     PropertyCallExpression, VariableExp, TypeExp,
     IntegerLiteralExpression, RealLiteralExpression,
     BooleanLiteralExpression, StringLiteralExpression, DateLiteralExpression,
-    InfixOperator,
+    EnumLiteralExpression, InfixOperator,
 )
 
 
@@ -46,6 +46,17 @@ _TYPE_TEST_NAMES = {
     "OCLISTYPEOF": "oclIsTypeOf",
     "OCLISKINDOF": "oclIsKindOf",
     "OCLASTYPE": "oclAsType",
+}
+
+_ARROW_OPS = {
+    "INCLUDES", "EXCLUDES", "INCLUDING", "EXCLUDING",
+    "UNION", "INTERSECTION", "PREPEND", "APPEND", "SYMMETRICDIFFERENCE",
+    "SUBSEQUENCE", "SUBORDEREDSET",
+    "Sum", "First", "Last", "ASSET",
+}
+
+_ARROW_DISPLAY = {
+    "ASSET": "asSet",
 }
 
 
@@ -89,6 +100,8 @@ def _render(node, parent_prec: int) -> str:
         return f"'{node.value}'"
     if isinstance(node, DateLiteralExpression):
         return str(node.value)
+    if isinstance(node, EnumLiteralExpression):
+        return f"{node.enum_name}::{node.literal_name}"
     # Fallback for bare structural-model objects (Property leaked from an
     # un-wrapped visitor) and anything else with a ``name``.
     if hasattr(node, "name"):
@@ -117,8 +130,7 @@ def _render_operation(node: OperationCallExpression, parent_prec: int) -> str:
         return _paren(f"not {operand}", _PREC_UNARY, parent_prec)
 
     if op == "ALLInstances":
-        # OCL spec uses ``::`` for class-scoped operations.
-        return f"{_render(node.source, _PREC_POSTFIX)}::allInstances()"
+        return f"{_render(node.source, _PREC_POSTFIX)}.allInstances()"
 
     if op == "Size":
         return f"{_render(node.source, _PREC_POSTFIX)}->size()"
@@ -145,6 +157,15 @@ def _render_operation(node: OperationCallExpression, parent_prec: int) -> str:
         left = _render(args[0], prec)
         right = _render(args[1], prec + 1)
         return _paren(f"{left} {op} {right}", prec, parent_prec)
+
+    # Arrow operations (collection operations).
+    if op in _ARROW_OPS:
+        rendered_args = ", ".join(
+            _render(a, _PREC_TOP) for a in args if not isinstance(a, InfixOperator)
+        )
+        src = _render(node.source, _PREC_POSTFIX) if node.source is not None else ""
+        display = _ARROW_DISPLAY.get(op, op.lower())
+        return f"{src}->{display}({rendered_args})"
 
     # Generic method-call fallback (e.g. user-defined methods).
     rendered_args = ", ".join(

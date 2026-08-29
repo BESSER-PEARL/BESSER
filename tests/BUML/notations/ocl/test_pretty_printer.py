@@ -17,6 +17,8 @@ from besser.BUML.notations.ocl import parse_ocl, pretty_print
     "context Employee inv: self.age > 16 and self.salary > 0.0",
     "context Department inv: self.employee->forAll(e | e.age > 16)",
     "context Employee inv: self.employer.minSalary <= self.salary",
+    "context Department inv: self.employee->union(self.employee)->size() > 0",
+    "context Department inv: self.employee->intersection(self.employee)->size() > 0",
 ])
 def test_round_trip_identity(source, model):
     constraint = parse_ocl(source, model)
@@ -59,3 +61,43 @@ def test_pretty_print_size(model):
         model,
     )
     assert pretty_print(constraint) == "context Department inv: self.employee->size() > 0"
+
+
+def test_pretty_print_including(model):
+    constraint = parse_ocl(
+        "context Department inv: self.employee->including(self.minSalary)->size() > 0",
+        model,
+    )
+    assert "->including(" in pretty_print(constraint)
+
+
+def test_pretty_print_excluding(model):
+    constraint = parse_ocl(
+        "context Department inv: self.employee->excluding(self.minSalary)->size() > 0",
+        model,
+    )
+    assert "->excluding(" in pretty_print(constraint)
+
+
+def test_pretty_print_closure(model):
+    constraint = parse_ocl(
+        "context Department inv: self.employee->closure(e | e.name <> '')",
+        model,
+    )
+    assert "->closure(" in pretty_print(constraint)
+
+
+def test_pretty_print_union(model):
+    constraint = parse_ocl(
+        "context Department inv: self.employee->union(self.employee)->size() > 0",
+        model,
+    )
+    assert "->union(" in pretty_print(constraint)
+
+
+def test_pretty_print_intersection(model):
+    constraint = parse_ocl(
+        "context Department inv: self.employee->intersection(self.employee)->size() > 0",
+        model,
+    )
+    assert "->intersection(" in pretty_print(constraint)

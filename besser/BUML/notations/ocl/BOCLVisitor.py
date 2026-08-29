@@ -1,4 +1,4 @@
-# Generated from BOCL.g4 by ANTLR 4.13.2
+# Generated from BOCL.g4 by ANTLR 4.13.1
 from antlr4 import *
 if "." in __name__:
     from .BOCLParser import BOCLParser
@@ -104,6 +104,11 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BOCLParser#arrowAsSet.
+    def visitArrowAsSet(self, ctx:BOCLParser.ArrowAsSetContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BOCLParser#ifThenElseExpr.
     def visitIfThenElseExpr(self, ctx:BOCLParser.IfThenElseExprContext):
         return self.visitChildren(ctx)
@@ -151,6 +156,11 @@ class BOCLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BOCLParser#primaryExpr.
     def visitPrimaryExpr(self, ctx:BOCLParser.PrimaryExprContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#arrowIncluding.
+    def visitArrowIncluding(self, ctx:BOCLParser.ArrowIncludingContext):
         return self.visitChildren(ctx)
 
 
@@ -204,6 +214,16 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BOCLParser#arrowExcluding.
+    def visitArrowExcluding(self, ctx:BOCLParser.ArrowExcludingContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#arrowIntersection.
+    def visitArrowIntersection(self, ctx:BOCLParser.ArrowIntersectionContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BOCLParser#arrowSize.
     def visitArrowSize(self, ctx:BOCLParser.ArrowSizeContext):
         return self.visitChildren(ctx)
@@ -226,6 +246,11 @@ class BOCLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BOCLParser#arrowPrepend.
     def visitArrowPrepend(self, ctx:BOCLParser.ArrowPrependContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#dotAllInstances.
+    def visitDotAllInstances(self, ctx:BOCLParser.DotAllInstancesContext):
         return self.visitChildren(ctx)
 
 
@@ -269,13 +294,13 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by BOCLParser#allInstancesExpr.
-    def visitAllInstancesExpr(self, ctx:BOCLParser.AllInstancesExprContext):
+    # Visit a parse tree produced by BOCLParser#dateFuncExpr.
+    def visitDateFuncExpr(self, ctx:BOCLParser.DateFuncExprContext):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by BOCLParser#dateFuncExpr.
-    def visitDateFuncExpr(self, ctx:BOCLParser.DateFuncExprContext):
+    # Visit a parse tree produced by BOCLParser#enumLiteralExpr.
+    def visitEnumLiteralExpr(self, ctx:BOCLParser.EnumLiteralExprContext):
         return self.visitChildren(ctx)
 
 

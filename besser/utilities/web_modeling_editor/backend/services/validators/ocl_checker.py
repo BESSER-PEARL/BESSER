@@ -1,32 +1,81 @@
-from antlr4 import InputStream, CommonTokenStream
+from antlr4 import InputStream, CommonTokenStream, ParseTreeListener, ParseTreeWalker
 from bocl.OCLWrapper import OCLWrapper
-from besser.BUML.metamodel.structural import Class
+from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
 from besser.BUML.notations.ocl.BOCLParser import BOCLParser
 from besser.BUML.notations.ocl.error_handling import BOCLErrorListener, BOCLSyntaxError
 import re
 
 
-def _parse_only(expression: str) -> None:
+def _parse_only(expression: str) -> "BOCLParser.OclFileContext":
     """Run the OCL lexer + parser for syntax validation without evaluating.
 
     Raises BOCLSyntaxError if the expression is syntactically invalid.
+    Returns the ANTLR parse tree so callers can run semantic checks on it.
     """
     input_stream = InputStream(expression)
     lexer = BOCLLexer(input_stream)
     lexer.removeErrorListeners()
     error_listener = BOCLErrorListener()
     lexer.addErrorListener(error_listener)
-
     stream = CommonTokenStream(lexer)
     parser = BOCLParser(stream)
     parser.removeErrorListeners()
     parser.addErrorListener(error_listener)
-
-    parser.oclFile()
-
+    tree = parser.oclFile()
     if error_listener.has_errors():
         raise BOCLSyntaxError(error_listener.errors)
+    return tree
+
+
+class _EnumLiteralCollector(ParseTreeListener):
+    """Collects every ``Enumeration::literal`` reference in a parse tree.
+
+    The grammar rule ``ID DOUBLECOLON ID`` (#enumLiteralExpr) accepts any
+    identifier pair, so a reference to a non-existent enumeration or literal
+    (e.g. ``TCategory::JUNIOR``) parses as syntactically valid. This listener
+    walks the tree and records every enum literal reference along with its
+    source line so callers can validate it semantically against the model.
+    """
+
+    def __init__(self) -> None:
+        self.references: list[tuple[str, str, int]] = []
+
+    def enterEnumLiteralExpr(self, ctx):
+        ids = ctx.ID()
+        if len(ids) >= 2:
+            self.references.append(
+                (ids[0].getText(), ids[1].getText(), ctx.start.line)
+            )
+
+
+def _validate_enum_literals(domain_model, tree):
+    """Semantic check of ``Enumeration::literal`` references in a parse tree.
+
+    Returns a list of warning strings describing enumerations or literals that
+    do not exist in ``domain_model``. An empty list means every referenced
+    enumeration literal resolves against the model.
+    """
+    collector = _EnumLiteralCollector()
+    ParseTreeWalker.DEFAULT.walk(collector, tree)
+    enums = {
+        t.name: t for t in domain_model.types if isinstance(t, Enumeration)
+    }
+    problems = []
+    for enum_name, literal_name, line in collector.references:
+        enum = enums.get(enum_name)
+        if enum is None:
+            problems.append(
+                f"line {line}: enumeration '{enum_name}' (used in "
+                f"'{enum_name}::{literal_name}') does not exist in the model"
+            )
+        elif literal_name not in {lit.name for lit in enum.literals}:
+            problems.append(
+                f"line {line}: literal '{enum_name}::{literal_name}' does not "
+                f"exist in enumeration '{enum_name}'"
+            )
+    return problems
+
 
 def extract_context_class_name(expression):
     """Extract the context class name from an OCL expression"""
@@ -149,11 +198,13 @@ def check_ocl_constraint(domain_model, object_model = None):
                 "success": True,
                 "message": "",
                 "valid_constraints": [],
-                "invalid_constraints": []
+                "invalid_constraints": [],
+                "warning_constraints": []
             }
 
         valid_constraints = []
         invalid_constraints = []
+        warning_constraints = []
         parser = OCLWrapper(domain_model, object_model)
 
         for label, kind, constraint in constraints:
@@ -176,10 +227,22 @@ def check_ocl_constraint(domain_model, object_model = None):
                     # text (set in ``parse_constraint_text``), so we can
                     # feed it directly to the BOCL parser.
                     try:
-                        _parse_only(expression)
-                        valid_constraints.append(
-                            f"✅ {label} '{expression}'{explanation_suffix}"
-                        )
+                        tree = _parse_only(expression)
+                        # Semantic check on top of the pure syntax pass: the
+                        # grammar accepts any ``Enumeration::literal`` pair, so
+                        # references to enums/literals missing from the model
+                        # are reported as warnings. A constraint with such
+                        # problems is NOT listed as valid.
+                        problems = _validate_enum_literals(domain_model, tree)
+                        if problems:
+                            for problem in problems:
+                                warning_constraints.append(
+                                    f"⚠️ {label} '{expression}' - {problem}{explanation_suffix}"
+                                )
+                        else:
+                            valid_constraints.append(
+                                f"✅ {label} '{expression}'{explanation_suffix}"
+                            )
                     except BOCLSyntaxError as syntax_err:
                         invalid_constraints.append(
                             f"❌ {label} '{expression}' - {syntax_err}{explanation_suffix}"
@@ -245,6 +308,7 @@ def check_ocl_constraint(domain_model, object_model = None):
             "success": len(invalid_constraints) == 0,
             "valid_constraints": valid_constraints,
             "invalid_constraints": invalid_constraints,
+            "warning_constraints": warning_constraints,
             "message": f"Found {len(valid_constraints)} valid and {len(invalid_constraints)} invalid constraints"
         }
 
@@ -253,5 +317,6 @@ def check_ocl_constraint(domain_model, object_model = None):
             "success": False,
             "message": f"{str(e)}",
             "valid_constraints": [],
-            "invalid_constraints": []
+            "invalid_constraints": [],
+            "warning_constraints": []
         }

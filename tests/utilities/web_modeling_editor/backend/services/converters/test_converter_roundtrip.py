@@ -13,28 +13,30 @@ BUML-to-JSON converter re-computes layout from scratch.
 
 import pytest
 
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
-    process_class_diagram,
-)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
-)
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.state_machine_processor import (
-    process_state_machine,
-)
-from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.state_machine_converter import (
-    state_machine_object_to_json,
-)
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.object_diagram_processor import (
-    process_object_diagram,
-)
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
-    process_nn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
     nn_model_to_json,
 )
-
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.object_diagram_converter import (
+    object_buml_to_json,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.state_machine_converter import (
+    state_machine_object_to_json,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
+    process_class_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+    process_nn_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.object_diagram_processor import (
+    process_object_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.state_machine_processor import (
+    process_state_machine,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1429,6 +1431,169 @@ class TestObjectDiagramRoundtrip:
         book = next(obj for obj in obj_model.objects if obj.name == "book1")
         slot_names = {slot.attribute.name for slot in book.slots}
         assert "title" not in slot_names
+
+    def test_object_buml_to_json_parses_build_without_attributes(self, minimal_class_diagram_json):
+        """Regression: objects created with Class(...).build() must be included."""
+        object_buml = """
+book_0_obj = Book("book_0").build()
+author_0_obj = Author("author_0").attributes(name="fitzgerald").build()
+book_0_obj.author = author_0_obj
+"""
+
+        obj_json = object_buml_to_json(object_buml, minimal_class_diagram_json["model"])
+        object_names = {
+            elem["name"]
+            for elem in obj_json["elements"].values()
+            if elem.get("type") == "ObjectName"
+        }
+
+        assert "book_0" in object_names
+        assert "author_0" in object_names
+
+    def test_object_buml_to_json_keeps_one_link_per_association(self):
+        """Two different associations between the same two classes must yield
+        one ObjectLink each (not a single deduplicated link)."""
+        reference_json = {
+            "type": "ClassDiagram",
+            "elements": {
+                "cls-a": {"id": "cls-a", "name": "A", "type": "Class", "attributes": [], "methods": [],
+                          "bounds": {"x": 0, "y": 0, "width": 160, "height": 70}},
+                "cls-b": {"id": "cls-b", "name": "B", "type": "Class", "attributes": [], "methods": [],
+                          "bounds": {"x": 300, "y": 0, "width": 160, "height": 70}},
+            },
+            "relationships": {
+                "rel-ab1": {
+                    "id": "rel-ab1", "name": "relAB1", "type": "ClassBidirectional",
+                    "source": {"element": "cls-a", "multiplicity": "1..1", "role": "as1"},
+                    "target": {"element": "cls-b", "multiplicity": "1..1", "role": "bs1"},
+                },
+                "rel-ab2": {
+                    "id": "rel-ab2", "name": "relAB2", "type": "ClassBidirectional",
+                    "source": {"element": "cls-a", "multiplicity": "1..*", "role": "as2"},
+                    "target": {"element": "cls-b", "multiplicity": "1..*", "role": "bs2"},
+                },
+            },
+        }
+
+        # BUML code as emitted by AlloyToBesserConverter for an instance with one
+        # A and one B object: each bidirectional association appears twice (once
+        # per role), the inverse directions must collapse, distinct associations
+        # must not.
+        object_buml = """
+a_0_obj = A("A_0").build()
+b_0_obj = B("B_0").build()
+setattr(a_0_obj, 'bs1', b_0_obj)
+setattr(b_0_obj, 'as1', a_0_obj)
+setattr(a_0_obj, 'bs2', b_0_obj)
+setattr(b_0_obj, 'as2', a_0_obj)
+"""
+
+        obj_json = object_buml_to_json(object_buml, reference_json)
+        links = [
+            r for r in obj_json["relationships"].values()
+            if r.get("type") == "ObjectLink"
+        ]
+
+        assert len(links) == 2
+        assoc_ids = {link["associationId"] for link in links}
+        assert assoc_ids == {"rel-ab1", "rel-ab2"}
+
+    def test_object_buml_to_json_many_valued_set_literal_links(self):
+        """setattr with a set-literal target (the form AlloyToBesserConverter
+        emits for many-valued roles, e.g. 3..* ends) must produce one
+        ObjectLink per target instead of dropping all of them."""
+        reference_json = {
+            "type": "ClassDiagram",
+            "elements": {
+                "cls-student": {"id": "cls-student", "name": "Student", "type": "Class", "attributes": [],
+                                "methods": [], "bounds": {"x": 0, "y": 0, "width": 160, "height": 70}},
+                "cls-subject": {"id": "cls-subject", "name": "Subject", "type": "Class", "attributes": [],
+                                "methods": [], "bounds": {"x": 300, "y": 0, "width": 160, "height": 70}},
+            },
+            "relationships": {
+                "rel-enr": {
+                    "id": "rel-enr", "name": "Enrollment", "type": "ClassBidirectional",
+                    "source": {"element": "cls-student", "multiplicity": "0..*", "role": "students"},
+                    "target": {"element": "cls-subject", "multiplicity": "3..*", "role": "subjects"},
+                },
+            },
+        }
+
+        # The bidirectional association also appears with its inverse role as
+        # single-target setattrs; the pair-based dedup must collapse them.
+        object_buml = """
+student_0_obj = Student("Student_0").build()
+subject_0_obj = Subject("Subject_0").build()
+subject_1_obj = Subject("Subject_1").build()
+setattr(student_0_obj, 'subjects', {subject_0_obj, subject_1_obj})
+setattr(subject_0_obj, 'students', student_0_obj)
+setattr(subject_1_obj, 'students', student_0_obj)
+"""
+
+        obj_json = object_buml_to_json(object_buml, reference_json)
+        links = [
+            r for r in obj_json["relationships"].values()
+            if r.get("type") == "ObjectLink"
+        ]
+
+        assert len(links) == 2
+        pairs = {
+            frozenset([
+                obj_json["elements"][link["source"]["element"]]["name"],
+                obj_json["elements"][link["target"]["element"]]["name"],
+            ])
+            for link in links
+        }
+        assert pairs == {
+            frozenset({"Student_0", "Subject_0"}),
+            frozenset({"Student_0", "Subject_1"}),
+        }
+        assert {link["associationId"] for link in links} == {"rel-enr"}
+
+    def test_object_buml_to_json_inherited_association_resolves_assoc_id(self):
+        """ObjectLinks emitted from an association field inherited from an
+        ancestor class must resolve the association id by walking the
+        ClassInheritance chain (source=subclass, target=superclass)."""
+        reference_json = {
+            "type": "ClassDiagram",
+            "elements": {
+                "cls-student": {"id": "cls-student", "name": "Student", "type": "Class", "attributes": [],
+                                "methods": [], "bounds": {"x": 0, "y": 0, "width": 160, "height": 70}},
+                "cls-subject": {"id": "cls-subject", "name": "Subject", "type": "Class", "attributes": [],
+                                "methods": [], "bounds": {"x": 300, "y": 0, "width": 160, "height": 70}},
+                "cls-math": {"id": "cls-math", "name": "Math", "type": "Class", "attributes": [],
+                             "methods": [], "bounds": {"x": 600, "y": 0, "width": 160, "height": 70}},
+            },
+            "relationships": {
+                "rel-enr": {
+                    "id": "rel-enr", "name": "Enrollment", "type": "ClassBidirectional",
+                    "source": {"element": "cls-student", "multiplicity": "0..*", "role": "students"},
+                    "target": {"element": "cls-subject", "multiplicity": "3..*", "role": "subjects"},
+                },
+                "gen-math": {
+                    "id": "gen-math", "name": "Math", "type": "ClassInheritance",
+                    "source": {"element": "cls-math"},
+                    "target": {"element": "cls-subject"},
+                },
+            },
+        }
+
+        object_buml = """
+student_0_obj = Student("Student_0").build()
+math_0_obj = Math("Math_0").build()
+setattr(math_0_obj, 'students', student_0_obj)
+"""
+
+        obj_json = object_buml_to_json(object_buml, reference_json)
+        links = [
+            r for r in obj_json["relationships"].values()
+            if r.get("type") == "ObjectLink"
+        ]
+
+        assert len(links) == 1
+        assert links[0]["associationId"] == "rel-enr"
+        assert obj_json["elements"][links[0]["source"]["element"]]["name"] == "Math_0"
+        assert obj_json["elements"][links[0]["target"]["element"]]["name"] == "Student_0"
 
 
 # ===========================================================================

@@ -49,7 +49,7 @@ class WrappingVisitor(BOCLVisitorImpl):
                 return self.context_class
             return self.iterators_context.get(receiver.name)
         if isinstance(receiver, PropertyCallExpression):
-            return receiver.property.type
+            return self._resolve_type(receiver.property.type)
         return None
 
     def _infer_collection_element_type(self, source):

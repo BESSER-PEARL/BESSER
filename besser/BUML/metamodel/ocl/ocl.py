@@ -2,7 +2,7 @@ from typing import Any
 from besser.BUML.metamodel.structural import (
     Class, TypedElement, Type, StringType,
     Property, Constraint, BooleanType, FloatType,
-    IntegerType, DateType
+    IntegerType, DateType, Enumeration
 )
 
 
@@ -596,6 +596,25 @@ class StringLiteralExpression(LiteralExpression):
 
     def __repr__(self):
         return f'StringLiteralExpression({self.value})'
+
+
+class EnumLiteralExpression(LiteralExpression):
+    """ An Enumeration literal value, e.g. ``TGenero::HOMBRE``.
+
+    Args:
+        name: the name of the expression
+        enum_name: the name of the enumeration type (e.g. ``"TGenero"``)
+        literal_name: the name of the literal value (e.g. ``"HOMBRE"``)
+        enumeration: the Enumeration type from the domain model (optional)
+    """
+
+    def __init__(self, name: str, enum_name: str, literal_name: str, enumeration: Enumeration = None):
+        super().__init__(name, type=enumeration if enumeration is not None else enum_name, value=literal_name)
+        self.enum_name: str = enum_name
+        self.literal_name: str = literal_name
+
+    def __repr__(self):
+        return f'EnumLiteralExpression({self.enum_name}::{self.literal_name})'
 
 class InfixOperator:
     """ A class to define Infinix Operator Expression

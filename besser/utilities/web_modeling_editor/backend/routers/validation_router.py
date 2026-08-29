@@ -4,9 +4,18 @@ Validation Router
 Handles all diagram validation endpoints for the BESSER web modeling editor backend.
 """
 
+import json
 import logging
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
+)
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -16,33 +25,31 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
     ValidationResponse,
 )
 
+# Centralized error handling
+from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+    handle_endpoint_errors,
+)
+
 # Backend services - Converters
 from besser.utilities.web_modeling_editor.backend.services.converters import (
-    process_class_diagram,
-    process_state_machine,
     process_agent_diagram,
-    process_object_diagram,
-    process_nn_diagram,
     process_bpmn_diagram,
+    process_class_diagram,
+    process_nn_diagram,
+    process_object_diagram,
+    process_state_machine,
 )
-from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
-    domain_model as user_reference_domain_model,
-)
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BPMN_DIAGRAM_TYPE,
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
 )
-
-# Centralized error handling
-from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
-    handle_endpoint_errors,
-)
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
+from besser.utilities.web_modeling_editor.backend.services.validators.sat_checker import (
+    check_alloy_consistency_stream,
+    generate_alloy_do_stream,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,9 +57,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/besser_api", tags=["validation"])
 
 
+@router.post("/semantic-consistency-check")
+async def semantic_consistency_check_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Checks semantic consistency of a class diagram by resorting to SAT solving, via an Alloy translation.
+
+    This is the unified semantic consistency check endpoint that:
+
+    1. Translates the class diagram, including its OCL constraints, into an Alloy model.
+    2. Checks the consistency of the class diagram by a satisfiability check on the Alloy model.
+	    Since the SAT based consistency check is performed up to a given scope, the check is performed
+	    on increasingly larger scopes until a SAT outcome is found, a max. scope is reached, or a timeout expires.
+
+    The translation and checking are encapsulated in check_alloy_consistency_stream from the sat_checker validator.
+    (see imports).
+
+    In order to gradually inform about the progress of the check, the result is channeled into a StreamingResponse."""
+    return StreamingResponse(
+        check_alloy_consistency_stream(input_data),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # important for nginx
+        },
+    )
+
+
 @router.post("/validate-diagram", response_model=ValidationResponse)
 @handle_endpoint_errors("validate_diagram")
-async def validate_diagram(input_data: DiagramInput):
+async def validate_diagram(input_data: DiagramInput) -> dict:
     """
     Validate diagram by converting to BUML and running metamodel validation.
 
@@ -226,6 +258,13 @@ async def validate_diagram(input_data: DiagramInput):
             if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                 validation_warnings.extend(buml_model.ocl_warnings)
 
+            # Surface OCL semantic warnings (e.g. enum literals that do not
+            # exist in the model) alongside the metamodel warnings.
+            if ocl_results:
+                validation_warnings.extend(
+                    ocl_results.get("warning_constraints", [])
+                )
+
         except Exception:
             logger.exception("Unexpected error during OCL constraint check")
             validation_warnings.append("OCL constraint check encountered an unexpected error.")
@@ -243,6 +282,7 @@ async def validate_diagram(input_data: DiagramInput):
     if ocl_results:
         response["valid_constraints"] = ocl_results.get("valid_constraints", [])
         response["invalid_constraints"] = ocl_results.get("invalid_constraints", [])
+        response["warning_constraints"] = ocl_results.get("warning_constraints", [])
         if ocl_results.get("message"):
             response["ocl_message"] = ocl_results["message"]
 
@@ -251,10 +291,35 @@ async def validate_diagram(input_data: DiagramInput):
 
 @router.post("/check-ocl", response_model=ValidationResponse)
 @handle_endpoint_errors("check_ocl")
-async def check_ocl(input_data: DiagramInput):
+async def check_ocl(input_data: DiagramInput) -> dict:
     """
     Deprecated: Use /validate-diagram instead.
     This endpoint is kept for backwards compatibility and redirects to the new unified validation.
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
+
+
+
+
+@router.post("/generate-object-diagram")
+async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Generates a semantically consistent object diagram, complying with the class diagram’s constraints,
+    including OCL constraints.
+
+    The obtained object diagram is produced by translating the class diagram into Alloy, generating an 
+    instance from the Alloy specification, and translating this instance back into an object diagram.
+
+    Alias of :func:`generate_alloy_do_stream_endpoint`, exposed under the
+    name expected by the current frontend (semantic generation action).
+    """
+    return StreamingResponse(
+        generate_alloy_do_stream(input_data),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # important for nginx
+        },
+    )
+
+

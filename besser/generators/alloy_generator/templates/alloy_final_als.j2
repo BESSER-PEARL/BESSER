@@ -1,0 +1,14 @@
+{% for c in fun_types %}
+{{c}}
+{% endfor %}
+{% for c in constraints %}
+{{ c.expression }}
+{% endfor %}
+
+pred instance_model[]{
+{%- for sig in sigsnv|unique  if sig not in ['bool', 'int','Integer'] %}
+{{ '\n' }} some {{ sig }}
+{%- endfor %}
+}
+
+run instance_model for  {{ scope }} {% for sig in sigsnv|unique if sig not in ['bool', 'Integer'] %} {% if sig == 'date' %}date{% else %}{{ sig }}{% endif %}{% if not loop.last %},  {{ scope }} {% endif %}{% endfor %}

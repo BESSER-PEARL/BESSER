@@ -27,11 +27,12 @@ class AlloyGenerator(GeneratorInterface):
     Current implementation translates class diagrams into Alloy models.
 
     The generator renders Jinja2 templates to produce a ``.als`` file containing:
+
     - Type signatures for basic or standard built-in datatypes (``str``, ``Int``, enumerations).
     - Signatures that represent classes, with fields that represent class attributes and
-        navigable association ends.
+      navigable association ends.
     - Facts that enforce cardinality constraints for non-default multiplicities.
-    - Facts enforcing enforcing transpose relational equivalence for bidirectional associations.
+    - Facts enforcing transpose relational equivalence for bidirectional associations.
     - Facts capturing OCL constraints in the model.
     - A predicate without any additional constraints, to be used for model consistency checking.
     - A run command associated with the above predicate.
@@ -202,7 +203,13 @@ class AlloyGenerator(GeneratorInterface):
 
     def generate(self) -> None:
         """
-        Renders all templates and writes the ``.als`` file to *output_dir*.
+        Generates an Alloy specification based on the provided B-UML model and saves it to
+        the specified output directory.
+        If the output directory was not specified, the code generated will be stored in the
+        <current directory>/output folder.
+
+        Returns:
+            None, but store the generated specification in a file named model.als
         """
         file_path = self.build_generation_path(file_name="model.als")
 

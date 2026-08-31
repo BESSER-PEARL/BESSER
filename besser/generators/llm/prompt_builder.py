@@ -11,6 +11,7 @@ import os
 import re
 from typing import Any
 
+from besser.generators.llm.contract_checks import build_data_contract
 from besser.generators.llm.model_serializer import (
     serialize_agent_model,
     serialize_bpmn_model,
@@ -234,6 +235,12 @@ def build_system_prompt(
         ])
 
     models_block = "\n".join(model_sections)
+
+    # Model-derived data contract — the hard rules a weak model breaks
+    # first (id types, server-owned fields, honest 501s). Derived only
+    # from the domain model, so it is constant across turns and lives in
+    # the cached region with the serialized models.
+    contract_section = _data_contract_section(domain_model)
 
     # Build inventory section
     inventory_section = ""
@@ -503,7 +510,81 @@ When done, briefly summarize what you changed.
             "regenerate untouched files.\n\n"
         )
 
-    return f"{modify_directive}{stable_header}\n{models_block}\n{variable_tail}"
+    return f"{modify_directive}{stable_header}\n{models_block}\n{contract_section}{variable_tail}"
+
+
+# Wire-type mapping for the contract table: model type -> TypeScript type.
+_TS_TYPES = {
+    "str": "string",
+    "string": "string",
+    "uuid": "string",
+    "int": "number",
+    "integer": "number",
+    "float": "number",
+    "bool": "boolean",
+    "datetime": "string (ISO)",
+    "date": "string (ISO)",
+    "time": "string (ISO)",
+}
+
+
+def _data_contract_section(domain_model) -> str:
+    """Render the NON-NEGOTIABLE data-contract rules for the system prompt.
+
+    These four rules exist because generated apps kept shipping façades:
+    string ids parseInt'd into NaN (edit/delete broken on first click),
+    create forms sending server-owned fields, and unimplemented methods
+    answering ``{"status": "executed"}``. The wording is deliberately
+    blunt — it must land on the weakest model the pipeline serves (free
+    local qwen), not just the frontier ones. ``contract_checks.py``
+    enforces the same rules mechanically; this section is what lets the
+    model get them right the first time.
+    """
+    contract = build_data_contract(domain_model)
+    if contract is None:
+        return ""
+
+    pk_lines = []
+    for cls in sorted(contract.pk_types):
+        attr_name, type_name = contract.pk_types[cls]
+        ts = _TS_TYPES.get(type_name.lower(), type_name)
+        pk_lines.append(f"- `{cls}.{attr_name}`: **{type_name}** (TypeScript: `{ts}`)")
+    if pk_lines:
+        pk_block = (
+            "Declared identifier attributes (these types are LAW in every layer):\n"
+            + "\n".join(pk_lines)
+            + "\n\nClasses with no declared id attribute get a server-generated "
+            "integer `id`.\n"
+        )
+    else:
+        pk_block = (
+            "No class declares an id attribute — every class gets a "
+            "server-generated integer `id`.\n"
+        )
+
+    return f"""
+## Data contract — NON-NEGOTIABLE rules derived from the domain model
+
+{pk_block}
+1. **Id types are the model's types — in EVERY layer.** Path parameters,
+   SQLAlchemy columns, ForeignKey columns, Pydantic schemas, and
+   TypeScript interfaces all use the exact type above. NEVER call
+   `parseInt()`/`Number()` on a string id, never declare an `int` path
+   param for a string id, and a ForeignKey column uses the SAME type as
+   the primary key it references.
+2. **Server-owned fields.** `id`, `createdAt`/`created_at`,
+   `updatedAt`/`updated_at` are assigned by the backend. They NEVER
+   appear in create-request schemas or create forms, and the client
+   never sends them. (A declared domain identifier with another name —
+   e.g. `isbn` — IS client-supplied and belongs in the create form.)
+3. **No fake success.** A modeled method you did not implement must
+   return HTTP 501 (Not Implemented) with a clear message — NEVER a fake
+   `{{"status": "executed"}}` or a silent 200. A button wired to an
+   unimplemented action must surface that error, not pretend it worked.
+4. **No junk pages.** A placeholder/empty screen (a page whose only
+   content is its own title, lorem text, or a name like `gf`) must NOT
+   become a route or a nav link — skip it entirely.
+"""
 
 
 def _render_gap_section(gap_tasks: list[str] | None) -> str:

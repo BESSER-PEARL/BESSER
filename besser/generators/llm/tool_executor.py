@@ -224,6 +224,33 @@ class ToolExecutor:
         # Observed with the free qwen tier deleting a whole FastAPI backend to
         # rewrite it in Flask; capable cloud models keep full delete_file.
         self._protect_scaffold = protect_scaffold
+        # Data contract from the domain model (id types, server-owned
+        # fields). Every write_file/modify_file result carries the lint
+        # findings for the new content, so the model sees a violation in
+        # the SAME turn it wrote it — far cheaper than waiting for the
+        # Phase 3 sweep to send it back with cold context.
+        try:
+            from besser.generators.llm.contract_checks import build_data_contract
+            self._data_contract = build_data_contract(domain_model)
+        except Exception:  # never let contract extraction break the executor
+            self._data_contract = None
+
+    def _contract_warnings(self, rel_path: str, content: str) -> str | None:
+        """Lint freshly-written content against the model's data contract."""
+        if self._data_contract is None:
+            return None
+        try:
+            from besser.generators.llm.contract_checks import format_findings, lint_file
+            findings = lint_file(rel_path, content, self._data_contract)
+        except Exception:
+            return None
+        if not findings:
+            return None
+        return (
+            "DATA-CONTRACT VIOLATIONS in the content you just wrote — "
+            "fix them now, while you still have the file in context:\n"
+            + format_findings(findings)
+        )
 
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.
@@ -777,7 +804,11 @@ class ToolExecutor:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])
-        return {"status": "written", "path": args["path"], "size": len(args["content"])}
+        result = {"status": "written", "path": args["path"], "size": len(args["content"])}
+        warnings = self._contract_warnings(rel_path, args["content"])
+        if warnings:
+            result["contract_warnings"] = warnings
+        return result
 
     def _modify_file(self, args: dict) -> dict:
         path = self._safe_path(args["path"])
@@ -797,7 +828,11 @@ class ToolExecutor:
         new_content = content.replace(old_text, args["new_text"], 1)
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        return {"status": "modified", "path": args["path"]}
+        result = {"status": "modified", "path": args["path"]}
+        warnings = self._contract_warnings(rel_path, new_content)
+        if warnings:
+            result["contract_warnings"] = warnings
+        return result
 
     def _delete_file(self, args: dict) -> dict:
         """Delete a regular file from the workspace.

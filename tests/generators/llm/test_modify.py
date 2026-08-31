@@ -314,3 +314,76 @@ def test_seed_recipe_missing_is_harmless(tmp_path):
     orch._seed_generator_files_from_recipe()  # must not raise
     assert orch._seed_generator_used is None
     assert orch.executor._generator_files == set()
+
+
+# ----------------------------------------------------------------------
+# Seed-issue forwarding (D1): a modify run pays down the seed's debt
+# ----------------------------------------------------------------------
+
+
+def test_seed_unresolved_blockers_are_loaded_from_recipe(tmp_path):
+    """Only blocker-severity issues from the seed recipe are forwarded —
+    warnings/style would flood the prompt with ruff noise."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / ".besser_recipe.json").write_text(json.dumps({
+        "generator_used": "generate_web_app",
+        "output_files": [],
+        "validation_issues": [
+            {"severity": "blocker", "message": "data contract: routers/book.py line 4: `id: int`"},
+            {"severity": "warning", "message": "ruff: F401 unused import"},
+            {"severity": "style", "message": "ruff: E501 line too long"},
+        ],
+    }), encoding="utf-8")
+
+    orch = LLMOrchestrator(
+        llm_client=_ScriptedClient([]),
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+    orch._seed_generator_files_from_recipe()
+    assert orch._seed_unresolved_issues == [
+        "Unresolved from the previous run: data contract: routers/book.py line 4: `id: int`",
+    ]
+
+
+def test_modify_forwards_seed_blockers_into_phase2(tmp_path, monkeypatch):
+    """modify() hands the seed's unresolved blockers to Phase 2 alongside
+    the fresh Phase 1.5 findings."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / ".besser_recipe.json").write_text(json.dumps({
+        "generator_used": "generate_web_app",
+        "output_files": [],
+        "validation_issues": [
+            {"severity": "blocker", "message": "Syntax error in main.py line 3: bad"},
+        ],
+    }), encoding="utf-8")
+
+    orch = LLMOrchestrator(
+        llm_client=_ScriptedClient([]),
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+    captured: dict = {}
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: ["fresh issue"])
+    monkeypatch.setattr(
+        orch, "_run_phase2",
+        lambda instr, extra_issues=None: captured.update(issues=extra_issues),
+    )
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.modify("add a feature")
+    assert captured["issues"] == [
+        "fresh issue",
+        "Unresolved from the previous run: Syntax error in main.py line 3: bad",
+    ]

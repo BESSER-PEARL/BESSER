@@ -275,8 +275,13 @@ class TestPhase1Validation:
         assert len(issues) >= 1
         assert any("syntax error" in i.lower() or "Syntax error" in i for i in issues)
 
-    def test_detects_missing_requirements_txt(self, simple_model, tmp_path):
-        """Phase 1 validation catches Dockerfile referencing missing requirements.txt."""
+    def test_repairs_missing_requirements_txt(self, simple_model, tmp_path):
+        """Phase 1 validation auto-restores a missing requirements.txt.
+
+        Since the dropped-requirements repair (614d29de) the validator
+        WRITES a sensible requirements.txt next to the Dockerfile instead
+        of reporting an issue — the repaired state is the contract now.
+        """
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
@@ -288,8 +293,11 @@ class TestPhase1Validation:
             f.write("FROM python:3.11\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\n")
 
         issues = orchestrator._validate_phase1_output()
-        assert len(issues) >= 1
-        assert any("requirements.txt" in i for i in issues)
+        assert not any("requirements.txt" in i for i in issues)
+        restored = os.path.join(str(tmp_path), "requirements.txt")
+        assert os.path.isfile(restored)
+        with open(restored, "r", encoding="utf-8") as f:
+            assert "fastapi" in f.read()
 
     def test_detects_missing_package_json(self, simple_model, tmp_path):
         """Phase 1 validation catches Dockerfile referencing missing package.json."""

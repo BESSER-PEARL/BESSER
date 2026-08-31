@@ -259,6 +259,13 @@ def _classify_issue(message: str) -> ValidationIssue:
     # didn't build; we only require that what it DID build actually works.
     if lower.startswith("frontend contract:"):
         return ValidationIssue("blocker", text)
+    # Data contract: the generated code disagrees with the domain model's
+    # declared id types / server-owned fields, or fakes success for an
+    # unimplemented method. High-precision patterns only (see
+    # contract_checks.py); the fuzzy ones carry an "(advisory)" prefix
+    # and fall through to the default warning below.
+    if lower.startswith("data contract:"):
+        return ValidationIssue("blocker", text)
 
     # Ruff: classify by rule code.
     if text.startswith("ruff:"):
@@ -568,6 +575,12 @@ class LLMOrchestrator:
         # recipe) so the inventory / new recipe frame the run correctly.
         self._modify_mode: bool = False
         self._seed_generator_used: str | None = None
+        # Unresolved blockers carried over from the seed run's recipe
+        # (modify() only). A modify run must pay down the seed's known
+        # debt, not just layer new edits on top of it — otherwise every
+        # defect the seed run shipped survives forever because later
+        # runs never look at it again.
+        self._seed_unresolved_issues: list[str] = []
         # Model-sync during vibe-MODIFY (class-diagram only). When a
         # ``modify()`` instruction implies new domain entities (e.g. "add
         # authentication" → a ``User`` class), ``_derive_and_apply_model_deltas``
@@ -913,8 +926,23 @@ class LLMOrchestrator:
             self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
 
         # -- Phase 2: LLM edits the seeded files in place ------------------
+        # Forward the seed run's unresolved blockers (D1): they ride along
+        # with the fresh Phase 1.5 findings so the modify run pays down
+        # the known debt instead of preserving it forever.
+        if self._seed_unresolved_issues:
+            logger.info(
+                "Forwarding %d unresolved blocker(s) from the seed run",
+                len(self._seed_unresolved_issues),
+            )
+            for issue in self._seed_unresolved_issues:
+                self._trace.write(
+                    EVENT_VALIDATION_ISSUE, phase="seed_forward", message=issue,
+                )
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
-        self._run_phase2(instructions, extra_issues=phase1_issues)
+        self._run_phase2(
+            instructions,
+            extra_issues=phase1_issues + self._seed_unresolved_issues,
+        )
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
         )
@@ -993,6 +1021,19 @@ class LLMOrchestrator:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
+        # Seed-issue forwarding: blockers the seed run could not fix are
+        # THIS run's opening tasks. Blockers only — warnings/style would
+        # bloat the prompt with ruff noise and dilute the real debt.
+        try:
+            self._seed_unresolved_issues = [
+                f"Unresolved from the previous run: {i.get('message', '')}"
+                for i in recipe.get("validation_issues", [])
+                if isinstance(i, dict)
+                and i.get("severity") == "blocker"
+                and i.get("message")
+            ]
+        except Exception:
+            logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
             for entry in recipe.get("output_files", []):
                 if (
@@ -2987,6 +3028,7 @@ class LLMOrchestrator:
         # ``enable_toolchain_validation`` so the web deployment can
         # opt out per deploy.
         raw_issues.extend(self._collect_frontend_contract_issues())
+        raw_issues.extend(self._collect_data_contract_issues())
 
         raw_issues.extend(self._collect_ruff_issues())
         if self.enable_toolchain_validation:
@@ -3000,6 +3042,50 @@ class LLMOrchestrator:
             )
 
         return [_classify_issue(s) for s in raw_issues]
+
+    def _collect_data_contract_issues(self) -> list[str]:
+        """Sweep the workspace with the model-derived data-contract lint.
+
+        Same checks the executor already ran per-write (contract_checks
+        module) — this catches what slipped through anyway: files the
+        model wrote before a violation pattern existed in them, Phase 1
+        scaffold output, and violations introduced by one edit into
+        another file's assumptions. Blocker findings feed the Phase 3
+        fix loop via the ``data contract:`` prefix; advisory findings
+        are reported as warnings.
+        """
+        try:
+            from besser.generators.llm.contract_checks import build_data_contract, lint_file
+            contract = build_data_contract(self.domain_model)
+        except Exception:
+            return []
+        if contract is None:
+            return []
+
+        issues: list[str] = []
+        exts = (".py", ".js", ".jsx", ".ts", ".tsx")
+        for root, dirs, files in os.walk(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            for fname in files:
+                if not fname.endswith(exts):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+                if rel.startswith(_SNAPSHOT_DIR) or rel.startswith(".besser_"):
+                    continue
+                try:
+                    if os.path.getsize(fpath) > 1_000_000:
+                        continue
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+                for finding in lint_file(rel, content, contract):
+                    prefix = "data contract:" if finding.blocker else "data contract (advisory):"
+                    issues.append(
+                        f"{prefix} {finding.path} line {finding.line}: {finding.message}"
+                    )
+        return issues
 
     def _collect_frontend_contract_issues(self) -> list[str]:
         """High-precision correctness checks on the (LLM-authored) frontend.

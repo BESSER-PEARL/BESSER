@@ -27,6 +27,7 @@ import shutil
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
@@ -927,6 +928,12 @@ class LLMOrchestrator:
             self.domain_model,
             self._seed_generator_used or "existing project",
         )
+        # Session memory: open the run knowing what was asked and changed
+        # in every previous run on this app (recipe history), instead of
+        # rediscovering it from file contents.
+        session_recap = self._render_seed_history()
+        if session_recap:
+            self._inventory = f"{self._inventory}\n{session_recap}"
 
         self._trace.write(
             EVENT_RUN_START,
@@ -1006,6 +1013,29 @@ class LLMOrchestrator:
             validation_issues=len(self._validation_issues),
         )
         return self.output_dir
+
+    def _render_seed_history(self) -> str:
+        """Format the seed recipe's session history for the inventory."""
+        recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
+        history = self._load_recipe_history(recipe_path)
+        if not history:
+            return ""
+        lines = ["\nPrevious work on this app (oldest first):"]
+        for i, entry in enumerate(history, 1):
+            request = (entry.get("instructions") or "").strip().replace("\n", " ")
+            mode = entry.get("mode") or "run"
+            files = entry.get("files_touched") or []
+            file_note = ""
+            if files:
+                shown = ", ".join(files[:8])
+                more = f" (+{len(files) - 8} more)" if len(files) > 8 else ""
+                file_note = f" — touched: {shown}{more}"
+            lines.append(f"  {i}. [{mode}] \"{request}\"{file_note}")
+        lines.append(
+            "Respect this history: those changes are deliberate and must "
+            "survive your edits unless the new request says otherwise."
+        )
+        return "\n".join(lines)
 
     def _seed_generator_files_from_recipe(self) -> None:
         """Pre-load generator-file tags from a seeded run's recipe.
@@ -3974,6 +4004,44 @@ class LLMOrchestrator:
     # Recipe
     # ==================================================================
 
+    @staticmethod
+    def _load_recipe_history(recipe_path: str) -> list[dict]:
+        """Read the session history from an existing recipe, best-effort.
+
+        Legacy recipes (written before the history field existed) get one
+        entry synthesized from their own instructions + tool log, so the
+        first modify after this ships still sees the seed run.
+        """
+        if not os.path.isfile(recipe_path):
+            return []
+        try:
+            with open(recipe_path, "r", encoding="utf-8") as fh:
+                prior = json.load(fh)
+        except Exception:
+            return []
+        if not isinstance(prior, dict):
+            return []
+        history = prior.get("history")
+        if isinstance(history, list) and history:
+            return [h for h in history if isinstance(h, dict)]
+        # Legacy recipe — synthesize the seed entry.
+        instructions = prior.get("instructions")
+        if not isinstance(instructions, str) or not instructions.strip():
+            return []
+        touched = sorted({
+            (tc.get("input") or {}).get("path")
+            for tc in prior.get("tool_calls", []) or []
+            if isinstance(tc, dict)
+            and tc.get("tool") in ("write_file", "modify_file")
+            and isinstance((tc.get("input") or {}).get("path"), str)
+        })
+        return [{
+            "instructions": instructions[:300],
+            "saved_at": "",
+            "mode": "create",
+            "files_touched": touched[:20],
+        }]
+
     def _save_recipe(self, instructions: str, elapsed: float) -> None:
         # Build file manifest. Dependency / build directories are pruned:
         # an LLM-run ``npm install`` would otherwise put thousands of
@@ -4036,8 +4104,30 @@ class LLMOrchestrator:
                 "modules": len(getattr(self.nn_model, "modules", []) or []),
             }
 
+        # Session history (pi's branch-summary mechanic): each run appends
+        # a compact entry — request, mode, files it touched — on top of
+        # whatever the seed recipe already carried. The next modify run
+        # opens with this history in its inventory, so the agent knows
+        # what was asked and changed before, instead of starting amnesiac.
+        recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
+        history = self._load_recipe_history(recipe_path)
+        touched = sorted({
+            (tc.get("input") or {}).get("path")
+            for tc in self.tool_calls_log
+            if tc.get("tool") in ("write_file", "modify_file")
+            and isinstance((tc.get("input") or {}).get("path"), str)
+        })
+        history.append({
+            "instructions": (instructions or "")[:300],
+            "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "mode": "modify" if self._modify_mode else "create",
+            "files_touched": touched[:20],
+        })
+        history = history[-10:]
+
         recipe = {
             "instructions": instructions,
+            "history": history,
             "model": recipe_model,
             "llm_model": self.client.model,
             "generator_used": self._generator_used,

@@ -387,3 +387,79 @@ def test_modify_forwards_seed_blockers_into_phase2(tmp_path, monkeypatch):
         "fresh issue",
         "Unresolved from the previous run: Syntax error in main.py line 3: bad",
     ]
+
+
+# ----------------------------------------------------------------------
+# Session history (P2): runs remember what previous runs did
+# ----------------------------------------------------------------------
+
+
+def test_save_recipe_accumulates_history(tmp_path):
+    orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    orch.tool_calls_log = [
+        {"turn": 1, "tool": "write_file", "input": {"path": "a.py"}, "success": True},
+        {"turn": 2, "tool": "read_file", "input": {"path": "b.py"}, "success": True},
+    ]
+    orch._save_recipe("build a library app", elapsed=1.0)
+
+    orch2 = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    orch2._modify_mode = True
+    orch2.tool_calls_log = [
+        {"turn": 1, "tool": "modify_file", "input": {"path": "a.py"}, "success": True},
+    ]
+    orch2._save_recipe("add a search bar", elapsed=1.0)
+
+    recipe = json.loads(
+        (tmp_path / ".besser_recipe.json").read_text(encoding="utf-8")
+    )
+    history = recipe["history"]
+    assert len(history) == 2
+    assert history[0]["mode"] == "create"
+    assert history[0]["instructions"] == "build a library app"
+    assert history[0]["files_touched"] == ["a.py"]  # read_file not counted
+    assert history[1]["mode"] == "modify"
+    assert history[1]["instructions"] == "add a search bar"
+
+
+def test_load_recipe_history_synthesizes_from_legacy_recipe(tmp_path):
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({
+        "instructions": "build a hotel app",
+        "tool_calls": [
+            {"turn": 1, "tool": "write_file", "input": {"path": "main.py"}, "success": True},
+        ],
+    }), encoding="utf-8")
+    history = LLMOrchestrator._load_recipe_history(
+        str(tmp_path / ".besser_recipe.json")
+    )
+    assert len(history) == 1
+    assert history[0]["instructions"] == "build a hotel app"
+    assert history[0]["files_touched"] == ["main.py"]
+    assert history[0]["mode"] == "create"
+
+
+def test_modify_inventory_carries_session_history(tmp_path, monkeypatch):
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({
+        "generator_used": "generate_web_app",
+        "output_files": [],
+        "history": [
+            {"instructions": "build a library app", "mode": "create",
+             "files_touched": ["backend/main.py"]},
+            {"instructions": "add a search bar", "mode": "modify",
+             "files_touched": ["frontend/src/App.tsx"]},
+        ],
+    }), encoding="utf-8")
+
+    orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.modify("make search fuzzy")
+
+    assert "Previous work on this app" in orch._inventory
+    assert '"add a search bar"' in orch._inventory
+    assert "frontend/src/App.tsx" in orch._inventory
+    assert "must survive your edits" in orch._inventory

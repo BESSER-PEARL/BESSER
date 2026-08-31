@@ -260,6 +260,18 @@ def safe_load_buml(
 
     tree = ast.parse(content, mode="exec")
 
+    def _is_main_guard(stmt) -> bool:
+        """True for exactly ``if __name__ == "__main__":`` (either order)."""
+        if not isinstance(stmt, ast.If) or not isinstance(stmt.test, ast.Compare):
+            return False
+        test = stmt.test
+        if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+            return False
+        operands = [test.left] + list(test.comparators)
+        names = [o.id for o in operands if isinstance(o, ast.Name)]
+        consts = [o.value for o in operands if isinstance(o, ast.Constant)]
+        return names == ["__name__"] and consts == ["__main__"]
+
     # Defence-in-depth: cap the total node count even if everything is
     # on the allowlist. A file full of legitimately-allowed ``Call``
     # nodes could still exhaust memory during traversal otherwise.
@@ -274,11 +286,21 @@ def safe_load_buml(
     # appear in our emitted BUML and are not in ``_ALLOWED_NODE_TYPES``, so
     # they'll be caught during recursive validation anyway. Double-check here
     # to fail fast with a clear message.
+    #
+    # One tolerated exception: a trailing ``if __name__ == "__main__":``
+    # guard, which users routinely leave in hand-edited/exported BUML
+    # files. It is STRIPPED, not executed — its body never runs under
+    # this loader and is not validated, so it adds zero attack surface.
+    kept_body = []
     for stmt in tree.body:
+        if _is_main_guard(stmt):
+            continue
         if not isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr)):
             raise SafeBumlLoaderError(
                 f"Top-level statement not allowed: {type(stmt).__name__}"
             )
+        kept_body.append(stmt)
+    tree.body = kept_body
 
     declared_vars = _collect_assigned_names(tree)
 

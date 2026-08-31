@@ -1,3 +1,5 @@
+# The Bibliographic Ontology (BIBO) v1.3 by Bruce D'Arcus & Frederick Giasson, vendored
+# verbatim as a test fixture. Source and licence (CC-BY): http://purl.org/ontology/bibo/
 @prefix bibo: <http://purl.org/ontology/bibo/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix dc: <http://purl.org/dc/terms/> .

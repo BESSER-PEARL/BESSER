@@ -577,6 +577,9 @@ class LLMOrchestrator:
         # model back to its open task_list items (bounded by
         # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
         self._end_turn_task_nudges: int = 0
+        # Model-derived acceptance matrix (per entity: route/page/create),
+        # computed by Phase 3 and saved in the recipe. Report-only.
+        self._acceptance_matrix: dict | None = None
 
         # Incremental vibe-modify state. ``modify()`` seeds ``output_dir``
         # from a previous run's files and edits them in place instead of
@@ -3116,6 +3119,19 @@ class LLMOrchestrator:
         raw_issues.extend(self._collect_frontend_contract_issues())
         raw_issues.extend(self._collect_data_contract_issues())
 
+        # Model-derived acceptance matrix: per entity — route present,
+        # page present, create wired. REPORT-ONLY (warnings + recipe
+        # field): a GUI-scoped run may legitimately omit entities, so
+        # these are visibility, never blockers.
+        try:
+            from besser.generators.llm.acceptance import build_acceptance_matrix, matrix_issues
+            self._acceptance_matrix = build_acceptance_matrix(
+                self.output_dir, self.domain_model,
+            )
+            raw_issues.extend(matrix_issues(self._acceptance_matrix))
+        except Exception:
+            logger.debug("Acceptance matrix computation failed", exc_info=True)
+
         raw_issues.extend(self._collect_ruff_issues())
         if self.enable_toolchain_validation:
             raw_issues.extend(self._collect_tsc_issues())
@@ -4145,6 +4161,10 @@ class LLMOrchestrator:
                 {"severity": i.severity, "message": i.message}
                 for i in self._validation_issues
             ],
+            # Per-entity route/page/create facts (None when no domain
+            # model or Phase 3 didn't run). The UI/recipe reader can
+            # render this as the model-derived definition of done.
+            "acceptance_matrix": self._acceptance_matrix,
             "output_files": sorted(output_files, key=lambda f: f["path"]),
             "output_summary": {
                 "total_files": len(output_files),

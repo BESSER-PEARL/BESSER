@@ -234,6 +234,58 @@ class ToolExecutor:
             self._data_contract = build_data_contract(domain_model)
         except Exception:  # never let contract extraction break the executor
             self._data_contract = None
+        # The run's work checklist (seeded from gap analysis via
+        # ``set_tasks``). The LLM manages it through the ``task_list``
+        # tool; the orchestrator's end_turn gate refuses to finish while
+        # items are open.
+        self._tasks: list[dict] = []
+
+    def set_tasks(self, tasks: list) -> None:
+        """Seed the checklist (one entry per gap-analysis task)."""
+        self._tasks = [
+            {"id": i + 1, "text": str(t), "done": False}
+            for i, t in enumerate(tasks or [])
+            if str(t).strip()
+        ]
+
+    def open_tasks(self) -> list[dict]:
+        """Checklist items not yet marked done."""
+        return [t for t in self._tasks if not t["done"]]
+
+    def _task_list(self, args: dict) -> dict:
+        action = args.get("action")
+        if action == "list":
+            return {
+                "tasks": [
+                    {"id": t["id"], "text": t["text"],
+                     "status": "done" if t["done"] else "open"}
+                    for t in self._tasks
+                ],
+                "open": len(self.open_tasks()),
+            }
+        if action == "done":
+            task_id = args.get("id")
+            for t in self._tasks:
+                if t["id"] == task_id:
+                    t["done"] = True
+                    remaining = self.open_tasks()
+                    return {
+                        "status": "done",
+                        "id": task_id,
+                        "open_remaining": len(remaining),
+                        "open_items": [
+                            {"id": r["id"], "text": r["text"]} for r in remaining
+                        ],
+                    }
+            return {"error": f"No task with id {task_id}. Use action='list' to see ids."}
+        if action == "add":
+            text = (args.get("text") or "").strip()
+            if not text:
+                return {"error": "action='add' requires non-empty `text`."}
+            new_id = max((t["id"] for t in self._tasks), default=0) + 1
+            self._tasks.append({"id": new_id, "text": text, "done": False})
+            return {"status": "added", "id": new_id, "open": len(self.open_tasks())}
+        return {"error": f"Unknown action '{action}'. Use list | done | add."}
 
     def _contract_warnings(self, rel_path: str, content: str) -> str | None:
         """Lint freshly-written content against the model's data contract."""
@@ -1222,4 +1274,6 @@ class ToolExecutor:
         # Validation
         "validate_model": _validate_model,
         "check_syntax": _check_syntax,
+        # Work checklist
+        "task_list": _task_list,
     }

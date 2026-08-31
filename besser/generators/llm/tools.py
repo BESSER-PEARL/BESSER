@@ -468,6 +468,35 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "required": ["path"],
         },
     },
+    {
+        "name": "task_list",
+        "description": (
+            "Your work checklist for this run. action='list' shows every item "
+            "with its status; action='done' marks item `id` complete; "
+            "action='add' appends a new item you discovered (pass `text`). "
+            "Mark each checklist item done as you complete it — the run does "
+            "not finish while items are open."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "done", "add"],
+                    "description": "list | done | add",
+                },
+                "id": {
+                    "type": "integer",
+                    "description": "Item id to mark done (required for action='done')",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "New item text (required for action='add')",
+                },
+            },
+            "required": ["action"],
+        },
+    },
 ]
 
 

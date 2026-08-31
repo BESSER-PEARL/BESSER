@@ -599,9 +599,12 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
     bullets = "\n".join(f"  {i + 1}. {t}" for i, t in enumerate(gap_tasks))
     return (
         "\n\n### Focused checklist (from gap analysis)\n"
-        "Use this list as a starting point — it captures what the gap "
-        "analyzer thinks is missing from the generator output. You can "
-        "add or skip items based on the user request.\n\n"
+        "This list is loaded into the `task_list` tool. Work through it "
+        "and mark each item done with task_list(action='done', id=N) as "
+        "you complete it — the run does NOT finish while items are open. "
+        "If an item is wrong or out of scope for the user request, mark "
+        "it done with a brief reason; track newly discovered work with "
+        "task_list(action='add').\n\n"
         f"{bullets}\n"
     )
 

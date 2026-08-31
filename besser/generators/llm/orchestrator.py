@@ -297,7 +297,12 @@ def _classify_issue(message: str) -> ValidationIssue:
     return ValidationIssue("warning", text)
 
 # Tools that are read-only and shouldn't count for loop detection
-_READONLY_TOOLS = frozenset({"read_file", "list_files", "search_in_files", "check_syntax"})
+_READONLY_TOOLS = frozenset({
+    "read_file", "list_files", "search_in_files", "check_syntax",
+    # Checklist bookkeeping — marking several items done back-to-back is
+    # exactly what the end_turn gate asks for, never a stuck loop.
+    "task_list",
+})
 
 # Maximum workers for parallel tool execution
 _MAX_PARALLEL_WORKERS = 4
@@ -352,6 +357,10 @@ class LLMOrchestrator:
     """
 
     MAX_TURNS = 80
+
+    # How many times the end_turn checklist gate sends the model back to
+    # its open items before letting the run finish anyway.
+    _MAX_TASK_NUDGES = 2
 
     def __init__(
         self,
@@ -563,6 +572,10 @@ class LLMOrchestrator:
         # Short provider error string captured when stop_reason == "api_error",
         # surfaced to the user so a rate-limit reads as such (not a mystery).
         self._phase2_api_error: str = ""
+        # end_turn checklist gate: how many times we've already sent the
+        # model back to its open task_list items (bounded by
+        # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
+        self._end_turn_task_nudges: int = 0
 
         # Incremental vibe-modify state. ``modify()`` seeds ``output_dir``
         # from a previous run's files and edits them in place instead of
@@ -2129,6 +2142,13 @@ class LLMOrchestrator:
                         )
                     return
 
+        # Seed the executor's checklist from the gap tasks. The LLM
+        # manages it through the ``task_list`` tool and the end_turn
+        # gate below refuses to finish while items are open — "done"
+        # becomes "the checklist is closed", not "the model said done".
+        if gap_tasks:
+            self.executor.set_tasks(gap_tasks)
+
         system = self._build_system_prompt(
             instructions=instructions,
             scoped_issues=scoped_issues,
@@ -2217,6 +2237,38 @@ class LLMOrchestrator:
                 break
 
             if response["stop_reason"] == "end_turn":
+                # Checklist gate: the run is not done while gap-analysis
+                # items are open. Nudge the model back to work (bounded —
+                # a stubborn model that ignores two nudges is let through
+                # rather than looping the user's budget away; Phase 3
+                # still validates whatever state it left).
+                open_items = self.executor.open_tasks()
+                if open_items and self._end_turn_task_nudges < self._MAX_TASK_NUDGES:
+                    self._end_turn_task_nudges += 1
+                    logger.info(
+                        "end_turn with %d open checklist item(s) — nudge %d/%d",
+                        len(open_items), self._end_turn_task_nudges,
+                        self._MAX_TASK_NUDGES,
+                    )
+                    messages.append(
+                        {"role": "assistant", "content": response["content"]}
+                    )
+                    listing = "\n".join(
+                        f"  {t['id']}. {t['text']}" for t in open_items
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": (
+                            "You ended the turn, but these checklist items "
+                            "are still OPEN:\n"
+                            f"{listing}\n"
+                            "Finish each one now. If an item is already "
+                            "complete or not applicable, mark it with "
+                            "task_list(action='done', id=N). End the turn "
+                            "only when every item is closed."
+                        )}],
+                    })
+                    continue
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
                 self._phase2_stop_reason = "completed"

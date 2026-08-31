@@ -3820,6 +3820,10 @@ class LLMOrchestrator:
             bpmn_model=self.bpmn_model,
             nn_model=self.nn_model,
             primary_kind=self.primary_kind,
+            # Clamps the threshold to the model's context window — the
+            # fixed default overflows small local models (free qwen tier)
+            # long before it trips.
+            model=getattr(self.client, "model", None),
         )
         if did_compact:
             self._compaction_count += 1

@@ -214,3 +214,99 @@ class TestStandaloneCompaction:
         messages = [{"role": "user", "content": "test"}]
         summary = standalone_summarize_messages(messages, [], str(tmp_path))
         assert "app.py" in summary
+
+
+class TestHarnessUpgrades:
+    """Headroom threshold, safe cut boundaries, file-op memory."""
+
+    def test_effective_threshold_clamps_small_models(self):
+        from besser.generators.llm.compaction import effective_threshold
+        assert effective_threshold("qwen3-coder:30b") == 16_000
+        assert effective_threshold("deepseek-coder") == 48_000
+
+    def test_effective_threshold_keeps_default_for_frontier_and_unknown(self):
+        from besser.generators.llm.compaction import effective_threshold
+        assert effective_threshold("gpt-5-mini") == STANDALONE_THRESHOLD
+        assert effective_threshold(None) == STANDALONE_THRESHOLD
+        assert effective_threshold("gpt-5.6-terra") == STANDALONE_THRESHOLD
+
+    def test_small_model_compacts_earlier(self, tmp_path):
+        """~20k tokens: under the 80k default, over qwen's clamped 16k."""
+        big = "x" * 80_000  # ~20k tokens by chars/4
+        messages = [{"role": "user", "content": "build"}]
+        for _ in range(4):
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": big[:20000]}]})
+            messages.append({"role": "user", "content": "go on"})
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": "ok"}]})
+
+        _, unclamped = standalone_maybe_compact(
+            messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert unclamped is False
+        _, clamped = standalone_maybe_compact(
+            messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
+            model="qwen3-coder:30b",
+        )
+        assert clamped is True
+
+    def test_cut_never_orphans_tool_results(self, tmp_path):
+        """When the naive cut would open the preserved tail on a
+        tool_result message, the boundary walks back to include the
+        paired assistant tool_use — and skips the synthetic assistant
+        turn so roles still alternate."""
+        big = "x" * (STANDALONE_THRESHOLD * 5)
+        tool_use = {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "read_file", "input": {"path": "a.py"}},
+        ]}
+        tool_result = {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "data"},
+        ]}
+        messages = [
+            {"role": "user", "content": big},
+            {"role": "assistant", "content": [{"type": "text", "text": "planning"}]},
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": [{"type": "text", "text": "step"}]},
+            tool_use,       # pair head — naive cut (preserve_recent=6) starts BELOW this
+            tool_result,    # pair tail
+            {"role": "assistant", "content": [{"type": "text", "text": "more"}]},
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": [{"type": "text", "text": "more"}]},
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+        ]
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert did_compact is True
+        # Every preserved tool_result must still be preceded by its tool_use.
+        for i, msg in enumerate(result):
+            if isinstance(msg.get("content"), list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in msg["content"]
+            ):
+                prev = result[i - 1]
+                assert prev["role"] == "assistant"
+                assert any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    for b in prev["content"]
+                )
+        # Roles must alternate (no double-assistant from the synthetic turn).
+        for i in range(1, len(result)):
+            assert result[i]["role"] != result[i - 1]["role"]
+
+    def test_summary_remembers_written_vs_read_files(self, tmp_path):
+        tool_calls_log = [
+            {"tool": "read_file", "turn": 1, "input": {"path": "a.py"}, "success": True},
+            {"tool": "read_file", "turn": 2, "input": {"path": "b.py"}, "success": True},
+            {"tool": "modify_file", "turn": 3, "input": {"path": "b.py"}, "success": True},
+            {"tool": "write_file", "turn": 4, "input": {"path": "c.py"}, "success": True},
+            {"tool": "write_file", "turn": 5, "input": {"path": "junk.py"}, "success": True},
+            {"tool": "delete_file", "turn": 6, "input": {"path": "junk.py"}, "success": True},
+        ]
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], tool_calls_log, str(tmp_path),
+        )
+        assert "WROTE or MODIFIED" in summary
+        assert "b.py, c.py" in summary          # written, sorted; b.py not double-listed as read
+        assert "Files you already read: a.py" in summary
+        assert "junk.py" not in summary          # deleted paths drop out

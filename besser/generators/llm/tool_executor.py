@@ -239,6 +239,16 @@ class ToolExecutor:
         # tool; the orchestrator's end_turn gate refuses to finish while
         # items are open.
         self._tasks: list[dict] = []
+        # Edit-first guardrail for MODIFY runs (set via
+        # ``enable_modify_guard``). In a modify run every existing file
+        # is a user's working app, so whole-file rewrites are rejected
+        # until the model has demonstrably tried targeted edits — the
+        # rewrite habit is where modify-run regressions come from.
+        self._modify_guard = False
+
+    def enable_modify_guard(self) -> None:
+        """Turn on the edit-first guardrail (modify runs only)."""
+        self._modify_guard = True
 
     def set_tasks(self, tasks: list) -> None:
         """Seed the checklist (one entry per gap-analysis task)."""
@@ -828,6 +838,31 @@ class ToolExecutor:
     def _write_file(self, args: dict) -> dict:
         rel_path = args["path"].replace("\\", "/")
         path = self._safe_path(rel_path)
+
+        # Edit-first guardrail (MODIFY runs only): every existing
+        # non-trivial file is part of the user's working app — reject a
+        # whole-file rewrite until the model has tried at least two
+        # targeted modify_file edits on it. The rejection text teaches
+        # the model the recovery path, and the >= 2 relaxation keeps the
+        # modify-streak reminder ("switch to write_file") consistent.
+        if (
+            self._modify_guard
+            and os.path.isfile(path)
+            and self._modify_counts.get(rel_path, 0) < 2
+        ):
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                existing_lines = f.read().count("\n") + 1
+            if existing_lines > 15:
+                return {
+                    "error": (
+                        f"'{rel_path}' already exists ({existing_lines} lines) and "
+                        "this is a MODIFY run — edit it in place with modify_file "
+                        "(exact old_text → new_text). A full rewrite risks dropping "
+                        "the customisations the app already carries. write_file "
+                        "unlocks for this file after two modify_file attempts, as "
+                        "a last resort."
+                    ),
+                }
 
         # Guardrail for small generated files: suggest modify_file instead.
         # For large files (>200 lines), allow rewriting — it's more efficient

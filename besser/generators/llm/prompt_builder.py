@@ -507,7 +507,10 @@ When done, briefly summarize what you changed.
             "You are MODIFYING an existing, working app. Preserve everything "
             "that already works; make the smallest change that satisfies the "
             "request; prefer `modify_file` over `write_file`; do NOT "
-            "regenerate untouched files.\n\n"
+            "regenerate untouched files. `write_file` on an existing file "
+            "is REJECTED in this run until you have tried two targeted "
+            "`modify_file` edits on it — read the file, edit it in place, "
+            "and treat a full rewrite as the last resort.\n\n"
         )
 
     return f"{modify_directive}{stable_header}\n{models_block}\n{contract_section}{variable_tail}"

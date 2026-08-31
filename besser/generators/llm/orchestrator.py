@@ -897,6 +897,10 @@ class LLMOrchestrator:
 
         self._start_time = time.monotonic()
         self._modify_mode = True
+        # Edit-first guardrail: in a modify run, whole-file rewrites of
+        # existing files are rejected until targeted edits were tried —
+        # rewrites are where modify-run regressions come from.
+        self.executor.enable_modify_guard()
 
         # Re-hydrate generator-file tags + the seed's generator name from
         # the copied recipe BEFORE building the inventory (which needs a

@@ -160,3 +160,81 @@ def test_no_gap_tasks_means_no_gate(tmp_path, monkeypatch):
     assert client.chat_calls == 1
     assert orch._end_turn_task_nudges == 0
     assert orch._phase2_stop_reason == "completed"
+
+
+# ----------------------------------------------------------------------
+# Edit-first guardrail (modify runs)
+# ----------------------------------------------------------------------
+
+
+def _existing_file(tmp_path, name="app.py", lines=30):
+    p = tmp_path / name
+    p.write_text("\n".join(f"line{i}" for i in range(lines)), encoding="utf-8")
+    return p
+
+
+def test_modify_guard_off_by_default(tmp_path):
+    """From-scratch runs keep today's behavior: rewriting a non-generator
+    file is allowed."""
+    _existing_file(tmp_path)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    result = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten",
+    }))
+    assert result["status"] == "written"
+
+
+def test_modify_guard_blocks_rewrite_of_existing_file(tmp_path):
+    _existing_file(tmp_path)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.enable_modify_guard()
+    result = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten",
+    }))
+    assert "MODIFY run" in result["error"]
+    assert "modify_file" in result["error"]
+    # File untouched.
+    assert (tmp_path / "app.py").read_text(encoding="utf-8").startswith("line0")
+
+
+def test_modify_guard_allows_new_and_trivial_files(tmp_path):
+    _existing_file(tmp_path, name="tiny.py", lines=5)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.enable_modify_guard()
+    new = json.loads(executor.execute("write_file", {
+        "path": "brand_new.py", "content": "x = 1",
+    }))
+    assert new["status"] == "written"
+    tiny = json.loads(executor.execute("write_file", {
+        "path": "tiny.py", "content": "y = 2",
+    }))
+    assert tiny["status"] == "written"
+
+
+def test_modify_guard_unlocks_after_two_targeted_edits(tmp_path):
+    _existing_file(tmp_path)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.enable_modify_guard()
+    for old in ("line1", "line2"):
+        r = json.loads(executor.execute("modify_file", {
+            "path": "app.py", "old_text": old, "new_text": old + "_edited",
+        }))
+        assert r["status"] == "modified"
+    result = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten as last resort",
+    }))
+    assert result["status"] == "written"
+
+
+def test_modify_run_enables_the_guard(tmp_path, monkeypatch):
+    """modify() flips the executor into edit-first mode."""
+    orch = _make_orch(tmp_path, _ScriptedClient([]))
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+    assert orch.executor._modify_guard is False
+    orch.modify("add a feature")
+    assert orch.executor._modify_guard is True

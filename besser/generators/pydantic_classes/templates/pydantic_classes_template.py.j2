@@ -43,7 +43,11 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {%- if attribute.is_id or attribute.name == 'id' %}
             {%- set ns.id_found = true %}
         {%- endif %}
-        {%- if attribute.name not in inherited_attr_names %}
+        {#- Create schemas (backend mode) never carry the server-owned
+            surrogate `id`: the DB autoincrements it, so a client-sent id
+            is at best ignored and at worst a PK conflict. Declared ids
+            with other names (e.g. isbn) stay client-supplied. #}
+        {%- if attribute.name not in inherited_attr_names and not (backend and attribute.name == 'id') %}
         {%- set is_opt = attribute.is_optional and not attribute.is_id %}
         {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}
         {%- if is_opt and attribute.default_value is not none %}

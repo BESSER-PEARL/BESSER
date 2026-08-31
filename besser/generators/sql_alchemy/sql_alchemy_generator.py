@@ -71,6 +71,28 @@ class SQLAlchemyGenerator(GeneratorInterface):
         for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
 
+    # Model type name -> python type used for Mapped_[...] annotations of
+    # primary keys and the foreign keys that reference them. Anything not
+    # listed keeps the historical integer surrogate.
+    _PK_PY_TYPES = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float"}
+
+    def get_pk_py_types(self):
+        """Class name -> python type of its primary key (default 'int').
+
+        A ForeignKey column must use the SAME python type as the primary
+        key it references — a ``Mapped_[int]`` FK pointing at a
+        ``String`` PK breaks joins at runtime even though it imports.
+        """
+        pk_types = {}
+        for cls in self.model.get_classes():
+            id_attr = next((a for a in cls.attributes if a.is_id), None)
+            if id_attr is None:
+                id_attr = next((a for a in cls.attributes if a.name == "id"), None)
+            if id_attr is not None:
+                type_name = getattr(id_attr.type, "name", "") or ""
+                pk_types[cls.name] = self._PK_PY_TYPES.get(type_name.lower(), "int")
+        return pk_types
+
     def get_ids(self):
         """
         Returns a dictionary with the class names as keys and the id attributes as values.
@@ -229,6 +251,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 model_name=self.model.name,
                 dbms=dbms,
                 ids=self.get_ids(),
+                pk_types=self.get_pk_py_types(),
                 fkeys=get_foreign_keys(self.model),
                 sort=sort_by_timestamp,
                 concrete_parents=concrete_parents

@@ -127,6 +127,18 @@ def generate_modular_api(
     classes = model.classes_sorted_by_inheritance()
     class_names = [cls.name for cls in classes]
     fkeys: Dict[str, List[str]] = get_foreign_keys(model)
+    # Class name -> python type of its primary key (default 'int'). Path
+    # params and FK payload fields must use the model's declared id type —
+    # a `guest_id: int` param for a String PK 404s on every real id.
+    _pk_map = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float"}
+    pk_types: Dict[str, str] = {}
+    for cls in classes:
+        id_attr = next((a for a in cls.attributes if a.is_id), None)
+        if id_attr is None:
+            id_attr = next((a for a in cls.attributes if a.name == "id"), None)
+        if id_attr is not None:
+            type_name = (getattr(id_attr.type, "name", "") or "").lower()
+            pk_types[cls.name] = _pk_map.get(type_name, "int")
 
     env = _make_env()
     env.globals['cross_router_calls'] = (
@@ -160,6 +172,7 @@ def generate_modular_api(
                 "nested_creations": nested_creations,
                 "fkeys": fkeys,
                 "model": model,
+                "pk_types": pk_types,
             }
         )
         router_path = os.path.join(routers_dir, f"{cls.name.lower()}.py")

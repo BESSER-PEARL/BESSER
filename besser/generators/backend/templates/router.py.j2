@@ -226,7 +226,7 @@ def search_{{ class.name | lower}}(
 
 
 @router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
-async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
+async def get_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
@@ -630,7 +630,7 @@ async def bulk_delete_{{ class.name | lower}}(ids: list[int], database: Session 
 {% if class.is_read_only == False %}
 {% if "PUT" in http_methods %}
 @router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
-async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }}, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
     if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
@@ -732,7 +732,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
 
 {% if "DELETE" in http_methods %}
 @router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
-async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
@@ -748,7 +748,7 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, databa
 {% set related_param_name = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
 {% set related_path_param = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
 @router.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
-async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ related_param_name }}: int, database: Session = Depends(get_db)):
+async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, database: Session = Depends(get_db)):
     """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -776,7 +776,7 @@ async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: in
 
 
 @router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
-async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ related_param_name }}: int, database: Session = Depends(get_db)):
+async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, database: Session = Depends(get_db)):
     """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -803,7 +803,7 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
 
 
 @router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
-async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
     """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -824,7 +824,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% if ns.one_to_many %}
 {% for x in ns.one_to_many %}
 @router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[2]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
-async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
     """Get all {{x[0]}} entities related to this {{ class.name }} through {{x[2]}}"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -932,8 +932,13 @@ async def {{ class.name | lower }}_{{ clean_name }}(
 
         result = _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
         {% else %}
-        # Method body not defined
-        result = None
+        # Method body not defined in the model - be honest: 501, never a
+        # fake "executed" success the client cannot distinguish from real.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
         {% endif %}
 
         # Restore stdout
@@ -961,6 +966,9 @@ async def {{ class.name | lower }}_{{ clean_name }}(
             "result": result,
             "output": output if output else None
         }
+    except HTTPException:
+        sys.stdout = sys.__stdout__
+        raise
     except Exception as e:
         sys.stdout = sys.__stdout__
         raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
@@ -969,7 +977,7 @@ async def {{ class.name | lower }}_{{ clean_name }}(
 {# Instance method - requires entity ID #}
 @router.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
 async def execute_{{ class.name | lower }}_{{ clean_name }}(
-    {{ class.name | lower }}_id: int,
+    {{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }},
     params: dict = Body(default=None, embed=True),
     database: Session = Depends(get_db)
 ):
@@ -1018,8 +1026,13 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
 
         result = await wrapper(_{{ class.name | lower }}_object)
         {% else %}
-        # Method body not defined
-        result = None
+        # Method body not defined in the model - be honest: 501, never a
+        # fake "executed" success the client cannot distinguish from real.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
         {% endif %}
         # Commit DB
         database.commit()
@@ -1036,6 +1049,9 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
             "result": str(result) if result is not None else None,
             "output": output if output else None
         }
+    except HTTPException:
+        sys.stdout = sys.__stdout__
+        raise
     except Exception as e:
         sys.stdout = sys.__stdout__
         raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")

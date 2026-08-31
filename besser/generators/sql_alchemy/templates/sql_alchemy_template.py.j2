@@ -77,7 +77,7 @@ class {{ class.name }}(
     {%- endif -%}
     {%- for parent in sort(class.parents()) %}
     {%- if parent.name not in concrete_parents %}
-    id: Mapped_[int] = mapped_column(ForeignKey_("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
+    id: Mapped_[{{ pk_types.get(parent.name, 'int') }}] = mapped_column(ForeignKey_("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endif %}
     {%- endfor %}
     {%- if (class.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0) 
@@ -113,7 +113,7 @@ class {{ class.name }}(
             {%- endfor %}
             {#- Foreign Key #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
-    {{end.name}}_id: Mapped_[int] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
+    {{end.name}}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
             {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
@@ -148,7 +148,7 @@ class {{ asso_class.name }}(Base):
     {%- for other_end in asso_class.association.ends if other_end != end %}
         {%- set ns.other_end_max = other_end.multiplicity.max %}
     {%- endfor %}
-    {{ end.name }}_id: Mapped_[str] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
+    {{ end.name }}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
     {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {%- for attribute in sort(asso_class.attributes) %}

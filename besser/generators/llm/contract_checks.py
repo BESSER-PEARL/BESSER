@@ -189,17 +189,23 @@ def _lint_frontend(rel: str, content: str, contract: DataContract) -> list:
 def _lint_python(rel: str, content: str, contract: DataContract) -> list:
     findings: list = []
 
-    for m in _FAKE_EXECUTED_RE.finditer(content):
-        findings.append(Finding(
-            path=rel,
-            line=_line_of(content, m.start()),
-            message=(
-                'fake success response {"status": "executed"} — an '
-                "unimplemented modeled method must return HTTP 501 "
-                "(Not Implemented), never pretend it ran"
-            ),
-            blocker=True,
-        ))
+    # The generated method endpoints legitimately answer "executed" after
+    # actually running the modeled body (a ``_impl`` function call in the
+    # same file; body-less methods raise 501 since the template fix). Only
+    # an "executed" with no execution machinery anywhere in the file is
+    # the fake-success facade.
+    if "_impl(" not in content:
+        for m in _FAKE_EXECUTED_RE.finditer(content):
+            findings.append(Finding(
+                path=rel,
+                line=_line_of(content, m.start()),
+                message=(
+                    'fake success response {"status": "executed"} — an '
+                    "unimplemented modeled method must return HTTP 501 "
+                    "(Not Implemented), never pretend it ran"
+                ),
+                blocker=True,
+            ))
 
     for schema in _CREATE_SCHEMA_RE.finditer(content):
         block = schema.group(1)

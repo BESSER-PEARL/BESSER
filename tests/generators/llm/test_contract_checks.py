@@ -292,3 +292,16 @@ def test_prompt_has_no_contract_section_without_domain_model():
         max_turns=20,
     )
     assert "## Data contract" not in prompt
+
+
+def test_executed_with_real_impl_in_file_is_not_flagged():
+    """The generated method endpoint answers "executed" after actually
+    running the modeled body via a _impl function — that's honest."""
+    contract = build_data_contract(_string_id_model())
+    content = (
+        "def _check_in_impl(database):\n"
+        "    return 1\n"
+        "result = _check_in_impl(database)\n"
+        'return {"status": "executed", "result": result}\n'
+    )
+    assert lint_file("backend/routers/reservation.py", content, contract) == []

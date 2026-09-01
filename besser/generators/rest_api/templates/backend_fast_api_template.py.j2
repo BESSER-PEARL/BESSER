@@ -589,18 +589,22 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% set ns_args = namespace(args=[]) %}
     {% for parent in all_parents %}
     {% for attrparent in parent.attributes %}
+    {% if attrparent.name != 'id' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.value') %}
     {% else %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name) %}
     {% endif %}
+    {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
+    {% if attribute.name != 'id' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.value') %}
     {% else %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name) %}
+    {% endif %}
     {% endif %}
     {% endfor %}
     {% if ns.end_name_one %}
@@ -782,18 +786,22 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
             {% for attrparent in parent.attributes %}
+            {% if attrparent.name != 'id' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.value') %}
             {% else %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name) %}
             {% endif %}
+            {% endif %}
             {% endfor %}
             {% endfor %}
             {% for attribute in class.attributes %}
+            {% if attribute.name != 'id' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.value') %}
             {% else %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name) %}
+            {% endif %}
             {% endif %}
             {% endfor %}
             {% if ns.end_name_one %}
@@ -889,7 +897,9 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
 
     {# Update attributes of the model -#}
     {% for attribute in class.attributes %}
+    {% if attribute.name != 'id' %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    {% endif %}
     {% endfor %}
     {# Update foreign key relationships -#}
     {% if ns.end_name_one %}

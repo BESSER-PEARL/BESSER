@@ -830,6 +830,16 @@ class SmartGenerationRunner:
                         msg = "skipped"
                     _put(PhaseEvent(phase="generate", message=msg))
                     return
+                if tool == "__metadata__":
+                    # Phase 0.5 wrote minimal build-config files for a
+                    # from-scratch stack. Without this branch the internal
+                    # sentinel leaked into the card as "running __metadata__".
+                    msg = (
+                        f"prepared starter build files — {status}"
+                        if status else "prepared starter build files"
+                    )
+                    _put(PhaseEvent(phase="generate", message=msg))
+                    return
                 if status.startswith("failed:"):
                     # Generator failure — without this the card shows
                     # "generating" forever and the user never learns the

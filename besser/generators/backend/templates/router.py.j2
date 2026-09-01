@@ -931,15 +931,6 @@ async def {{ class.name | lower }}_{{ clean_name }}(
 {{ method_body | indent(4, first=True) | indent(4, first=True) }}
 
         result = _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
-        {% else %}
-        # Method body not defined in the model - be honest: 501, never a
-        # fake "executed" success the client cannot distinguish from real.
-        sys.stdout = sys.__stdout__
-        raise HTTPException(
-            status_code=501,
-            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
-        )
-        {% endif %}
 
         # Restore stdout
         sys.stdout = sys.__stdout__
@@ -966,6 +957,15 @@ async def {{ class.name | lower }}_{{ clean_name }}(
             "result": result,
             "output": output if output else None
         }
+        {% else %}
+        # Method body not defined in the model - be honest: 501, never a
+        # fake "executed" success the client cannot distinguish from real.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
+        {% endif %}
     except HTTPException:
         sys.stdout = sys.__stdout__
         raise
@@ -1025,15 +1025,6 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
 {{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
 
         result = await wrapper(_{{ class.name | lower }}_object)
-        {% else %}
-        # Method body not defined in the model - be honest: 501, never a
-        # fake "executed" success the client cannot distinguish from real.
-        sys.stdout = sys.__stdout__
-        raise HTTPException(
-            status_code=501,
-            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
-        )
-        {% endif %}
         # Commit DB
         database.commit()
         database.refresh(_{{ class.name | lower }}_object)
@@ -1049,6 +1040,15 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
             "result": str(result) if result is not None else None,
             "output": output if output else None
         }
+        {% else %}
+        # Method body not defined in the model - be honest: 501, never a
+        # fake "executed" success the client cannot distinguish from real.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
+        {% endif %}
     except HTTPException:
         sys.stdout = sys.__stdout__
         raise

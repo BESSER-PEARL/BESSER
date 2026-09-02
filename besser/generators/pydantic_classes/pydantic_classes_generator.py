@@ -4,6 +4,7 @@ import unicodedata
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.pk_types import pk_python_types
 from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 
@@ -72,7 +73,8 @@ class PydanticGenerator(GeneratorInterface):
                 nested_creations=self.nested_creations,
                 constraints_map=constraints_map,
                 fkeys=get_foreign_keys(self.domain_model),
-                class_names=class_names
+                class_names=class_names,
+                pk_types=pk_python_types(self.domain_model),
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

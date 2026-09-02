@@ -1,5 +1,6 @@
 import os
 from jinja2 import Environment, FileSystemLoader
+from besser.generators.pk_types import pk_python_types
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators import GeneratorInterface
@@ -90,6 +91,7 @@ class RESTAPIGenerator(GeneratorInterface):
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w", encoding="utf-8") as f:
                 generated_code = template.render(
+                    pk_types=pk_python_types(self.model),
                     name=self.model.name,
                     model=self.model,
                     classes=self.model.classes_sorted_by_inheritance(),

@@ -605,7 +605,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
 
 
 @router.delete("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
-async def bulk_delete_{{ class.name | lower}}(ids: list[int], database: Session = Depends(get_db)) -> dict:
+async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.name, 'int') }}], database: Session = Depends(get_db)) -> dict:
     """Delete multiple {{ class.name }} entities at once"""
     deleted_count = 0
     not_found = []

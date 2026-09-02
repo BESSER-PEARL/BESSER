@@ -15,6 +15,17 @@ from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
 )
 from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
+from uuid import uuid4 as _uuid4
+
+
+def _new_str_id() -> str:
+    """Server-side surrogate for string primary keys named ``id``.
+
+    A string PK has no autoincrement; without a default every INSERT dies
+    on NOT NULL (the id is in nobody's hands: create schemas rightly
+    exclude the server-owned ``id``, so the server must mint it).
+    """
+    return _uuid4().hex
 
 class Base(DeclarativeBase):
     pass

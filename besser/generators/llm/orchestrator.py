@@ -584,6 +584,9 @@ class LLMOrchestrator:
         # Model-derived acceptance matrix (per entity: route/page/create),
         # computed by Phase 3 and saved in the recipe. Report-only.
         self._acceptance_matrix: dict | None = None
+        # The run's instructions, kept for Phase 3 checks that depend on
+        # what was ASKED (e.g. "web app" requested but no frontend files).
+        self._instructions: str = ""
 
         # Incremental vibe-modify state. ``modify()`` seeds ``output_dir``
         # from a previous run's files and edits them in place instead of
@@ -660,6 +663,7 @@ class LLMOrchestrator:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
             raise EmptyInstructionsError("Instructions cannot be empty")
+        self._instructions = instructions
 
         self._start_time = time.monotonic()
         # Re-compute fingerprint now that we know the instructions — the
@@ -791,6 +795,7 @@ class LLMOrchestrator:
             current project/instructions. We refuse rather than silently
             resuming against a different spec.
         """
+        self._instructions = instructions
         checkpoint = load_checkpoint(self.output_dir)
         if checkpoint is None:
             raise FileNotFoundError(
@@ -902,6 +907,7 @@ class LLMOrchestrator:
         """
         if not instructions or not instructions.strip():
             raise EmptyInstructionsError("Instructions cannot be empty")
+        self._instructions = instructions
 
         self._start_time = time.monotonic()
         self._modify_mode = True
@@ -3121,6 +3127,7 @@ class LLMOrchestrator:
         # ``enable_toolchain_validation`` so the web deployment can
         # opt out per deploy.
         raw_issues.extend(self._collect_frontend_contract_issues())
+        raw_issues.extend(self._collect_missing_frontend_issue())
         raw_issues.extend(self._collect_data_contract_issues())
 
         # Model-derived acceptance matrix: per entity — route present,
@@ -3148,6 +3155,33 @@ class LLMOrchestrator:
             )
 
         return [_classify_issue(s) for s in raw_issues]
+
+    def _collect_missing_frontend_issue(self) -> list[str]:
+        """BLOCKER when the user asked for a web app and got no frontend.
+
+        The hotel audit's defect #4: 'build a hotel reservation web app'
+        shipped an API-only tree — presence of a backend read as success.
+        High-precision: fires only when the instructions explicitly name a
+        web app / frontend / UI AND the workspace holds not a single
+        frontend artifact (js/ts/tsx/jsx/html or a package.json).
+        """
+        low = (self._instructions or "").lower()
+        if not _re.search(r"\b(web ?app|frontend|front-end|website|\bui\b|user interface)\b", low):
+            return []
+        for root, dirs, files in os.walk(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
+            if rel_root.startswith(_SNAPSHOT_DIR):
+                continue
+            for fname in files:
+                if fname.endswith((".js", ".jsx", ".ts", ".tsx", ".html")) or fname == "package.json":
+                    return []
+        return [
+            "frontend contract: the instructions request a web app / "
+            "frontend, but the output contains no frontend files at all "
+            "(no js/ts/html, no package.json). Build the frontend — a "
+            "backend-only tree does not satisfy a web-app request."
+        ]
 
     def _collect_data_contract_issues(self) -> list[str]:
         """Sweep the workspace with the model-derived data-contract lint.

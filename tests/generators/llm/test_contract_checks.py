@@ -305,3 +305,36 @@ def test_executed_with_real_impl_in_file_is_not_flagged():
         'return {"status": "executed", "result": result}\n'
     )
     assert lint_file("backend/routers/reservation.py", content, contract) == []
+
+
+def test_string_pk_scaffold_mints_ids_and_types_fks(tmp_path):
+    """Audit defects #2/#3 (2026-09-02): a string-PK scaffold must mint the
+    id server-side (uuid default) and type relationship fields str."""
+    import json as _json
+    guest = Class(name="Guest")
+    guest.attributes = {
+        Property(name="id", type=StringType, is_id=True),
+        Property(name="name", type=StringType),
+    }
+    reservation = Class(name="Reservation")
+    reservation.attributes = {
+        Property(name="id", type=StringType, is_id=True),
+        Property(name="date", type=StringType),
+    }
+    from besser.BUML.metamodel.structural import BinaryAssociation, Multiplicity, UNLIMITED_MAX_MULTIPLICITY
+    assoc = BinaryAssociation(name="Guest_Reservation", ends={
+        Property(name="guest", type=guest, multiplicity=Multiplicity(1, 1)),
+        Property(name="reservations", type=reservation,
+                 multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+    })
+    model = DomainModel(name="Hotel", types={guest, reservation}, associations={assoc})
+    executor = ToolExecutor(workspace=str(tmp_path), domain_model=model)
+    result = _json.loads(executor.execute("generate_fastapi_backend", {}))
+    assert result["status"] == "ok"
+
+    sqla = (tmp_path / "backend" / "sql_alchemy.py").read_text(encoding="utf-8")
+    assert "default=_new_str_id" in sqla          # server mints string ids
+    assert "def _new_str_id" in sqla
+    pyd = (tmp_path / "backend" / "pydantic_classes.py").read_text(encoding="utf-8")
+    assert "guest: str" in pyd                     # FK field typed str, not int
+    assert "reservations: Optional[List[str]]" in pyd

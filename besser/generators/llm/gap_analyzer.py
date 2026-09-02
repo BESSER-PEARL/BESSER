@@ -226,12 +226,30 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
     )
     try:
         response = _chat(repair_prompt, planning_model)
+        tasks = _extract_tasks(response)
     except Exception:
-        logger.warning("Gap analyzer repair retry failed; no checklist")
-        return None
-    tasks = _extract_tasks(response)
+        logger.warning("Gap analyzer repair retry failed; trying plain-JSON fallback")
+        tasks = None
+    if tasks is not None:
+        return tasks
+
+    # Final fallback, NO tools: some OpenAI-compatible gateways (ollama
+    # for certain models, e.g. devstral) reject a FORCED tool_choice with
+    # an error even though ordinary tool calling works — which silently
+    # killed the checklist (and with it the end_turn gate) on every free-
+    # tier run. A plain call asking for a bare JSON array sidesteps the
+    # gateway quirk entirely.
+    try:
+        response = llm_client.chat(
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": repair_prompt}],
+            tools=[],
+        )
+        tasks = _extract_tasks(response)
+    except Exception:
+        tasks = None
     if tasks is None:
-        logger.warning("Gap analyzer returned unparseable response twice; no checklist")
+        logger.warning("Gap analyzer unparseable after plain fallback; no checklist")
     return tasks
 
 

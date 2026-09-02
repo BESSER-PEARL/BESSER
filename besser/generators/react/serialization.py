@@ -26,6 +26,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     LookupColumn,
     ExpressionColumn,
     LineChart,
+    Map,
     MetricCard,
     PieChart,
     RadarChart,
@@ -658,6 +659,19 @@ class GuiSerializationMixin:
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
 
+        if isinstance(element, Map):
+            node["title"] = element.title or self._humanize(element.name)
+            node["map_config"] = self._clean_dict(
+                {
+                    "centerLatitude": element.center_latitude,
+                    "centerLongitude": element.center_longitude,
+                    "zoom": element.zoom,
+                    "latitudeField": getattr(element.latitude_field, "name", None),
+                    "longitudeField": getattr(element.longitude_field, "name", None),
+                    "markerLabelField": getattr(element.marker_label_field, "name", None),
+                }
+            )
+
         if isinstance(element, AgentComponent):
             node["agent-name"] = element.agent_name or ""
             node["agent-title"] = element.agent_title or "BESSER Agent"
@@ -1237,6 +1251,8 @@ class GuiSerializationMixin:
             return "table"
         if isinstance(element, MetricCard):
             return "metric-card"
+        if isinstance(element, Map):
+            return "map"
         if isinstance(element, AgentComponent):
             return "agent-component"
         if isinstance(element, Alert):
@@ -1322,6 +1338,8 @@ class GuiSerializationMixin:
                 used_types.add('Table')
             elif isinstance(element, MetricCard):
                 used_types.add('MetricCard')
+            elif isinstance(element, Map):
+                used_types.add('Map')
 
             # Recursively scan children if this is a ViewContainer
             if isinstance(element, ViewContainer):

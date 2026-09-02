@@ -50,6 +50,40 @@ Visualization components including:
 - Pie charts
 - Data binding to backend entities
 
+MapBlock
+^^^^^^^^
+
+Interactive map component powered by `Leaflet <https://leafletjs.com/>`_ and
+`react-leaflet <https://react-leaflet.js.org/>`_ with OpenStreetMap tiles (no API key required):
+
+- Renders an ``<MapContainer>`` with a ``<TileLayer>`` for OpenStreetMap tiles.
+- Fetches rows from the auto-generated REST endpoint (``GET /<class>/``) when a
+  ``DataBinding`` is set on the ``Map`` metamodel component.
+- Renders a ``<Marker>/<Popup>`` for every row using the configured
+  ``latitude_field``, ``longitude_field``, and ``marker_label_field``.
+- Falls back to a static centre marker when no data binding is present.
+- Fully responsive — fills its container's width at a configurable height.
+
+The following npm packages are automatically added to the generated ``package.json``
+when the GUI model contains at least one ``Map`` component:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 20 45
+
+   * - Package
+     - Version
+     - Purpose
+   * - ``leaflet``
+     - ``^1.9.4``
+     - Core Leaflet mapping library.
+   * - ``react-leaflet``
+     - ``^5.0.0``
+     - React bindings for Leaflet (React 19 compatible).
+   * - ``@types/leaflet``
+     - ``^1.9.12``
+     - TypeScript type definitions for Leaflet.
+
 Usage
 -----
 

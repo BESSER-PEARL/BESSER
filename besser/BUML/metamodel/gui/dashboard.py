@@ -1251,46 +1251,172 @@ class MetricCard(ViewComponent):
         )
 
 class Map(ViewComponent):
-    """Represents a map component in the dashboard.
+    """Represents an interactive map component that displays OpenStreetMap tiles via Leaflet.
+
+    Markers can be bound to a domain class (e.g. a ``Location`` class with latitude/longitude
+    attributes) via ``data_binding``.  When bound, markers are fetched at runtime from the
+    auto-generated REST endpoint for that class.
 
     Args:
-        name (str): The name of the map.
+        name (str): The name of the map component.
+        title (str | None): Optional display title shown above the map.
+        center_latitude (float | None): Initial map centre latitude (default: 0.0).
+        center_longitude (float | None): Initial map centre longitude (default: 0.0).
+        zoom (int | None): Initial zoom level (default: 10).
+        latitude_field (Property | None): Domain class attribute holding marker latitude values.
+        longitude_field (Property | None): Domain class attribute holding marker longitude values.
+        marker_label_field (Property | None): Domain class attribute used as the marker popup label.
+        **kwargs: Forwarded to :class:`ViewComponent` (e.g. ``styling``, ``data_binding``).
 
     Attributes:
-        name (str): The name of the map.
+        title (str | None): Display title.
+        center_latitude (float | None): Map centre latitude.
+        center_longitude (float | None): Map centre longitude.
+        zoom (int | None): Zoom level.
+        latitude_field (Property | None): Property supplying marker latitudes.
+        longitude_field (Property | None): Property supplying marker longitudes.
+        marker_label_field (Property | None): Property supplying marker popup labels.
     """
 
-    def __init__(self, name: str, data: list):
-        super().__init__(name)
-        self.data = data
+    def __init__(
+        self,
+        name: str,
+        title: Optional[str] = None,
+        center_latitude: Optional[float] = None,
+        center_longitude: Optional[float] = None,
+        zoom: Optional[int] = None,
+        latitude_field: Optional[Property] = None,
+        longitude_field: Optional[Property] = None,
+        marker_label_field: Optional[Property] = None,
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+        self.title = title
+        self.center_latitude = center_latitude
+        self.center_longitude = center_longitude
+        self.zoom = zoom
+        self.latitude_field = latitude_field
+        self.longitude_field = longitude_field
+        self.marker_label_field = marker_label_field
+
+    # --- title ---
+    @property
+    def title(self) -> Optional[str]:
+        """Optional[str]: Display title shown above the map."""
+        return self._title
+
+    @title.setter
+    def title(self, value: Optional[str]):
+        """Set the display title."""
+        self._title = value
+
+    # --- center_latitude ---
+    @property
+    def center_latitude(self) -> Optional[float]:
+        """Optional[float]: Initial map centre latitude."""
+        return self._center_latitude
+
+    @center_latitude.setter
+    def center_latitude(self, value: Optional[float]):
+        """Set the initial map centre latitude."""
+        self._center_latitude = value
+
+    # --- center_longitude ---
+    @property
+    def center_longitude(self) -> Optional[float]:
+        """Optional[float]: Initial map centre longitude."""
+        return self._center_longitude
+
+    @center_longitude.setter
+    def center_longitude(self, value: Optional[float]):
+        """Set the initial map centre longitude."""
+        self._center_longitude = value
+
+    # --- zoom ---
+    @property
+    def zoom(self) -> Optional[int]:
+        """Optional[int]: Initial zoom level."""
+        return self._zoom
+
+    @zoom.setter
+    def zoom(self, value: Optional[int]):
+        """Set the initial zoom level."""
+        self._zoom = value
+
+    # --- latitude_field ---
+    @property
+    def latitude_field(self) -> Optional[Property]:
+        """Optional[Property]: Domain class attribute that holds marker latitude values."""
+        return self._latitude_field
+
+    @latitude_field.setter
+    def latitude_field(self, value: Optional[Property]):
+        """Set the latitude field; must be a Property instance when provided."""
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"latitude_field must be a Property instance, got {type(value)}")
+        self._latitude_field = value
+
+    # --- longitude_field ---
+    @property
+    def longitude_field(self) -> Optional[Property]:
+        """Optional[Property]: Domain class attribute that holds marker longitude values."""
+        return self._longitude_field
+
+    @longitude_field.setter
+    def longitude_field(self, value: Optional[Property]):
+        """Set the longitude field; must be a Property instance when provided."""
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"longitude_field must be a Property instance, got {type(value)}")
+        self._longitude_field = value
+
+    # --- marker_label_field ---
+    @property
+    def marker_label_field(self) -> Optional[Property]:
+        """Optional[Property]: Domain class attribute used as the marker popup label."""
+        return self._marker_label_field
+
+    @marker_label_field.setter
+    def marker_label_field(self, value: Optional[Property]):
+        """Set the marker label field; must be a Property instance when provided."""
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"marker_label_field must be a Property instance, got {type(value)}")
+        self._marker_label_field = value
+
+    def __repr__(self):
+        return (
+            f"Map(name={self.name}, title={self.title}, "
+            f"center=({self.center_latitude}, {self.center_longitude}), zoom={self.zoom}, "
+            f"latitude_field={self.latitude_field}, longitude_field={self.longitude_field}, "
+            f"marker_label_field={self.marker_label_field})"
+        )
+
 
 class WorldMap(Map):
-    """Represents a world map component in the dashboard.
+    """Represents a world-scale map component.
+
+    Thin subclass of :class:`Map` — accepts all the same keyword arguments and forwards them
+    unchanged.  Provides a semantic distinction for components that display a global map view.
 
     Args:
         name (str): The name of the world map.
-        data (list): The data to be displayed on the world map.
-
-    Attributes:
-        name (str): The name of the world map.
-        data (list): The data to be displayed on the world map.
+        **kwargs: Forwarded to :class:`Map`.
     """
 
-    def __init__(self, name: str, data: list):
-        super().__init__(name, data)
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
 
 
 class LocationMap(Map):
-    """Represents a location map component in the dashboard.
+    """Represents a location/point-of-interest map component.
+
+    Thin subclass of :class:`Map` — accepts all the same keyword arguments and forwards them
+    unchanged.  Provides a semantic distinction for components focused on one or more specific
+    locations (e.g. a store-locator or delivery-tracking view).
 
     Args:
         name (str): The name of the location map.
-        data (list): The data to be displayed on the location map.
-
-    Attributes:
-        name (str): The name of the location map.
-        data (list): The data to be displayed on the location map.
+        **kwargs: Forwarded to :class:`Map`.
     """
 
-    def __init__(self, name: str, data: list):
-        super().__init__(name, data)
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)

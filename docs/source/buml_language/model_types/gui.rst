@@ -116,8 +116,95 @@ For data visualization and dashboard-style interfaces, the metamodel includes:
   - ``FieldColumn``: A column bound to a specific class attribute.
   - ``LookupColumn``: A column that resolves values through an association.
 
+- **Map**: An interactive map component backed by `OpenStreetMap <https://www.openstreetmap.org/>`_
+  via the Leaflet library. Supports a static center view or **data-bound markers** fetched at runtime
+  from a domain class — see `Map Component`_ below.
+
 - **AgentComponent**: A component that integrates a BESSER Agent Framework (BAF) agent
   into the user interface, enabling conversational or AI-driven interactions.
+
+Map Component
+-------------
+
+``Map`` is a ``ViewComponent`` that renders an interactive OpenStreetMap tile layer.
+It requires no API key.
+
+**Constructor parameters**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 12 63
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``name``
+     - (required)
+     - Unique component name.
+   * - ``title``
+     - ``None``
+     - Optional heading displayed above the map.
+   * - ``center_latitude``
+     - ``0.0``
+     - Initial map centre latitude (decimal degrees).
+   * - ``center_longitude``
+     - ``0.0``
+     - Initial map centre longitude (decimal degrees).
+   * - ``zoom``
+     - ``10``
+     - Initial zoom level (1 = world, 18 = street).
+   * - ``latitude_field``
+     - ``None``
+     - A ``Property`` on the bound class whose value is the marker latitude.
+   * - ``longitude_field``
+     - ``None``
+     - A ``Property`` on the bound class whose value is the marker longitude.
+   * - ``marker_label_field``
+     - ``None``
+     - A ``Property`` on the bound class whose value is shown in the marker popup.
+   * - ``data_binding``
+     - ``None``
+     - A ``DataBinding`` instance linking the map to a domain ``Class``.
+
+``WorldMap`` and ``LocationMap`` are thin subclasses of ``Map`` that forward all
+keyword arguments unchanged.
+
+**Python code example**
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.structural import (
+        Class, Property, DomainModel, FloatType, StringType,
+    )
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen, DataBinding
+    from besser.BUML.metamodel.gui.dashboard import Map
+
+    # Domain model: a Location class with geo attributes
+    latitude = Property(name="latitude", type=FloatType)
+    longitude = Property(name="longitude", type=FloatType)
+    store_name = Property(name="store_name", type=StringType)
+    location = Class(name="Location", attributes={latitude, longitude, store_name})
+    domain = DomainModel(name="StoreLocator", types={location})
+
+    # GUI model: a screen with a data-bound map
+    binding = DataBinding(name="location_binding", domain_concept=location)
+    store_map = Map(
+        name="StoreMap",
+        title="Store Locations",
+        center_latitude=48.8566,
+        center_longitude=2.3522,
+        zoom=12,
+        latitude_field=latitude,
+        longitude_field=longitude,
+        marker_label_field=store_name,
+        data_binding=binding,
+    )
+    screen = Screen(name="MapScreen", description="", view_elements={store_map},
+                    is_main_page=True)
+    module = Module(name="AppModule", screens={screen})
+    gui = GUIModel(name="StoreLocatorApp", package="com.example.locator",
+                   versionCode="1", versionName="1.0", modules={module},
+                   description="Store locator map app")
 
 Layout and Styling
 ------------------

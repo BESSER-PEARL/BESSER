@@ -23,7 +23,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
-    FieldColumn, LookupColumn, ExpressionColumn, MetricCard
+    FieldColumn, LookupColumn, ExpressionColumn, Map, MetricCard
 )
 from besser.BUML.metamodel.gui.events_actions import Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -246,7 +246,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
         f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,\n")
-        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn, MetricCard, Series\n")
+        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn, Map, MetricCard, Series\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -439,6 +439,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_table(f, comp_var, component)
     elif isinstance(component, MetricCard):
         _write_metric_card(f, comp_var, component)
+    elif isinstance(component, Map):
+        _write_map(f, comp_var, component)
     elif isinstance(component, AgentComponent):
         _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
@@ -1197,6 +1199,47 @@ def _write_styling(f, component_var, styling, created_vars):
     _write_styling_object(f, styling_var, styling, created_vars)
     # Assign styling to component
     f.write(f'{component_var}.styling = {styling_var}\n')
+
+
+def _write_map(f, var_name, map_comp):
+    """Write code for a Map component."""
+    params = [f'name="{_escape_string(map_comp.name)}"']
+    if hasattr(map_comp, 'title') and map_comp.title:
+        params.append(f'title="{_escape_string(map_comp.title)}"')
+    if hasattr(map_comp, 'center_latitude') and map_comp.center_latitude is not None:
+        params.append(f'center_latitude={map_comp.center_latitude}')
+    if hasattr(map_comp, 'center_longitude') and map_comp.center_longitude is not None:
+        params.append(f'center_longitude={map_comp.center_longitude}')
+    if hasattr(map_comp, 'zoom') and map_comp.zoom is not None:
+        params.append(f'zoom={map_comp.zoom}')
+
+    _write_constructor(f, var_name, 'Map', params, map_comp)
+
+    if hasattr(map_comp, 'data_binding') and map_comp.data_binding:
+        _write_data_binding_assignment(f, var_name, map_comp.data_binding)
+
+    # Re-attach geo field Property references from the bound domain class.
+    # These are stored directly on the Map, not inside DataBinding, so we emit
+    # separate assignment statements guarded by the same domain-class lookup.
+    binding = getattr(map_comp, 'data_binding', None)
+    domain_name = _get_attr_name(getattr(binding, 'domain_concept', None)) if binding else None
+    if domain_name:
+        for attr_name, field_attr in (
+            ('latitude_field', getattr(map_comp, 'latitude_field', None)),
+            ('longitude_field', getattr(map_comp, 'longitude_field', None)),
+            ('marker_label_field', getattr(map_comp, 'marker_label_field', None)),
+        ):
+            field_name = _get_attr_name(field_attr)
+            if field_name:
+                escaped_domain = _escape_string(domain_name)
+                escaped_field = _escape_string(field_name)
+                f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
+                f.write(f"if domain_model_ref is not None:\n")
+                f.write(f"    _domain_cls = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
+                f.write(f"    if _domain_cls:\n")
+                f.write(f"        {var_name}.{attr_name} = next(\n")
+                f.write(f"            (a for a in _domain_cls.attributes if a.name == \"{escaped_field}\"), None\n")
+                f.write(f"        )\n")
 
 
 def _write_agent_component(f, var_name, agent):

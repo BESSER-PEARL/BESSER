@@ -7,10 +7,10 @@ benefit from: GUI, agent, object (instance data), state machines,
 quantum circuits.
 
 Any optional processor failure degrades gracefully to ``None`` for that
-model — the smart-generation run continues with whatever succeeded.
+model — the spec-driven generation run continues with whatever succeeded.
 
 Lives in its own module (not inside ``generation_router``) so that the
-smart-generation router does not import from the generation router and
+spec-driven generation router does not import from the generation router and
 vice-versa — no circular deps between routers.
 """
 
@@ -350,7 +350,7 @@ def _assemble_gui_and_agent(
     except Exception:
         # GUI processing can fail if the class diagram and GUI are
         # out of sync. Degrade gracefully to class-only rather than
-        # blocking the whole smart-generation run.
+        # blocking the whole spec-driven generation run.
         logger.exception(
             "Failed to process GUINoCodeDiagram for smart generation; "
             "continuing with class diagram only"

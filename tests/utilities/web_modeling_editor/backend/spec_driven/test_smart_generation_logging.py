@@ -1,7 +1,7 @@
 """Mechanical proof that the user's API key never reaches any log record.
 
 Capture every LogRecord produced by every logger during a full
-``/besser_api/smart-generate`` request and assert that the literal
+``/besser_api/spec-driven/generate`` request and assert that the literal
 API-key string does not appear in any record's formatted message.
 
 Also sanity-check that the request *is* actually being logged (path +
@@ -17,13 +17,13 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import runner as runner_module
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _FakeOrchestrator,
     _FakeClient,
     _clear_registry,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_smart_generation_router import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
 
@@ -74,8 +74,8 @@ def capture_all_logs():
         "besser",
         "besser.utilities.web_modeling_editor.backend",
         "besser.utilities.web_modeling_editor.backend.middleware.request_logging",
-        "besser.utilities.web_modeling_editor.backend.services.smart_generation.runner",
-        "besser.utilities.web_modeling_editor.backend.routers.smart_generation_router",
+        "besser.utilities.web_modeling_editor.backend.services.spec_driven.runner",
+        "besser.utilities.web_modeling_editor.backend.routers.spec_driven_router",
     ):
         lg = logging.getLogger(name)
         touched.append((lg, lg.level, lg.propagate))
@@ -107,7 +107,7 @@ class TestApiKeyNeverInLogs:
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
                 async with ac.stream(
                     "POST",
-                    "/besser_api/smart-generate",
+                    "/besser_api/spec-driven/generate",
                     json=body,
                 ) as response:
                     async for _ in response.aiter_bytes():
@@ -135,7 +135,7 @@ class TestApiKeyNeverInLogs:
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
                 async with ac.stream(
                     "POST",
-                    "/besser_api/smart-generate",
+                    "/besser_api/spec-driven/generate",
                     json=body,
                 ) as response:
                     async for _ in response.aiter_bytes():
@@ -145,7 +145,7 @@ class TestApiKeyNeverInLogs:
         log_text = capture_all_logs.all_text()
         # The request_logging middleware emits a structured "request completed"
         # line for every response, so we expect the path to appear.
-        assert "/besser_api/smart-generate" in log_text, (
+        assert "/besser_api/spec-driven/generate" in log_text, (
             f"Expected the request path in captured logs, got: {log_text[:500]!r}"
         )
 
@@ -168,7 +168,7 @@ class TestApiKeyNeverInLogs:
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
                 async with ac.stream(
                     "POST",
-                    "/besser_api/smart-generate",
+                    "/besser_api/spec-driven/generate",
                     json=body,
                 ) as response:
                     async for _ in response.aiter_bytes():

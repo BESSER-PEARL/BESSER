@@ -1,4 +1,4 @@
-"""HTTP-level tests for POST /besser_api/import-github-run.
+"""HTTP-level tests for POST /besser_api/spec-driven/import-github-run.
 
 The endpoint downloads an existing BESSER-created repo, registers its
 code tree as a run (usable as a modify seed) and returns the repo's
@@ -17,18 +17,18 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
-    smart_generation_router as router_module,
+    spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_runner import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
 
 
 BASE_URL = "http://testserver"
-IMPORT_URL = "/besser_api/import-github-run"
+IMPORT_URL = "/besser_api/spec-driven/import-github-run"
 
 
 @pytest.fixture(autouse=True)

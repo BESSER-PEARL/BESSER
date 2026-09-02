@@ -22,22 +22,22 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
-    smart_generation_router as router_module,
+    spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_model_assembly import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_runner import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
 
 
 BASE_URL = "http://testserver"
-PUSH_URL = "/besser_api/push-smart-to-github"
+PUSH_URL = "/besser_api/spec-driven/push-to-github"
 
 
 @pytest.fixture(autouse=True)

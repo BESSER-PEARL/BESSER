@@ -1,6 +1,6 @@
 """Tests for the production resource-protection layer:
 
-* ``GET /besser_api/smart-gen/config`` exposes the server caps.
+* ``GET /besser_api/spec-driven/config`` exposes the server caps.
 * The concurrency semaphore rejects excess in-flight runs with 429.
 * Env-var overrides on the caps are honoured.
 """
@@ -14,12 +14,12 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
-    smart_generation_router as router_module,
+    spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_smart_generation_router import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
 
@@ -28,7 +28,7 @@ BASE_URL = "http://testserver"
 
 
 # ======================================================================
-# /smart-gen/config
+# /spec-driven/config
 # ======================================================================
 
 
@@ -36,7 +36,7 @@ def _get_config() -> httpx.Response:
     async def _go() -> httpx.Response:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
-            return await ac.get("/besser_api/smart-gen/config")
+            return await ac.get("/besser_api/spec-driven/config")
 
     return asyncio.run(_go())
 
@@ -154,7 +154,7 @@ def test_resume_returns_409_when_run_id_is_already_active(monkeypatch):
                 transport=transport, base_url=BASE_URL,
             ) as client:
                 return await client.post(
-                    f"/besser_api/resume-smart-gen/{run_id}",
+                    f"/besser_api/spec-driven/resume/{run_id}",
                     json=_build_project_body(),
                 )
         finally:
@@ -189,7 +189,7 @@ def test_release_when_at_max_does_not_crash():
 
 
 def test_smart_generate_returns_429_when_saturated(monkeypatch):
-    """When the semaphore is exhausted, POST /smart-generate must
+    """When the semaphore is exhausted, POST /spec-driven/generate must
     return 429 immediately — not open an SSE stream that hangs.
     """
     from besser.utilities.web_modeling_editor.backend.constants import constants as C
@@ -205,7 +205,7 @@ def test_smart_generate_returns_429_when_saturated(monkeypatch):
             transport = ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
                 return await ac.post(
-                    "/besser_api/smart-generate",
+                    "/besser_api/spec-driven/generate",
                     json={
                         # Minimal body — real validation runs first but
                         # the cap check precedes any heavy work so a

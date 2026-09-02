@@ -1,4 +1,4 @@
-"""HTTP-level tests for POST /besser_api/smart-preview.
+"""HTTP-level tests for POST /besser_api/spec-driven/preview.
 
 The preview endpoint is pure computation — no LLM call, no API key, no
 worker thread — so these tests exercise the full route with a real
@@ -15,13 +15,13 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     AssembledModels,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.preview import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview import (
     _predict_target_generator,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_model_assembly import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     BPMN_DIAGRAM_MODEL,
     CLASS_DIAGRAM_MODEL,
 )
@@ -44,13 +44,13 @@ def _project(diagrams: dict) -> dict:
 async def _preview_async(body: dict) -> httpx.Response:
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
-        return await ac.post("/besser_api/smart-preview", json=body)
+        return await ac.post("/besser_api/spec-driven/preview", json=body)
 
 
 def _preview(body: dict) -> httpx.Response:
     """Sync wrapper — pytest-asyncio isn't configured here, so we drive
     the async ASGI transport via ``asyncio.run`` the same way the rest
-    of the smart-generation HTTP tests do."""
+    of the spec-driven generation HTTP tests do."""
     return asyncio.run(_preview_async(body))
 
 

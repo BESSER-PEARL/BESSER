@@ -1,7 +1,7 @@
 """Tests for the Phase 1 skip event and PhaseUpdateEvent — #1 + #5.
 
 When the orchestrator's Phase 1 is skipped (no class diagram / no
-quantum circuit, or no matching deterministic generator), the smart-gen
+quantum circuit, or no matching deterministic generator), the spec-driven
 card used to silently jump from `select` to `gap`, making users wonder
 if a step was missing. The fix:
 
@@ -14,7 +14,7 @@ Separately, the gap analyser used to emit only a coarse "Analysing gaps"
 phase marker — users couldn't see what the planner had actually decided.
 The fix adds ``PhaseUpdateEvent(phase="gap", details=<task list>)`` emitted
 after the planning LLM call returns, surfaced behind the chevron on the
-smart-gen card.
+spec-driven card.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from besser.generators.llm import gap_analyzer
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_events import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     PhaseEvent,
     PhaseUpdateEvent,
     format_sse,

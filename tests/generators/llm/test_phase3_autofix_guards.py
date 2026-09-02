@@ -124,7 +124,7 @@ def test_runner_passes_auto_fix_flag_to_orchestrator() -> None:
     web run)."""
     import inspect
 
-    from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
         runner,
     )
 

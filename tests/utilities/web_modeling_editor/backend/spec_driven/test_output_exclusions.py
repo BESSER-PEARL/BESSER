@@ -10,7 +10,7 @@ import os
 import shutil
 import tempfile
 
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _EXCLUDED_OUTPUT_DIRS,
 )
 

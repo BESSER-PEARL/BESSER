@@ -10,14 +10,14 @@ from __future__ import annotations
 import asyncio
 
 from besser.generators.llm.orchestrator import ValidationIssue
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
     SmartGenerationRunner,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_modify_seed import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed import (
     _FakeClient,
     _StubOrchestrator,
     _build_request,

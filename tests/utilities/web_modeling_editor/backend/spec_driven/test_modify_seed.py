@@ -26,18 +26,18 @@ from pydantic import ValidationError as PydanticValidationError
 
 from besser.generators.llm.checkpoint import CHECKPOINT_FILENAME
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
-from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
     SmartGenerationRunner,
     SmartRunEntry,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_model_assembly import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
 

@@ -9,16 +9,16 @@ from typing import Callable, Optional
 
 import pytest
 
-from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
 )
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import runner as runner_module
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
     SMART_RUN_REGISTRY,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_model_assembly import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
 
@@ -231,7 +231,7 @@ def _parse_frame(frame: bytes) -> dict:
 
 _RUNNER_MODULE = (
     "besser.utilities.web_modeling_editor.backend.services."
-    "smart_generation.runner.LLM_ALLOW_CUSTOM_BASE_URL"
+    "spec_driven.runner.LLM_ALLOW_CUSTOM_BASE_URL"
 )
 
 
@@ -303,7 +303,7 @@ class TestHappyPath:
         frames = asyncio.run(_collect_frames(runner))
         done = _parse_frame(frames[-1])
         assert done["event"] == "done"
-        assert done["downloadUrl"].startswith("/besser_api/download-smart/")
+        assert done["downloadUrl"].startswith("/besser_api/spec-driven/download/")
         assert done["fileName"] == "main.py"  # single file, not zipped
         assert done["isZip"] is False
         assert done["recipe"]["instructions"] == request.instructions

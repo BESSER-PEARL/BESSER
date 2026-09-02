@@ -1,6 +1,6 @@
 """Pre-flight plan preview for smart generation.
 
-Builds a ``PreviewPlan`` showing what smart-generate would do, before
+Builds a ``PreviewPlan`` showing what spec-driven generate would do, before
 spending any LLM tokens:
 
     1. Which primary model it detected (class, gui, agent, …).
@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     AssembledModels,
 )
 
@@ -43,10 +43,10 @@ _EXPLICIT_NO_GENERATOR_FRAMEWORKS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class PreviewPlan:
-    """Structured response for ``POST /besser_api/smart-preview``.
+    """Structured response for ``POST /besser_api/spec-driven/preview``.
 
     All numeric fields are integers or floats suitable for a JSON UI.
-    ``target_generator`` is ``None`` when smart-generation would run the
+    ``target_generator`` is ``None`` when spec-driven generation would run the
     LLM from scratch (e.g. state-machine-only or user asked for NestJS).
     """
 
@@ -87,7 +87,7 @@ def build_preview(
 
     Does NOT call any LLM. Returns instantly with a deterministic plan
     so the frontend can render a confirmation screen before the user
-    commits to a real smart-generate run.
+    commits to a real spec-driven generate run.
 
     Parameters
     ----------
@@ -95,7 +95,7 @@ def build_preview(
         Result of ``assemble_models_from_project``.
     instructions
         The user's natural-language request, same string that will be
-        sent to ``POST /smart-generate`` if the preview is approved.
+        sent to ``POST /spec-driven/generate`` if the preview is approved.
     max_cost_usd, max_runtime_seconds
         Server-clamped caps from the request. The cost estimate is
         clipped to ``max_cost_usd`` so the UI never shows a number above
@@ -183,7 +183,7 @@ def _predict_target_generator(
     * 0.5   — default based on available models
     * 0.3   — "no match, LLM writes from scratch"
 
-    A ``None`` generator name means smart-generation will skip Phase 1
+    A ``None`` generator name means spec-driven generation will skip Phase 1
     and build from scratch in Phase 2. That's not a failure — it's the
     expected path for "generate me a NestJS API" or for state-machine-
     only projects.

@@ -67,11 +67,11 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     conversion_router,
     validation_router,
     deployment_router,
-    smart_generation_router,
+    spec_driven_router,
 )
 
 # Smart-generation download registry — started/cancelled in the lifespan below
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SMART_RUN_REGISTRY,
 )
 
@@ -167,10 +167,10 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
-    # Sweep expired smart-generation download entries every minute.
+    # Sweep expired spec-driven generation download entries every minute.
     smart_gen_sweeper = asyncio.create_task(
         SMART_RUN_REGISTRY.periodic_sweep(),
-        name="smart-gen-registry-sweeper",
+        name="spec-driven-registry-sweeper",
     )
 
     yield
@@ -225,7 +225,7 @@ app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
-app.include_router(smart_generation_router.router)
+app.include_router(spec_driven_router.router)
 
 
 # Exception handlers
@@ -268,8 +268,8 @@ def get_api_root():
         "endpoints": {
             "generate": "/besser_api/generate-output",
             "generate_from_project": "/besser_api/generate-output-from-project",
-            "smart_generate": "/besser_api/smart-generate",
-            "download_smart": "/besser_api/download-smart/{run_id}",
+            "smart_generate": "/besser_api/spec-driven/generate",
+            "download_smart": "/besser_api/spec-driven/download/{run_id}",
             "deploy": "/besser_api/deploy-app",
             "export_buml": "/besser_api/export-buml",
             "export_project": "/besser_api/export-project-as-buml",

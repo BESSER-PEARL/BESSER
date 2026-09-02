@@ -3,10 +3,10 @@
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     model_assembly as model_assembly_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
 

@@ -7,10 +7,10 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_MAX_COST_USD_HARD_CAP,
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
 )
-from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_runner import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _build_request,
 )
 
@@ -116,13 +116,13 @@ class TestFilenameSanitization:
     """Test the router's _safe_attachment_filename helper directly."""
 
     def test_plain_filename_passes_through(self):
-        from besser.utilities.web_modeling_editor.backend.routers.smart_generation_router import (
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
             _safe_attachment_filename,
         )
         assert _safe_attachment_filename("output.zip", "fallback.zip") == "output.zip"
 
     def test_quotes_and_crlf_stripped(self):
-        from besser.utilities.web_modeling_editor.backend.routers.smart_generation_router import (
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
             _safe_attachment_filename,
         )
         injected = 'evil.txt"\r\nX-Injected: header'
@@ -132,7 +132,7 @@ class TestFilenameSanitization:
         assert "\n" not in safe
 
     def test_empty_after_sanitization_uses_fallback(self):
-        from besser.utilities.web_modeling_editor.backend.routers.smart_generation_router import (
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
             _safe_attachment_filename,
         )
         # Only control chars + quotes → nothing left
@@ -140,7 +140,7 @@ class TestFilenameSanitization:
         assert result == "fallback.zip"
 
     def test_very_long_filename_truncated(self):
-        from besser.utilities.web_modeling_editor.backend.routers.smart_generation_router import (
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
             _safe_attachment_filename,
         )
         huge = "a" * 500 + ".zip"
@@ -148,7 +148,7 @@ class TestFilenameSanitization:
         assert len(safe) <= 120
 
     def test_null_byte_stripped(self):
-        from besser.utilities.web_modeling_editor.backend.routers.smart_generation_router import (
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
             _safe_attachment_filename,
         )
         safe = _safe_attachment_filename("out\x00put.zip", "fallback.zip")

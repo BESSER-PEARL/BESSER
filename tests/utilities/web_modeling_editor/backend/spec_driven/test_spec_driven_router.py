@@ -1,4 +1,4 @@
-"""HTTP-level tests for /besser_api/smart-generate and /download-smart."""
+"""HTTP-level tests for /besser_api/spec-driven/generate and /download-smart."""
 
 import asyncio
 import io
@@ -12,14 +12,14 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import runner as runner_module
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_model_assembly import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
-from tests.utilities.web_modeling_editor.backend.smart_generation.test_runner import (
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _FakeOrchestrator,
     _FakeClient,
     _FailingOrchestrator,
@@ -80,12 +80,12 @@ def _build_project_body(**overrides) -> dict:
 
 
 async def _post_sse(body: dict) -> tuple[int, list[dict]]:
-    """POST to /smart-generate and parse the SSE event stream."""
+    """POST to /spec-driven/generate and parse the SSE event stream."""
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
         async with ac.stream(
             "POST",
-            "/besser_api/smart-generate",
+            "/besser_api/spec-driven/generate",
             json=body,
         ) as response:
             status = response.status_code
@@ -132,7 +132,7 @@ class TestSmartGenerateEndpoint:
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
                 async with ac.stream(
                     "POST",
-                    "/besser_api/smart-generate",
+                    "/besser_api/spec-driven/generate",
                     json=body,
                 ) as response:
                     data = b""
@@ -189,12 +189,12 @@ class TestDownloadEndpoint:
                 return await ac.get(path)
 
         # First GET succeeds
-        r1 = asyncio.run(_get(f"/besser_api/download-smart/{run_id}"))
+        r1 = asyncio.run(_get(f"/besser_api/spec-driven/download/{run_id}"))
         assert r1.status_code == 200
         assert r1.content.startswith(b"# fake generated content")
 
         # Second GET succeeds too (re-downloadable within TTL)
-        r2 = asyncio.run(_get(f"/besser_api/download-smart/{run_id}"))
+        r2 = asyncio.run(_get(f"/besser_api/spec-driven/download/{run_id}"))
         assert r2.status_code == 200
         assert r2.content == r1.content
 
@@ -204,7 +204,7 @@ class TestDownloadEndpoint:
         async def _get() -> httpx.Response:
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
                 return await ac.get(
-                    "/besser_api/download-smart/" + "0" * 32
+                    "/besser_api/spec-driven/download/" + "0" * 32
                 )
 
         r = asyncio.run(_get())
@@ -216,7 +216,7 @@ class TestDownloadEndpoint:
 
         async def _get() -> httpx.Response:
             async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
-                return await ac.get("/besser_api/download-smart/not-a-hex-id")
+                return await ac.get("/besser_api/spec-driven/download/not-a-hex-id")
 
         r = asyncio.run(_get())
         assert r.status_code == 422

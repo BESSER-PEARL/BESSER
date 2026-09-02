@@ -58,7 +58,7 @@ class PhaseUpdateEvent(BaseSseEvent):
     timeline entry in place (rather than appending a duplicate row).
     Used by the gap analyser to surface the task list after the planning
     LLM call returns. ``details`` is rendered behind a chevron on the
-    smart-gen card.
+    spec-driven card.
     """
 
     event: Literal["phase_update"] = "phase_update"
@@ -112,7 +112,7 @@ class CostEvent(BaseSseEvent):
 class DoneEvent(BaseSseEvent):
     """Terminal event on successful completion.
 
-    ``downloadUrl`` points to the sibling ``GET /download-smart/{runId}``
+    ``downloadUrl`` points to the sibling ``GET /spec-driven/download/{runId}``
     endpoint which single-use-serves the generated ZIP or file. ``runId``
     is carried explicitly so clients don't have to parse it back out of
     the URL. The ``recipe`` field carries the contents of

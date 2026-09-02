@@ -1,4 +1,4 @@
-"""Pydantic request model for the smart-generation SSE endpoint.
+"""Pydantic request model for the spec-driven generation SSE endpoint.
 
 The ``api_key`` field is a ``SecretStr`` so Pydantic never renders it in
 its default ``repr`` / ``model_dump(mode='python')`` output — it shows
@@ -37,7 +37,7 @@ _LLM_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
 
 
 class SmartGenerateRequest(BaseModel):
-    """Body of ``POST /besser_api/smart-generate``.
+    """Body of ``POST /besser_api/spec-driven/generate``.
 
     Attributes
     ----------
@@ -88,7 +88,7 @@ class SmartGenerateRequest(BaseModel):
         ]
     ] = None
     # Optional binding choice of the Phase-1 deterministic generator.
-    # When set (e.g. from an approved /smart-preview plan), the
+    # When set (e.g. from an approved /spec-driven/preview plan), the
     # orchestrator skips its own LLM/keyword selection entirely — the
     # plan the user approved is the plan that runs, and one paid LLM
     # call is saved. Validated against the registered generator tools.
@@ -214,11 +214,11 @@ class SmartGenerateRequest(BaseModel):
 
 
 class SmartPushDeployConfig(BaseModel):
-    """Deployment target for ``POST /besser_api/push-smart-to-github``.
+    """Deployment target for ``POST /besser_api/spec-driven/push-to-github``.
 
     Mirrors the ``deploy_config`` block the existing ``/deploy-webapp``
     endpoint reads from its body, but as a typed model. ``is_private``
-    defaults to ``True`` — a vibe/smart-generation run is customized,
+    defaults to ``True`` — a vibe/spec-driven generation run is customized,
     unreviewed LLM output and should not be world-readable by accident.
     """
 
@@ -233,9 +233,9 @@ class SmartPushDeployConfig(BaseModel):
 
 
 class PushSmartToGitHubRequest(BaseModel):
-    """Body of ``POST /besser_api/push-smart-to-github``.
+    """Body of ``POST /besser_api/spec-driven/push-to-github``.
 
-    Pushes the *stored* artifact of a finished vibe/smart-generation run
+    Pushes the *stored* artifact of a finished vibe/spec-driven generation run
     (identified by ``run_id``) plus the re-importable model source, rather
     than re-generating deterministically (which would discard the LLM
     customizations). The run's code is read from ``SMART_RUN_REGISTRY``;
@@ -244,7 +244,7 @@ class PushSmartToGitHubRequest(BaseModel):
     Attributes
     ----------
     run_id
-        The hex run id returned in the smart-generate ``done`` event.
+        The hex run id returned in the spec-driven generate ``done`` event.
     projectExport
         The frontend V2 project-export envelope (a re-importable
         ``diagrams.json``). Also used to rebuild the B-UML model files
@@ -260,7 +260,7 @@ class PushSmartToGitHubRequest(BaseModel):
 
 
 class PushSmartToGitHubResponse(BaseModel):
-    """Response of ``POST /besser_api/push-smart-to-github``."""
+    """Response of ``POST /besser_api/spec-driven/push-to-github``."""
 
     success: bool
     repo_url: str
@@ -273,7 +273,7 @@ class PushSmartToGitHubResponse(BaseModel):
 
 
 class ImportGitHubRunRequest(BaseModel):
-    """Body of ``POST /besser_api/import-github-run``.
+    """Body of ``POST /besser_api/spec-driven/import-github-run``.
 
     Points the editor at an existing repo that BESSER created (so it
     carries ``buml/diagrams.json`` + the generated code). The endpoint
@@ -298,10 +298,10 @@ class ImportGitHubRunRequest(BaseModel):
 
 
 class ImportGitHubRunResponse(BaseModel):
-    """Response of ``POST /besser_api/import-github-run``."""
+    """Response of ``POST /besser_api/spec-driven/import-github-run``."""
 
     # A fresh run id whose stored files are the repo's code tree; usable as
-    # the ``base_run_id`` of a subsequent smart-generate modify run.
+    # the ``base_run_id`` of a subsequent spec-driven generate modify run.
     run_id: str
     # The repo's re-importable V2 project export (``buml/diagrams.json``),
     # or ``None`` when the repo carries no BESSER model.
@@ -316,7 +316,7 @@ class ImportGitHubRunResponse(BaseModel):
 
 
 class SmartPreviewRequest(BaseModel):
-    """Body of ``POST /besser_api/smart-preview``.
+    """Body of ``POST /besser_api/spec-driven/preview``.
 
     Same shape as ``SmartGenerateRequest`` minus the ``api_key`` —
     preview is a pure-local computation (no LLM call) so we don't want

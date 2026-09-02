@@ -58,17 +58,17 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_TEMP_DIR_PREFIX,
     LLM_WATCHDOG_GRACE_SECONDS,
 )
-from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
     ValidationError,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_events import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
     DoneEvent,
@@ -171,7 +171,7 @@ class SmartRunEntry:
 class SmartRunRegistry:
     """In-memory, TTL-bounded map of ``run_id → SmartRunEntry``.
 
-    The sibling ``GET /download-smart/{run_id}`` endpoint reads entries
+    The sibling ``GET /spec-driven/download/{run_id}`` endpoint reads entries
     non-destructively (``get``) so a failed blob fetch can be retried.
     Cleanup is owned by the periodic sweep: anything older than
     ``LLM_DOWNLOAD_TTL_SECONDS`` is removed (entry + temp dir) by the
@@ -235,7 +235,7 @@ class SmartRunRegistry:
                     )
             if expired:
                 logger.info(
-                    "SmartRunRegistry: swept %d expired smart-gen run(s)",
+                    "SmartRunRegistry: swept %d expired spec-driven run(s)",
                     len(expired),
                 )
 
@@ -246,7 +246,7 @@ SMART_RUN_REGISTRY = SmartRunRegistry()
 # ---------------------------------------------------------------------
 # Global concurrency cap
 # ---------------------------------------------------------------------
-# Each in-flight smart-generation run holds a worker thread, a temp
+# Each in-flight spec-driven generation run holds a worker thread, a temp
 # dir, and a long-lived SSE connection. The semaphore protects against
 # a malicious or buggy client spawning runs faster than they finish,
 # which would otherwise exhaust threads / disk. The router tries a
@@ -299,7 +299,7 @@ _SMART_GEN_EXECUTOR: ThreadPoolExecutor | None = None
 
 
 def _get_smart_gen_executor() -> ThreadPoolExecutor:
-    """Lazily build the dedicated smart-gen thread pool (see try_acquire_run_slot)."""
+    """Lazily build the dedicated spec-driven thread pool (see try_acquire_run_slot)."""
     global _SMART_GEN_EXECUTOR
     if _SMART_GEN_EXECUTOR is None:
         from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -313,7 +313,7 @@ def _get_smart_gen_executor() -> ThreadPoolExecutor:
 
 
 async def _run_blocking(func, /, *args, **kwargs):
-    """Run *func* on the dedicated smart-gen pool — a drop-in replacement for
+    """Run *func* on the dedicated spec-driven pool — a drop-in replacement for
     ``asyncio.to_thread`` that keeps long runs off the shared default executor."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
@@ -355,7 +355,7 @@ def release_run_slot() -> None:
 
 
 def _locate_run_temp_dir(run_id: str) -> str | None:
-    """Locate a smart-gen temp directory by ``run_id``.
+    """Locate a spec-driven temp directory by ``run_id``.
 
     ``mkdtemp`` names temp dirs as ``{prefix}{run_id}_{suffix}`` so we
     can recover them after a process restart by scanning the system
@@ -393,7 +393,7 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
 # Live-run cancellation registry
 # ---------------------------------------------------------------------
 
-# Maps ``run_id`` of an in-flight smart-gen run to an asyncio.Event that
+# Maps ``run_id`` of an in-flight spec-driven run to an asyncio.Event that
 # the cancel endpoint can set. The runner registers itself here on start
 # and removes itself in its ``finally`` block. The orchestrator polls
 # the event between turns to stop cleanly. Closing the SSE stream alone
@@ -488,7 +488,7 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
 
 
 class SmartGenerationRunner:
-    """Drive one smart-generation run and yield SSE events."""
+    """Drive one spec-driven generation run and yield SSE events."""
 
     def __init__(
         self,
@@ -607,7 +607,7 @@ class SmartGenerationRunner:
                     code="INTERNAL",
                     message="Failed to allocate a workspace for this run",
                 ))
-                logger.exception("mkdtemp failed for smart-generate run %s: %s", self.run_id, exc)
+                logger.exception("mkdtemp failed for spec-driven generate run %s: %s", self.run_id, exc)
                 return
 
             # ---- Incremental vibe-modify: seed from the base run --------
@@ -695,7 +695,7 @@ class SmartGenerationRunner:
             return
         except Exception:
             logger.exception(
-                "Unexpected error while assembling models for smart-generate run %s",
+                "Unexpected error while assembling models for spec-driven generate run %s",
                 self.run_id,
             )
             yield format_sse(ErrorEvent(
@@ -767,7 +767,7 @@ class SmartGenerationRunner:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
                     logger.warning(
-                        "smart-gen event queue full even after drop; "
+                        "spec-driven event queue full even after drop; "
                         "event of type %s was dropped",
                         type(event).__name__,
                     )
@@ -780,7 +780,7 @@ class SmartGenerationRunner:
 
             Currently only emitted for the gap phase by gap_analyzer
             after the planning LLM call returns. The frontend renders
-            this behind a chevron on the smart-gen card.
+            this behind a chevron on the spec-driven card.
             """
             if not details:
                 return
@@ -798,7 +798,7 @@ class SmartGenerationRunner:
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm
                 # right before the planning LLM call. Surfaces the gap
-                # phase in the smart-gen card; without this the user
+                # phase in the spec-driven card; without this the user
                 # sees a silent jump from `generate` to `customize`.
                 _put(PhaseEvent(phase="gap", message="Analysing gaps"))
                 return
@@ -814,7 +814,7 @@ class SmartGenerationRunner:
             if turn == 0:
                 if tool == "__skipped__":
                     # Phase 1 skipped — surface a clear reason on the
-                    # smart-gen card so users don't think the run jumped
+                    # spec-driven card so users don't think the run jumped
                     # straight to gap analysis by mistake.
                     if status == "no_generator":
                         msg = (
@@ -863,7 +863,7 @@ class SmartGenerationRunner:
 
         # Register this run for cancellation NOW that we've cleared all
         # the early-return paths (mkdtemp / model assembly / LLM client
-        # build). ``POST /cancel-smart-gen/{run_id}`` will set this
+        # build). ``POST /spec-driven/cancel/{run_id}`` will set this
         # event and the orchestrator will stop at the next turn boundary.
         cancel_event = self._reserved_cancel_event
         if cancel_event is None:
@@ -872,7 +872,7 @@ class SmartGenerationRunner:
             yield format_sse(ErrorEvent(
                 code="BAD_REQUEST",
                 message=(
-                    "This smart-generation run is already active or being resumed."
+                    "This spec-driven generation run is already active or being resumed."
                 ),
             ))
             return
@@ -1009,16 +1009,16 @@ class SmartGenerationRunner:
                         queue.put_nowait(None)
                     except Exception:
                         logger.error(
-                            "Failed to enqueue smart-gen sentinel; "
+                            "Failed to enqueue spec-driven sentinel; "
                             "drain loop will fall back to worker-done race path"
                         )
                 except Exception:
                     logger.exception(
-                        "Unexpected error enqueueing smart-gen sentinel"
+                        "Unexpected error enqueueing spec-driven sentinel"
                     )
 
-        emitter_task = asyncio.create_task(cost_emitter(), name="smart-gen-cost-emitter")
-        worker_task = asyncio.create_task(run_orchestrator(), name="smart-gen-worker")
+        emitter_task = asyncio.create_task(cost_emitter(), name="spec-driven-cost-emitter")
+        worker_task = asyncio.create_task(run_orchestrator(), name="spec-driven-worker")
 
         # Watch for client disconnect. When the browser closes the SSE
         # stream we flip the cancel_event so the orchestrator stops at
@@ -1038,7 +1038,7 @@ class SmartGenerationRunner:
                         return
                     if disconnected:
                         logger.info(
-                            "smart-gen client disconnected, cancelling run %s",
+                            "spec-driven client disconnected, cancelling run %s",
                             self.run_id,
                         )
                         cancel_event.set()
@@ -1048,7 +1048,7 @@ class SmartGenerationRunner:
                 raise
 
         disconnect_task = asyncio.create_task(
-            disconnect_watcher(), name="smart-gen-disconnect-watcher",
+            disconnect_watcher(), name="spec-driven-disconnect-watcher",
         )
 
         # Hard runtime watchdog. The orchestrator checks its runtime cap
@@ -1087,7 +1087,7 @@ class SmartGenerationRunner:
                     self.request.max_runtime_seconds,
                 )
                 logger.warning(
-                    "smart-gen watchdog fired for run %s (cap %ds + %ds grace)",
+                    "spec-driven watchdog fired for run %s (cap %ds + %ds grace)",
                     self.run_id,
                     effective_cap,
                     LLM_WATCHDOG_GRACE_SECONDS,
@@ -1096,7 +1096,7 @@ class SmartGenerationRunner:
                 cancel_event.set()
 
         watchdog_task = asyncio.create_task(
-            runtime_watchdog(), name="smart-gen-runtime-watchdog",
+            runtime_watchdog(), name="spec-driven-runtime-watchdog",
         )
 
         # ---- 7. Drain the queue, yielding events ----------------------
@@ -1394,7 +1394,7 @@ class SmartGenerationRunner:
                 self._cleanup_temp_dir()
             except Exception:
                 logger.exception(
-                    "Failed to package smart-generate output for run %s", self.run_id
+                    "Failed to package spec-driven generate output for run %s", self.run_id
                 )
                 yield format_sse(ErrorEvent(
                     code="INTERNAL",
@@ -1475,7 +1475,7 @@ class SmartGenerationRunner:
 
         event = DoneEvent(
             runId=self.run_id,
-            downloadUrl=f"/besser_api/download-smart/{self.run_id}",
+            downloadUrl=f"/besser_api/spec-driven/download/{self.run_id}",
             fileName=entry.file_name,
             isZip=entry.is_zip,
             recipe=recipe,

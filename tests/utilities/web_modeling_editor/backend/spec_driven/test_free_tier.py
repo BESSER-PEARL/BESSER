@@ -19,7 +19,7 @@ from besser.generators.llm.llm_client import (
     free_tier_available,
     free_tier_model,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_events import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     StartEvent,
 )
 

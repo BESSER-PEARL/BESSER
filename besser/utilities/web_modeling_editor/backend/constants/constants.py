@@ -8,7 +8,7 @@ CSV_TEMP_DIR_PREFIX = "besser_csv_"
 LLM_TEMP_DIR_PREFIX = "besser_llm_"
 
 # ---------------------------------------------------------------------
-# LLM smart-generation caps & feature flags
+# LLM spec-driven generation caps & feature flags
 # ---------------------------------------------------------------------
 # All of these can be overridden at deploy time via environment
 # variables. Reading env once at import keeps the hot path free of
@@ -53,7 +53,7 @@ def _env_bool(name: str, default: bool) -> bool:
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.
 # Set to $5 to match the from-scratch ceiling below: the UI reads this hard
-# cap from /smart-gen/config, so a lower value here was DISHONEST — it showed
+# cap from /spec-driven/config, so a lower value here was DISHONEST — it showed
 # "$2" while a from-scratch run was already permitted up to $5. One honest
 # ceiling everywhere. (The DEFAULT below stays $1 — the cap is the max a user
 # can opt into, not what a normal run spends.)
@@ -74,7 +74,7 @@ LLM_COST_EMITTER_INTERVAL_SECONDS = _env_float(
     "BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS", 2.0,
 )
 
-# Concurrency cap. Each in-flight smart-generation run holds a worker
+# Concurrency cap. Each in-flight spec-driven generation run holds a worker
 # thread, a temp dir, and an SSE connection. 10 is a sensible default
 # for a modest VM; bump for beefier hosts, lower for shared infra.
 LLM_MAX_CONCURRENT_RUNS = _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10)
@@ -116,7 +116,7 @@ LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
 # var. Durable answer is per-run container isolation.
 LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
 
-# Whether a smart-generation request may carry a custom LLM ``base_url`` (the
+# Whether a spec-driven generation request may carry a custom LLM ``base_url`` (the
 # 'PIA (LIST)' and 'Local / self-hosted' BYOK providers route through an
 # OpenAI-compatible endpoint at a user-supplied URL). OFF by default: on a
 # shared hosted box, having the server open an arbitrary user-provided URL is an

@@ -7,7 +7,7 @@ from .responses import (
     ProjectExportResponse,
     ValidationResponse,
 )
-from .smart_generation import SmartGenerateRequest
+from .spec_driven import SmartGenerateRequest
 
 __all__ = [
     'DiagramInput',

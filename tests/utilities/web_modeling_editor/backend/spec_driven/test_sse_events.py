@@ -1,10 +1,10 @@
-"""Tests for the smart-generation SSE event schema and framer."""
+"""Tests for the spec-driven generation SSE event schema and framer."""
 
 import json
 
 import pytest
 
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.sse_events import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     CostEvent,
     DoneEvent,
     ErrorEvent,
@@ -62,7 +62,7 @@ class TestFormatSse:
             ToolCallEvent(turn=3, tool="write_file", status="executing"),
             CostEvent(usd=0.0342, turns=7, elapsedSeconds=23.41),
             DoneEvent(
-                downloadUrl="/besser_api/download-smart/abc",
+                downloadUrl="/besser_api/spec-driven/download/abc",
                 fileName="besser_smart_abc.zip",
                 isZip=True,
                 recipe={"usage": {"input_tokens": 100}},

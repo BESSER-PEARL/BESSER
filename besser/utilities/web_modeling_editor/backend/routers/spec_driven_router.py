@@ -38,7 +38,7 @@ from fastapi import APIRouter, Header, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
-from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
     PushSmartToGitHubRequest,
@@ -49,18 +49,18 @@ from besser.utilities.web_modeling_editor.backend.models.smart_generation import
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SMART_RUN_REGISTRY,
     SmartGenerationRunner,
     SmartRunEntry,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.preview import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview import (
     build_preview,
 )
-from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _EXCLUDED_OUTPUT_DIRS,
     _locate_run_temp_dir,
     release_active_run,
@@ -90,7 +90,7 @@ from besser.generators.llm.llm_client import free_tier_available, free_tier_mode
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/besser_api", tags=["smart-generation"])
+router = APIRouter(prefix="/besser_api", tags=["spec-driven"])
 
 _DOWNLOAD_CHUNK_SIZE = 65536
 
@@ -127,7 +127,7 @@ async def _stream_with_slot_release(
     """Yield from an SSE generator and return its concurrency slot
     when the stream ends, regardless of outcome.
 
-    Used for both /smart-generate and /resume-smart-gen. The slot is
+    Used for both /spec-driven/generate and /spec-driven resume. The slot is
     always acquired by the caller before entering this wrapper; we
     only care about release semantics (happy path, error, or client
     disconnect — ``finally`` covers all three).
@@ -142,11 +142,11 @@ async def _stream_with_slot_release(
 
 
 # ---------------------------------------------------------------------
-# POST /besser_api/smart-generate  (SSE stream)
+# POST /besser_api/spec-driven/generate  (SSE stream)
 # ---------------------------------------------------------------------
 
 
-@router.post("/smart-generate", response_class=StreamingResponse)
+@router.post("/spec-driven/generate", response_class=StreamingResponse)
 async def smart_generate(request: SmartGenerateRequest, http_request: Request):
     """Stream an LLM-orchestrated code generation run as SSE events.
 
@@ -158,7 +158,7 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
     The ``api_key`` field in the request body is a ``SecretStr`` and is
     never logged, never echoed in events, and never stored. The download
     URL returned in the ``done`` event is single-use — the first GET
-    against ``/download-smart/{runId}`` serves the file; subsequent GETs
+    against ``/spec-driven/download/{runId}`` serves the file; subsequent GETs
     return 404.
     """
     # Reserve a concurrency slot BEFORE allocating any resources.
@@ -169,7 +169,7 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
         raise HTTPException(
             status_code=429,
             detail=(
-                "Too many smart-generation runs are in flight right now. "
+                "Too many spec-driven generation runs are in flight right now. "
                 "Retry in a moment."
             ),
         )
@@ -199,13 +199,13 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
 
 
 # ---------------------------------------------------------------------
-# GET /besser_api/smart-gen/config
+# GET /besser_api/spec-driven/config
 # ---------------------------------------------------------------------
 
 
-@router.get("/smart-gen/config")
+@router.get("/spec-driven/config")
 async def smart_gen_config():
-    """Expose the server's current smart-generation configuration.
+    """Expose the server's current spec-driven generation configuration.
 
     The frontend reads this once at app startup (or before rendering
     the preview screen) so it can show the real hard caps in tooltips,
@@ -254,13 +254,13 @@ async def smart_gen_config():
 
 
 # ---------------------------------------------------------------------
-# POST /besser_api/smart-preview
+# POST /besser_api/spec-driven/preview
 # ---------------------------------------------------------------------
 
 
-@router.post("/smart-preview")
+@router.post("/spec-driven/preview")
 async def smart_preview(request: SmartPreviewRequest):
-    """Return the plan smart-generate would run, without executing it.
+    """Return the plan spec-driven generate would run, without executing it.
 
     The response lets the UI show a confirmation screen before the user
     commits their API key and budget. Preview never calls an LLM — the
@@ -296,7 +296,7 @@ async def smart_preview(request: SmartPreviewRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Unexpected error building smart-preview")
+        logger.exception("Unexpected error building spec-driven preview")
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     plan = build_preview(
@@ -312,19 +312,19 @@ async def smart_preview(request: SmartPreviewRequest):
 
 
 # ---------------------------------------------------------------------
-# POST /besser_api/resume-smart-gen/{run_id}
+# POST /besser_api/spec-driven/resume/{run_id}
 # ---------------------------------------------------------------------
 
 
-@router.post("/resume-smart-gen/{run_id}", response_class=StreamingResponse)
+@router.post("/spec-driven/resume/{run_id}", response_class=StreamingResponse)
 async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
     http_request: Request,
 ):
-    """Resume a smart-generate run that crashed before completion.
+    """Resume a spec-driven generate run that crashed before completion.
 
-    Takes the same ``SmartGenerateRequest`` shape as ``/smart-generate``
+    Takes the same ``SmartGenerateRequest`` shape as ``/spec-driven/generate``
     — the user re-supplies their API key and the current project, which
     we hash and compare against the checkpoint's fingerprint before
     accepting the resume. The orchestrator picks up from the last saved
@@ -347,7 +347,7 @@ async def resume_smart_gen(
             detail=(
                 "No recoverable workspace for this run_id. The crashed "
                 "run's temp directory has either been swept or the run "
-                "completed cleanly. Start a fresh run via /smart-generate."
+                "completed cleanly. Start a fresh run via /spec-driven/generate."
             ),
         )
 
@@ -359,18 +359,18 @@ async def resume_smart_gen(
         raise HTTPException(
             status_code=409,
             detail=(
-                "This smart-generation run is already active or being resumed."
+                "This spec-driven generation run is already active or being resumed."
             ),
         )
 
-    # Same concurrency gate as /smart-generate - a resumed run consumes
+    # Same concurrency gate as /spec-driven/generate - a resumed run consumes
     # the same resources as a fresh one.
     if not try_acquire_run_slot():
         await release_active_run(run_id, cancel_event)
         raise HTTPException(
             status_code=429,
             detail=(
-                "Too many smart-generation runs are in flight right now. "
+                "Too many spec-driven generation runs are in flight right now. "
                 "Retry in a moment."
             ),
         )
@@ -395,11 +395,11 @@ async def resume_smart_gen(
 
 
 # ---------------------------------------------------------------------
-# POST /besser_api/cancel-smart-gen/{run_id}
+# POST /besser_api/spec-driven/cancel/{run_id}
 # ---------------------------------------------------------------------
 
 
-@router.post("/cancel-smart-gen/{run_id}")
+@router.post("/spec-driven/cancel/{run_id}")
 @handle_endpoint_errors("cancel_smart_gen")
 async def cancel_smart_gen(
     run_id: str = Path(
@@ -408,7 +408,7 @@ async def cancel_smart_gen(
         description="Hex run ID returned in the `start` SSE event",
     ),
 ):
-    """Signal a live smart-generation run to stop at its next turn.
+    """Signal a live spec-driven generation run to stop at its next turn.
 
     Returns ``{"status": "cancelled"}`` if the run was found and
     signalled, ``{"status": "not_found"}`` if no live run exists for
@@ -426,11 +426,11 @@ async def cancel_smart_gen(
 
 
 # ---------------------------------------------------------------------
-# GET /besser_api/download-smart/{run_id}
+# GET /besser_api/spec-driven/download/{run_id}
 # ---------------------------------------------------------------------
 
 
-@router.get("/download-smart/{run_id}", response_class=StreamingResponse)
+@router.get("/spec-driven/download/{run_id}", response_class=StreamingResponse)
 @handle_endpoint_errors("download_smart")
 async def download_smart(
     run_id: str = Path(
@@ -497,7 +497,7 @@ async def download_smart(
 
 
 # ---------------------------------------------------------------------
-# POST /besser_api/push-smart-to-github
+# POST /besser_api/spec-driven/push-to-github
 # ---------------------------------------------------------------------
 
 # .env-family files whose content is safe to publish (templates, not
@@ -577,7 +577,7 @@ def _scrub_secret_env_files(workdir: str) -> list[str]:
                     removed.append(os.path.relpath(full, workdir).replace("\\", "/"))
                 except OSError:
                     logger.warning(
-                        "push-smart-to-github: failed to remove secret env file %s",
+                        "spec-driven push-to-github: failed to remove secret env file %s",
                         full, exc_info=True,
                     )
     return removed
@@ -587,7 +587,7 @@ def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> 
     """Inject the model source into ``workdir/buml/`` (best-effort).
 
     Reuses the same ``buml_code_builder`` helpers ``/deploy-webapp`` uses
-    and the smart-generation project→BUML assembly, so this works for
+    and the spec-driven generation project→BUML assembly, so this works for
     class / GUI / agent projects. Also writes ``buml/diagrams.json`` from
     the re-importable V2 project-export envelope. Never raises — a failed
     export logs a warning and the code push still succeeds.
@@ -622,7 +622,7 @@ def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> 
                 )
         except Exception:
             logger.warning(
-                "push-smart-to-github: failed to export B-UML model files; "
+                "spec-driven push-to-github: failed to export B-UML model files; "
                 "continuing without them",
                 exc_info=True,
             )
@@ -636,13 +636,13 @@ def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> 
                 json.dump(project_export, f, indent=2, default=str)
         except Exception:
             logger.warning(
-                "push-smart-to-github: failed to write buml/diagrams.json; "
+                "spec-driven push-to-github: failed to write buml/diagrams.json; "
                 "continuing without it",
                 exc_info=True,
             )
     else:
         logger.warning(
-            "push-smart-to-github: request carried no 'projectExport'; the "
+            "spec-driven push-to-github: request carried no 'projectExport'; the "
             "pushed repo will not include a re-importable buml/diagrams.json"
         )
 
@@ -679,18 +679,18 @@ def _resolve_target_branch(
         if available is None or requested in available:
             return requested
         logger.warning(
-            "push-smart-to-github: requested branch %r not present; using %r",
+            "spec-driven push-to-github: requested branch %r not present; using %r",
             requested, default_branch,
         )
     return default_branch
 
 
-@router.post("/push-smart-to-github", response_model=PushSmartToGitHubResponse)
-async def push_smart_to_github(
+@router.post("/spec-driven/push-to-github", response_model=PushSmartToGitHubResponse)
+async def push_spec_driven_to_github(
     req: PushSmartToGitHubRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
-    """Push a finished vibe/smart-generation run to a GitHub repository.
+    """Push a finished vibe/spec-driven generation run to a GitHub repository.
 
     Unlike ``/deploy-webapp`` (which regenerates deterministically and
     would discard the LLM's customizations), this pushes the *stored*
@@ -757,7 +757,7 @@ async def push_smart_to_github(
             scrubbed = _scrub_secret_env_files(workdir)
             if scrubbed:
                 logger.info(
-                    "push-smart-to-github: scrubbed %d secret env file(s): %s",
+                    "spec-driven push-to-github: scrubbed %d secret env file(s): %s",
                     len(scrubbed), scrubbed,
                 )
 
@@ -836,7 +836,7 @@ async def push_smart_to_github(
         raise
     except httpx.HTTPStatusError as exc:
         # Mirror /deploy-webapp's GitHub error mapping.
-        logger.warning("GitHub API error in push_smart_to_github", exc_info=True)
+        logger.warning("GitHub API error in push_spec_driven_to_github", exc_info=True)
         upstream_status = exc.response.status_code if exc.response is not None else 502
         detail = _extract_github_error_message(exc)
         if upstream_status == 401:
@@ -854,7 +854,7 @@ async def push_smart_to_github(
             status_code=502, detail=f"GitHub upstream error: {detail}"
         ) from exc
     except Exception:
-        logger.exception("Unexpected error in push_smart_to_github")
+        logger.exception("Unexpected error in push_spec_driven_to_github")
         raise HTTPException(
             status_code=500,
             detail="An internal error occurred during GitHub push.",
@@ -862,18 +862,18 @@ async def push_smart_to_github(
 
 
 # ---------------------------------------------------------------------
-# POST /besser_api/import-github-run
+# POST /besser_api/spec-driven/import-github-run
 # ---------------------------------------------------------------------
 
 
-@router.post("/import-github-run", response_model=ImportGitHubRunResponse)
+@router.post("/spec-driven/import-github-run", response_model=ImportGitHubRunResponse)
 async def import_github_run(
     req: ImportGitHubRunRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Import an existing BESSER-created GitHub repo as a modify seed.
 
-    The counterpart to ``/push-smart-to-github``: instead of *writing* a
+    The counterpart to ``/spec-driven/push-to-github``: instead of *writing* a
     finished run to GitHub, this *reads* a repo we previously created (so
     it carries the generated code plus a re-importable ``buml/diagrams.json``)
     back into the editor so the user can continue from it.
@@ -885,7 +885,7 @@ async def import_github_run(
       3. Download + extract the repo tarball into a fresh temp dir.
       4. Register that code tree as a run in ``SMART_RUN_REGISTRY`` under a
          fresh ``run_id``, with ``temp_dir`` pointing at the extracted root.
-         A later ``/smart-generate`` with ``mode="modify"`` and
+         A later ``/spec-driven/generate`` with ``mode="modify"`` and
          ``base_run_id=run_id`` seeds its workspace from exactly this tree.
       5. Read ``buml/diagrams.json`` (the re-importable model) if present.
 
@@ -894,7 +894,7 @@ async def import_github_run(
     has no BESSER model — the frontend must then tell the user to open the
     repo in the editor first before it can be smart-modified).
     """
-    # ---- 1. GitHub auth gate (identical to push-smart-to-github) ----
+    # ---- 1. GitHub auth gate (identical to spec-driven push-to-github) ----
     if not github_session:
         raise HTTPException(
             status_code=401,
@@ -981,7 +981,7 @@ async def import_github_run(
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
-        # Mirror push-smart-to-github's GitHub error mapping.
+        # Mirror spec-driven push-to-github's GitHub error mapping.
         logger.warning("GitHub API error in import_github_run", exc_info=True)
         upstream_status = exc.response.status_code if exc.response is not None else 502
         detail = _extract_github_error_message(exc)

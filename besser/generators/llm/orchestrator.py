@@ -2168,7 +2168,7 @@ class LLMOrchestrator:
                 )
                 _needs_custom = any(
                     m in (instructions or "").lower() for m in _markers
-                )
+                ) or bool(self._deterministic_gap_tasks())
                 if _needs_custom:
                     logger.warning(
                         "Phase 2: gap analysis returned empty, but the request "
@@ -2191,10 +2191,16 @@ class LLMOrchestrator:
                         )
                     return
 
-        # Seed the executor's checklist from the gap tasks. The LLM
+        # Seed the executor's checklist from the gap tasks PLUS the
+        # harness's own deterministic items (e.g. "build the frontend"
+        # when a web app was asked and the scaffold has none). The LLM
         # manages it through the ``task_list`` tool and the end_turn
         # gate below refuses to finish while items are open — "done"
         # becomes "the checklist is closed", not "the model said done".
+        if not resumed:
+            deterministic_tasks = self._deterministic_gap_tasks()
+            if deterministic_tasks:
+                gap_tasks = deterministic_tasks + (gap_tasks or [])
         if gap_tasks:
             self.executor.set_tasks(gap_tasks)
 
@@ -3211,6 +3217,41 @@ class LLMOrchestrator:
             f"but these files import a rival framework: {shown}{more}. "
             f"Remove the rewrite and extend the existing {family} app."
         ]
+
+    _WEBAPP_ASK_RE = _re.compile(
+        r"\b(web ?app|frontend|front-end|website|\bui\b|user interface)\b")
+
+    def _has_frontend_files(self) -> bool:
+        for root, dirs, files in os.walk(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
+            if rel_root.startswith(_SNAPSHOT_DIR):
+                continue
+            for fname in files:
+                if fname.endswith((".js", ".jsx", ".ts", ".tsx", ".html")) or fname == "package.json":
+                    return True
+        return False
+
+    _FRONTEND_CHECKLIST_TASK = (
+        "Build the COMPLETE React frontend for this app (none exists yet): "
+        "a home route and navigation, and for every entity a list view "
+        "plus working Create/Edit/Delete forms wired to the backend API. "
+        "The run is not done without it."
+    )
+
+    def _deterministic_gap_tasks(self) -> list[str]:
+        """Checklist items the harness ADDS regardless of the planner.
+
+        Devstral A/B finding: with a backend-only scaffold, no layer
+        explicitly ORDERS the frontend — the gap planner assumes the
+        scaffold has screens, and prompt Rule 15 is prose a terse model
+        skips. Making it a checklist item puts it behind the end_turn
+        gate, which is enforcement, not prose.
+        """
+        low = (self._instructions or "").lower()
+        if self._WEBAPP_ASK_RE.search(low) and not self._has_frontend_files():
+            return [self._FRONTEND_CHECKLIST_TASK]
+        return []
 
     def _collect_missing_frontend_issue(self) -> list[str]:
         """BLOCKER when the user asked for a web app and got no frontend.

@@ -238,3 +238,36 @@ def test_modify_run_enables_the_guard(tmp_path, monkeypatch):
     assert orch.executor._modify_guard is False
     orch.modify("add a feature")
     assert orch.executor._modify_guard is True
+
+
+def test_webapp_ask_without_frontend_seeds_deterministic_task(tmp_path, monkeypatch):
+    """Devstral finding: nobody explicitly ORDERS the frontend when the
+    scaffold is backend-only. The harness now adds it as a checklist item
+    so the end_turn gate enforces it."""
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: None,
+    )
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "main.py").write_text("x = 1\n", encoding="utf-8")
+    client = _ScriptedClient([_end_turn(), _end_turn(), _end_turn()])
+    orch = _make_orch(tmp_path, client)
+    orch._instructions = "Build a library management web app"
+
+    orch._run_phase2("Build a library management web app", extra_issues=[])
+
+    # Deterministic task seeded -> gate nudged twice despite gap=None.
+    assert orch._end_turn_task_nudges == 2
+    tasks = orch.executor._tasks
+    assert any("React frontend" in t["text"] for t in tasks)
+
+
+def test_backend_ask_seeds_no_deterministic_frontend_task(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: None,
+    )
+    client = _ScriptedClient([_end_turn()])
+    orch = _make_orch(tmp_path, client)
+    orch._instructions = "Build an invoicing backend"
+    orch._run_phase2("Build an invoicing backend", extra_issues=[])
+    assert orch._end_turn_task_nudges == 0
+    assert orch.executor._tasks == []

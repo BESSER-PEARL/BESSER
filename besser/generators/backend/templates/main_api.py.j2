@@ -161,13 +161,27 @@ def root():
 
 
 @app.get("/health", tags=["System"])
-def health_check():
-    """Health check endpoint for monitoring"""
+def health_check(database: Session = Depends(get_db)):
+    """Health check endpoint for monitoring.
+
+    Actually touches the database — a health check that hardcodes
+    "connected" is worse than none.
+    """
     from datetime import datetime
+    from sqlalchemy import text as _sql_text
+    try:
+        database.execute(_sql_text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        raise HTTPException(status_code=503, detail={
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "error",
+        })
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "database": "connected"
+        "database": db_status,
     }
 
 

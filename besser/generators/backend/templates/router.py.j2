@@ -198,11 +198,24 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     {% endif %}
 
 
+{#- Search endpoint. Attribute types are matched by NAME, not python
+    class: converter-produced attributes arrive as PrimitiveDataType
+    instances, so the old __class__.__name__ check matched nothing and
+    every search endpoint shipped with ZERO parameters (a facade that
+    returned query.all()). When a class has no searchable primitive
+    attribute the endpoint is not generated at all. #}
+{%- set ns_search = namespace(searchable=false) %}
+{%- for attribute in class.attributes %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+{%- set ns_search.searchable = true %}
+{%- endif %}
+{%- endfor %}
+{% if ns_search.searchable %}
 @router.get("/{{ class.name | lower}}/search/", response_model=None, tags=["{{ class.name }}"])
 def search_{{ class.name | lower}}(
     {% for attribute in class.attributes %}
-    {% if attribute.type.__class__.__name__ in ['StringType', 'IntegerType', 'FloatType', 'BooleanType'] %}
-    {{attribute.name}}: {% if attribute.type.__class__.__name__ == 'StringType' %}str{% elif attribute.type.__class__.__name__ == 'IntegerType' %}int{% elif attribute.type.__class__.__name__ == 'FloatType' %}float{% elif attribute.type.__class__.__name__ == 'BooleanType' %}bool{% endif %} = None,
+    {% if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+    {{attribute.name}}: {% if attribute.type.name in ['str', 'string'] %}str{% elif attribute.type.name in ['int', 'integer'] %}int{% elif attribute.type.name == 'float' %}float{% else %}bool{% endif %} = None,
     {% endif %}
     {% endfor %}
     database: Session = Depends(get_db)
@@ -211,9 +224,9 @@ def search_{{ class.name | lower}}(
     query = database.query({{ class.name }})
 
     {% for attribute in class.attributes %}
-    {% if attribute.type.__class__.__name__ in ['StringType', 'IntegerType', 'FloatType', 'BooleanType'] %}
+    {% if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
     if {{attribute.name}} is not None:
-        {% if attribute.type.__class__.__name__ == 'StringType' %}
+        {% if attribute.type.name in ['str', 'string'] %}
         query = query.filter({{ class.name }}.{{attribute.name}}.ilike(f"%{% raw %}{{% endraw %}{{attribute.name}}{% raw %}}{% endraw %}%"))
         {% else %}
         query = query.filter({{ class.name }}.{{attribute.name}} == {{attribute.name}})
@@ -223,6 +236,7 @@ def search_{{ class.name | lower}}(
 
     results = query.all()
     return results
+{% endif %}
 
 
 @router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])

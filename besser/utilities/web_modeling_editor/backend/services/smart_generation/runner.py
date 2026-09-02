@@ -1353,7 +1353,7 @@ class SmartGenerationRunner:
                         message=(
                             incomplete_reason_msg
                             + " The downloaded output may be incomplete; you can "
-                            "resume the run to continue from where it stopped."
+                            "run the generation again to finish the remaining changes."
                         ),
                     ))
 
@@ -1363,7 +1363,7 @@ class SmartGenerationRunner:
                 incomplete_reason_msg = _late_err
                 yield format_sse(ErrorEvent(
                     code="INCOMPLETE",
-                    message=_late_err + " You can resume the run to continue.",
+                    message=_late_err + " You can run the generation again to continue.",
                 ))
 
             # ---- 10. Package the result and emit `done` ---------------

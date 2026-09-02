@@ -268,11 +268,15 @@ def _classify_issue(message: str) -> ValidationIssue:
     if lower.startswith("data contract:"):
         return ValidationIssue("blocker", text)
 
-    # Ruff: classify by rule code.
+    # Ruff: classify by rule code. F821 (undefined name) is a BLOCKER:
+    # it means the backend imports crash on `uvicorn` even though
+    # ast.parse was clean — the classic "ships green, boots dead" bug.
     if text.startswith("ruff:"):
         match = _RUFF_LINE_RE.search(text)
         if match and match.group(1) in _RUFF_STYLE_CODES:
             return ValidationIssue("style", text)
+        if match and match.group(1) in ("F821", "F822", "F823"):
+            return ValidationIssue("blocker", text)
         return ValidationIssue("warning", text)
 
     # Per-project toolchain failures (tsc / cargo / kotlinc) are

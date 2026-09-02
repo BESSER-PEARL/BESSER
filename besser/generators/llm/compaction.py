@@ -29,6 +29,10 @@ _SMALL_CONTEXT_WINDOWS: tuple = (
     ("qwen", 32_000),
     ("llama", 32_000),
     ("mistral", 32_000),
+    # Served on the LIST ollama box, which loads models with a 32k
+    # window (OLLAMA server config), regardless of the model's native
+    # maximum — verified via /api/ps on 2026-09-02.
+    ("devstral", 32_000),
     ("deepseek", 64_000),
 )
 

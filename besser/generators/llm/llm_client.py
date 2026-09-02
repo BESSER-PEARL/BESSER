@@ -104,6 +104,7 @@ _ZERO_PRICING: dict[str, float] = {
 _FREE_LOCAL_MODEL_MARKERS = (
     "qwen", "llama", "codellama", "deepseek", "mixtral",
     "gemma", "starcoder", "granite", "phi-", "phi3", "phi4",
+    "devstral", "mistral-small", "codestral",
 )
 
 

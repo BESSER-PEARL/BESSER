@@ -3243,10 +3243,14 @@ class LLMOrchestrator:
         return False
 
     _FRONTEND_CHECKLIST_TASK = (
-        "Build the COMPLETE React frontend for this app (none exists yet): "
-        "a home route and navigation, and for every entity a list view "
-        "plus working Create/Edit/Delete forms wired to the backend API. "
-        "The run is not done without it."
+        "Create the React frontend (none exists yet) — write these files "
+        "with write_file: frontend/package.json (react, react-dom, "
+        "react-router-dom, vite), frontend/index.html, "
+        "frontend/src/main.jsx, frontend/src/App.jsx (router with a home "
+        "route + nav), frontend/src/api.js (fetch helpers for the backend "
+        "routes), and per entity frontend/src/pages/<Entity>List.jsx with "
+        "a table plus working Create/Edit/Delete wired to the API. This "
+        "task cannot be marked done until frontend files exist on disk."
     )
 
     def _deterministic_gap_tasks(self) -> list[str]:

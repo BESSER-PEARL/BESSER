@@ -250,6 +250,36 @@ class ToolExecutor:
         """Turn on the edit-first guardrail (modify runs only)."""
         self._modify_guard = True
 
+    def set_scaffold_family(self, family: str | None) -> None:
+        """Record which framework the Phase-1 scaffold committed to.
+
+        Used by the per-write lint: content that imports a RIVAL framework
+        (a Flask rewrite of a FastAPI scaffold) gets an immediate warning —
+        the free tier's framework-switch habit, caught at write time
+        instead of after the run burned its budget.
+        """
+        self._scaffold_family = family
+
+    _RIVALS = {
+        "fastapi": ("flask", "django"),
+        "django": ("flask", "fastapi"),
+    }
+
+    def _framework_switch_warning(self, rel_path: str, content: str) -> str | None:
+        family = getattr(self, "_scaffold_family", None)
+        rivals = self._RIVALS.get(family or "")
+        if not rivals or not rel_path.endswith(".py"):
+            return None
+        for rival in rivals:
+            if re.search(rf"^\s*(?:from|import)\s+{rival}\b", content, re.MULTILINE):
+                return (
+                    f"FRAMEWORK SWITCH: this file imports {rival}, but the "
+                    f"scaffold is {family} — a HARD constraint violation. "
+                    f"Extend the existing {family} app; do not rewrite it "
+                    f"in {rival}."
+                )
+        return None
+
     def set_tasks(self, tasks: list) -> None:
         """Seed the checklist (one entry per gap-analysis task)."""
         self._tasks = [
@@ -299,20 +329,22 @@ class ToolExecutor:
 
     def _contract_warnings(self, rel_path: str, content: str) -> str | None:
         """Lint freshly-written content against the model's data contract."""
+        switch = self._framework_switch_warning(rel_path, content)
         if self._data_contract is None:
-            return None
+            return switch
         try:
             from besser.generators.llm.contract_checks import format_findings, lint_file
             findings = lint_file(rel_path, content, self._data_contract)
         except Exception:
-            return None
+            return switch
         if not findings:
-            return None
-        return (
+            return switch
+        note = (
             "DATA-CONTRACT VIOLATIONS in the content you just wrote — "
             "fix them now, while you still have the file in context:\n"
             + format_findings(findings)
         )
+        return f"{switch}\n{note}" if switch else note
 
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.

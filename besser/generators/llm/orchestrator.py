@@ -925,6 +925,7 @@ class LLMOrchestrator:
         # base + prior LLM edits descend from it) so gap analysis, the
         # scaffold-snapshot inlining, and the saved recipe all line up.
         self._generator_used = self._seed_generator_used
+        self.executor.set_scaffold_family(self._scaffold_family())
 
         # -- Model-sync: derive + apply class-diagram deltas implied by the
         # instruction BEFORE building the inventory, so a genuinely new
@@ -1427,6 +1428,7 @@ class LLMOrchestrator:
                 result = {"status": "failed", "error": "Generator returned invalid response"}
             if result.get("status") == "ok":
                 self._generator_used = generator_name
+                self.executor.set_scaffold_family(self._scaffold_family())
                 self.tool_calls_log.append({
                     "turn": 0, "tool": generator_name,
                     "input": {}, "success": True,
@@ -3127,6 +3129,7 @@ class LLMOrchestrator:
         # ``enable_toolchain_validation`` so the web deployment can
         # opt out per deploy.
         raw_issues.extend(self._collect_frontend_contract_issues())
+        raw_issues.extend(self._collect_framework_switch_issues())
         raw_issues.extend(self._collect_missing_frontend_issue())
         raw_issues.extend(self._collect_data_contract_issues())
 
@@ -3155,6 +3158,59 @@ class LLMOrchestrator:
             )
 
         return [_classify_issue(s) for s in raw_issues]
+
+    _SCAFFOLD_FAMILIES = {
+        "generate_fastapi_backend": "fastapi",
+        "generate_web_app": "fastapi",
+        "generate_rest_api": "fastapi",
+        "generate_django": "django",
+    }
+
+    def _scaffold_family(self) -> str | None:
+        return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
+
+    def _collect_framework_switch_issues(self) -> list[str]:
+        """BLOCKER when generated code imports a rival framework.
+
+        Live finding (2026-09-02): the free model rewrote a FastAPI
+        scaffold into a Flask hybrid via write_file (delete-protection
+        never fired), burned the runtime cap mid-restructure, and shipped
+        an unbootable mix. The HARD-CONSTRAINTS prompt forbids this; now
+        Phase 3 enforces it.
+        """
+        family = self._scaffold_family()
+        rivals = {"fastapi": ("flask", "django"),
+                  "django": ("flask", "fastapi")}.get(family or "")
+        if not rivals:
+            return []
+        offenders: list[str] = []
+        for root, dirs, files in os.walk(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+                if rel.startswith(_SNAPSHOT_DIR) or rel.startswith(".besser_"):
+                    continue
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+                for rival in rivals:
+                    if _re.search(rf"^\s*(?:from|import)\s+{rival}\b", content, _re.MULTILINE):
+                        offenders.append(f"{rel} (imports {rival})")
+                        break
+        if not offenders:
+            return []
+        shown = ", ".join(offenders[:6])
+        more = f" (+{len(offenders) - 6} more)" if len(offenders) > 6 else ""
+        return [
+            f"frontend contract: framework switch — the scaffold is {family} "
+            f"but these files import a rival framework: {shown}{more}. "
+            f"Remove the rewrite and extend the existing {family} app."
+        ]
 
     def _collect_missing_frontend_issue(self) -> list[str]:
         """BLOCKER when the user asked for a web app and got no frontend.

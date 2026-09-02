@@ -338,3 +338,44 @@ def test_string_pk_scaffold_mints_ids_and_types_fks(tmp_path):
     pyd = (tmp_path / "backend" / "pydantic_classes.py").read_text(encoding="utf-8")
     assert "guest: str" in pyd                     # FK field typed str, not int
     assert "reservations: Optional[List[str]]" in pyd
+
+
+def test_framework_switch_is_blocked_phase3(tmp_path):
+    """Live finding 2026-09-02: qwen rewrote a FastAPI scaffold into Flask.
+    Phase 3 must report it as a blocker."""
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "app.py").write_text(
+        "from flask import Flask\napp = Flask(__name__)\n", encoding="utf-8")
+    shim = types.SimpleNamespace(
+        output_dir=str(tmp_path), _generator_used="generate_fastapi_backend",
+        _scaffold_family=lambda: "fastapi",
+    )
+    issues = LLMOrchestrator._collect_framework_switch_issues(shim)
+    assert len(issues) == 1
+    assert "framework switch" in issues[0]
+    assert _classify_issue(issues[0]).severity == "blocker"
+
+
+def test_no_framework_switch_for_from_scratch_runs(tmp_path):
+    """No deterministic scaffold -> the model may pick any framework."""
+    (tmp_path / "app.py").write_text("from flask import Flask\n", encoding="utf-8")
+    shim = types.SimpleNamespace(
+        output_dir=str(tmp_path), _generator_used=None,
+        _scaffold_family=lambda: None,
+    )
+    assert LLMOrchestrator._collect_framework_switch_issues(shim) == []
+
+
+def test_write_time_framework_switch_warning(tmp_path):
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.set_scaffold_family("fastapi")
+    result = json.loads(executor.execute("write_file", {
+        "path": "backend/app.py",
+        "content": "from flask import Flask\napp = Flask(__name__)\n",
+    }))
+    assert "FRAMEWORK SWITCH" in result["contract_warnings"]
+    clean = json.loads(executor.execute("write_file", {
+        "path": "backend/ok.py",
+        "content": "from fastapi import APIRouter\n",
+    }))
+    assert "contract_warnings" not in clean

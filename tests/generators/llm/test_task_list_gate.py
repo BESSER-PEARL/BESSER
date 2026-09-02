@@ -255,10 +255,16 @@ def test_webapp_ask_without_frontend_seeds_deterministic_task(tmp_path, monkeypa
 
     orch._run_phase2("Build a library management web app", extra_issues=[])
 
-    # Deterministic task seeded -> gate nudged twice despite gap=None.
-    assert orch._end_turn_task_nudges == 2
+    # Deterministic VERIFIED task seeded -> extended nudge cap (2+2)
+    # because a verified task cannot be cheat-marked done.
+    assert orch._end_turn_task_nudges == 4
     tasks = orch.executor._tasks
     assert any("React frontend" in t["text"] for t in tasks)
+    # And the cheat-proofing itself: done is refused while no frontend.
+    import json as _json
+    tid = next(t["id"] for t in tasks if "React frontend" in t["text"])
+    refused = _json.loads(orch.executor.execute("task_list", {"action": "done", "id": tid}))
+    assert "NOT done" in refused.get("error", "")
 
 
 def test_backend_ask_seeds_no_deterministic_frontend_task(tmp_path, monkeypatch):

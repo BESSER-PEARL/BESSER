@@ -2200,6 +2200,13 @@ class LLMOrchestrator:
         if not resumed:
             deterministic_tasks = self._deterministic_gap_tasks()
             if deterministic_tasks:
+                logger.info(
+                    "Seeding %d harness-owned checklist task(s) (e.g. %r)",
+                    len(deterministic_tasks),
+                    (deterministic_tasks[0].get("text")
+                     if isinstance(deterministic_tasks[0], dict)
+                     else deterministic_tasks[0])[:80],
+                )
                 gap_tasks = deterministic_tasks + (gap_tasks or [])
         if gap_tasks:
             self.executor.set_tasks(gap_tasks)
@@ -2298,7 +2305,10 @@ class LLMOrchestrator:
                 # rather than looping the user's budget away; Phase 3
                 # still validates whatever state it left).
                 open_items = self.executor.open_tasks()
-                if open_items and self._end_turn_task_nudges < self._MAX_TASK_NUDGES:
+                _has_verified_open = any(t.get("verify") for t in open_items)
+                _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
+                              else self._MAX_TASK_NUDGES)
+                if open_items and self._end_turn_task_nudges < _nudge_cap:
                     self._end_turn_task_nudges += 1
                     logger.info(
                         "end_turn with %d open checklist item(s) — nudge %d/%d",
@@ -3250,7 +3260,11 @@ class LLMOrchestrator:
         """
         low = (self._instructions or "").lower()
         if self._WEBAPP_ASK_RE.search(low) and not self._has_frontend_files():
-            return [self._FRONTEND_CHECKLIST_TASK]
+            return [{
+                "text": self._FRONTEND_CHECKLIST_TASK,
+                # Cheat-proof: done is refused until frontend files exist.
+                "verify": self._has_frontend_files,
+            }]
         return []
 
     def _collect_missing_frontend_issue(self) -> list[str]:

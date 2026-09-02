@@ -281,12 +281,26 @@ class ToolExecutor:
         return None
 
     def set_tasks(self, tasks: list) -> None:
-        """Seed the checklist (one entry per gap-analysis task)."""
-        self._tasks = [
-            {"id": i + 1, "text": str(t), "done": False}
-            for i, t in enumerate(tasks or [])
-            if str(t).strip()
-        ]
+        """Seed the checklist (one entry per gap-analysis task).
+
+        An entry may be a plain string, or a dict ``{"text": ...,
+        "verify": callable}``. A verifier makes the item CHEAT-PROOF:
+        ``task_list(action='done')`` is refused while it returns False
+        (Devstral marked 'build the frontend' done without writing a
+        single file — trust was the bug).
+        """
+        self._tasks = []
+        for i, t in enumerate(tasks or []):
+            if isinstance(t, dict):
+                text = str(t.get("text", "")).strip()
+                verify = t.get("verify")
+            else:
+                text, verify = str(t).strip(), None
+            if text:
+                self._tasks.append(
+                    {"id": len(self._tasks) + 1, "text": text,
+                     "done": False, "verify": verify}
+                )
 
     def open_tasks(self) -> list[dict]:
         """Checklist items not yet marked done."""
@@ -307,6 +321,18 @@ class ToolExecutor:
             task_id = args.get("id")
             for t in self._tasks:
                 if t["id"] == task_id:
+                    verify = t.get("verify")
+                    if verify is not None:
+                        try:
+                            verified = bool(verify())
+                        except Exception:
+                            verified = True  # never wedge the run on a broken check
+                        if not verified:
+                            return {"error": (
+                                f"Task {task_id} is NOT done — the check for it "
+                                f"still fails: {t['text']} Do the work first, "
+                                "then mark it done."
+                            )}
                     t["done"] = True
                     remaining = self.open_tasks()
                     return {

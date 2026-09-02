@@ -40,6 +40,9 @@ from besser.BUML.metamodel.gui.dashboard import (
     LookupColumn,
     ExpressionColumn,
     LineChart,
+    Map,
+    WorldMap,
+    LocationMap,
     MetricCard,
     PieChart,
     RadarChart,
@@ -154,6 +157,9 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "RadialBarChart": RadialBarChart,
         "Table": Table,
         "MetricCard": MetricCard,
+        "Map": Map,
+        "WorldMap": WorldMap,
+        "LocationMap": LocationMap,
         "AgentComponent": AgentComponent,
         "Transition": Transition,
         "Create": Create,
@@ -351,6 +357,8 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
         _apply_table_attributes(element, attrs)
     elif isinstance(element, MetricCard):
         _apply_metric_card_attributes(element, attrs)
+    elif isinstance(element, Map):
+        _apply_map_attributes(element, attrs)
     elif isinstance(element, AgentComponent):
         _apply_agent_component_attributes(element, attrs)
     elif isinstance(element, Alert):
@@ -532,6 +540,33 @@ def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> No
     attrs.setdefault("show-trend", getattr(card, "show_trend", True))
     attrs.setdefault("positive-color", getattr(card, "positive_color", "#27ae60"))
     attrs.setdefault("negative-color", getattr(card, "negative_color", "#e74c3c"))
+def _apply_map_attributes(map_comp: Map, attrs: Dict[str, Any]) -> None:
+    """Expose Map traits for the GrapesJS round-trip.
+
+    Emits the same attribute keys that ``parse_map`` reads back
+    (``map-title``, ``map-latitude``, ``map-longitude``, ``map-zoom``,
+    ``data-source``, ``latitude-field``, ``longitude-field``,
+    ``marker-label-field``).
+    """
+    _apply_chart_data_binding_attributes(map_comp, attrs)
+    attrs.setdefault("map-title", getattr(map_comp, "title", None) or map_comp.name)
+    attrs.setdefault("map-latitude", getattr(map_comp, "center_latitude", 0.0))
+    attrs.setdefault("map-longitude", getattr(map_comp, "center_longitude", 0.0))
+    attrs.setdefault("map-zoom", getattr(map_comp, "zoom", 10))
+
+    lat_field = getattr(map_comp, "latitude_field", None)
+    if lat_field:
+        attrs.setdefault("latitude-field", getattr(lat_field, "name", None) or str(lat_field))
+
+    lng_field = getattr(map_comp, "longitude_field", None)
+    if lng_field:
+        attrs.setdefault("longitude-field", getattr(lng_field, "name", None) or str(lng_field))
+
+    label_field = getattr(map_comp, "marker_label_field", None)
+    if label_field:
+        attrs.setdefault("marker-label-field", getattr(label_field, "name", None) or str(label_field))
+
+
 def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("agent-name", getattr(agent, "agent_name", None) or "")
     attrs.setdefault("agent-title", getattr(agent, "agent_title", None) or "BESSER Agent")
@@ -809,6 +844,7 @@ def _infer_component_type(element: ViewComponent) -> Optional[str]:
         RadialBarChart: "radial-bar-chart",
         Table: "table",
         MetricCard: "metric-card",
+        Map: "map",
         AgentComponent: "agent-component",
     }
     for cls, comp_type in mapping.items():

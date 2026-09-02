@@ -13,7 +13,7 @@ from besser.BUML.metamodel.gui import (
     Color, Position, Size, Styling, MetricCard
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn, Map
 )
 from besser.BUML.metamodel.gui.dashboard import Series
 from .styling import ensure_styling_parts
@@ -867,6 +867,94 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     _attach_chart_metadata(metric_card, view_comp)
 
     return metric_card
+
+
+def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
+    """
+    Parse a map component from GrapesJS JSON into a BUML Map instance.
+
+    Reads static positioning attributes (``map-title``, ``map-latitude``,
+    ``map-longitude``, ``map-zoom``) from the component's ``attributes`` dict.
+    If a ``data-source`` is bound, uses :func:`_parse_chart_data_binding` to
+    resolve the domain class; then resolves ``latitude-field``,
+    ``longitude-field``, and ``marker-label-field`` attribute IDs to
+    :class:`~besser.BUML.metamodel.structural.Property` objects on that class.
+
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.Map` instance.
+    """
+    attrs = view_comp.get("attributes", {})
+
+    # --- static map properties ---
+    title = attrs.get("map-title", "Location Map")
+    try:
+        center_latitude = float(attrs.get("map-latitude", 0.0))
+    except (TypeError, ValueError):
+        center_latitude = 0.0
+    try:
+        center_longitude = float(attrs.get("map-longitude", 0.0))
+    except (TypeError, ValueError):
+        center_longitude = 0.0
+    try:
+        zoom = int(attrs.get("map-zoom", 10))
+    except (TypeError, ValueError):
+        zoom = 10
+
+    # --- data binding (reuse the chart binding helper) ---
+    domain_class, _, _, _, _ = _parse_chart_data_binding(attrs, class_model, domain_model)
+
+    data_binding = None
+    latitude_field = None
+    longitude_field = None
+    marker_label_field = None
+
+    if domain_class:
+        binding_name = sanitize_name(f"{title}_binding")
+        data_binding = DataBinding(
+            name=binding_name,
+            domain_concept=domain_class,
+        )
+
+        # --- resolve geo field references ---
+        def _resolve_attr(attr_key: str):
+            """Return a Property object for the given attribute-ID key, or None."""
+            raw = attrs.get(attr_key)
+            if not raw:
+                return None
+            el = get_element_by_id(class_model, raw)
+            if not el:
+                return None
+            attr_name = clean_attribute_name(el.get("name", raw))
+            return next(
+                (a for a in domain_class.attributes if clean_attribute_name(a.name) == attr_name),
+                None,
+            )
+
+        latitude_field = _resolve_attr("latitude-field")
+        longitude_field = _resolve_attr("longitude-field")
+        marker_label_field = _resolve_attr("marker-label-field")
+
+    # --- build the Map ---
+    map_name = sanitize_name(title) or "Map"
+    map_component = Map(
+        name=map_name,
+        title=title,
+        center_latitude=center_latitude,
+        center_longitude=center_longitude,
+        zoom=zoom,
+        latitude_field=latitude_field,
+        longitude_field=longitude_field,
+        marker_label_field=marker_label_field,
+        data_binding=data_binding,
+    )
+
+    _attach_chart_metadata(map_component, view_comp)
+    return map_component
 
 
 def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:

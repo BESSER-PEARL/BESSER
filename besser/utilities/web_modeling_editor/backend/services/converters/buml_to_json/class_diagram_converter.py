@@ -27,6 +27,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_eval import (
+    safe_exec,
+)
 
 
 def _format_multiplicity_label(multiplicity):
@@ -138,9 +141,11 @@ def parse_buml_content(content: str) -> DomainModel:
             cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
 
-        # Execute the cleaned B-UML content
-        local_vars = {}
-        exec(cleaned_content, safe_globals, local_vars)
+        # Safely reconstruct the B-UML content. The uploaded file is untrusted,
+        # so it is evaluated by an AST whitelist interpreter (see _safe_eval),
+        # never exec()'d — exec on user input is an RCE vector even with a
+        # restricted __builtins__.
+        local_vars = safe_exec(cleaned_content, safe_globals)
 
         domain_name = "Imported_Domain_Model"
         for var_name, var_value in local_vars.items():

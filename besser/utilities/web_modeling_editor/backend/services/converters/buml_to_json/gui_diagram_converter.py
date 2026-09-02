@@ -57,6 +57,10 @@ from besser.BUML.metamodel.gui.events_actions import (
 )
 from besser.BUML.metamodel.gui.graphical_ui import InputFieldType
 from besser.BUML.metamodel.gui.style import Alignment, Color, Layout, LayoutType, Position, PositionType, Size, Styling, UnitSize
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_eval import (
+    safe_exec,
+    UnsafeConstruct,
+)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -196,9 +200,14 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars: Dict[str, Any] = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        # AST whitelist evaluation instead of exec() — the uploaded GUI model
+        # source is untrusted (see _safe_eval).
+        local_vars: Dict[str, Any] = safe_exec(cleaned_content, safe_globals)
+    except UnsafeConstruct:
+        # A security refusal must surface as-is, not be reframed as a generic
+        # execution failure.
+        raise
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [

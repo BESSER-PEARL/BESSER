@@ -318,3 +318,34 @@ def test_resume_seeds_prior_cost(tmp_path, monkeypatch):
     # Token-based accounting still works on top of the seed
     tracker.output_tokens += 100_000  # sonnet fallback pricing: $1.50
     assert tracker.estimated_cost > 1.25
+
+
+def test_gap_sanitizer_drops_scaffold_demolition_and_rival_framework():
+    """Devstral A/B live finding: the planner proposed deleting the react
+    scaffold and installing Flask. The sanitizer must drop those, keep
+    honest tasks, and respect a USER-requested rival framework."""
+    from besser.generators.llm.gap_analyzer import _sanitize_tasks
+
+    tasks = [
+        "delete react frontend scaffold as not requested by user",
+        "install Flask backend framework requirements in backend directory",
+        "create book model class that implements Book concept",
+        "add login route to the main application",
+    ]
+    kept = _sanitize_tasks(tasks, "generate_web_app", "Build a library web app")
+    assert kept == [
+        "create book model class that implements Book concept",
+        "add login route to the main application",
+    ]
+
+    # User explicitly asked for flask -> rival mention is legitimate.
+    kept2 = _sanitize_tasks(
+        ["create flask blueprint for API endpoints"],
+        "generate_fastapi_backend",
+        "build me a flask backend",
+    )
+    assert kept2 == ["create flask blueprint for API endpoints"]
+
+    # From-scratch runs (no scaffold) keep everything non-demolition.
+    kept3 = _sanitize_tasks(["use flask for the app"], None, "make an app")
+    assert kept3 == ["use flask for the app"]

@@ -1030,6 +1030,12 @@ class OpenAIProvider(LLMProvider):
             return None if env.lower() == "primary" else env
         if any(tier in self._model.lower() for tier in ("mini", "nano")):
             return None  # already on a cheap tier
+        # Self-hosted / free-local models (ollama gateways): the OpenAI
+        # cheap sibling doesn't exist there — a gpt-4o-mini override just
+        # burns two failing round-trips per gap analysis before the
+        # primary-model retry kicks in.
+        if _is_free_local_model(self._model.lower()):
+            return None
         return self.PLANNING_MODEL
 
     def chat(

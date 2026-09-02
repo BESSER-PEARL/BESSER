@@ -41,6 +41,7 @@ receives a raw character clip.
 import inspect
 import json
 import logging
+import re
 from typing import Any, Callable
 
 from besser.generators.llm.model_serializer import serialize_domain_model
@@ -170,8 +171,58 @@ def analyze_gaps_via_llm(
     if tasks is None:
         return None
     cleaned = [t.strip() for t in tasks[:_MAX_TASKS] if isinstance(t, str) and t.strip()]
+    cleaned = _sanitize_tasks(cleaned, generator_used, instructions)
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
+
+
+# Scaffold families for the task sanitizer (mirrors the orchestrator's
+# framework-switch enforcement).
+_GAP_SCAFFOLD_RIVALS = {
+    "generate_fastapi_backend": ("flask", "django"),
+    "generate_web_app": ("flask", "django"),
+    "generate_rest_api": ("flask", "django"),
+    "generate_django": ("flask", "fastapi"),
+}
+
+_DELETE_SCAFFOLD_RE = re.compile(
+    r"\b(delete|remove|drop|uninstall|replace)\b.{0,60}\b(scaffold|"
+    r"generated|frontend|react|output|backend framework)\b",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_tasks(
+    tasks: list, generator_used: str | None, instructions: str
+) -> list:
+    """Drop checklist items that would demolish the scaffold.
+
+    Live finding (Devstral A/B, 2026-09-02): the planner proposed
+    'delete react frontend scaffold' and 'install Flask' — a checklist
+    that would fight the Phase-2 HARD CONSTRAINTS and the framework-
+    switch blocker for the whole run. The prompt now forbids it; this
+    filter guarantees it. Rival-framework mentions are only dropped when
+    the USER didn't ask for that framework themselves.
+    """
+    rivals = _GAP_SCAFFOLD_RIVALS.get(generator_used or "", ())
+    low_instr = (instructions or "").lower()
+    kept: list = []
+    for task in tasks:
+        low = task.lower()
+        if _DELETE_SCAFFOLD_RE.search(task):
+            logger.info("Gap sanitizer dropped scaffold-demolition task: %r", task[:100])
+            continue
+        rival_hit = next(
+            (r for r in rivals if r in low and r not in low_instr), None
+        )
+        if rival_hit:
+            logger.info(
+                "Gap sanitizer dropped rival-framework (%s) task: %r",
+                rival_hit, task[:100],
+            )
+            continue
+        kept.append(task)
+    return kept
 
 
 def _call_planner(llm_client, user_prompt: str) -> list | None:
@@ -354,10 +405,12 @@ _SYSTEM_PROMPT = (
     "  * Anchor every task to a SPECIFIC model element (class, attribute, "
     "relationship, OCL constraint) or a SPECIFIC line in the user's request. "
     "If you can't tie a task to one of those, drop it.\n"
-    "  * If the deterministic generator left files that no longer fit the "
-    "customised stack (e.g. FastAPI files when the user asked for Flask, "
-    "Pydantic schemas when you'll use Marshmallow), include an explicit "
-    "'delete X' task. The next agent has a delete_file tool.\n"
+    "  * The scaffold's framework is FIXED — it is the stack named in the "
+    "inventory. NEVER propose switching frameworks (e.g. FastAPI→Flask), "
+    "deleting the scaffold, or removing the generated frontend. Every task "
+    "EXTENDS the existing stack. A 'delete X' task is allowed ONLY for a "
+    "leftover file that is unused within that SAME stack, and ONLY when the "
+    "user's own words asked for a different stack than the scaffold's.\n"
     "  * Skip anything the generator already provided correctly.\n"
     "  * CRITICAL — what the deterministic generator does NOT produce: it "
     "emits ONLY the data model's structure and basic CRUD endpoints/screens. "

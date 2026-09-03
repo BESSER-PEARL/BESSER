@@ -975,37 +975,46 @@ def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var,
 def _handle_binop_add_syntax(tensorop, modules_details, in_var, prev_out_var,
                              params):
     """Handle binop_add tensorop syntax."""
-    result = (f"{params[0]} + {params[1]}" if isinstance(params, list)
-            else f"tf.add({params})")
-    return result
+    if isinstance(params, list):
+        return f"{params[0]} + {params[1]}"
+    else:
+        return f"tf.add({params})"
 
 
 def _handle_binop_subtract_syntax(tensorop, modules_details, in_var,
                                   prev_out_var, params):
     """Handle binop_subtract tensorop syntax."""
-    return (f"{params[0]} - {params[1]}" if isinstance(params, list)
-            else f"tf.subtract({params})")
+    if isinstance(params, list):
+        return f"{params[0]} - {params[1]}"
+    else:
+        return f"tf.subtract({params})"
 
 
 def _handle_binop_multiply_syntax(tensorop, modules_details, in_var,
                                   prev_out_var, params):
     """Handle binop_multiply tensorop syntax."""
-    return (f"{params[0]} * {params[1]}" if isinstance(params, list)
-            else f"tf.multiply({params})")
+    if isinstance(params, list):
+        return f"{params[0]} * {params[1]}"
+    else:
+        return f"tf.multiply({params})"
 
 
 def _handle_binop_divide_syntax(tensorop, modules_details, in_var,
                                 prev_out_var, params):
     """Handle binop_divide tensorop syntax."""
-    return (f"{params[0]} / {params[1]}" if isinstance(params, list)
-            else f"tf.divide({params})")
+    if isinstance(params, list):
+        return f"{params[0]} / {params[1]}"
+    else:
+        return f"tf.divide({params})"
 
 
 def _handle_binop_floor_divide_syntax(tensorop, modules_details, in_var,
                                       prev_out_var, params):
     """Handle binop_floor_divide tensorop syntax."""
-    return (f"{params[0]} // {params[1]}" if isinstance(params, list)
-            else f"tf.math.floordiv({params})")
+    if isinstance(params, list):
+        return f"{params[0]} // {params[1]}"
+    else:
+        return f"tf.math.floordiv({params})"
 
 
 def _remap_subscript_for_conv(tensorop, modules_details, subscript_indices):

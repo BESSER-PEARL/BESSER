@@ -22,7 +22,7 @@ class TensorOp(NamedElement):
         concatenate_dim (int): The dimension along which the tensors
             will be concatenated. Only relevant for concatenate
             operation.
-        layers_of_tensors (list[str | float]): The list that
+        layers_of_tensors (list[str | float | int]): The list that
             defines the inputs of the tensor op. Elements can be layer
             names or scalar values.
         reshape_dim (list[int]): New shape for reshape operation.
@@ -88,7 +88,7 @@ class TensorOp(NamedElement):
         name (str): The name of the tensor operation.
         tns_type (str): The type of the tensor operation.
         concatenate_dim (int): Concatenation dimension.
-        layers_of_tensors (list[str | float]): Input layers or
+        layers_of_tensors (list[str | float | int]): Input layers or
             scalars.
         reshape_dim (list[int]): Reshape target shape.
         transpose_dim (list[int]): Transpose dimensions.
@@ -133,7 +133,7 @@ class TensorOp(NamedElement):
     """
     def __init__(self, name: str, tns_type: str,
                  concatenate_dim: int | None = None,
-                 layers_of_tensors: list[str | float] | None = None,
+                 layers_of_tensors: list[str | float | int] | None = None,
                  reshape_dim: list[int] | None = None,
                  transpose_dim: list[int] | None = None,
                  permute_dim: list[int] | None = None,
@@ -156,7 +156,7 @@ class TensorOp(NamedElement):
                  output_vars: list[str] | None = None):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
-        self.layers_of_tensors: list[str | float] = layers_of_tensors
+        self.layers_of_tensors: list[str | float | int] = layers_of_tensors
         self.reshape_dim: list[int] = reshape_dim
         self.transpose_dim: list[int] = transpose_dim
         self.permute_dim: list[int] = permute_dim
@@ -242,7 +242,7 @@ class TensorOp(NamedElement):
         self.__concatenate_dim = concatenate_dim
 
     @property
-    def layers_of_tensors(self) -> list[str | float]:
+    def layers_of_tensors(self) -> list[str | float | int]:
         """
         list[str | float]: Get the list that defines the inputs
         of the tensor op. Elements of the list can be either names
@@ -252,11 +252,11 @@ class TensorOp(NamedElement):
         return self.__layers_of_tensors
 
     @layers_of_tensors.setter
-    def layers_of_tensors(self, layers_of_tensors: list[str | float]):
+    def layers_of_tensors(self, layers_of_tensors: list[str | float | int]):
         """
-        list[str | float]: Set the list of layers names from
+        list[str | float | int]: Set the list of layers names from
         which the tensors, on which tensor ops are performed,
-        originate. Can include scalar values (float) for binary
+        originate. Can include float or int values for binary
         operations with constants.
         """
         if layers_of_tensors is not None:
@@ -266,10 +266,10 @@ class TensorOp(NamedElement):
                     f"{type(layers_of_tensors).__name__}"
                 )
             for i, elem in enumerate(layers_of_tensors):
-                if not isinstance(elem, (str, float)):
+                if not isinstance(elem, (str, float, int)):
                     raise TypeError(
-                        f"layers_of_tensors[{i}] must be str or float, got "
-                        f"{type(elem).__name__}"
+                        f"layers_of_tensors[{i}] must be str or float or int,"
+                        f" got {type(elem).__name__}"
                     )
         self.__layers_of_tensors = layers_of_tensors
 
@@ -4089,11 +4089,11 @@ class NN(BehaviorImplementation):
         """str: Set the input variable name for this NN."""
         if (
             input_var is not None
-            and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', input_var)
+            and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', input_var)
         ):
             raise ValueError(
                 "input_var must be a valid identifier starting "
-                "with a letter"
+                "with a letter or underscore"
             )
         self.__input_var = input_var
 
@@ -4157,7 +4157,7 @@ class NN(BehaviorImplementation):
             * Layer ``name_module_input`` references resolve to
               a module defined in the same NN.
             * TensorOp ``layers_of_tensors`` string entries resolve to
-              a module defined in the same NN.
+              a module defined in the same NN or scalar values for binops.
             * Sub-NNs are acyclic (no NN directly or transitively
               contains itself).
             * Each sub-NN is itself valid (recursive validation).

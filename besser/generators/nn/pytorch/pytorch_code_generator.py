@@ -49,9 +49,11 @@ class PytorchGenerator(NNCodeGenerator):
     def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing",
                  channel_last: bool = False,
-                 strip_layer_counter_suffix: bool = False):
+                 strip_layer_counter_suffix: bool = False,
+                 skip_validation: bool = False):
 
-        self._validate_required_layer_attributes(model)
+        if not skip_validation:
+            self._validate_required_layer_attributes(model)
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax
         setup_tensorop: Callable = get_tensorop_syntax

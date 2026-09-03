@@ -266,8 +266,11 @@ class TestPushSmartToGitHub:
         assert "buml/domain_model.py" in files
         # The stored vibe code is present.
         assert "main.py" in files
-        # Internal artifact + build dir excluded.
-        assert ".besser_recipe.json" not in files
+        # The recipe rides along so continue-from-GitHub re-hydrates the
+        # seed's generator + history; other internals and build dirs stay out.
+        assert ".besser_recipe.json" in files
+        assert not any(f.startswith(".besser_checkpoint") for f in files)
+        assert not any(f.startswith(".besser_snapshot") for f in files)
         assert not any(f.startswith("node_modules/") for f in files)
         # Secret .env scrubbed; template preserved.
         assert ".env" not in files

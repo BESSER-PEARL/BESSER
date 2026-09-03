@@ -132,9 +132,69 @@ async def _stream_with_slot_release(
     only care about release semantics (happy path, error, or client
     disconnect — ``finally`` covers all three).
     """
+    import traceback as _tb
+
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.incidents import (
+        record_incident,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
+        ErrorEvent,
+        format_sse,
+    )
+
+    # Run context comes from the start frame; error frames don't carry it.
+    run_ctx: dict = {}
+
+    def _frame_payload(frame: bytes) -> dict:
+        data_line = next(
+            (ln for ln in frame.split(b"\n") if ln.startswith(b"data:")), None,
+        )
+        return json.loads(data_line[5:].decode("utf-8")) if data_line else {}
+
+    def _sniff_frame(frame: bytes) -> None:
+        """Persist every user-facing SSE error event as an incident."""
+        try:
+            if b"event: start" in frame:
+                payload = _frame_payload(frame)
+                run_ctx.update(
+                    run_id=payload.get("runId"),
+                    provider=payload.get("provider"),
+                    model=payload.get("llmModel"),
+                )
+            elif b"event: error" in frame:
+                payload = _frame_payload(frame)
+                record_incident(
+                    kind="sse_error",
+                    code=payload.get("code"),
+                    message=payload.get("message"),
+                    **run_ctx,
+                )
+        except Exception:
+            pass
+
     try:
         async for frame in inner:
+            _sniff_frame(frame)
             yield frame
+    except Exception as exc:
+        # An exception escaping the run generator used to close the SSE
+        # stream with NO final event — the client showed "stream closed
+        # before reporting a final result" and the traceback died with
+        # the container logs. Record it AND tell the client honestly.
+        tb = _tb.format_exc()
+        logger.exception("Run stream crashed without a final event")
+        record_incident(
+            kind="stream_crash",
+            message=str(exc),
+            traceback_text=tb,
+            **run_ctx,
+        )
+        try:
+            yield format_sse(
+                ErrorEvent(code="INTERNAL", message="Internal server error")
+            )
+        except Exception:
+            logger.exception("Could not deliver the terminal error frame")
     finally:
         if run_reservation is not None:
             await release_active_run(*run_reservation)
@@ -747,13 +807,21 @@ async def push_spec_driven_to_github(
             prefix=f"besser_smart_push_{uuid.uuid4().hex}_"
         ) as workdir:
             # ---- 3. Copy the stored tree, dropping build/dep dirs and
-            # `.besser_*` internal files (recipe / checkpoint / snapshot).
+            # `.besser_*` internal files (checkpoint / snapshot). The
+            # recipe is the one internal file we KEEP: a repo imported
+            # back via continue-from-GitHub re-hydrates the seed's
+            # generator name and run history from it — without it the
+            # modify run loses the framework guard and gap analysis
+            # falls back to "build from scratch" framing.
             shutil.copytree(
                 entry.temp_dir,
                 workdir,
                 dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns(*_EXCLUDED_OUTPUT_DIRS, ".besser_*"),
             )
+            _recipe_src = os.path.join(entry.temp_dir, ".besser_recipe.json")
+            if os.path.isfile(_recipe_src):
+                shutil.copy2(_recipe_src, os.path.join(workdir, ".besser_recipe.json"))
             scrubbed = _scrub_secret_env_files(workdir)
             if scrubbed:
                 logger.info(

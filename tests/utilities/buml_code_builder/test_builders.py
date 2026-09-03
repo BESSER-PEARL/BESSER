@@ -1705,8 +1705,8 @@ class TestNNModelBuilder:
             ("concatenate", {"concatenate_dim": 1, "layers_of_tensors": ["a", "b"]}),
             ("multiply",    {"layers_of_tensors": ["a", "b"]}),
             ("matmultiply", {"layers_of_tensors": ["a", "b"]}),
-            ("reshape",     {"reshape_dim": [1, -1]}),
-            ("transpose",   {"transpose_dim": [0, 2, 1]}),
+            ("reshape",     {"layers_of_tensors": ["a"], "reshape_dim": [1, -1]}),
+            ("transpose",   {"layers_of_tensors": ["a"], "transpose_dim": [0, 2]}),
             ("permute",     {"permute_dim": [0, 3, 1, 2]}),
         ]
         for tns_type, kwargs in cases:

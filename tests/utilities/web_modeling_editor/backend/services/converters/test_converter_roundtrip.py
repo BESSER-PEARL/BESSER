@@ -2002,6 +2002,7 @@ class TestNNDiagramRoundtrip:
 
     def test_tensorop_reshape_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('reshape', [
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
             ('TensorOp', 'reshape_dim', '[1, -1]'),
         ]))
         elements = _resolve_elements(out)
@@ -2012,13 +2013,14 @@ class TestNNDiagramRoundtrip:
 
     def test_tensorop_transpose_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('transpose', [
-            ('TensorOp', 'transpose_dim', '[0, 2, 1]'),
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
+            ('TensorOp', 'transpose_dim', '[0, 2]'),
         ]))
         elements = _resolve_elements(out)
         ops = _extract_elements_by_type(out, 'TensorOp')
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
         assert attrs.get('tns_type') == 'transpose'
-        assert attrs.get('transpose_dim') == '[0, 2, 1]'
+        assert attrs.get('transpose_dim') == '[0, 2]'
 
     def test_tensorop_permute_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('permute', [

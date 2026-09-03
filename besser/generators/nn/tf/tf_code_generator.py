@@ -3,11 +3,11 @@ This module defines the `TFGenerator` class that generates
 TF code for neural networks based on the B-UML model.
 """
 
-from typing import Callable
+from collections.abc import Callable
+
 from besser.BUML.metamodel.nn import NN
-from besser.generators.nn.tf.utils_tf import SetupLayerSyntax, \
-    get_tensorop_syntax
 from besser.generators.nn.nn_code_generator import NNCodeGenerator
+from besser.generators.nn.tf.utils_tf import SetupLayerSyntax, get_tensorop_syntax
 
 
 class TFGenerator(NNCodeGenerator):
@@ -31,7 +31,8 @@ class TFGenerator(NNCodeGenerator):
         generation_type (str): 'subclassing' or 'sequential'.
     """
     def __init__(self, model: NN, output_dir: str | None = None,
-                 generation_type: str = "subclassing"):
+                 generation_type: str = "subclassing",
+                 strip_layer_counter_suffix: bool = False):
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax
         setup_tensorop: Callable = get_tensorop_syntax
@@ -41,4 +42,25 @@ class TFGenerator(NNCodeGenerator):
 
         super().__init__(model, setup_layer, setup_tensorop, generation_type,
                          template_dir, file_name=file_name,
-                         output_dir=output_dir)
+                         output_dir=output_dir,
+                         strip_layer_counter_suffix=strip_layer_counter_suffix)
+
+    def _cleanup_lambda_syntax(self, module, syntax, prev_out_var):
+        """TensorFlow-specific variable extraction, mapping, and cleanup."""
+        import re
+
+        # Extract variable from syntax
+        if hasattr(module, 'tns_type') and module.tns_type == 'dropout':
+            match = re.search(r'\)\(([^,)]+)', syntax)
+        else:
+            match = re.search(r'\(([^,)]+)', syntax)
+        var_replace = match.group(1).strip() if match else str(prev_out_var)
+
+        # Map old variable to x
+        syntax = re.sub(r'\b' + re.escape(var_replace) + r'\b', 'x', syntax)
+
+        # Remove training parameter from dropout
+        if hasattr(module, 'tns_type') and module.tns_type == 'dropout':
+            syntax = syntax.replace(', training=training', '')
+
+        return syntax

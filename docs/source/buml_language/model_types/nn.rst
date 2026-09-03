@@ -36,7 +36,11 @@ Core Concepts
   ``LayerNormLayer``.
 * **TensorOp**: an operation applied to one or more tensors. Supported
   types are ``concatenate``, ``multiply``, ``matmultiply``, ``reshape``,
-  ``transpose``, and ``permute``.
+  ``transpose``, ``permute`` ``mean``, ``max``, ``squeeze``, ``unsqueeze``,
+  ``binop_add``, ``binop_subtract``, ``binop_multiply``, ``binop_divide``,
+  ``binop_floor_divide``, ``subscript``, ``shape_dim``, ``normalize``,
+  ``repeat``, ``interpolate``, ``pad``, ``dropout``, ``zeros_like``,
+  ``split``, and ``identity``.
 * **Configuration**: hyperparameters used during training and evaluation,
   such as ``batch_size``, ``epochs``, ``learning_rate``, ``optimizer``,
   ``loss_function``, ``metrics``, plus optional ``weight_decay`` and

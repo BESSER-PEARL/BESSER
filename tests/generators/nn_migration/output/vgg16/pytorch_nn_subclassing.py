@@ -1,6 +1,6 @@
 """PyTorch code generated based on BUML."""
 
-                                        
+from besser.generators.nn.utils_nn import Permute
 
 from torch import nn
 
@@ -12,6 +12,7 @@ class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.features = nn.Sequential(
+            Permute(dims=[0, 3, 1, 2]),
             nn.Conv2d(in_channels=3, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.ReLU(),
             nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=1),
@@ -43,6 +44,7 @@ class NeuralNetwork(nn.Module):
             nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0),
+            Permute(dims=[0, 2, 3, 1]),
         )
         self.p1 = nn.AdaptiveAvgPool2d(output_size=(7, 7))
         self.f1 = nn.Flatten(start_dim=1, end_dim=-1)
@@ -59,7 +61,9 @@ class NeuralNetwork(nn.Module):
 
     def forward(self, x):
         x = self.features(x)
+        x = x.permute(0, 3, 1, 2)
         x = self.p1(x)
+        x = x.permute(0, 2, 3, 1)
         x = self.f1(x)
         x = self.classifier(x)
         return x

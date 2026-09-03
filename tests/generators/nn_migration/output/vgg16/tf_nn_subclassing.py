@@ -53,7 +53,7 @@ class NeuralNetwork(tf.keras.Model):
             layers.Dropout(rate=0.5),
             layers.Dense(units=4096, activation='relu'),
             layers.Dropout(rate=0.5),
-            layers.Dense(units=1000, activation=None),
+            layers.Dense(units=1000),
         ])
 
         
@@ -64,5 +64,4 @@ class NeuralNetwork(tf.keras.Model):
         x = self.classifier(x)
         return x
 
-    
 

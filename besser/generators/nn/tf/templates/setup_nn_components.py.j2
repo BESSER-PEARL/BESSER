@@ -1,5 +1,25 @@
 {# Template for nn components #}
 
+{%- macro strip_counter(name) -%}
+    {# Strip counter suffix if global flag is set #}
+    {%- if strip_layer_counter_suffix -%}
+        {{- name|strip_counter_suffix -}}
+    {%- else -%}
+        {{- name -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro get_layer_name(module_name, strip_counter_flag=False) -%}
+    {# Strip _layer suffix #}
+    {%- set name = module_name.rsplit('_', 1)[0] if module_name.endswith('_layer') else module_name -%}
+    {# Strip counter suffix (_N) if requested using custom filter #}
+    {%- if strip_counter_flag -%}
+        {{- name|strip_counter_suffix -}}
+    {%- else -%}
+        {{- name -}}
+    {%- endif -%}
+{%- endmacro -%}
+
 {% macro add_to_set(current_set, new_element) %}
     {{ current_set }}
     {% if new_element not in current_set %}
@@ -15,8 +35,122 @@
     {%- set _ = dict_def.update({key: []}) -%}
 {%- endmacro -%}
 
+{%- macro get_hidden_state_var(hx_source, modules_details) -%}
+    {# PRIORITY 1: Try to read from layer.hidden_state_var attribute (NEW migration) #}
+    {%- if (hx_source + '_layer') in modules_details -%}
+        {%- set layer_details = modules_details[hx_source + '_layer'] -%}
+        {%- if layer_details|length > 3 and layer_details[3] is defined -%}
+            {%- set layer_obj = layer_details[3] -%}
+            {%- if layer_obj.hidden_state_var is defined and layer_obj.hidden_state_var -%}
+                {{- layer_obj.hidden_state_var -}}
+            {%- elif layer_details|length > 4 -%}
+                {{- layer_details[4] -}}
+            {%- endif -%}
+        {%- elif layer_details|length > 4 -%}
+            {{- layer_details[4] -}}
+        {%- endif -%}
+    {# PRIORITY 2: Fall back to checking _op (for tensorop sources) #}
+    {%- elif (hx_source + '_op') in modules_details -%}
+        {{- modules_details[hx_source + '_op'][1] -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro get_cell_state_var(hx_source, modules_details) -%}
+    {# PRIORITY 1: Try to read from layer.cell_state_var attribute (NEW migration) #}
+    {%- if (hx_source + '_layer') in modules_details -%}
+        {%- set layer_details = modules_details[hx_source + '_layer'] -%}
+        {%- if layer_details|length > 3 and layer_details[3] is defined -%}
+            {%- set layer_obj = layer_details[3] -%}
+            {%- if layer_obj.cell_state_var is defined and layer_obj.cell_state_var -%}
+                {{- layer_obj.cell_state_var -}}
+            {# PRIORITY 2: Fall back to modules_details index 5 or 4_cell #}
+            {%- elif layer_details|length > 5 -%}
+                {{- layer_details[5] -}}
+            {%- elif layer_details|length > 4 -%}
+                {{- layer_details[4] ~ '_cell' -}}
+            {%- endif -%}
+        {%- elif layer_details|length > 5 -%}
+            {{- layer_details[5] -}}
+        {%- elif layer_details|length > 4 -%}
+            {{- layer_details[4] ~ '_cell' -}}
+        {%- endif -%}
+    {%- else -%}
+        {{- get_hidden_state_var(hx_source, modules_details) ~ '_cell' -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro get_bidirectional_var(layer_name, direction, modules_details) -%}
+    {%- set layer_details = modules_details.get(layer_name + '_layer') -%}
+    {%- if layer_details and layer_details|length > 3 and layer_details[3] is defined -%}
+        {%- set layer_obj = layer_details[3] -%}
+        {%- if direction == 'forward' and layer_obj.forward_output_var -%}
+            {{- layer_obj.forward_output_var -}}
+        {%- elif direction == 'backward' and layer_obj.backward_output_var -%}
+            {{- layer_obj.backward_output_var -}}
+        {%- else -%}
+            {{- layer_name + '_' + direction + '_h' -}}
+        {%- endif -%}
+    {%- else -%}
+        {{- layer_name + '_' + direction + '_h' -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro get_hidden_subscript_assignment(layer_name, modules_details) -%}
+    {# Read from layer attributes #}
+    {%- if (layer_name + '_layer') in modules_details -%}
+        {%- set layer_details = modules_details[layer_name + '_layer'] -%}
+        {%- if layer_details|length > 3 and layer_details[3] is defined -%}
+            {%- set layer_obj = layer_details[3] -%}
+            {%- if layer_obj.hidden_subscript_target is defined and layer_obj.hidden_subscript_target -%}
+                {# Use explicit source if defined, otherwise default to the hidden state variable (module_details[4]) #}
+                {%- set tuple_var = layer_obj.hidden_subscript_source if (layer_obj.hidden_subscript_source is defined and layer_obj.hidden_subscript_source) else layer_details[4] -%}
+                {%- set subscript_var = layer_obj.hidden_subscript_target -%}
+                {%- if tuple_var and subscript_var and tuple_var != subscript_var %}
+        {{ subscript_var }} = {{ tuple_var }}
+                {%- endif -%}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro get_split_output_vars(op_name, modules_details) -%}
+    {# Read from tensorop.output_var_joined attribute #}
+    {%- if modules_details and (op_name + '_op') in modules_details -%}
+        {%- set op_details = modules_details[op_name + '_op'] -%}
+        {%- if op_details|length > 2 and op_details[2] is defined -%}
+            {%- set tensorop = op_details[2] -%}
+            {%- if tensorop.tns_type == 'split' and tensorop.output_var_joined is defined and tensorop.output_var_joined -%}
+                {{- tensorop.output_var_joined -}}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro is_split_op(op_name, modules_details) -%}
+    {%- if modules_details and (op_name + '_op') in modules_details -%}
+        {%- set op_details = modules_details[op_name + '_op'] -%}
+        {%- if op_details|length > 2 and op_details[2] is defined -%}
+            {%- set tensorop = op_details[2] -%}
+            {{- 'true' if tensorop.tns_type == 'split' else '' -}}
+        {%- endif -%}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro get_sequential_vars(module_name, default_var, module_details_dict=None) -%}
+    {%- set base_name = module_name.rsplit('_', 2)[0] -%}
+    {%- if module_details_dict and "subnn_input" in module_details_dict and "subnn_output" in module_details_dict -%}
+        {%- set input_var = module_details_dict["subnn_input"] if module_details_dict["subnn_input"] else default_var -%}
+        {%- set output_var = module_details_dict["subnn_output"] if module_details_dict["subnn_output"] else default_var -%}
+    {%- else -%}
+        {%- set input_var = default_var -%}
+        {%- set output_var = default_var -%}
+    {%- endif -%}
+    {{- output_var + '|||' + input_var -}}
+{%- endmacro -%}
+
 {%- macro print_imports(model, modules_details, generation_type) %}
 {%- set si = namespace(sequential_imported=False) -%}
+{%- set tfa_needed = namespace(value=False) -%}
 {% if generation_type == "sequential"%}from keras.models import Sequential{%- set si.sequential_imported = True -%} {% endif %}
 import tensorflow as tf
 from keras import layers
@@ -25,11 +159,23 @@ from keras import layers
 {% if model.train_data is not none %}
 from datetime import datetime
 {% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report
-{%- else -%}from sklearn.metrics import mean_absolute_error{%- endif %} 
+{%- else -%}from sklearn.metrics import mean_absolute_error{%- endif %}
 {% if model.train_data.input_format == "csv" %}import pandas as pd{%- endif %}
 {%- endif %}
 {%- for module_name, module_details in modules_details.items() -%}
-{%- if module_name.endswith("layer") %}{% if module_details[0].split("=")[1].strip().startswith("tfa") %}import tensorflow_addons as tfa{% endif %}{% endif %}{% endfor %}
+{%- if module_name.endswith("layer") and module_details[0].split("=")[1].strip().startswith("tfa") -%}
+{%- set tfa_needed.value = True -%}
+{%- endif -%}
+{%- if module_name.endswith("nn") -%}
+{%- for subnn_key, subnn_value in module_details.items() -%}
+{%- if subnn_key != "in_out_variable" and "tfa.layers" in subnn_value[0] -%}
+{%- set tfa_needed.value = True -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{%- endfor -%}
+{% if tfa_needed.value %}import tensorflow_addons as tfa
+{% endif -%}
 {% if model.train_data.input_format == "images" %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}
 {% endmacro -%}
 
@@ -37,9 +183,9 @@ from datetime import datetime
 {%- macro print_sequential(model, modules_details) %}
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-{{ module_name.split('_')[0] }} = Sequential([
+{{ module_name.rsplit('_', 2)[0] }} = Sequential([
     {%- for subnn_key, subnn_value in module_details.items() %}
-        {%- if subnn_key != "in_out_variable" %}
+        {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
             {%- if "layers.ZeroPadding" in subnn_value[0] %}
     {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
     {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
@@ -54,15 +200,19 @@ from datetime import datetime
 
 {{ model.name }} = Sequential([
     {%- for module_name, module_details in modules_details.items() %}
-        {%- if module_name.endswith("nn") %}
-    {{ module_name.split('_')[0] }},
-        {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
-        {%- if "layers.ZeroPadding" in module_details[0] %}
+        {%- if module_name not in ["_lambda_needed"] %}
+            {%- if module_name.endswith("nn") %}
+    {{ module_name.rsplit('_', 2)[0] }},
+            {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+            {%- if "layers.ZeroPadding" in module_details[0] %}
     {{ module_details[0].split("#")[0].strip() }}
     {{ module_details[0].split("#")[1].strip() }}
-        {%- else %}
+            {%- else %}
     {{ module_details[0].split('=', 1)[1].strip() }},
-        {%- endif -%}
+            {%- endif -%}
+            {%- else %}
+    {{ module_details[0] }},
+            {%- endif -%}
         {%- endif -%}
     {%- endfor %}
 ])
@@ -75,9 +225,9 @@ from datetime import datetime
         {%- for module_name, module_details in modules_details.items() -%}
         {%- if module_name.endswith("nn") %}
 
-        self.{{ module_name.split('_')[0] }} = Sequential([
+        self.{{ module_name[:-3] }} = Sequential([
             {%- for subnn_key, subnn_value in module_details.items() %}
-            {%- if subnn_key != "in_out_variable" %}
+            {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
             {%- if "layers.ZeroPadding" in subnn_value[0] %}
             {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
             {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
@@ -89,56 +239,154 @@ from datetime import datetime
         ])
 
         {%- elif module_name.endswith("layer") %}
-        {%- if "layers.ZeroPadding" in module_details[0] %}
+        {%- if module_details[3] is defined and module_details[3].is_layer_call %}
+        {# Skip layer definition if is_layer_call is True - it will be called in forward #}
+        {%- else %}
+        {%- if "#" in module_details[0] %}
         {{ module_details[0].split("#")[0].strip() }}
         {{ module_details[0].split("#")[1].strip() }}
         {%- else %}
         {{ module_details[0] }}
         {%- endif -%}
         {%- endif -%}
+        {%- elif module_name.endswith("activ") %}
+        {%- if module_details[0].startswith("DEF:") %}
+        {{ module_details[0][4:] }}
+        {%- elif not module_details[0].startswith("CALL:") %}
+            {%- if module_details[3] is defined and module_details[3].is_layer_call %}
+            {# Skip activation definition if is_layer_call is True - reused activation #}
+            {%- else %}
+        {{ module_details[0] }}
+            {%- endif %}
+        {%- endif -%}
+        {%- endif -%}
         {%- endfor %}
 {% endmacro -%}
 
-{%- macro print_forward(modules_details) %}
+{%- macro print_forward(modules_details, model=None, strip_layer_counter_suffix=False) %}
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
+    {%- set layer_name = get_layer_name(module_name, strip_layer_counter_suffix) %}
     {%- if module_name.endswith("op") %}
-        {{ module_details[1] }} = {{ module_details[0] }}
-    {%- elif module_name.endswith("nn") %} 
-        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
-    {%- else %}
-        {%- if "layers.ZeroPadding" in module_details[0] %}
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}_pad({{ module_details[2] }})
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-        {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
-            {%- if module_details[-1].return_type == "hidden" %}
-                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" and module_details[-1].bidirectional %}
-        _, forward_h_n, _, backward_h_n, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- elif module_details[-1].__class__.__name__ == "LSTMLayer" %}
-        _, {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- elif module_details[-1].__class__.__name__ != "LSTMLayer" and module_details[-1].bidirectional %}
-        _, forward_h_n, backward_h_n = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {%- set split_outputs = get_split_output_vars(module_name[:-3], modules_details) -%}
+        {%- if split_outputs %}
+        {{ split_outputs }} = {{ module_details[0] }}
+        {%- elif not module_details[0].startswith("SKIP:") and module_details[1] != module_details[0] %}
+            {%- set tensorop = module_details[2] if module_details|length > 2 else None -%}
+            {%- if tensorop and tensorop.tns_type == 'split' and tensorop.split_sizes is defined %}
+                {%- set num_splits = tensorop.split_sizes|length if tensorop.split_sizes is iterable and tensorop.split_sizes is not string else tensorop.split_sizes -%}
+                {%- if num_splits == 1 %}
+        [{{ module_details[1] }}] = {{ module_details[0] }}
                 {%- else %}
-        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- endif -%}
-                {%- if module_details[-1].bidirectional %}
-        {{ module_details[1] }} = tf.concat([forward_h_n, backward_h_n], axis=-1)
+        {{ module_details[1] }} = {{ module_details[0] }}
                 {%- endif -%}
             {%- else %}
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {{ module_details[1] }} = {{ module_details[0] }}
             {%- endif -%}
+        {%- endif %}
+    {%- elif module_name.endswith("nn") %}
+        {%- set vars = get_sequential_vars(module_name, module_details["in_out_variable"], module_details) -%}
+        {%- set output_var = vars.split('|||')[0] -%}
+        {%- set input_var = vars.split('|||')[1] %}
+        {{ output_var }} = self.{{ module_name[:-3] }}({{ input_var }})
+    {%- elif module_name.endswith("activ") %}
+        {%- if module_details[0].startswith("CALL:") %}
+        {{ module_details[1] }} = self.{{ module_details[0][5:] }}({{ module_details[2] }})
+        {%- elif not module_details[0].startswith("DEF:") %}
+        {%- set base_layer_name = module_name[:-6] if module_name.endswith("_activ") else module_name %}
+        {%- set layer_name = base_layer_name|strip_counter_suffix if strip_layer_counter_suffix else base_layer_name %}
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[2] }})
+        {%- endif %}
+    {%- else %}
+        {%- if "layers.ZeroPadding" in module_details[0] %}
+        {{ module_details[1] }} = self.{{ layer_name }}_pad({{ module_details[2] }})
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[1] }})
+        {%- elif "Lambda" in module_details[0] and "_remap" in module_details[0] %}
+        {{ module_details[1] }}_remap = self.{{ layer_name }}_remap({{ module_details[2] }})
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[1] }}_remap)
+        {%- elif module_details[3].__class__.mro()[1].__name__ == "RNN" %}
+            {%- if module_details[3].return_type == "both" %}
+                {%- if module_details[3].__class__.__name__ == "LSTMLayer" and module_details[3].bidirectional %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', modules_details) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', modules_details) %}
+
+        {{ module_details[1] }}, {{ forward_var }}, _, {{ backward_var }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+        {{ module_details[4] }} = tf.concat([{{ forward_var }}, {{ backward_var }}], axis=-1)
+                {%- elif module_details[3].__class__.__name__ == "LSTMLayer" %}
+                    {%- if module_details|length > 5 %}
+        {{ module_details[1] }}, {% if module_details[4] == "_" %}_{% else %}{{ module_details[4] }}{% endif %}, {% if module_details[3].cell_state_unused or module_details[4] == "_" %}_{% else %}{{ module_details[5] }}{% endif %} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_cell_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+{{ get_hidden_subscript_assignment(layer_name, modules_details) }}
+                    {%- else %}
+        {{ module_details[1] }}, {% if module_details[4] == "_" %}_{% else %}{{ module_details[4] }}{% endif %}, {% if module_details[3].cell_state_unused or module_details[4] == "_" %}_{% else %}{{ module_details[4] }}_cell{% endif %} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_cell_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+{{ get_hidden_subscript_assignment(layer_name, modules_details) }}
+                    {%- endif %}
+                {%- elif module_details[3].__class__.__name__ != "LSTMLayer" and module_details[3].bidirectional -%}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', modules_details) %}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', modules_details) %}
+
+        {{ module_details[1] }}, {{ forward_var }}, {{ backward_var }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+        {{ module_details[4] }} = tf.concat([{{ forward_var }}, {{ backward_var }}], axis=-1)
+                {%- else %}
+        {{ module_details[1] }}, {% if module_details[4] == "_" %}_{% else %}{{ module_details[4] }}{% endif %} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+{{ get_hidden_subscript_assignment(layer_name, modules_details) }}
+                {%- endif -%}
+            {%- elif module_details[3].return_type == "hidden" %}
+                {%- if module_details[3].__class__.__name__ == "LSTMLayer" and module_details[3].bidirectional %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', modules_details) -%}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', modules_details) -%}
+        _, {{ forward_var }}, _, {{ backward_var }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+                {%- elif module_details[3].__class__.__name__ == "LSTMLayer" %}
+                    {%- if module_details|length > 5 -%}
+        _, {{ module_details[4] }}, {% if module_details[3].cell_state_unused %}_{% else %}{{ module_details[5] }}{% endif %} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_cell_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+                    {%- else -%}
+        _, {{ module_details[4] }}, {% if module_details[3].cell_state_unused %}_{% else %}{{ module_details[4] }}_cell{% endif %} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_cell_state_var(module_details[3].hx_source, modules_details) }}]{% endif %})
+                    {%- endif %}
+                {%- elif module_details[3].__class__.__name__ != "LSTMLayer" and module_details[3].bidirectional %}
+                    {%- set forward_var = get_bidirectional_var(layer_name, 'forward', modules_details) -%}
+                    {%- set backward_var = get_bidirectional_var(layer_name, 'backward', modules_details) -%}
+        _, {{ forward_var }}, {{ backward_var }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_cell_state_var(module_details[3].hx_source, modules_details) }}]{% else %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %}{% endif %})
+                {%- else %}
+        _, {{ module_details[4] }} = self.{{ layer_name }}({{ module_details[2] }})
+{{ get_hidden_subscript_assignment(layer_name, modules_details) }}
+                {%- endif -%}
+{%- if module_details[3].bidirectional %}
+        {{ module_details[4] if (module_details|length > 4 and module_details[4]) else module_details[1] }} = tf.concat([{{ get_bidirectional_var(layer_name, 'forward', modules_details) }}, {{ get_bidirectional_var(layer_name, 'backward', modules_details) }}], axis=-1)
+{% endif %}
+            {%- else %}
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if module_details[3].__class__.__name__ == "LSTMLayer" %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}, {{ get_cell_state_var(module_details[3].hx_source, modules_details) }}]{% else %}, initial_state=[{{ get_hidden_state_var(module_details[3].hx_source, modules_details) }}]{% endif %}{% endif %})
+            {%- endif %}
         {%- else %}
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-    {%- endif -%}
-    {%- endif -%}
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[2] }})
+    {%- endif %}
+    {%- endif %}
     {%- if module_name.endswith("nn") %}
-    {%- set return_variable.value =  module_details["in_out_variable"] %}
-    {%- else %} 
+        {%- set vars = get_sequential_vars(module_name, module_details["in_out_variable"], module_details) -%}
+        {%- set output_var = vars.split('|||')[0] %}
+    {%- set return_variable.value =  output_var %}
+    {%- else %}
+        {%- if module_details|length > 3 and module_details[3] is defined -%}
+            {%- set layer_obj = module_details[3] -%}
+            {%- if layer_obj.hidden_subscript_target is defined and layer_obj.hidden_subscript_target -%}
+    {%- set return_variable.value = layer_obj.hidden_subscript_target %}
+            {%- else -%}
     {%- set return_variable.value =  module_details[1] %}
-    {%- endif -%}
+            {%- endif -%}
+        {%- else -%}
+    {%- set return_variable.value =  module_details[1] %}
+        {%- endif -%}
+    {%- endif %}
     {%- endfor %}
-        {%- if "," in return_variable.value %}
-        return {{ return_variable.value.split(",")[0].strip() if return_variable.value.split(",")[0].strip()!="_" else return_variable.value.split(",")[1].strip()}}
+        {%- if model.return_vars is defined and model.return_vars %}
+        return {{ model.return_vars }}
+        {%- elif "," in return_variable.value %}
+            {%- set parts = return_variable.value.split(",") %}
+            {%- set non_underscore = [] %}
+            {%- for part in parts %}
+                {%- if part.strip() != "_" %}
+                    {%- set _ = non_underscore.append(part.strip()) %}
+                {%- endif %}
+            {%- endfor %}
+        return {{ non_underscore|join(', ') }}
         {%- else %}
         return {{ return_variable.value }}
         {%- endif %}
@@ -397,4 +645,97 @@ print("Mean Absolute Error (MAE):", mae)
 print('##### Saving the model')
 {{ model.name }}.save(f"{{ model.name | lower }}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 print("The model is saved successfully")
+{% endmacro -%}
+
+
+{%- macro train_model_body(model, prediction_task) -%}
+print('##### Training the model')
+for epoch in range(epochs):
+    # Initialize the running loss for the current epoch
+    running_loss = 0.0
+    total_loss = 0.0
+    # Iterate over mini-batches of training data
+    for i, (inputs, labels) in enumerate(train_loader):
+        with tf.GradientTape() as tape:
+            outputs = model(inputs, training=True)
+            # Convert labels to one-hot encoding
+            {% if prediction_task == "multi_class" -%}
+            if labels.shape.rank > 1 and labels.shape[-1] == 1:
+                labels = tf.squeeze(labels, axis=-1)
+            labels = tf.cast(labels, dtype=tf.int32)
+            labels = tf.one_hot(labels, depth=num_classes)
+            {% elif prediction_task == "regression" %}
+            labels = tf.expand_dims(labels, axis=1)
+            {% endif -%}
+            loss = criterion(labels, outputs)
+        # Compute gradients and update model parameters
+        gradients = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(
+            zip(gradients, model.trainable_variables))
+        total_loss += loss.numpy()
+        running_loss += loss.numpy()
+        if i % 200 == 199:  # Print every 200 mini-batches
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
+            running_loss = 0.0
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
+    total_loss = 0.0
+print('Training finished')
+{%- endmacro -%}
+
+
+{% macro evaluate_model_body(model, prediction_task) -%}
+print('##### Evaluating the model')
+predicted_labels = []
+true_labels = []
+test_loss = 0.0
+
+for inputs, labels in test_loader:
+    outputs = model(inputs, training=False)
+    true_labels.extend(labels.numpy())
+    {% if prediction_task == "binary" -%}
+    predicted = (outputs.numpy() > 0.5).astype(int)
+    {%- elif prediction_task == "multi_class" -%}
+    predicted = tf.argmax(outputs, axis=-1).numpy()
+    if labels.shape.rank > 1 and labels.shape[-1] == 1:
+        labels = tf.squeeze(labels, axis=-1)
+    labels = tf.cast(labels, dtype=tf.int32)
+    labels = tf.one_hot(labels, depth=num_classes)
+    {%- else -%}
+    predicted = outputs.numpy()
+    labels = tf.expand_dims(labels, axis=1)
+    {%- endif %}
+    predicted_labels.extend(predicted)
+    test_loss += criterion(labels, outputs).numpy()
+
+
+average_loss = test_loss / len(test_loader)
+print(f"Test Loss: {average_loss:.3f}")
+
+# Calculate the metrics
+metrics = {{ model.configuration.metrics }}
+{%- if prediction_task != "regression" %}
+report = classification_report(true_labels, predicted_labels,
+                               output_dict=True)
+for metric in metrics:
+    {%- if prediction_task == "binary" %}
+    print(f"{metric.capitalize()}:", report['1'][metric])
+    {%- elif prediction_task == 'multi_class' %}
+    metric_list = []
+    for class_label in report.keys():
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
+            metric_list.append(report[class_label][metric])
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
+    print(f"Accuracy: {report['accuracy']}"){% endif %}
+{% else %}
+mae = mean_absolute_error(true_labels, predicted_labels)
+print("Mean Absolute Error (MAE):", mae)
+{%- endif -%}
 {% endmacro -%}

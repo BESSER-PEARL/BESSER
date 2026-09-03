@@ -8,11 +8,11 @@ by the web editor for NNDiagrams.
 import ast
 import threading
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
+import besser.BUML.metamodel.nn as nn_module
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
-
 
 # Stable namespace for uuid5-based element IDs. Using a fixed UUID here means
 # the same BUML NN model, converted twice, produces byte-identical JSON — which
@@ -110,8 +110,8 @@ def _fmt_value(value: Any) -> str:
 
 
 def _make_attr(parent_id: str, field: str, value: Any, suffix: str,
-               bounds: Dict[str, int], attr_type_hint: str = 'str',
-               mandatory: bool = False) -> Dict[str, Any]:
+               bounds: dict[str, int], attr_type_hint: str = 'str',
+               mandatory: bool = False) -> dict[str, Any]:
     """Build a single attribute element child dict."""
     formatted = _fmt_value(value)
     return {
@@ -134,7 +134,7 @@ def _make_attr(parent_id: str, field: str, value: Any, suffix: str,
     }
 
 
-def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
+def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
     """
     Return the list of (field_name, value, type_hint, mandatory) tuples to emit for a module.
 
@@ -142,7 +142,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
     or diverge from defaults, so round-trip stays minimal.
     """
     cls = type(module).__name__
-    fields: List[Tuple[str, Any, str, bool]] = []
+    fields: list[tuple[str, Any, str, bool]] = []
 
     if cls in ('Conv1D', 'Conv2D', 'Conv3D'):
         fields.append(('name', module.name, 'str', True))
@@ -298,19 +298,27 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type in ('multiply', 'matmultiply') and module.layers_of_tensors is not None:
             fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
-        elif tns_type == 'reshape' and module.reshape_dim is not None:
-            fields.append(('reshape_dim', module.reshape_dim, 'List', False))
+        elif tns_type == 'reshape':
+            if module.reshape_dim is not None:
+                fields.append(('reshape_dim', module.reshape_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type == 'transpose' and module.transpose_dim is not None:
             fields.append(('transpose_dim', module.transpose_dim, 'List', False))
         elif tns_type == 'permute' and module.permute_dim is not None:
             fields.append(('permute_dim', module.permute_dim, 'List', False))
+        elif tns_type == 'repeat':
+            if module.repeat_dim is not None:
+                fields.append(('repeat_dim', module.repeat_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
 
     return fields
 
 
-def _configuration_fields(config: Configuration) -> List[Tuple[str, Any, str, bool]]:
+def _configuration_fields(config: Configuration) -> list[tuple[str, Any, str, bool]]:
     fields = [
         ('batch_size',     config.batch_size,     'int',  True),
         ('epochs',         config.epochs,         'int',  True),
@@ -330,8 +338,8 @@ def _configuration_fields(config: Configuration) -> List[Tuple[str, Any, str, bo
     return fields
 
 
-def _dataset_fields(dataset: Dataset) -> List[Tuple[str, Any, str, bool]]:
-    fields: List[Tuple[str, Any, str, bool]] = [
+def _dataset_fields(dataset: Dataset) -> list[tuple[str, Any, str, bool]]:
+    fields: list[tuple[str, Any, str, bool]] = [
         ('name',      dataset.name,      'str', True),
         ('path_data', dataset.path_data, 'str', True),
     ]
@@ -348,7 +356,7 @@ def _dataset_fields(dataset: Dataset) -> List[Tuple[str, Any, str, bool]]:
 
 
 def _emit_module(module, owner_id: str, x: int, y: int,
-                 elements: Dict[str, Dict[str, Any]]) -> str:
+                 elements: dict[str, dict[str, Any]]) -> str:
     """Create a layer/tensor_op element (with its attribute children) inside a container."""
     cls = type(module).__name__
     try:
@@ -359,7 +367,7 @@ def _emit_module(module, owner_id: str, x: int, y: int,
             f"element type. Add {cls!r} to _MODULE_TYPE_MAP."
         ) from exc
     element_id = _new_id()
-    attr_ids: List[str] = []
+    attr_ids: list[str] = []
 
     attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
     for field, value, attr_type_hint, mandatory in _module_fields(module):
@@ -381,7 +389,7 @@ def _emit_module(module, owner_id: str, x: int, y: int,
 
 
 def _emit_container(name: str, x: int, y: int, width: int, height: int,
-                    elements: Dict[str, Dict[str, Any]]) -> str:
+                    elements: dict[str, dict[str, Any]]) -> str:
     container_id = _new_id()
     elements[container_id] = {
         'id': container_id,
@@ -394,7 +402,7 @@ def _emit_container(name: str, x: int, y: int, width: int, height: int,
 
 
 def _emit_nn_reference(ref_name: str, owner_id: str, x: int, y: int,
-                       elements: Dict[str, Dict[str, Any]]) -> str:
+                       elements: dict[str, dict[str, Any]]) -> str:
     ref_id = _new_id()
     elements[ref_id] = {
         'id': ref_id,
@@ -408,7 +416,7 @@ def _emit_nn_reference(ref_name: str, owner_id: str, x: int, y: int,
 
 
 def _emit_nnnext(source_id: str, target_id: str,
-                 relationships: Dict[str, Dict[str, Any]]) -> None:
+                 relationships: dict[str, dict[str, Any]]) -> None:
     rel_id = _new_id()
     relationships[rel_id] = {
         'id': rel_id,
@@ -424,7 +432,7 @@ def _emit_nnnext(source_id: str, target_id: str,
 
 
 def _emit_container_link(rel_type: str, source_id: str, target_id: str,
-                         relationships: Dict[str, Dict[str, Any]]) -> None:
+                         relationships: dict[str, dict[str, Any]]) -> None:
     """Emit an NNComposition or NNAssociation edge from an unowned element to the main NN container.
 
     Used to wire Configuration → container (composition) and Dataset →
@@ -446,9 +454,9 @@ def _emit_container_link(rel_type: str, source_id: str, target_id: str,
 
 
 def _emit_configuration(config: Configuration, x: int, y: int,
-                        elements: Dict[str, Dict[str, Any]]) -> str:
+                        elements: dict[str, dict[str, Any]]) -> str:
     element_id = _new_id()
-    attr_ids: List[str] = []
+    attr_ids: list[str] = []
     attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
     for field, value, attr_type_hint, mandatory in _configuration_fields(config):
         attr = _make_attr(element_id, field, value, 'Configuration', attr_bounds,
@@ -468,9 +476,9 @@ def _emit_configuration(config: Configuration, x: int, y: int,
 
 
 def _emit_dataset(dataset: Dataset, parent_type: str, x: int, y: int,
-                  elements: Dict[str, Dict[str, Any]]) -> str:
+                  elements: dict[str, dict[str, Any]]) -> str:
     element_id = _new_id()
-    attr_ids: List[str] = []
+    attr_ids: list[str] = []
     attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
     for field, value, attr_type_hint, mandatory in _dataset_fields(dataset):
         attr = _make_attr(element_id, field, value, 'Dataset', attr_bounds,
@@ -490,9 +498,9 @@ def _emit_dataset(dataset: Dataset, parent_type: str, x: int, y: int,
 
 
 def _emit_nn_container(nn: NN, y_base: int,
-                       elements: Dict[str, Dict[str, Any]],
-                       relationships: Dict[str, Dict[str, Any]],
-                       sub_nn_ids: Optional[Dict[int, str]] = None) -> str:
+                       elements: dict[str, dict[str, Any]],
+                       relationships: dict[str, dict[str, Any]],
+                       sub_nn_ids: dict[int, str] | None = None) -> str:
     """
     Emit a container holding the modules of a single NN.
     Returns the container id. Lays out modules left-to-right with NNNext relationships.
@@ -504,7 +512,7 @@ def _emit_nn_container(nn: NN, y_base: int,
     container_id = _emit_container(nn.name, container_x, y_base,
                                     width=width, height=250, elements=elements)
 
-    prev_id: Optional[str] = None
+    prev_id: str | None = None
     for i, module in enumerate(nn.modules):
         x = container_x + 20 + i * step
         y = y_base + 60
@@ -547,7 +555,7 @@ def _collect_all_sub_nns(nn_model: NN) -> list:
     return ordered
 
 
-def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
+def nn_model_to_json(nn_model: NN) -> dict[str, Any]:
     """
     Convert a BUML NN instance into a web-editor NNDiagram model dict
     (the inner `model` payload).
@@ -556,8 +564,8 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
     # produces the same JSON bytes on every call (helpful for round-trip tests
     # and for diffing BUML-to-JSON output).
     _reset_id_state()
-    elements: Dict[str, Dict[str, Any]] = {}
-    relationships: Dict[str, Dict[str, Any]] = {}
+    elements: dict[str, dict[str, Any]] = {}
+    relationships: dict[str, dict[str, Any]] = {}
 
     # Emit every transitively-reachable sub-NN, not just the top-level list.
     # The processor traverses NNReferences at any depth; we must emit a
@@ -567,7 +575,7 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
     # are still distinct objects; keying by name would let the second
     # overwrite the first and silently reroute references (mirrors the
     # iter-7 id-based bookkeeping in nn_model_builder).
-    sub_nn_ids: Dict[int, str] = {}
+    sub_nn_ids: dict[int, str] = {}
     y_cursor = -700
     for sub_nn in _collect_all_sub_nns(nn_model):
         # Build sub_nn_ids incrementally so a sub-NN's own container can
@@ -679,7 +687,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
         if isinstance(node, ast.Set):
             for e in node.elts:
                 if isinstance(e, ast.Starred):
-                    raise ValueError(
+                    raise TypeError(
                         "Iterable unpacking (*expr) is not supported "
                         "in NN BUML literals."
                     )
@@ -705,7 +713,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
             # ``Conv2D(**malicious_dict)`` produced a cryptic metamodel error.
             for a in node.args:
                 if isinstance(a, ast.Starred):
-                    raise ValueError(
+                    raise TypeError(
                         "Positional *args unpacking is not supported in NN BUML; "
                         "pass arguments explicitly."
                     )
@@ -757,7 +765,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
                     )
                 for a in stmt.value.args:
                     if isinstance(a, ast.Starred):
-                        raise ValueError(
+                        raise TypeError(
                             "Positional *args unpacking is not supported in "
                             "NN BUML add_* builder calls."
                         )
@@ -786,21 +794,19 @@ def _parse_nn_buml_ast(content: str, nn_module):
     except SyntaxError as exc:
         raise ValueError(f"Failed to parse NN BUML content: {exc}") from exc
 
-    env: Dict[str, Any] = {}
+    env: dict[str, Any] = {}
     for stmt in tree.body:
         _run_stmt(stmt, env)
     return env
 
 
-def nn_buml_to_json(content: str) -> Dict[str, Any]:
+def nn_buml_to_json(content: str) -> dict[str, Any]:
     """Convert an NN model Python section to the editor NNDiagram model dict.
 
     Uses an ``ast.parse`` whitelist visitor rather than ``exec`` so that
     uploaded BUML content cannot escape the sandbox (``().__class__.__bases__
     .__subclasses__()``-style tricks) or run arbitrary system calls.
     """
-    import besser.BUML.metamodel.nn as nn_module
-
     env = _parse_nn_buml_ast(content, nn_module)
 
     all_nns = [v for v in env.values() if isinstance(v, NN)]

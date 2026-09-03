@@ -177,7 +177,12 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
                                name_prefix=main_var)
 
         f.write(f"# Neural Network: {_safe_comment(model.name)}\n")
-        f.write(f"{main_var} = NN(name='{_esc(model.name)}')\n")
+        params = [f"name='{_esc(model.name)}'"]
+        if model.input_var:
+            params.append(f"input_var='{_esc(model.input_var)}'")
+        if model.return_vars:
+            params.append(f"return_vars='{_esc(model.return_vars)}'")
+        f.write(f"{main_var} = NN({', '.join(params)})\n")
 
         # Add modules in order (sub_nns, layers, tensor_ops)
         # Using model.modules preserves the order from the diagram's NNNext relationships
@@ -299,7 +304,12 @@ def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None,
         sub_nn_vars[id(sub_nn)] = var_name
 
         f.write(f"# Sub-Network: {_safe_comment(sub_nn.name)}\n")
-        f.write(f"{var_name} = NN(name='{_esc(sub_nn.name)}')\n")
+        params = [f"name='{_esc(sub_nn.name)}'"]
+        if sub_nn.input_var:
+            params.append(f"input_var='{_esc(sub_nn.input_var)}'")
+        if sub_nn.return_vars:
+            params.append(f"return_vars='{_esc(sub_nn.return_vars)}'")
+        f.write(f"{var_name} = NN({', '.join(params)})\n")
 
         # Add modules in order (preserves NNNext relationship order)
         if sub_nn.modules:
@@ -380,6 +390,14 @@ def _write_conv(f, layer, var_name: str):
         params.append(f"permute_in={layer.permute_in}")
     if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
+    if _is_attr_set(layer, 'bias'):
+        params.append(f"bias={layer.bias}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
 
@@ -413,6 +431,12 @@ def _write_pooling(f, layer: PoolingLayer, var_name: str):
         params.append(f"permute_in={layer.permute_in}")
     if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = PoolingLayer({', '.join(params)})\n")
 
@@ -440,6 +464,30 @@ def _write_rnn_like(f, layer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'bias'):
+        params.append(f"bias={layer.bias}")
+    if _is_attr_set(layer, 'hx_source') and layer.hx_source:
+        params.append(f"hx_source='{_esc(layer.hx_source)}'")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
+    if _is_attr_set(layer, 'hidden_state_var') and layer.hidden_state_var:
+        params.append(f"hidden_state_var='{_esc(layer.hidden_state_var)}'")
+    if _is_attr_set(layer, 'hidden_unused'):
+        params.append(f"hidden_unused={layer.hidden_unused}")
+    if _is_attr_set(layer, 'hidden_subscript_source') and layer.hidden_subscript_source:
+        params.append(f"hidden_subscript_source='{_esc(layer.hidden_subscript_source)}'")
+    if _is_attr_set(layer, 'hidden_subscript_target') and layer.hidden_subscript_target:
+        params.append(f"hidden_subscript_target='{_esc(layer.hidden_subscript_target)}'")
+    # LSTM-specific attributes
+    if class_name == 'LSTMLayer':
+        if _is_attr_set(layer, 'cell_state_var') and layer.cell_state_var:
+            params.append(f"cell_state_var='{_esc(layer.cell_state_var)}'")
+        if _is_attr_set(layer, 'cell_unused'):
+            params.append(f"cell_unused={layer.cell_unused}")
 
     f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
 
@@ -458,6 +506,14 @@ def _write_linear(f, layer: LinearLayer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'bias'):
+        params.append(f"bias={layer.bias}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = LinearLayer({', '.join(params)})\n")
 
@@ -479,6 +535,12 @@ def _write_flatten(f, layer: FlattenLayer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = FlattenLayer({', '.join(params)})\n")
 
@@ -492,10 +554,18 @@ def _write_embedding(f, layer: EmbeddingLayer, var_name: str):
     ]
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
+    if _is_attr_set(layer, 'padding_idx'):
+        params.append(f"padding_idx={layer.padding_idx}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = EmbeddingLayer({', '.join(params)})\n")
 
@@ -506,10 +576,18 @@ def _write_dropout(f, layer: DropoutLayer, var_name: str):
         f"name='{_esc(layer.name)}'",
         f"rate={layer.rate}",
     ]
+    if _is_attr_set(layer, 'dimension'):
+        params.append(f"dimension='{_esc(layer.dimension)}'")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = DropoutLayer({', '.join(params)})\n")
 
@@ -522,10 +600,20 @@ def _write_layer_norm(f, layer: LayerNormLayer, var_name: str):
     ]
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
+    if _is_attr_set(layer, 'eps'):
+        params.append(f"eps={layer.eps}")
+    if _is_attr_set(layer, 'affine'):
+        params.append(f"affine={layer.affine}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = LayerNormLayer({', '.join(params)})\n")
 
@@ -539,56 +627,120 @@ def _write_batch_norm(f, layer: BatchNormLayer, var_name: str):
     ]
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
+    if _is_attr_set(layer, 'eps'):
+        params.append(f"eps={layer.eps}")
+    if _is_attr_set(layer, 'momentum'):
+        params.append(f"momentum={layer.momentum}")
+    if _is_attr_set(layer, 'affine'):
+        params.append(f"affine={layer.affine}")
+    if _is_attr_set(layer, 'track_running_stats'):
+        params.append(f"track_running_stats={layer.track_running_stats}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'is_layer_call'):
+        params.append(f"is_layer_call={layer.is_layer_call}")
+    if _is_attr_set(layer, 'input_var'):
+        params.append(f"input_var='{_esc(layer.input_var)}'")
+    if _is_attr_set(layer, 'output_var'):
+        params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = BatchNormLayer({', '.join(params)})\n")
 
 
 def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
-    """Write TensorOp definition.
-
-    Only outputs attributes relevant to the specific tns_type:
-    - 'reshape': reshape_dim
-    - 'concatenate': concatenate_dim + layers_of_tensors
-    - 'multiply': layers_of_tensors
-    - 'matmultiply': layers_of_tensors
-    - 'permute': permute_dim
-    - 'transpose': transpose_dim
-    - input_reused is optional for all types
-    """
+    """Write TensorOp definition with all attributes based on tns_type."""
     params = [
         f"name='{_esc(tensor_op.name)}'",
         f"tns_type='{_esc(tensor_op.tns_type)}'",
     ]
 
     tns_type = tensor_op.tns_type
+    binops = ['binop_add', 'binop_subtract', 'binop_multiply',
+              'binop_divide', 'binop_floor_divide']
 
-    # Only output attributes relevant to the specific tns_type. Use
-    # ``is not None`` rather than truthiness so an explicit empty list or
-    # ``0`` survives round-trip — the metamodel setters validate content
-    # themselves, so we don't want to silently drop values here.
-    if tns_type == 'concatenate':
+    # Type-specific attributes (use is not None to preserve explicit 0/[])
+    if tns_type == 'reshape':
+        if tensor_op.reshape_dim is not None:
+            params.append(f"reshape_dim={tensor_op.reshape_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+    elif tns_type == 'concatenate':
         if tensor_op.concatenate_dim is not None:
             params.append(f"concatenate_dim={tensor_op.concatenate_dim}")
         if tensor_op.layers_of_tensors is not None:
             params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
-    elif tns_type in ('multiply', 'matmultiply'):
-        if tensor_op.layers_of_tensors is not None:
-            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
-    elif tns_type == 'reshape':
-        if tensor_op.reshape_dim is not None:
-            params.append(f"reshape_dim={tensor_op.reshape_dim}")
+        if tensor_op.actual_vars is not None:
+            params.append(f"actual_vars={tensor_op.actual_vars}")
     elif tns_type == 'transpose':
         if tensor_op.transpose_dim is not None:
             params.append(f"transpose_dim={tensor_op.transpose_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type == 'permute':
         if tensor_op.permute_dim is not None:
             params.append(f"permute_dim={tensor_op.permute_dim}")
+    elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
+        if tensor_op.reduce_dim is not None:
+            params.append(f"reduce_dim={tensor_op.reduce_dim}")
+        if tns_type == 'max' and tensor_op.reduce_keepdims is not None:
+            params.append(f"reduce_keepdims={tensor_op.reduce_keepdims}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+    elif tns_type == 'subscript':
+        if tensor_op.subscript_indices is not None:
+            params.append(f"subscript_indices={tensor_op.subscript_indices}")
+    elif tns_type == 'repeat':
+        if tensor_op.repeat_dim is not None:
+            params.append(f"repeat_dim={tensor_op.repeat_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+    elif tns_type == 'interpolate':
+        if tensor_op.interpolate_size is not None:
+            params.append(f"interpolate_size={tensor_op.interpolate_size}")
+        if tensor_op.interpolate_scale is not None:
+            params.append(f"interpolate_scale={tensor_op.interpolate_scale}")
+        if tensor_op.interpolate_mode is not None:
+            params.append(f"interpolate_mode='{_esc(tensor_op.interpolate_mode)}'")
+    elif tns_type == 'pad':
+        if tensor_op.pad_amount is not None:
+            params.append(f"pad_amount={tensor_op.pad_amount}")
+        if tensor_op.pad_mode is not None:
+            params.append(f"pad_mode='{_esc(tensor_op.pad_mode)}'")
+        if tensor_op.pad_value is not None:
+            params.append(f"pad_value={tensor_op.pad_value}")
+    elif tns_type == 'dropout':
+        if tensor_op.dropout_rate is not None:
+            params.append(f"dropout_rate={tensor_op.dropout_rate}")
+        if tensor_op.dropout_training_aware is not None:
+            params.append(f"dropout_training_aware={tensor_op.dropout_training_aware}")
+    elif tns_type == 'split':
+        if tensor_op.split_dim is not None:
+            params.append(f"split_dim={tensor_op.split_dim}")
+        if tensor_op.split_sizes is not None:
+            params.append(f"split_sizes={tensor_op.split_sizes}")
+        if tensor_op.output_vars is not None:
+            params.append(f"output_vars={tensor_op.output_vars}")
+    elif tns_type in binops:
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
+        if tensor_op.actual_vars is not None:
+            params.append(f"actual_vars={tensor_op.actual_vars}")
+    elif tns_type in ('multiply', 'matmultiply', 'zeros_like', 'identity'):
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
 
-    # input_reused is optional for all types - only output when explicitly set
+    # Common optional attributes
+    if _is_attr_set(tensor_op, 'permute_in'):
+        params.append(f"permute_in={tensor_op.permute_in}")
+    if _is_attr_set(tensor_op, 'permute_out'):
+        params.append(f"permute_out={tensor_op.permute_out}")
+    if _is_attr_set(tensor_op, 'input_var'):
+        params.append(f"input_var='{_esc(tensor_op.input_var)}'")
+    # output_var is NOT for split type (split uses output_vars instead)
+    if tns_type != 'split' and _is_attr_set(tensor_op, 'output_var'):
+        params.append(f"output_var='{_esc(tensor_op.output_var)}'")
     if _is_attr_set(tensor_op, 'input_reused'):
         params.append(f"input_reused={tensor_op.input_reused}")
 

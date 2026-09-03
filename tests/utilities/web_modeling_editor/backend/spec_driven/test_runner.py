@@ -309,6 +309,51 @@ class TestHappyPath:
         assert done["recipe"]["instructions"] == request.instructions
 
 
+class TestFreeTierStartEventModel:
+    """The start event's llmModel must name the model the run is actually
+    served by: the primary by default, the fallback only when the request
+    explicitly picked it — mirroring create_llm_client's allowlist."""
+
+    def _configure_free_env(self, monkeypatch):
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
+        monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
+        monkeypatch.setenv(
+            "BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1"
+        )
+        monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+
+    def _start_event(self, request) -> dict:
+        frames = asyncio.run(_collect_frames(SmartGenerationRunner(request)))
+        start = _parse_frame(frames[0])
+        assert start["event"] == "start"
+        return start
+
+    def test_default_free_run_reports_primary(self, stub_orchestrator, monkeypatch):
+        self._configure_free_env(monkeypatch)
+        request = _build_request(provider="free", llm_model=None)
+        assert self._start_event(request)["llmModel"] == "meituan/LongCat-2.0:free"
+
+    def test_explicit_fallback_choice_reported_truthfully(
+        self, stub_orchestrator, monkeypatch
+    ):
+        self._configure_free_env(monkeypatch)
+        request = _build_request(provider="free", llm_model="qwen3.8:27b")
+        assert self._start_event(request)["llmModel"] == "qwen3.8:27b"
+
+    def test_arbitrary_model_reported_as_primary(self, stub_orchestrator, monkeypatch):
+        self._configure_free_env(monkeypatch)
+        request = _build_request(provider="free", llm_model="gpt-4o")
+        assert self._start_event(request)["llmModel"] == "meituan/LongCat-2.0:free"
+
+    def test_fallback_choice_without_fallback_configured(
+        self, stub_orchestrator, monkeypatch
+    ):
+        self._configure_free_env(monkeypatch)
+        monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", raising=False)
+        request = _build_request(provider="free", llm_model="qwen3.8:27b")
+        assert self._start_event(request)["llmModel"] == "meituan/LongCat-2.0:free"
+
+
 class TestErrorPaths:
     def test_invalid_api_key(self, stub_orchestrator):
         request = _build_request(api_key="bad-key")

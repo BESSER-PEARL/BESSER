@@ -1538,6 +1538,29 @@ def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
     return base_url, token, model
 
 
+def free_fallback_model() -> str:
+    """The model served by the keyless-tier fallback endpoint, or ``""``."""
+    config = _resolve_free_fallback_config()
+    return config[2] if config else ""
+
+
+def is_free_fallback_choice(requested: str | None) -> bool:
+    """True when ``requested`` explicitly names the free tier's fallback model.
+
+    This is the single rule deciding whether a free-tier request is served
+    by the fallback endpoint instead of the primary (see the free branch in
+    ``create_llm_client``). The allowlist is exactly the two server-configured
+    models: the primary and, when configured, the fallback. Any other value —
+    including empty — is not a fallback choice, and requesting the primary
+    explicitly behaves identically to the default. The runner reuses this
+    predicate so the start-event model name matches what the factory builds.
+    """
+    req = (requested or "").strip()
+    if not req or req == free_tier_model():
+        return False
+    return req == free_fallback_model()
+
+
 # ======================================================================
 # Factory
 # ======================================================================
@@ -1557,8 +1580,11 @@ def create_llm_client(
             ``"free"`` (server-hosted open-weight model; needs no user key).
         api_key: API key. If not provided, resolved from environment variables.
             Ignored for the ``"free"`` provider.
-        model: Model identifier. Defaults to provider-specific default. Ignored
-            for the ``"free"`` provider, which is pinned to the server's model.
+        model: Model identifier. Defaults to provider-specific default. For the
+            ``"free"`` provider only the server's fallback model may be chosen
+            explicitly (served from the fallback endpoint, with no outage
+            fallback of its own); any other value is ignored and the client is
+            pinned to the server's primary model.
         base_url: Custom API base URL. Ignored for the ``"free"`` provider,
             which reads its endpoint from server env.
         **kwargs: Additional keyword arguments passed to the provider constructor
@@ -1596,6 +1622,29 @@ def create_llm_client(
         # Endpoint, token, and model all come from SERVER env — never from the
         # request. The bearer header is the real gate; the api_key is a
         # placeholder the endpoint ignores.
+        #
+        # The only client-steerable choice is between the two server-configured
+        # models: a request may explicitly name the FALLBACK model, in which
+        # case the client is built directly against the fallback endpoint.
+        # Any other requested value is ignored and the run pins to the primary,
+        # so the server's credentials can never be pointed at an arbitrary
+        # model or host.
+        if is_free_fallback_choice(model):
+            fb_base_url, fb_token, fb_model = _resolve_free_fallback_config()
+            fb_headers = (
+                {"Authorization": f"Bearer {fb_token}"} if fb_token else None
+            )
+            # fallback=None on purpose: the user explicitly chose the
+            # self-hosted model, so an outage surfaces as an honest error —
+            # never a silent switch back to the cloud model.
+            return OpenAIProvider(
+                api_key="free",
+                model=fb_model,
+                base_url=fb_base_url,
+                default_headers=fb_headers,
+                fallback=None,
+                **kwargs,
+            )
         free_base_url, token, free_model = _resolve_free_tier_config()
         headers = {"Authorization": f"Bearer {token}"} if token else None
         return OpenAIProvider(

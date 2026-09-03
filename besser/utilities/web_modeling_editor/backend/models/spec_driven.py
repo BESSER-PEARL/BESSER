@@ -164,7 +164,11 @@ class SmartGenerateRequest(BaseModel):
         has_key = bool(self.api_key and self.api_key.get_secret_value().strip())
         if self.provider in ("free", "sponsored"):
             # Ignore any accidentally-sent key rather than erroring — these
-            # server-configured tiers never use a client key.
+            # server-configured tiers never use a client key. ``llm_model`` is
+            # deliberately KEPT: for "free" it may name the server's fallback
+            # model (the only id besides the primary the factory honors —
+            # anything else pins to the primary), and for "sponsored" it picks
+            # from the aggregator's catalog.
             self.api_key = None
         elif not has_key:
             raise ValueError(

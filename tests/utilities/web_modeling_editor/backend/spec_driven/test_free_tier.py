@@ -16,8 +16,10 @@ import pytest
 from besser.generators.llm.llm_client import (
     _get_pricing,
     create_llm_client,
+    free_fallback_model,
     free_tier_available,
     free_tier_model,
+    is_free_fallback_choice,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     StartEvent,
@@ -102,3 +104,75 @@ def test_free_client_ignores_client_supplied_model_and_url(monkeypatch):
     )
     assert str(client._client.base_url).rstrip("/") == "https://ollama.example/v1"
     assert client._model == "qwen3-coder:30b"
+
+
+# ---------------------------------------------------------------------
+# Explicit free-model choice — allowlist is exactly {primary, fallback}
+# ---------------------------------------------------------------------
+
+
+def _configure_free_tier_with_fallback(monkeypatch):
+    monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_TOKEN", "primary-token")
+    monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_TOKEN", "fallback-token")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+
+
+def test_is_free_fallback_choice_matrix(monkeypatch):
+    _configure_free_tier_with_fallback(monkeypatch)
+    assert free_fallback_model() == "qwen3.8:27b"
+    assert is_free_fallback_choice("qwen3.8:27b") is True
+    # Everything else — empty, primary, arbitrary — is NOT a fallback choice.
+    assert is_free_fallback_choice(None) is False
+    assert is_free_fallback_choice("") is False
+    assert is_free_fallback_choice("meituan/LongCat-2.0:free") is False
+    assert is_free_fallback_choice("gpt-4o") is False
+
+
+def test_is_free_fallback_choice_false_without_fallback(monkeypatch):
+    _configure_free_tier_with_fallback(monkeypatch)
+    monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", raising=False)
+    assert free_fallback_model() == ""
+    assert is_free_fallback_choice("qwen3.8:27b") is False
+
+
+def test_free_client_explicit_fallback_model_uses_fallback_endpoint(monkeypatch):
+    # A user who explicitly picks the self-hosted fallback model gets a
+    # client built directly against the fallback endpoint...
+    _configure_free_tier_with_fallback(monkeypatch)
+    client = create_llm_client(provider="free", model="qwen3.8:27b")
+    assert str(client._client.base_url).rstrip("/") == "https://ollama.example/v1"
+    assert client._model == "qwen3.8:27b"
+    assert client._client.default_headers.get("Authorization") == "Bearer fallback-token"
+    # ...with NO outage fallback of its own: if the self-hosted box is down
+    # the run fails with an honest error instead of silently switching the
+    # user to the cloud model they opted out of.
+    assert client._fallback is None
+
+
+def test_free_client_arbitrary_model_pins_primary(monkeypatch):
+    # Any id outside {primary, fallback} is ignored: primary endpoint,
+    # primary model, normal outage-fallback chain. The server's free-tier
+    # credentials can never be steered to an arbitrary model.
+    _configure_free_tier_with_fallback(monkeypatch)
+    client = create_llm_client(provider="free", model="gpt-4o")
+    assert str(client._client.base_url).rstrip("/") == "https://cloud.example/v1"
+    assert client._model == "meituan/LongCat-2.0:free"
+    assert client._client.default_headers.get("Authorization") == "Bearer primary-token"
+    assert client._fallback == (
+        "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
+    )
+
+
+def test_free_client_explicit_primary_behaves_like_default(monkeypatch):
+    # Requesting the primary explicitly is identical to sending no model:
+    # primary endpoint + the normal fallback chain stays armed.
+    _configure_free_tier_with_fallback(monkeypatch)
+    client = create_llm_client(provider="free", model="meituan/LongCat-2.0:free")
+    assert str(client._client.base_url).rstrip("/") == "https://cloud.example/v1"
+    assert client._model == "meituan/LongCat-2.0:free"
+    assert client._fallback == (
+        "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
+    )

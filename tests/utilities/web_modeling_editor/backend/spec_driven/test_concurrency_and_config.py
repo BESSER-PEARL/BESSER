@@ -72,6 +72,49 @@ def test_config_endpoint_exposes_expected_fields():
     }
 
 
+def test_config_endpoint_free_models_with_fallback(monkeypatch):
+    """When the free tier and its fallback are both configured, the config
+    advertises exactly the two choosable model ids — primary flagged as the
+    default, fallback not."""
+    monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+
+    payload = _get_config().json()
+    free_tier = payload["free_tier"]
+    assert free_tier["available"] is True
+    assert free_tier["model"] == "meituan/LongCat-2.0:free"
+    assert free_tier["models"] == [
+        {"id": "meituan/LongCat-2.0:free", "default": True},
+        {"id": "qwen3.8:27b", "default": False},
+    ]
+
+
+def test_config_endpoint_free_models_without_fallback(monkeypatch):
+    monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
+    monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", raising=False)
+    monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_MODEL", raising=False)
+
+    free_tier = _get_config().json()["free_tier"]
+    assert free_tier["models"] == [
+        {"id": "meituan/LongCat-2.0:free", "default": True},
+    ]
+
+
+def test_config_endpoint_free_models_empty_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
+    # A fallback alone does not make the tier (or its choices) available.
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+
+    free_tier = _get_config().json()["free_tier"]
+    assert free_tier["available"] is False
+    assert free_tier["models"] == []
+
+
 def test_config_endpoint_reflects_monkeypatched_caps(monkeypatch):
     """Patching the module-level constants must be visible to the
     config endpoint. This matters because env-var overrides are applied

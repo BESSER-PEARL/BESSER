@@ -13,6 +13,9 @@ from besser.generators import GeneratorInterface
 from besser.generators.nn.pytorch.utils_pytorch import (
     SetupLayerSyntax as SetupLayerTorch,
 )
+from besser.BUML.metamodel.nn.neural_network import (
+    GRULayer, LSTMLayer, SimpleRNNLayer
+)
 from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_name
 from besser.generators.nn.tf.utils_tf import SetupLayerSyntax as SetupLayerTF
 from besser.generators.nn.utils_nn import (
@@ -549,7 +552,16 @@ class NNCodeGenerator(GeneratorInterface):
             if isinstance(first_module_data, dict) and 'in_out_variable' in first_module_data:
                 forward_input_var = first_module_data['in_out_variable']
             elif isinstance(first_module_data, list) and len(first_module_data) >= 3:
-                forward_input_var = first_module_data[1]
+                # For RNN layers: [syntax, out_var, in_var, layer, ...]
+                # Check if this is an RNN layer by checking if layer object exists at index 3
+                if len(first_module_data) >= 4:
+                    layer_obj = first_module_data[3]
+                    if isinstance(layer_obj, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+                        forward_input_var = first_module_data[2]  # Use in_var
+                    else:
+                        forward_input_var = first_module_data[1]  # Use out_var
+                else:
+                    forward_input_var = first_module_data[1]
 
 
         generated_code = template.render(

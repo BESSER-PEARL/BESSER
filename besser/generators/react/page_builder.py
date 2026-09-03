@@ -445,7 +445,7 @@ class PageBuilderMixin:
                 extra_props={
                     "title": node.get("title"),
                     "mapConfig": node.get("map_config"),
-                    "dataBinding": node.get("data_binding"),
+                    "layers": node.get("layers"),
                 },
                 style_prop_name="styles",
                 include_class_name=False,

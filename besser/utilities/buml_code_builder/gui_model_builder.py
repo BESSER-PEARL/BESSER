@@ -23,7 +23,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
-    FieldColumn, LookupColumn, ExpressionColumn, Map, MetricCard
+    FieldColumn, LookupColumn, ExpressionColumn, Map, MapLayer, MapLayerType, MetricCard
 )
 from besser.BUML.metamodel.gui.events_actions import Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -246,7 +246,8 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
         f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,\n")
-        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn, Map, MetricCard, Series\n")
+        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn,\n")
+        f.write("    Map, MapLayer, MapLayerType, MetricCard, Series\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -1201,45 +1202,84 @@ def _write_styling(f, component_var, styling, created_vars):
     f.write(f'{component_var}.styling = {styling_var}\n')
 
 
-def _write_map(f, var_name, map_comp):
-    """Write code for a Map component."""
-    params = [f'name="{_escape_string(map_comp.name)}"']
-    if hasattr(map_comp, 'title') and map_comp.title:
-        params.append(f'title="{_escape_string(map_comp.title)}"')
-    if hasattr(map_comp, 'center_latitude') and map_comp.center_latitude is not None:
-        params.append(f'center_latitude={map_comp.center_latitude}')
-    if hasattr(map_comp, 'center_longitude') and map_comp.center_longitude is not None:
-        params.append(f'center_longitude={map_comp.center_longitude}')
-    if hasattr(map_comp, 'zoom') and map_comp.zoom is not None:
-        params.append(f'zoom={map_comp.zoom}')
+def _write_map_layer(f, layer_var, layer_comp, layer_index):
+    """Write code for a single MapLayer (helper called from _write_map)."""
+    params = [f'name="{_escape_string(layer_comp.name)}"']
+    lt = getattr(layer_comp, "layer_type", None)
+    if lt is not None:
+        params.append(f"layer_type=MapLayerType.{lt.name}")
 
-    _write_constructor(f, var_name, 'Map', params, map_comp)
+    # Constructor call (no styling/metadata needed — MapLayer is a sub-object)
+    if len(params) <= 2:
+        f.write(f"{layer_var} = MapLayer({', '.join(params)})\n")
+    else:
+        f.write(f"{layer_var} = MapLayer(\n")
+        for i, p in enumerate(params):
+            comma = "," if i < len(params) - 1 else ""
+            f.write(f"    {p}{comma}\n")
+        f.write(")\n")
 
-    if hasattr(map_comp, 'data_binding') and map_comp.data_binding:
-        _write_data_binding_assignment(f, var_name, map_comp.data_binding)
+    # Data binding
+    binding = getattr(layer_comp, "data_binding", None)
+    if binding:
+        _write_data_binding_assignment(f, layer_var, binding)
 
-    # Re-attach geo field Property references from the bound domain class.
-    # These are stored directly on the Map, not inside DataBinding, so we emit
-    # separate assignment statements guarded by the same domain-class lookup.
-    binding = getattr(map_comp, 'data_binding', None)
-    domain_name = _get_attr_name(getattr(binding, 'domain_concept', None)) if binding else None
+    # Re-attach field Property references from the bound domain class
+    domain_name = _get_attr_name(getattr(binding, "domain_concept", None)) if binding else None
     if domain_name:
-        for attr_name, field_attr in (
-            ('latitude_field', getattr(map_comp, 'latitude_field', None)),
-            ('longitude_field', getattr(map_comp, 'longitude_field', None)),
-            ('marker_label_field', getattr(map_comp, 'marker_label_field', None)),
-        ):
+        _field_attrs = (
+            ("latitude_field", getattr(layer_comp, "latitude_field", None)),
+            ("longitude_field", getattr(layer_comp, "longitude_field", None)),
+            ("label_field", getattr(layer_comp, "label_field", None)),
+            ("weight_field", getattr(layer_comp, "weight_field", None)),
+            ("geojson_field", getattr(layer_comp, "geojson_field", None)),
+            ("value_field", getattr(layer_comp, "value_field", None)),
+        )
+        for attr_name, field_attr in _field_attrs:
             field_name = _get_attr_name(field_attr)
             if field_name:
                 escaped_domain = _escape_string(domain_name)
                 escaped_field = _escape_string(field_name)
-                f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
-                f.write(f"if domain_model_ref is not None:\n")
-                f.write(f"    _domain_cls = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
-                f.write(f"    if _domain_cls:\n")
-                f.write(f"        {var_name}.{attr_name} = next(\n")
-                f.write(f"            (a for a in _domain_cls.attributes if a.name == \"{escaped_field}\"), None\n")
-                f.write(f"        )\n")
+                # domain_model is either in local_vars (structural model included in
+                # the same file) or seeded as None in safe_globals.  Reference it
+                # directly — works in plain exec() and in the sandboxed converter exec.
+                f.write(
+                    "_dm_ref = domain_model\n"
+                )
+                f.write(f"if _dm_ref is not None:\n")
+                f.write(f"    _dc = _dm_ref.get_class_by_name(\"{escaped_domain}\")\n")
+                f.write(f"    if _dc:\n")
+                f.write(
+                    f"        {layer_var}.{attr_name} = next(\n"
+                    f"            (a for a in _dc.attributes if a.name == \"{escaped_field}\"), None\n"
+                    f"        )\n"
+                )
+
+
+def _write_map(f, var_name, map_comp):
+    """Write code for a Map component and its layers."""
+    params = [f'name="{_escape_string(map_comp.name)}"']
+    if hasattr(map_comp, "title") and map_comp.title:
+        params.append(f'title="{_escape_string(map_comp.title)}"')
+    if hasattr(map_comp, "center_latitude") and map_comp.center_latitude is not None:
+        params.append(f"center_latitude={map_comp.center_latitude}")
+    if hasattr(map_comp, "center_longitude") and map_comp.center_longitude is not None:
+        params.append(f"center_longitude={map_comp.center_longitude}")
+    if hasattr(map_comp, "zoom") and map_comp.zoom is not None:
+        params.append(f"zoom={map_comp.zoom}")
+
+    _write_constructor(f, var_name, "Map", params, map_comp)
+
+    # Write each layer and collect variable names
+    layer_var_names = []
+    for idx, layer in enumerate(getattr(map_comp, "layers", None) or []):
+        layer_var = f"{var_name}_layer_{idx}"
+        _write_map_layer(f, layer_var, layer, idx)
+        layer_var_names.append(layer_var)
+
+    # Assign the layers list back to the map
+    if layer_var_names:
+        f.write(f"{var_name}.layers = [{', '.join(layer_var_names)}]\n")
 
 
 def _write_agent_component(f, var_name, agent):
@@ -1332,7 +1372,7 @@ def _write_data_binding(f, binding_var, binding):
         return None
 
     escaped_domain = _escape_string(domain_name)
-    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
+    f.write("domain_model_ref = domain_model\n")
     f.write(f"{binding_var}_domain = None\n")
     f.write("if domain_model_ref is not None:\n")
     f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
@@ -1397,7 +1437,7 @@ def _update_data_source_element(f, var_name, source):
     if not any([domain_name, field_names, label_name, value_name]):
         return
 
-    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
+    f.write("domain_model_ref = domain_model\n")
     f.write(f"{var_name}_domain = None\n")
     if domain_name:
         escaped_domain = _escape_string(domain_name)

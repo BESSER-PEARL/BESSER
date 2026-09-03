@@ -53,23 +53,30 @@ Visualization components including:
 MapBlock
 ^^^^^^^^
 
-Interactive map component powered by `Leaflet <https://leafletjs.com/>`_ and
-`react-leaflet <https://react-leaflet.js.org/>`_ with OpenStreetMap tiles (no API key required):
+Interactive multi-layer map powered by `Leaflet <https://leafletjs.com/>`_ and
+`react-leaflet <https://react-leaflet.js.org/>`_ with OpenStreetMap tiles (no API
+key required).  Each ``MapLayer`` on the metamodel ``Map`` component produces one
+rendered layer in the generated output.  Supported layer types:
 
-- Renders an ``<MapContainer>`` with a ``<TileLayer>`` for OpenStreetMap tiles.
-- Fetches rows from the auto-generated REST endpoint (``GET /<class>/``) when a
-  ``DataBinding`` is set on the ``Map`` metamodel component.
-- Renders a ``<Marker>/<Popup>`` for every row using the configured
-  ``latitude_field``, ``longitude_field``, and ``marker_label_field``.
-- Falls back to a static centre marker when no data binding is present.
-- Fully responsive — fills its container's width at a configurable height.
+- **points** — ``<Marker>`` + ``<Popup>`` per row (lat/lng columns required).
+- **geojson** — react-leaflet ``<GeoJSON>`` (geometry column required).
+- **choropleth** — ``<GeoJSON>`` with a value-driven fill colour + auto legend
+  (geometry + value columns required; degrades to plain GeoJSON with a console
+  warning when the value column is absent).
+- **heatmap** — ``leaflet.heat`` heat layer via ``useMap()`` (lat/lng columns
+  required; weight column optional).
+
+The generated ``MapBlock.tsx`` loops over the ``layers`` prop and dispatches to the
+correct per-type renderer.  Each renderer is preceded by a section-comment banner
+(``// ===== POINTS LAYER =====``, etc.) and extension blocks are left as commented
+examples, so the output is self-documenting.  See :ref:`maps` for the full guide.
 
 The following npm packages are automatically added to the generated ``package.json``
 when the GUI model contains at least one ``Map`` component:
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 20 45
+   :widths: 30 18 52
 
    * - Package
      - Version
@@ -80,9 +87,15 @@ when the GUI model contains at least one ``Map`` component:
    * - ``react-leaflet``
      - ``^5.0.0``
      - React bindings for Leaflet (React 19 compatible).
+   * - ``leaflet.heat``
+     - ``^0.2.0``
+     - Heat-map plugin (used when any layer is ``heatmap`` type).
    * - ``@types/leaflet``
      - ``^1.9.12``
      - TypeScript type definitions for Leaflet.
+   * - ``@types/leaflet.heat``
+     - ``^0.2.4``
+     - TypeScript type definitions for leaflet.heat.
 
 Usage
 -----

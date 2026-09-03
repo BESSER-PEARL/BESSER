@@ -116,9 +116,9 @@ For data visualization and dashboard-style interfaces, the metamodel includes:
   - ``FieldColumn``: A column bound to a specific class attribute.
   - ``LookupColumn``: A column that resolves values through an association.
 
-- **Map**: An interactive map component backed by `OpenStreetMap <https://www.openstreetmap.org/>`_
-  via the Leaflet library. Supports a static center view or **data-bound markers** fetched at runtime
-  from a domain class — see `Map Component`_ below.
+- **Map**: An interactive multi-layer map backed by `OpenStreetMap <https://www.openstreetmap.org/>`_
+  via the Leaflet library. Supports static and data-bound layers of types: ``points``,
+  ``geojson``, ``choropleth``, ``heatmap`` — see `Map Component`_ below and :ref:`maps`.
 
 - **AgentComponent**: A component that integrates a BESSER Agent Framework (BAF) agent
   into the user interface, enabling conversational or AI-driven interactions.
@@ -126,14 +126,16 @@ For data visualization and dashboard-style interfaces, the metamodel includes:
 Map Component
 -------------
 
-``Map`` is a ``ViewComponent`` that renders an interactive OpenStreetMap tile layer.
-It requires no API key.
+``Map`` is a ``ViewComponent`` that renders an interactive OpenStreetMap tile layer
+with one or more **typed data layers** stacked on top.  It requires no API key.
+See :ref:`maps` for full documentation including the column contract table,
+auto-detection rules, and the generated-code guide.
 
-**Constructor parameters**
+**Map constructor parameters**
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 12 63
+   :widths: 22 12 66
 
    * - Parameter
      - Default
@@ -153,23 +155,66 @@ It requires no API key.
    * - ``zoom``
      - ``10``
      - Initial zoom level (1 = world, 18 = street).
-   * - ``latitude_field``
-     - ``None``
-     - A ``Property`` on the bound class whose value is the marker latitude.
-   * - ``longitude_field``
-     - ``None``
-     - A ``Property`` on the bound class whose value is the marker longitude.
-   * - ``marker_label_field``
-     - ``None``
-     - A ``Property`` on the bound class whose value is shown in the marker popup.
-   * - ``data_binding``
-     - ``None``
-     - A ``DataBinding`` instance linking the map to a domain ``Class``.
+   * - ``layers``
+     - ``[]``
+     - List of ``MapLayer`` instances to render on this map.
 
 ``WorldMap`` and ``LocationMap`` are thin subclasses of ``Map`` that forward all
 keyword arguments unchanged.
 
-**Python code example**
+**MapLayerType**
+
+.. code-block:: python
+
+   from besser.BUML.metamodel.gui.dashboard import MapLayerType
+
+   MapLayerType.points     # lat/lng markers
+   MapLayerType.geojson    # GeoJSON polygons or lines
+   MapLayerType.choropleth # value-coloured GeoJSON + auto legend
+   MapLayerType.heatmap    # density heat layer
+
+When ``layer_type`` is ``None``, ``effective_layer_type()`` infers the type from the
+configured field references and, as a final fallback, from the bound class's attribute
+names and types. See :ref:`maps` for the full auto-detection rules.
+
+**MapLayer constructor parameters**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 12 66
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``name``
+     - (required)
+     - Unique layer name.
+   * - ``layer_type``
+     - ``None``
+     - ``MapLayerType`` value; ``None`` → auto-detect.
+   * - ``data_binding``
+     - ``None``
+     - ``DataBinding`` linking this layer to a domain ``Class``.
+   * - ``latitude_field``
+     - ``None``
+     - ``Property`` for row latitude (``points`` / ``heatmap``).
+   * - ``longitude_field``
+     - ``None``
+     - ``Property`` for row longitude (``points`` / ``heatmap``).
+   * - ``label_field``
+     - ``None``
+     - ``Property`` shown in the popup (all types, optional).
+   * - ``weight_field``
+     - ``None``
+     - ``Property`` used as heat intensity (``heatmap``, optional).
+   * - ``geojson_field``
+     - ``None``
+     - ``Property`` containing a GeoJSON string (``geojson`` / ``choropleth``).
+   * - ``value_field``
+     - ``None``
+     - ``Property`` used to colour regions (``choropleth``).
+
+**Python code example — multi-layer map**
 
 .. code-block:: python
 
@@ -177,34 +222,51 @@ keyword arguments unchanged.
         Class, Property, DomainModel, FloatType, StringType,
     )
     from besser.BUML.metamodel.gui import GUIModel, Module, Screen, DataBinding
-    from besser.BUML.metamodel.gui.dashboard import Map
+    from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType
 
-    # Domain model: a Location class with geo attributes
-    latitude = Property(name="latitude", type=FloatType)
-    longitude = Property(name="longitude", type=FloatType)
-    store_name = Property(name="store_name", type=StringType)
-    location = Class(name="Location", attributes={latitude, longitude, store_name})
-    domain = DomainModel(name="StoreLocator", types={location})
+    # Domain model
+    lat        = Property(name="latitude",   type=FloatType)
+    lng        = Property(name="longitude",  type=FloatType)
+    store_name = Property(name="name",       type=StringType)
+    store = Class(name="Store", attributes={lat, lng, store_name})
 
-    # GUI model: a screen with a data-bound map
-    binding = DataBinding(name="location_binding", domain_concept=location)
-    store_map = Map(
-        name="StoreMap",
-        title="Store Locations",
-        center_latitude=48.8566,
-        center_longitude=2.3522,
-        zoom=12,
-        latitude_field=latitude,
-        longitude_field=longitude,
-        marker_label_field=store_name,
-        data_binding=binding,
+    geometry   = Property(name="geometry",   type=StringType)
+    population = Property(name="population", type=FloatType)
+    canton = Class(name="Canton", attributes={geometry, population})
+
+    domain = DomainModel(name="LuxMap", types={store, canton})
+
+    # Layers
+    store_layer = MapLayer(
+        name="stores",
+        layer_type=MapLayerType.points,
+        data_binding=DataBinding(name="store_binding", domain_concept=store),
+        latitude_field=lat,
+        longitude_field=lng,
+        label_field=store_name,
     )
-    screen = Screen(name="MapScreen", description="", view_elements={store_map},
+    canton_layer = MapLayer(
+        name="cantons",
+        layer_type=MapLayerType.choropleth,
+        data_binding=DataBinding(name="canton_binding", domain_concept=canton),
+        geojson_field=geometry,
+        value_field=population,
+    )
+
+    # Map
+    lux_map = Map(
+        name="LuxMap",
+        title="Luxembourg — Stores & Cantons",
+        center_latitude=49.8153,
+        center_longitude=6.1296,
+        zoom=9,
+        layers=[store_layer, canton_layer],
+    )
+    screen = Screen(name="MapScreen", description="", view_elements={lux_map},
                     is_main_page=True)
     module = Module(name="AppModule", screens={screen})
-    gui = GUIModel(name="StoreLocatorApp", package="com.example.locator",
-                   versionCode="1", versionName="1.0", modules={module},
-                   description="Store locator map app")
+    gui = GUIModel(name="LuxApp", package="com.example.lux",
+                   versionCode="1", versionName="1.0", modules={module})
 
 Layout and Styling
 ------------------

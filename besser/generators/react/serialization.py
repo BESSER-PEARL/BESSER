@@ -27,6 +27,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     ExpressionColumn,
     LineChart,
     Map,
+    MapLayer,
     MetricCard,
     PieChart,
     RadarChart,
@@ -666,11 +667,42 @@ class GuiSerializationMixin:
                     "centerLatitude": element.center_latitude,
                     "centerLongitude": element.center_longitude,
                     "zoom": element.zoom,
-                    "latitudeField": getattr(element.latitude_field, "name", None),
-                    "longitudeField": getattr(element.longitude_field, "name", None),
-                    "markerLabelField": getattr(element.marker_label_field, "name", None),
                 }
             )
+            # Serialize each MapLayer with its own data binding and field references
+            serialized_layers = []
+            for layer in getattr(element, "layers", None) or []:
+                lt = layer.effective_layer_type()
+                serialized_layers.append(
+                    self._clean_dict(
+                        {
+                            "name": layer.name,
+                            "type": lt.value,
+                            "dataBinding": self._serialize_data_binding(
+                                getattr(layer, "data_binding", None)
+                            ),
+                            "latitudeField": getattr(
+                                getattr(layer, "latitude_field", None), "name", None
+                            ),
+                            "longitudeField": getattr(
+                                getattr(layer, "longitude_field", None), "name", None
+                            ),
+                            "labelField": getattr(
+                                getattr(layer, "label_field", None), "name", None
+                            ),
+                            "weightField": getattr(
+                                getattr(layer, "weight_field", None), "name", None
+                            ),
+                            "geojsonField": getattr(
+                                getattr(layer, "geojson_field", None), "name", None
+                            ),
+                            "valueField": getattr(
+                                getattr(layer, "value_field", None), "name", None
+                            ),
+                        }
+                    )
+                )
+            node["layers"] = serialized_layers
 
         if isinstance(element, AgentComponent):
             node["agent-name"] = element.agent_name or ""

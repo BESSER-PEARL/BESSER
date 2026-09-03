@@ -6,7 +6,7 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation, Multiplicity
 )
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text, DataBinding
-from besser.BUML.metamodel.gui.dashboard import Map
+from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType
 from besser.generators.react import ReactGenerator
 
 
@@ -136,19 +136,23 @@ def map_domain_model():
 
 @pytest.fixture
 def map_gui_model(map_domain_model):
-    """GUI model containing a bound Map component."""
+    """GUI model containing a Map component with a points layer."""
     _, location_cls, lat_p, lng_p, name_p = map_domain_model
-    binding = DataBinding(name="loc_binding", domain_concept=location_cls)
+    layer = MapLayer(
+        name="stores",
+        layer_type=MapLayerType.points,
+        data_binding=DataBinding(name="loc_binding", domain_concept=location_cls),
+        latitude_field=lat_p,
+        longitude_field=lng_p,
+        label_field=name_p,
+    )
     map_comp = Map(
         name="StoreMap",
         title="Store Locations",
         center_latitude=51.5,
         center_longitude=-0.09,
         zoom=12,
-        latitude_field=lat_p,
-        longitude_field=lng_p,
-        marker_label_field=name_p,
-        data_binding=binding,
+        layers=[layer],
     )
     screen = Screen(
         name="MapPage",
@@ -232,3 +236,4 @@ def test_react_map_leaflet_in_package_json(map_domain_model, map_gui_model, tmpd
     deps = pkg.get("dependencies", {})
     assert "leaflet" in deps, "leaflet must be in package.json dependencies"
     assert "react-leaflet" in deps, "react-leaflet must be in package.json dependencies"
+    assert "leaflet.heat" in deps, "leaflet.heat must be in package.json dependencies"

@@ -13,7 +13,8 @@ from besser.BUML.metamodel.gui import (
     Color, Position, Size, Styling, MetricCard
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn, Map
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn,
+    Map, MapLayer, MapLayerType,
 )
 from besser.BUML.metamodel.gui.dashboard import Series
 from .styling import ensure_styling_parts
@@ -869,16 +870,79 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     return metric_card
 
 
-def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
+def _parse_map_layer(layer_entry: Dict[str, Any], class_model, domain_model) -> MapLayer:
+    """Parse a single layer dict (from the editor's layer-manager trait) into a MapLayer.
+
+    Args:
+        layer_entry: Dict with keys ``name``, ``type``, ``dataSource``,
+            ``latitudeField``, ``longitudeField``, ``labelField``,
+            ``weightField``, ``geojsonField``, ``valueField``.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer` instance.
     """
-    Parse a map component from GrapesJS JSON into a BUML Map instance.
+    layer_name = sanitize_name(layer_entry.get("name", "layer")) or "layer"
+
+    # --- layer type ---
+    _type_map = {t.value: t for t in MapLayerType}
+    raw_type = layer_entry.get("type", "")
+    layer_type = _type_map.get(raw_type)  # None → auto-detect via effective_layer_type()
+
+    # --- resolve domain class from dataSource (UUID from editor, or name from BUML→JSON) ---
+    data_source_el = get_element_by_id(class_model, layer_entry.get("dataSource", ""))
+    if data_source_el:
+        data_source_name = data_source_el.get("name")
+    else:
+        # Fallback: value may already be a class name (written by _apply_map_attributes)
+        data_source_name = layer_entry.get("dataSource") or None
+    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+
+    data_binding = None
+    if domain_class:
+        binding_name = sanitize_name(f"{layer_name}_binding")
+        data_binding = DataBinding(name=binding_name, domain_concept=domain_class)
+
+    # --- helper: resolve a field (UUID from editor, or name from BUML→JSON) → Property ---
+    def _resolve_field(key: str):
+        raw = layer_entry.get(key, "")
+        if not raw or domain_class is None:
+            return None
+        el = get_element_by_id(class_model, raw)
+        if el:
+            attr_name = clean_attribute_name(el.get("name", raw))
+        else:
+            # Fallback: treat the value as a field name directly
+            attr_name = clean_attribute_name(raw)
+        return next(
+            (a for a in domain_class.attributes if clean_attribute_name(a.name) == attr_name),
+            None,
+        )
+
+    return MapLayer(
+        name=layer_name,
+        layer_type=layer_type,
+        latitude_field=_resolve_field("latitudeField"),
+        longitude_field=_resolve_field("longitudeField"),
+        label_field=_resolve_field("labelField"),
+        weight_field=_resolve_field("weightField"),
+        geojson_field=_resolve_field("geojsonField"),
+        value_field=_resolve_field("valueField"),
+        data_binding=data_binding,
+    )
+
+
+def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
+    """Parse a map component from GrapesJS JSON into a BUML Map instance.
 
     Reads static positioning attributes (``map-title``, ``map-latitude``,
     ``map-longitude``, ``map-zoom``) from the component's ``attributes`` dict.
-    If a ``data-source`` is bound, uses :func:`_parse_chart_data_binding` to
-    resolve the domain class; then resolves ``latitude-field``,
-    ``longitude-field``, and ``marker-label-field`` attribute IDs to
-    :class:`~besser.BUML.metamodel.structural.Property` objects on that class.
+    Parses the ``map-layers`` JSON string (emitted by the editor's layer-manager
+    trait) into a list of :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer`
+    objects — one per element in the array. Each layer resolves its own domain
+    class, :class:`~besser.BUML.metamodel.gui.binding.DataBinding`, and field
+    :class:`~besser.BUML.metamodel.structural.Property` references.
 
     Args:
         view_comp: Component dictionary from GrapesJS JSON.
@@ -905,39 +969,20 @@ def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
     except (TypeError, ValueError):
         zoom = 10
 
-    # --- data binding (reuse the chart binding helper) ---
-    domain_class, _, _, _, _ = _parse_chart_data_binding(attrs, class_model, domain_model)
-
-    data_binding = None
-    latitude_field = None
-    longitude_field = None
-    marker_label_field = None
-
-    if domain_class:
-        binding_name = sanitize_name(f"{title}_binding")
-        data_binding = DataBinding(
-            name=binding_name,
-            domain_concept=domain_class,
-        )
-
-        # --- resolve geo field references ---
-        def _resolve_attr(attr_key: str):
-            """Return a Property object for the given attribute-ID key, or None."""
-            raw = attrs.get(attr_key)
-            if not raw:
-                return None
-            el = get_element_by_id(class_model, raw)
-            if not el:
-                return None
-            attr_name = clean_attribute_name(el.get("name", raw))
-            return next(
-                (a for a in domain_class.attributes if clean_attribute_name(a.name) == attr_name),
-                None,
-            )
-
-        latitude_field = _resolve_attr("latitude-field")
-        longitude_field = _resolve_attr("longitude-field")
-        marker_label_field = _resolve_attr("marker-label-field")
+    # --- layers (emitted as a JSON string by the layer-manager trait) ---
+    layers: List[MapLayer] = []
+    raw_layers = attrs.get("map-layers")
+    if raw_layers:
+        try:
+            layer_entries = json.loads(raw_layers) if isinstance(raw_layers, str) else raw_layers
+            if isinstance(layer_entries, list):
+                for entry in layer_entries:
+                    try:
+                        layers.append(_parse_map_layer(entry, class_model, domain_model))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Skipping malformed map layer entry %r: %s", entry, exc)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Could not parse map-layers JSON: %s", exc)
 
     # --- build the Map ---
     map_name = sanitize_name(title) or "Map"
@@ -947,10 +992,7 @@ def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
         center_latitude=center_latitude,
         center_longitude=center_longitude,
         zoom=zoom,
-        latitude_field=latitude_field,
-        longitude_field=longitude_field,
-        marker_label_field=marker_label_field,
-        data_binding=data_binding,
+        layers=layers,
     )
 
     _attach_chart_metadata(map_component, view_comp)

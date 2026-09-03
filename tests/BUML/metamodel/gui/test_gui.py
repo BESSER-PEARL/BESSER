@@ -2,7 +2,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import *
 from besser.BUML.metamodel.gui import *
-from besser.BUML.metamodel.gui.dashboard import Map, WorldMap, LocationMap
+from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, WorldMap, LocationMap
 
 
 def test_named_element():
@@ -139,7 +139,7 @@ def test_associations():
 # ---------------------------------------------------------------------------
 
 def test_map_basic_construction():
-    """Map can be constructed with center/zoom and retains values."""
+    """Map can be constructed with center/zoom; layers defaults to empty list."""
     m = Map(name="StoreMap", title="Store Locations", center_latitude=48.8566,
             center_longitude=2.3522, zoom=13)
     assert m.name == "StoreMap"
@@ -147,56 +147,55 @@ def test_map_basic_construction():
     assert m.center_latitude == 48.8566
     assert m.center_longitude == 2.3522
     assert m.zoom == 13
-    assert m.latitude_field is None
-    assert m.longitude_field is None
-    assert m.marker_label_field is None
-    assert m.data_binding is None
+    assert m.layers == []  # new API: Map holds a list of MapLayer objects
 
 
 def test_map_with_data_binding_and_geo_fields():
-    """Map accepts DataBinding + Property references for geo fields."""
+    """Map accepts a list of MapLayer objects with DataBinding + Property field refs."""
     lat_prop = Property(name="latitude", type=FloatType)
     lng_prop = Property(name="longitude", type=FloatType)
     label_prop = Property(name="store_name", type=StringType)
     location_class = Class(name="Location", attributes={lat_prop, lng_prop, label_prop})
 
     binding = DataBinding(name="location_binding", domain_concept=location_class)
-    m = Map(
-        name="LocationMap",
-        center_latitude=0.0,
-        center_longitude=0.0,
-        zoom=5,
+    layer = MapLayer(
+        name="stores",
+        layer_type=MapLayerType.points,
+        data_binding=binding,
         latitude_field=lat_prop,
         longitude_field=lng_prop,
-        marker_label_field=label_prop,
-        data_binding=binding,
+        label_field=label_prop,
     )
-    assert m.latitude_field is lat_prop
-    assert m.longitude_field is lng_prop
-    assert m.marker_label_field is label_prop
-    assert m.data_binding is binding
-    assert m.data_binding.domain_concept is location_class
+    m = Map(name="LocationMap", center_latitude=0.0, center_longitude=0.0,
+            zoom=5, layers=[layer])
+    assert len(m.layers) == 1
+    lyr = m.layers[0]
+    assert lyr.latitude_field is lat_prop
+    assert lyr.longitude_field is lng_prop
+    assert lyr.label_field is label_prop
+    assert lyr.data_binding is binding
+    assert lyr.data_binding.domain_concept is location_class
 
 
 def test_map_geo_field_type_validation():
-    """Setting a non-Property on latitude_field raises TypeError."""
-    m = Map(name="TestMap")
+    """MapLayer field setters raise TypeError for non-Property values."""
+    layer = MapLayer(name="TestLayer")
     with pytest.raises(TypeError):
-        m.latitude_field = "not_a_property"
+        layer.latitude_field = "not_a_property"
 
 
 def test_map_geo_longitude_type_validation():
-    """Setting a non-Property on longitude_field raises TypeError."""
-    m = Map(name="TestMap")
+    """MapLayer.longitude_field setter raises TypeError for non-Property values."""
+    layer = MapLayer(name="TestLayer")
     with pytest.raises(TypeError):
-        m.longitude_field = 42
+        layer.longitude_field = 42
 
 
 def test_map_geo_label_field_type_validation():
-    """Setting a non-Property on marker_label_field raises TypeError."""
-    m = Map(name="TestMap")
+    """MapLayer.label_field setter raises TypeError for non-Property values."""
+    layer = MapLayer(name="TestLayer")
     with pytest.raises(TypeError):
-        m.marker_label_field = object()
+        layer.label_field = object()
 
 
 def test_world_map_inherits_map():

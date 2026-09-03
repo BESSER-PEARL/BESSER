@@ -3,6 +3,7 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
+import json
 import logging
 import re
 import uuid
@@ -41,6 +42,8 @@ from besser.BUML.metamodel.gui.dashboard import (
     ExpressionColumn,
     LineChart,
     Map,
+    MapLayer,
+    MapLayerType,
     WorldMap,
     LocationMap,
     MetricCard,
@@ -124,6 +127,10 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
             "bool": bool,
             "len": len,
             "range": range,
+            "next": next,
+            "hasattr": hasattr,
+            "getattr": getattr,
+            "isinstance": isinstance,
             "True": True,
             "False": False,
             "None": None,
@@ -158,6 +165,8 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "Table": Table,
         "MetricCard": MetricCard,
         "Map": Map,
+        "MapLayer": MapLayer,
+        "MapLayerType": MapLayerType,
         "WorldMap": WorldMap,
         "LocationMap": LocationMap,
         "AgentComponent": AgentComponent,
@@ -543,28 +552,46 @@ def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> No
 def _apply_map_attributes(map_comp: Map, attrs: Dict[str, Any]) -> None:
     """Expose Map traits for the GrapesJS round-trip.
 
-    Emits the same attribute keys that ``parse_map`` reads back
-    (``map-title``, ``map-latitude``, ``map-longitude``, ``map-zoom``,
-    ``data-source``, ``latitude-field``, ``longitude-field``,
-    ``marker-label-field``).
+    Emits ``map-title``, ``map-latitude``, ``map-longitude``, ``map-zoom``, and
+    ``map-layers`` (a JSON string).  The ``map-layers`` array uses class and field
+    **names** rather than UUIDs so that the value survives the BUML→JSON→BUML
+    round-trip even when GrapesJS element IDs are unavailable (e.g. when the map
+    was created programmatically rather than via the editor).  The JSON→BUML parser
+    accepts both names and UUIDs.
     """
-    _apply_chart_data_binding_attributes(map_comp, attrs)
     attrs.setdefault("map-title", getattr(map_comp, "title", None) or map_comp.name)
     attrs.setdefault("map-latitude", getattr(map_comp, "center_latitude", 0.0))
     attrs.setdefault("map-longitude", getattr(map_comp, "center_longitude", 0.0))
     attrs.setdefault("map-zoom", getattr(map_comp, "zoom", 10))
 
-    lat_field = getattr(map_comp, "latitude_field", None)
-    if lat_field:
-        attrs.setdefault("latitude-field", getattr(lat_field, "name", None) or str(lat_field))
+    layers = getattr(map_comp, "layers", None) or []
+    layer_entries = []
+    for layer in layers:
+        binding = getattr(layer, "data_binding", None)
+        domain = getattr(binding, "domain_concept", None)
+        domain_name = getattr(domain, "name", None) or ""
 
-    lng_field = getattr(map_comp, "longitude_field", None)
-    if lng_field:
-        attrs.setdefault("longitude-field", getattr(lng_field, "name", None) or str(lng_field))
+        def _field_name(attr):
+            return getattr(attr, "name", None) or ""
 
-    label_field = getattr(map_comp, "marker_label_field", None)
-    if label_field:
-        attrs.setdefault("marker-label-field", getattr(label_field, "name", None) or str(label_field))
+        layer_entries.append({
+            "name": getattr(layer, "name", "layer"),
+            "type": (
+                layer.layer_type.value
+                if getattr(layer, "layer_type", None) is not None
+                else ""
+            ),
+            "dataSource": domain_name,
+            "latitudeField": _field_name(getattr(layer, "latitude_field", None)),
+            "longitudeField": _field_name(getattr(layer, "longitude_field", None)),
+            "labelField": _field_name(getattr(layer, "label_field", None)),
+            "weightField": _field_name(getattr(layer, "weight_field", None)),
+            "geojsonField": _field_name(getattr(layer, "geojson_field", None)),
+            "valueField": _field_name(getattr(layer, "value_field", None)),
+        })
+
+    if layer_entries:
+        attrs.setdefault("map-layers", json.dumps(layer_entries))
 
 
 def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:

@@ -316,3 +316,93 @@ def test_Operations_many_to_many():
     #os.remove(output_file)
     shutil.rmtree("output")
 
+
+
+# ---------------------------------------------------------------------------
+# Map component Flutter generator tests
+# ---------------------------------------------------------------------------
+
+def test_flutter_map_main_dart_contains_flutter_map(tmp_path):
+    """FlutterMainDartGenerator emits FlutterMap widget for a Map on the main screen."""
+    from besser.BUML.metamodel.gui.dashboard import Map
+    from besser.BUML.metamodel.structural import FloatType, StringType
+
+    lat_prop = Property(name="latitude", type=FloatType)
+    lng_prop = Property(name="longitude", type=FloatType)
+    name_prop = Property(name="store_name", type=StringType)
+    location_cls = Class(name="Location", attributes={lat_prop, lng_prop, name_prop})
+    domain_model = DomainModel(name="MapDomain", types={location_cls})
+
+    map_comp = Map(name="StoreMap", title="Store Locations",
+                   center_latitude=51.5, center_longitude=-0.09, zoom=12)
+
+    # The main page template renders Map with a full FlutterMap widget.
+    # Put the Map component ON the main screen so it appears in the body.
+    main_screen = Screen(
+        name="MainMapScreen",
+        description="Main screen with map",
+        x_dpi="x_dpi",
+        y_dpi="y_dpi",
+        screen_size="Medium",
+        view_elements={map_comp},
+    )
+    module = Module(name="AppModule", screens={main_screen})
+    gui = GUIModel(
+        name="mapapp",
+        package="com.example.mapapp",
+        versionCode="1",
+        versionName="1.0",
+        description="Map Flutter app",
+        screenCompatibility=True,
+        modules={module},
+    )
+
+    gen = FlutterMainDartGenerator(model=domain_model, gui_model=gui,
+                                    main_page=main_screen, module=module,
+                                    output_dir=str(tmp_path))
+    gen.generate()
+
+    output_file = tmp_path / "main.dart"
+    assert output_file.exists(), "main.dart should be generated"
+    content = output_file.read_text(encoding="utf-8")
+
+    assert "FlutterMap" in content, "main.dart should contain FlutterMap widget"
+    assert "TileLayer" in content, "main.dart should contain TileLayer for OSM tiles"
+    assert "flutter_map" in content, "import for flutter_map should be present"
+
+
+def test_flutter_map_pubspec_contains_flutter_map_dep(tmp_path):
+    """FlutterPubspecGenerator includes flutter_map and latlong2 dependencies."""
+    import shutil, os
+    from besser.BUML.metamodel.gui.dashboard import Map
+
+    map_comp = Map(name="PubspecMap", center_latitude=0.0, center_longitude=0.0, zoom=5)
+    screen = Screen(name="S", description="", x_dpi="", y_dpi="",
+                    screen_size="Medium", view_elements={map_comp})
+    module = Module(name="M", screens={screen})
+    gui = GUIModel(
+        name="pubspecapp",
+        package="com.example",
+        versionCode="1",
+        versionName="1.0",
+        description="",
+        screenCompatibility=True,
+        modules={module},
+    )
+
+    from besser.generators.flutter import FlutterPubspecGenerator
+    # FlutterPubspecGenerator has a pre-existing bug: it passes output_dir as the
+    # model arg to super().__init__, so output_dir is always None and files are
+    # written to <cwd>/output/. We work around it here.
+    gen = FlutterPubspecGenerator(gui_model=gui)
+    gen.generate()
+
+    pubspec_path = os.path.join(os.path.abspath(''), 'output', 'pubspec.yaml')
+    try:
+        assert os.path.exists(pubspec_path), "pubspec.yaml should be generated"
+        with open(pubspec_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        assert "flutter_map" in content, "pubspec.yaml should list flutter_map dependency"
+        assert "latlong2" in content, "pubspec.yaml should list latlong2 dependency"
+    finally:
+        shutil.rmtree(os.path.join(os.path.abspath(''), 'output'), ignore_errors=True)

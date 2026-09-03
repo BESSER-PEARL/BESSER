@@ -3,6 +3,7 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
+import json
 import logging
 import re
 import uuid
@@ -40,6 +41,11 @@ from besser.BUML.metamodel.gui.dashboard import (
     LookupColumn,
     ExpressionColumn,
     LineChart,
+    Map,
+    MapLayer,
+    MapLayerType,
+    WorldMap,
+    LocationMap,
     MetricCard,
     PieChart,
     RadarChart,
@@ -121,6 +127,10 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
             "bool": bool,
             "len": len,
             "range": range,
+            "next": next,
+            "hasattr": hasattr,
+            "getattr": getattr,
+            "isinstance": isinstance,
             "True": True,
             "False": False,
             "None": None,
@@ -154,6 +164,11 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "RadialBarChart": RadialBarChart,
         "Table": Table,
         "MetricCard": MetricCard,
+        "Map": Map,
+        "MapLayer": MapLayer,
+        "MapLayerType": MapLayerType,
+        "WorldMap": WorldMap,
+        "LocationMap": LocationMap,
         "AgentComponent": AgentComponent,
         "Transition": Transition,
         "Create": Create,
@@ -351,6 +366,8 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
         _apply_table_attributes(element, attrs)
     elif isinstance(element, MetricCard):
         _apply_metric_card_attributes(element, attrs)
+    elif isinstance(element, Map):
+        _apply_map_attributes(element, attrs)
     elif isinstance(element, AgentComponent):
         _apply_agent_component_attributes(element, attrs)
     elif isinstance(element, Alert):
@@ -532,6 +549,51 @@ def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> No
     attrs.setdefault("show-trend", getattr(card, "show_trend", True))
     attrs.setdefault("positive-color", getattr(card, "positive_color", "#27ae60"))
     attrs.setdefault("negative-color", getattr(card, "negative_color", "#e74c3c"))
+def _apply_map_attributes(map_comp: Map, attrs: Dict[str, Any]) -> None:
+    """Expose Map traits for the GrapesJS round-trip.
+
+    Emits ``map-title``, ``map-latitude``, ``map-longitude``, ``map-zoom``, and
+    ``map-layers`` (a JSON string).  The ``map-layers`` array uses class and field
+    **names** rather than UUIDs so that the value survives the BUML→JSON→BUML
+    round-trip even when GrapesJS element IDs are unavailable (e.g. when the map
+    was created programmatically rather than via the editor).  The JSON→BUML parser
+    accepts both names and UUIDs.
+    """
+    attrs.setdefault("map-title", getattr(map_comp, "title", None) or map_comp.name)
+    attrs.setdefault("map-latitude", getattr(map_comp, "center_latitude", 0.0))
+    attrs.setdefault("map-longitude", getattr(map_comp, "center_longitude", 0.0))
+    attrs.setdefault("map-zoom", getattr(map_comp, "zoom", 10))
+
+    layers = getattr(map_comp, "layers", None) or []
+    layer_entries = []
+    for layer in layers:
+        binding = getattr(layer, "data_binding", None)
+        domain = getattr(binding, "domain_concept", None)
+        domain_name = getattr(domain, "name", None) or ""
+
+        def _field_name(attr):
+            return getattr(attr, "name", None) or ""
+
+        layer_entries.append({
+            "name": getattr(layer, "name", "layer"),
+            "type": (
+                layer.layer_type.value
+                if getattr(layer, "layer_type", None) is not None
+                else ""
+            ),
+            "dataSource": domain_name,
+            "latitudeField": _field_name(getattr(layer, "latitude_field", None)),
+            "longitudeField": _field_name(getattr(layer, "longitude_field", None)),
+            "labelField": _field_name(getattr(layer, "label_field", None)),
+            "weightField": _field_name(getattr(layer, "weight_field", None)),
+            "geojsonField": _field_name(getattr(layer, "geojson_field", None)),
+            "valueField": _field_name(getattr(layer, "value_field", None)),
+        })
+
+    if layer_entries:
+        attrs.setdefault("map-layers", json.dumps(layer_entries))
+
+
 def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("agent-name", getattr(agent, "agent_name", None) or "")
     attrs.setdefault("agent-title", getattr(agent, "agent_title", None) or "BESSER Agent")
@@ -809,6 +871,7 @@ def _infer_component_type(element: ViewComponent) -> Optional[str]:
         RadialBarChart: "radial-bar-chart",
         Table: "table",
         MetricCard: "metric-card",
+        Map: "map",
         AgentComponent: "agent-component",
     }
     for cls, comp_type in mapping.items():

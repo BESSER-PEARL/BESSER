@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Optional, Sequence
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
@@ -1250,47 +1251,340 @@ class MetricCard(ViewComponent):
             f"format={self.format}, show_trend={self.show_trend})"
         )
 
-class Map(ViewComponent):
-    """Represents a map component in the dashboard.
+class MapLayerType(Enum):
+    """Supported rendering types for a :class:`MapLayer`.
 
-    Args:
-        name (str): The name of the map.
-
-    Attributes:
-        name (str): The name of the map.
+    * ``points``     — ``latitude + longitude`` → :class:`~react_leaflet.Marker` + ``Popup``
+    * ``geojson``    — ``geometry`` (GeoJSON string) → :class:`~react_leaflet.GeoJSON`
+    * ``choropleth`` — ``geometry + value`` → ``GeoJSON`` with colour-scale style function + legend
+    * ``heatmap``    — ``latitude + longitude [+ weight]`` → ``leaflet.heat`` heatmap
     """
 
-    def __init__(self, name: str, data: list):
-        super().__init__(name)
-        self.data = data
+    points = "points"
+    geojson = "geojson"
+    choropleth = "choropleth"
+    heatmap = "heatmap"
+
+
+class MapLayer(ViewComponent):
+    """Represents a single data-bound layer on a :class:`Map`.
+
+    A map may contain multiple ``MapLayer`` instances stacked on one tile base. Each layer binds
+    to its own domain ``Class`` (DB table) and declares a ``layer_type`` controlling how rows are
+    visualised. If ``layer_type`` is ``None``, :meth:`effective_layer_type` auto-detects from the
+    field configuration (priority order below).
+
+    Column contracts per ``layer_type``:
+
+    +-------------+-------------------------------------------+----------+
+    | layer_type  | Required columns                          | Optional |
+    +=============+===========================================+==========+
+    | points      | latitude:float, longitude:float           | label    |
+    +-------------+-------------------------------------------+----------+
+    | geojson     | geometry:str (GeoJSON string)             | label    |
+    +-------------+-------------------------------------------+----------+
+    | choropleth  | geometry:str, value:float                 | label    |
+    +-------------+-------------------------------------------+----------+
+    | heatmap     | latitude:float, longitude:float           | weight   |
+    +-------------+-------------------------------------------+----------+
+
+    Args:
+        name (str): The name of the layer.
+        layer_type (MapLayerType | None): Explicit layer type; auto-detected when ``None``.
+        latitude_field (Property | None): Attribute holding latitude (points / heatmap).
+        longitude_field (Property | None): Attribute holding longitude (points / heatmap).
+        label_field (Property | None): Attribute used as popup label.
+        weight_field (Property | None): Attribute holding heatmap intensity weight.
+        geojson_field (Property | None): Attribute holding a GeoJSON string (geojson / choropleth).
+        value_field (Property | None): Numeric attribute for choropleth colour scale.
+        **kwargs: Forwarded to :class:`ViewComponent` (e.g. ``data_binding``, ``styling``).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        layer_type: Optional[MapLayerType] = None,
+        latitude_field: Optional[Property] = None,
+        longitude_field: Optional[Property] = None,
+        label_field: Optional[Property] = None,
+        weight_field: Optional[Property] = None,
+        geojson_field: Optional[Property] = None,
+        value_field: Optional[Property] = None,
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+        self.layer_type = layer_type
+        self.latitude_field = latitude_field
+        self.longitude_field = longitude_field
+        self.label_field = label_field
+        self.weight_field = weight_field
+        self.geojson_field = geojson_field
+        self.value_field = value_field
+
+    # --- layer_type ---
+    @property
+    def layer_type(self) -> Optional[MapLayerType]:
+        """Optional[MapLayerType]: Explicit layer type; ``None`` triggers auto-detection."""
+        return self._layer_type
+
+    @layer_type.setter
+    def layer_type(self, value: Optional[MapLayerType]):
+        if value is not None and not isinstance(value, MapLayerType):
+            raise TypeError(f"layer_type must be a MapLayerType instance, got {type(value)}")
+        self._layer_type = value
+
+    # --- latitude_field ---
+    @property
+    def latitude_field(self) -> Optional[Property]:
+        """Optional[Property]: Attribute holding latitude values (points / heatmap)."""
+        return self._latitude_field
+
+    @latitude_field.setter
+    def latitude_field(self, value: Optional[Property]):
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"latitude_field must be a Property instance, got {type(value)}")
+        self._latitude_field = value
+
+    # --- longitude_field ---
+    @property
+    def longitude_field(self) -> Optional[Property]:
+        """Optional[Property]: Attribute holding longitude values (points / heatmap)."""
+        return self._longitude_field
+
+    @longitude_field.setter
+    def longitude_field(self, value: Optional[Property]):
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"longitude_field must be a Property instance, got {type(value)}")
+        self._longitude_field = value
+
+    # --- label_field ---
+    @property
+    def label_field(self) -> Optional[Property]:
+        """Optional[Property]: Attribute used as the marker / polygon popup label."""
+        return self._label_field
+
+    @label_field.setter
+    def label_field(self, value: Optional[Property]):
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"label_field must be a Property instance, got {type(value)}")
+        self._label_field = value
+
+    # --- weight_field ---
+    @property
+    def weight_field(self) -> Optional[Property]:
+        """Optional[Property]: Attribute holding the heatmap intensity weight (0.0–1.0)."""
+        return self._weight_field
+
+    @weight_field.setter
+    def weight_field(self, value: Optional[Property]):
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"weight_field must be a Property instance, got {type(value)}")
+        self._weight_field = value
+
+    # --- geojson_field ---
+    @property
+    def geojson_field(self) -> Optional[Property]:
+        """Optional[Property]: Attribute holding a GeoJSON string (geojson / choropleth)."""
+        return self._geojson_field
+
+    @geojson_field.setter
+    def geojson_field(self, value: Optional[Property]):
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"geojson_field must be a Property instance, got {type(value)}")
+        self._geojson_field = value
+
+    # --- value_field ---
+    @property
+    def value_field(self) -> Optional[Property]:
+        """Optional[Property]: Numeric attribute used for choropleth colour scaling."""
+        return self._value_field
+
+    @value_field.setter
+    def value_field(self, value: Optional[Property]):
+        if value is not None and not isinstance(value, Property):
+            raise TypeError(f"value_field must be a Property instance, got {type(value)}")
+        self._value_field = value
+
+    def effective_layer_type(self) -> MapLayerType:
+        """Return the effective :class:`MapLayerType`, auto-detecting from field config when unset.
+
+        Detection priority:
+        1. Explicit ``layer_type`` — returned as-is.
+        2. ``geojson_field`` **and** ``value_field`` set → ``choropleth``
+        3. ``geojson_field`` set → ``geojson``
+        4. ``weight_field`` set → ``heatmap``
+        5. ``latitude_field`` **and** ``longitude_field`` set → ``points``
+        6. Attribute-name inspection of the bound domain class:
+           - attribute ``geometry`` present → ``geojson`` (``choropleth`` if ``value`` also present)
+           - attributes ``latitude``/``lat`` **and** ``longitude``/``lng``/``lon`` + ``weight``
+             → ``heatmap``
+           - attributes ``latitude``/``lat`` **and** ``longitude``/``lng``/``lon`` → ``points``
+        7. Default: ``points``.
+        """
+        if self._layer_type is not None:
+            return self._layer_type
+
+        # Field-reference hints (explicit bindings take priority over name inspection)
+        if self._geojson_field is not None:
+            return MapLayerType.choropleth if self._value_field is not None else MapLayerType.geojson
+        if self._weight_field is not None:
+            return MapLayerType.heatmap
+        if self._latitude_field is not None and self._longitude_field is not None:
+            return MapLayerType.points
+
+        # Attribute-name inspection of the bound domain class (best-effort)
+        domain_class = getattr(getattr(self, "data_binding", None), "domain_concept", None)
+        if domain_class is not None:
+            try:
+                attr_names = {a.name.lower() for a in domain_class.attributes}
+                if "geometry" in attr_names:
+                    return MapLayerType.choropleth if "value" in attr_names else MapLayerType.geojson
+                has_lat = bool(attr_names & {"latitude", "lat"})
+                has_lng = bool(attr_names & {"longitude", "lng", "lon"})
+                if has_lat and has_lng:
+                    return MapLayerType.heatmap if "weight" in attr_names else MapLayerType.points
+            except Exception:
+                pass
+
+        return MapLayerType.points
+
+    def __repr__(self):
+        return (
+            f"MapLayer(name={self.name}, layer_type={self.layer_type}, "
+            f"data_binding={getattr(self, 'data_binding', None)})"
+        )
+
+
+class Map(ViewComponent):
+    """Represents an interactive map component that displays OpenStreetMap tiles via Leaflet.
+
+    A map contains one or more :class:`MapLayer` instances stacked on a single tile base. Each
+    layer binds to its own domain ``Class`` (DB table) and declares a ``layer_type`` controlling
+    how rows are visualised. When the map has no layers a static tile view is shown at the
+    configured centre and zoom.
+
+    Args:
+        name (str): The name of the map component.
+        title (str | None): Optional display title shown above the map.
+        center_latitude (float | None): Initial map centre latitude (default: 0.0).
+        center_longitude (float | None): Initial map centre longitude (default: 0.0).
+        zoom (int | None): Initial zoom level (default: 10).
+        layers (list[MapLayer] | None): Data layers to render; defaults to an empty list.
+        **kwargs: Forwarded to :class:`ViewComponent` (e.g. ``styling``).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        title: Optional[str] = None,
+        center_latitude: Optional[float] = None,
+        center_longitude: Optional[float] = None,
+        zoom: Optional[int] = None,
+        layers: Optional[list] = None,
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+        self.title = title
+        self.center_latitude = center_latitude
+        self.center_longitude = center_longitude
+        self.zoom = zoom
+        self.layers = layers
+
+    # --- title ---
+    @property
+    def title(self) -> Optional[str]:
+        """Optional[str]: Display title shown above the map."""
+        return self._title
+
+    @title.setter
+    def title(self, value: Optional[str]):
+        """Set the display title."""
+        self._title = value
+
+    # --- center_latitude ---
+    @property
+    def center_latitude(self) -> Optional[float]:
+        """Optional[float]: Initial map centre latitude."""
+        return self._center_latitude
+
+    @center_latitude.setter
+    def center_latitude(self, value: Optional[float]):
+        """Set the initial map centre latitude."""
+        self._center_latitude = value
+
+    # --- center_longitude ---
+    @property
+    def center_longitude(self) -> Optional[float]:
+        """Optional[float]: Initial map centre longitude."""
+        return self._center_longitude
+
+    @center_longitude.setter
+    def center_longitude(self, value: Optional[float]):
+        """Set the initial map centre longitude."""
+        self._center_longitude = value
+
+    # --- zoom ---
+    @property
+    def zoom(self) -> Optional[int]:
+        """Optional[int]: Initial zoom level."""
+        return self._zoom
+
+    @zoom.setter
+    def zoom(self, value: Optional[int]):
+        """Set the initial zoom level."""
+        self._zoom = value
+
+    # --- layers ---
+    @property
+    def layers(self) -> list:
+        """list[MapLayer]: Data layers rendered on this map (in order, bottom to top)."""
+        return self._layers
+
+    @layers.setter
+    def layers(self, value: Optional[list]):
+        """Set the layers list; each item must be a :class:`MapLayer` instance."""
+        if value is None:
+            self._layers = []
+        else:
+            for item in value:
+                if not isinstance(item, MapLayer):
+                    raise TypeError(f"Each layer must be a MapLayer instance, got {type(item)}")
+            self._layers = list(value)
+
+    def __repr__(self):
+        return (
+            f"Map(name={self.name}, title={self.title}, "
+            f"center=({self.center_latitude}, {self.center_longitude}), zoom={self.zoom}, "
+            f"layers={self.layers})"
+        )
+
 
 class WorldMap(Map):
-    """Represents a world map component in the dashboard.
+    """Represents a world-scale map component.
+
+    Thin subclass of :class:`Map` — accepts all the same keyword arguments and forwards them
+    unchanged.  Provides a semantic distinction for components that display a global map view.
 
     Args:
         name (str): The name of the world map.
-        data (list): The data to be displayed on the world map.
-
-    Attributes:
-        name (str): The name of the world map.
-        data (list): The data to be displayed on the world map.
+        **kwargs: Forwarded to :class:`Map`.
     """
 
-    def __init__(self, name: str, data: list):
-        super().__init__(name, data)
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
 
 
 class LocationMap(Map):
-    """Represents a location map component in the dashboard.
+    """Represents a location/point-of-interest map component.
+
+    Thin subclass of :class:`Map` — accepts all the same keyword arguments and forwards them
+    unchanged.  Provides a semantic distinction for components focused on one or more specific
+    locations (e.g. a store-locator or delivery-tracking view).
 
     Args:
         name (str): The name of the location map.
-        data (list): The data to be displayed on the location map.
-
-    Attributes:
-        name (str): The name of the location map.
-        data (list): The data to be displayed on the location map.
+        **kwargs: Forwarded to :class:`Map`.
     """
 
-    def __init__(self, name: str, data: list):
-        super().__init__(name, data)
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)

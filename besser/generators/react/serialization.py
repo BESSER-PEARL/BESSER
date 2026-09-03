@@ -26,6 +26,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     LookupColumn,
     ExpressionColumn,
     LineChart,
+    Map,
     MetricCard,
     PieChart,
     RadarChart,
@@ -658,6 +659,50 @@ class GuiSerializationMixin:
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
 
+        if isinstance(element, Map):
+            node["title"] = element.title or self._humanize(element.name)
+            node["map_config"] = self._clean_dict(
+                {
+                    "centerLatitude": element.center_latitude,
+                    "centerLongitude": element.center_longitude,
+                    "zoom": element.zoom,
+                }
+            )
+            # Serialize each MapLayer with its own data binding and field references
+            serialized_layers = []
+            for layer in getattr(element, "layers", None) or []:
+                lt = layer.effective_layer_type()
+                serialized_layers.append(
+                    self._clean_dict(
+                        {
+                            "name": layer.name,
+                            "type": lt.value,
+                            "dataBinding": self._serialize_data_binding(
+                                getattr(layer, "data_binding", None)
+                            ),
+                            "latitudeField": getattr(
+                                getattr(layer, "latitude_field", None), "name", None
+                            ),
+                            "longitudeField": getattr(
+                                getattr(layer, "longitude_field", None), "name", None
+                            ),
+                            "labelField": getattr(
+                                getattr(layer, "label_field", None), "name", None
+                            ),
+                            "weightField": getattr(
+                                getattr(layer, "weight_field", None), "name", None
+                            ),
+                            "geojsonField": getattr(
+                                getattr(layer, "geojson_field", None), "name", None
+                            ),
+                            "valueField": getattr(
+                                getattr(layer, "value_field", None), "name", None
+                            ),
+                        }
+                    )
+                )
+            node["layers"] = serialized_layers
+
         if isinstance(element, AgentComponent):
             node["agent-name"] = element.agent_name or ""
             node["agent-title"] = element.agent_title or "BESSER Agent"
@@ -1237,6 +1282,8 @@ class GuiSerializationMixin:
             return "table"
         if isinstance(element, MetricCard):
             return "metric-card"
+        if isinstance(element, Map):
+            return "map"
         if isinstance(element, AgentComponent):
             return "agent-component"
         if isinstance(element, Alert):
@@ -1322,6 +1369,8 @@ class GuiSerializationMixin:
                 used_types.add('Table')
             elif isinstance(element, MetricCard):
                 used_types.add('MetricCard')
+            elif isinstance(element, Map):
+                used_types.add('Map')
 
             # Recursively scan children if this is a ViewContainer
             if isinstance(element, ViewContainer):

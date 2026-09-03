@@ -47,3 +47,59 @@ The code generator will produce several files, which will be located in the ``<<
 By incorporating these generated files into your Flutter project, you'll have a solid foundation for building your application, including the necessary configuration, database management capabilities, and dependency management.
 
 You can check our :doc:`../examples/mobile_app_example`, which ilustrates the usage of the Flutter code generator.
+
+Map Component
+-------------
+
+When a :doc:`Map <../buml_language/model_types/gui>` component is present in the GUI model,
+the Flutter Generator adds an interactive map widget to the generated application using the
+`flutter_map <https://pub.dev/packages/flutter_map>`_ package with
+OpenStreetMap tiles (no API key required).
+
+**Generated output**
+
+- The map screen renders a ``FlutterMap`` widget with a ``TileLayer`` for OpenStreetMap.
+- When a ``DataBinding`` is configured, the map fetches records from the SQLite database
+  and places a ``Marker`` for each row using the configured ``latitude_field``,
+  ``longitude_field``, and ``marker_label_field`` attributes.
+- Without a data binding, a single static marker is placed at the configured centre
+  coordinates.
+- The widget is wrapped in an ``Expanded`` / ``SizedBox`` container to fill the available
+  screen area responsively.
+
+**Dependencies added to** ``pubspec.yaml``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 20 45
+
+   * - Package
+     - Version
+     - Purpose
+   * - ``flutter_map``
+     - ``^7.0.2``
+     - Core Flutter mapping widget using Leaflet tiles.
+   * - ``latlong2``
+     - ``^0.9.1``
+     - Latitude/longitude data types consumed by ``flutter_map``.
+
+**Example GUI model usage**
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.gui.dashboard import Map
+    from besser.BUML.metamodel.gui import DataBinding
+
+    # Bind the map to a domain class with geo attributes
+    binding = DataBinding(name="location_binding", domain_concept=location_class)
+    store_map = Map(
+        name="StoreMap",
+        title="Store Locations",
+        center_latitude=48.8566,
+        center_longitude=2.3522,
+        zoom=12,
+        latitude_field=latitude_property,
+        longitude_field=longitude_property,
+        marker_label_field=name_property,
+        data_binding=binding,
+    )

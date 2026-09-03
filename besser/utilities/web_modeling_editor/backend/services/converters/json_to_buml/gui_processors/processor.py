@@ -29,6 +29,7 @@ from .chart_parsers import (
     parse_agent_component,
     parse_bar_chart,
     parse_line_chart,
+    parse_map,
     parse_metric_card,
     parse_pie_chart,
     parse_radar_chart,
@@ -424,8 +425,17 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             attach_meta(link, meta)
             return link
 
+        # === MAP PARSER ===
+        if comp_type == "map":
+            name = get_unique_name(component, "Map")
+            map_component = parse_map(component, class_model, domain_model)
+            map_component.name = name
+            map_component.styling = styling
+            attach_meta(map_component, meta)
+            return map_component
+
         # === EMBEDDED CONTENT PARSER ===
-        if comp_type == "map" or tag == "iframe":
+        if tag == "iframe":
             name = get_unique_name(component, "EmbeddedContent")
             embedded = parse_embedded_content(component, styling, name, meta)
             attach_meta(embedded, meta)

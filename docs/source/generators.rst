@@ -121,6 +121,7 @@ Generate complete web applications with frontend, backend, and database:
    :maxdepth: 2
 
    generators/full_web_app
+   generators/maps
 
 Frameworks & Languages
 ----------------------

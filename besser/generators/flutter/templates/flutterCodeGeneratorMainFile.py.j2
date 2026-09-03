@@ -17,6 +17,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:multiselect/multiselect.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'sql_helper.dart';
 
 
@@ -76,6 +80,27 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
             const SizedBox(height: 16),
                 {%- endif %}
+              {%- endif %}
+              {%- if component is is_Map %}
+            SizedBox(
+              height: 350,
+              child: FlutterMap(
+                options: MapOptions(
+                  initialCenter: LatLng(
+                    {{component.center_latitude if component.center_latitude is not none else 0.0}},
+                    {{component.center_longitude if component.center_longitude is not none else 0.0}},
+                  ),
+                  initialZoom: {{component.zoom if component.zoom is not none else 10}}.0,
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: '{{app.name|lower|replace(' ', '_')}}',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
               {%- endif %}
             {%- endfor %}
           ],
@@ -1393,6 +1418,10 @@ class _{{screen.name}}State extends State<{{screen.name}}> {
           onPressed: () => _showForm(null),
         ),
           {%- endif%}
+        {%- endif%}
+        {%- if component is is_Map %}
+        // Map widget for {{component.name}}
+        // Note: FlutterMap is rendered inline; nest inside Scaffold body for full layout.
         {%- endif%}
       {%- endfor%}
     );

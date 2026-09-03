@@ -1,6 +1,7 @@
 import logging
 import os
 from besser.BUML.metamodel.gui import *
+from besser.BUML.metamodel.gui.dashboard import Map
 from besser.BUML.metamodel.structural import *
 from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
@@ -143,6 +144,11 @@ class FlutterMainDartGenerator(GeneratorInterface):
         """Check if the given value is an instance of DataSourceElement class."""
         return isinstance(value, DataSourceElement)
 
+    @staticmethod
+    def is_Map(value):
+        """Check if the given value is an instance of Map (or subclass) class."""
+        return isinstance(value, Map)
+
     def generate(self):
 
         """
@@ -162,6 +168,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
         env.tests['is_Button'] = self.is_Button
         env.tests['is_List'] = self.is_List
         env.tests['is_ModelElement'] = self.is_ModelElement
+        env.tests['is_Map'] = self.is_Map
         if self.module is None:
           # User did not specify a module, so select the first module from the set of modules
           self.module = next(iter(self.gui_model.modules))

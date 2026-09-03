@@ -33,7 +33,7 @@ from besser.utilities.web_modeling_editor.backend.models.project import ProjectI
 # forward slash (for Claude's vendor/model format). Reject anything
 # else to catch typos and prompt-injection attempts embedded in the
 # model name.
-_LLM_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
+_LLM_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:\-/]+$")
 
 
 class SmartGenerateRequest(BaseModel):
@@ -66,7 +66,7 @@ class SmartGenerateRequest(BaseModel):
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.
     api_key: Optional[SecretStr] = None
-    provider: Literal["anthropic", "openai", "mistral", "free"] = "anthropic"
+    provider: Literal["anthropic", "openai", "mistral", "free", "sponsored"] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
     # OpenAI-compatible base URL for the frontend's 'PIA (LIST)' and 'Local
     # (self-hosted)' providers (both arrive as provider="openai" + this URL).
@@ -162,9 +162,9 @@ class SmartGenerateRequest(BaseModel):
         # otherwise fall through to create_llm_client and produce a generic
         # error — catch it here with a clear, provider-aware message.
         has_key = bool(self.api_key and self.api_key.get_secret_value().strip())
-        if self.provider == "free":
-            # Ignore any accidentally-sent key rather than erroring — the free
-            # provider never uses it.
+        if self.provider in ("free", "sponsored"):
+            # Ignore any accidentally-sent key rather than erroring — these
+            # server-configured tiers never use a client key.
             self.api_key = None
         elif not has_key:
             raise ValueError(

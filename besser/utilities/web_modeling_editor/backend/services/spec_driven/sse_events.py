@@ -34,7 +34,7 @@ class StartEvent(BaseSseEvent):
 
     event: Literal["start"] = "start"
     runId: str
-    provider: Literal["anthropic", "openai", "mistral", "free"]
+    provider: Literal["anthropic", "openai", "mistral", "free", "sponsored"]
     llmModel: str
     maxCost: float
     maxRuntime: int

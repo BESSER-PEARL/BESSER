@@ -105,6 +105,9 @@ _FREE_LOCAL_MODEL_MARKERS = (
     "qwen", "llama", "codellama", "deepseek", "mixtral",
     "gemma", "starcoder", "granite", "phi-", "phi3", "phi4",
     "devstral", "mistral-small", "codestral",
+    # Sponsored-tier zero-credit models (the ':free' suffix is the
+    # aggregator's own marker); zero pricing + no ghost planning model.
+    ":free", "longcat", "laguna",
 )
 
 
@@ -987,6 +990,7 @@ class OpenAIProvider(LLMProvider):
         base_url: str | None = None,
         timeout: float | None = None,
         default_headers: dict[str, str] | None = None,
+        fallback: tuple[str, str, str] | None = None,
     ):
         try:
             from openai import OpenAI
@@ -1010,6 +1014,41 @@ class OpenAIProvider(LLMProvider):
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
         self._usage = UsageTracker(self._model)
+        # Optional (base_url, token, model) endpoint used when the primary
+        # endpoint stays unavailable past the retry budget. The switch is
+        # sticky for this provider instance (i.e. for the run) so later
+        # calls don't re-pay the retry tax against a dead primary.
+        self._fallback = fallback
+        self._on_fallback = False
+
+    def _activate_fallback(self, error: Exception) -> bool:
+        """Switch to the configured fallback endpoint, if any.
+
+        Returns True when the switch happened (caller should retry the
+        call), False when no fallback is configured or it is already
+        active (caller should raise).
+        """
+        if self._fallback is None or self._on_fallback:
+            return False
+        from openai import OpenAI
+
+        base_url, token, fb_model = self._fallback
+        client_kwargs: dict[str, Any] = {
+            "api_key": "fallback",
+            "base_url": base_url,
+            "timeout": _DEFAULT_SDK_TIMEOUT_SECONDS,
+        }
+        if token:
+            client_kwargs["default_headers"] = {"Authorization": f"Bearer {token}"}
+        logger.warning(
+            "Primary model %s unavailable after all retries (%s) — "
+            "switching to fallback model %s for the rest of this run",
+            self._model, error, fb_model,
+        )
+        self._client = OpenAI(**client_kwargs)
+        self._model = fb_model
+        self._on_fallback = True
+        return True
 
     @property
     def model(self) -> str:
@@ -1106,6 +1145,11 @@ class OpenAIProvider(LLMProvider):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
+                if _is_retryable(e) and self._activate_fallback(e):
+                    return self.chat(
+                        system, messages, tools,
+                        force_tool=force_tool, model_override=model_override,
+                    )
                 raise UpstreamLLMError(f"OpenAI API call failed: {e}") from None
 
         raise UpstreamLLMError(f"OpenAI API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
@@ -1244,6 +1288,12 @@ class OpenAIProvider(LLMProvider):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
+                if _is_retryable(e) and self._activate_fallback(e):
+                    # Re-stream from the top on the fallback endpoint. Any
+                    # partial deltas already yielded are superseded — same
+                    # semantics as the in-loop stream retry above.
+                    yield from self.chat_stream(system, messages, tools)
+                    return
                 raise UpstreamLLMError(f"OpenAI API streaming failed: {e}") from None
 
         raise UpstreamLLMError(f"OpenAI streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
@@ -1389,6 +1439,38 @@ def _resolve_mistral_api_key(
 
 FREE_TIER_PROVIDER = "free"
 
+# Server-sponsored premium tier (e.g. the Command Code Provider endpoint):
+# like the free tier, endpoint + token live in SERVER env and never come
+# from the request — but the model MAY be chosen per request from the
+# aggregator's catalog (curated by us, paid from the org's credits).
+SPONSORED_PROVIDER = "sponsored"
+
+
+def sponsored_tier_model() -> str:
+    """Default model for the sponsored tier (from server env), or ``""``."""
+    return os.environ.get("BESSER_SPONSORED_LLM_MODEL", "").strip()
+
+
+def sponsored_tier_available() -> bool:
+    """True when the server is configured with a sponsored endpoint."""
+    return bool(
+        os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
+        and os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
+    )
+
+
+def _resolve_sponsored_tier_config() -> tuple[str, str, str]:
+    """Return ``(base_url, token, default_model)`` for the sponsored tier."""
+    base_url = os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
+    token = os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
+    if not base_url or not token:
+        raise ValueError(
+            "The sponsored tier is not available on this server "
+            "(BESSER_SPONSORED_LLM_BASE_URL / BESSER_SPONSORED_LLM_TOKEN "
+            "are unset)."
+        )
+    return base_url, token, sponsored_tier_model()
+
 
 def free_tier_model() -> str:
     """The model served by the free tier (from server env), or ``""``."""
@@ -1418,6 +1500,24 @@ def _resolve_free_tier_config() -> tuple[str, str, str]:
             "(BESSER_FREE_LLM_BASE_URL / BESSER_FREE_LLM_MODEL are unset)."
         )
     token = os.environ.get("BESSER_FREE_LLM_TOKEN", "").strip()
+    return base_url, token, model
+
+
+def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
+    """Return ``(base_url, token, model)`` for the keyless-tier fallback
+    endpoint, or ``None`` when no fallback is configured.
+
+    The fallback absorbs upstream outages of the primary keyless model
+    (e.g. an aggregator's free pool shedding requests with 429/5xx for
+    longer than the retry budget): after the primary's retries exhaust,
+    the provider switches to this endpoint for the rest of the run.
+    Typically points at the self-hosted LIST qwen endpoint.
+    """
+    base_url = os.environ.get("BESSER_FREE_LLM_FALLBACK_BASE_URL", "").strip()
+    model = os.environ.get("BESSER_FREE_LLM_FALLBACK_MODEL", "").strip()
+    if not base_url or not model:
+        return None
+    token = os.environ.get("BESSER_FREE_LLM_FALLBACK_TOKEN", "").strip()
     return base_url, token, model
 
 
@@ -1455,6 +1555,26 @@ def create_llm_client(
             or the ``"free"`` provider is selected but not configured.
         ImportError: If the required SDK package is not installed.
     """
+    if provider == SPONSORED_PROVIDER:
+        # Endpoint + token come from SERVER env (org-paid credits); the
+        # model may be chosen per request from the aggregator's catalog,
+        # falling back to the server's default.
+        sp_base_url, sp_token, sp_default = _resolve_sponsored_tier_config()
+        chosen = (model or "").strip() or sp_default
+        if not chosen:
+            raise ValueError(
+                "The sponsored tier has no model configured: set "
+                "BESSER_SPONSORED_LLM_MODEL or pass llm_model."
+            )
+        return OpenAIProvider(
+            api_key="sponsored",
+            model=chosen,
+            base_url=sp_base_url,
+            default_headers={"Authorization": f"Bearer {sp_token}"},
+            fallback=_resolve_free_fallback_config(),
+            **kwargs,
+        )
+
     if provider == FREE_TIER_PROVIDER:
         # Endpoint, token, and model all come from SERVER env — never from the
         # request. The bearer header is the real gate; the api_key is a
@@ -1466,6 +1586,7 @@ def create_llm_client(
             model=free_model,
             base_url=free_base_url,
             default_headers=headers,
+            fallback=_resolve_free_fallback_config(),
             **kwargs,
         )
     elif provider == "anthropic":

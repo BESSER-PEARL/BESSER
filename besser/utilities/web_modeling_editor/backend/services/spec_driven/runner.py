@@ -544,6 +544,9 @@ class SmartGenerationRunner:
             # Free tier is pinned to the server's hosted model, not the
             # request; show that name in the start event.
             llm_model = free_tier_model() or "free"
+        elif self.request.provider == "sponsored":
+            from besser.generators.llm.llm_client import sponsored_tier_model
+            llm_model = self.request.llm_model or sponsored_tier_model() or "sponsored"
         else:
             llm_model = (
                 self.request.llm_model or _DEFAULT_MODELS.get(self.request.provider, "")

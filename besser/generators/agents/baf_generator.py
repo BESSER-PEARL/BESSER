@@ -418,7 +418,7 @@ class BAFGenerator(GeneratorInterface):
                     with open(gui_file_path, mode="a", encoding="utf-8") as gf:
                         gf.write("\nfrom baf.core.gui.agent_gui import AgentGUI\n\n")
                         gf.write("gui = AgentGUI(\n")
-                        gf.write(f"    model=gui_model,\n")
+                        gf.write("    model=gui_model,\n")
                         gf.write(f"    gui_id={json.dumps(gui_action.gui_id)},\n")
                         gf.write(f"    persist={gui_action.persist},\n")
                         if gui_action.width:

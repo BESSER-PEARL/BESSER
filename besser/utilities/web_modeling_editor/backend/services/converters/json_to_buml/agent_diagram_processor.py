@@ -43,7 +43,6 @@ from besser.BUML.metamodel.state_machine.agent import (
     RAGTextSplitter,
     GUIReplyAction,
     GUIEvent,
-    FormSubmitMatcher,
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text

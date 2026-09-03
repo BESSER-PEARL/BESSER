@@ -438,6 +438,23 @@ def _is_retryable(error: Exception) -> bool:
     return False
 
 
+def _is_model_unavailable(error: Exception) -> bool:
+    """True when the requested model id no longer resolves upstream.
+
+    An aggregator retires a zero-credit model by REMOVING its id (e.g.
+    the ``:free`` alias disappearing the day the model goes paid), which
+    surfaces as a 404/400 "model not found" — not a retryable outage,
+    but exactly the situation the configured fallback endpoint exists
+    for. Auth errors are excluded by the caller before this check.
+    """
+    s = str(error).lower()
+    return any(marker in s for marker in (
+        "model_not_found", "model not found", "no such model",
+        "unknown model", "invalid model", "does not exist",
+        "is not available", "not_found",
+    ))
+
+
 def _is_rate_limit(error: Exception) -> bool:
     """True if the error is a provider rate-limit (HTTP 429)."""
     s = str(error).lower()
@@ -1145,7 +1162,7 @@ class OpenAIProvider(LLMProvider):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
-                if _is_retryable(e) and self._activate_fallback(e):
+                if (_is_retryable(e) or _is_model_unavailable(e)) and self._activate_fallback(e):
                     return self.chat(
                         system, messages, tools,
                         force_tool=force_tool, model_override=model_override,
@@ -1288,7 +1305,7 @@ class OpenAIProvider(LLMProvider):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
-                if _is_retryable(e) and self._activate_fallback(e):
+                if (_is_retryable(e) or _is_model_unavailable(e)) and self._activate_fallback(e):
                     # Re-stream from the top on the fallback endpoint. Any
                     # partial deltas already yielded are superseded — same
                     # semantics as the in-loop stream retry above.

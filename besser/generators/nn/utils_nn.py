@@ -147,6 +147,14 @@ def _get_regular_module_var(lyr_input, layer, modules_details, prev_out_var):
 
     if f"{lyr_input}_layer" in modules_details:
         layer_details = modules_details[f"{lyr_input}_layer"]
+        # If RNN has hidden_subscript_target AND prev_out_var matches it, use it
+        if (
+            len(layer_details) > 3
+            and hasattr(layer_details[3], 'hidden_subscript_target')
+            and layer_details[3].hidden_subscript_target
+            and prev_out_var == layer_details[3].hidden_subscript_target
+        ):
+            return layer_details[3].hidden_subscript_target
         if (
             len(layer_details) > 4
             and hasattr(layer_details[3], 'return_type')

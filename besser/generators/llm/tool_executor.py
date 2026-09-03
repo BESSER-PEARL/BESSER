@@ -29,6 +29,19 @@ logger = logging.getLogger(__name__)
 # Maximum time a shell command can run (seconds)
 COMMAND_TIMEOUT = 120
 
+# 1:1 typographic → ASCII map used by modify_file's fallback matching.
+# Models routinely type an ASCII apostrophe/quote/dash where the file has
+# the typographic variant (’ etc.); the exact match then fails on
+# every retry — observed live as a 77-action, multi-million-token flail
+# on a single Dashboard.tsx edit. Every mapping is same-length so match
+# indices in the normalized text are valid in the original.
+_TYPOGRAPHIC_TRANSLATION = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"',
+    "–": "-", "—": "-", "−": "-", "‐": "-", "‑": "-",
+    " ": " ",
+})
+
 # Obvious destructive / exfiltration patterns we refuse to run. This is
 # NOT a full sandbox — a committed attacker with prompt injection on the
 # instructions can still cause damage within the workspace. It's a cheap
@@ -965,11 +978,20 @@ class ToolExecutor:
             content = f.read()
         old_text = args["old_text"]
         if old_text not in content:
-            return {
-                "error": f"old_text not found in {args['path']}. "
-                         f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
-                         f"Make sure old_text matches exactly including whitespace/indentation.",
-            }
+            # Typographic fallback: match with smart quotes/dashes/nbsp
+            # normalized on both sides, then substitute the original span
+            # so the file's own characters are what gets replaced.
+            norm_content = content.translate(_TYPOGRAPHIC_TRANSLATION)
+            norm_old = old_text.translate(_TYPOGRAPHIC_TRANSLATION)
+            idx = norm_content.find(norm_old)
+            if idx >= 0:
+                old_text = content[idx:idx + len(old_text)]
+            else:
+                return {
+                    "error": f"old_text not found in {args['path']}. "
+                             f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
+                             f"Make sure old_text matches exactly including whitespace/indentation.",
+                }
         new_content = content.replace(old_text, args["new_text"], 1)
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)

@@ -2134,6 +2134,7 @@ class LLMOrchestrator:
                 on_progress=self.on_progress,
                 on_phase_details=self.on_phase_details,
                 generator_failure=self._phase1_failure_reason,
+                modify_mode=self._modify_mode,
             )
             messages = [{"role": "user", "content": instructions}]
 

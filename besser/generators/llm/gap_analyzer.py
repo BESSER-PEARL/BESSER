@@ -95,6 +95,7 @@ def analyze_gaps_via_llm(
     on_progress: Callable[[int, str, str], None] | None = None,
     on_phase_details: Callable[[str, str], None] | None = None,
     generator_failure: str | None = None,
+    modify_mode: bool = False,
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -132,7 +133,20 @@ def analyze_gaps_via_llm(
             logger.debug("on_progress callback raised; continuing", exc_info=True)
 
     if not generator_used:
-        if generator_failure:
+        if modify_mode:
+            # A seeded/imported app is already in the workspace (its
+            # recipe just didn't survive — e.g. a repo pushed before the
+            # recipe was included). "Build from scratch" framing here
+            # would invite the LLM to bulldoze the user's app.
+            fallback = [
+                "An existing application is already present in the "
+                "workspace. Do NOT rebuild it from scratch: explore the "
+                "code, keep its framework and structure, and implement "
+                "the requested change with the smallest set of edits. "
+                "Where the domain model and the code disagree, update "
+                "the code to match the model."
+            ]
+        elif generator_failure:
             fallback = [
                 f"The deterministic generator failed ({generator_failure}). "
                 "Build the entire application from scratch using the domain "
@@ -151,6 +165,7 @@ def analyze_gaps_via_llm(
         _emit_phase_details(
             on_phase_details, fallback,
             fallback_label=True, generator_failure=generator_failure,
+            modify_mode=modify_mode,
         )
         return fallback
 
@@ -351,6 +366,7 @@ def _emit_phase_details(
     tasks: list[str],
     fallback_label: bool = False,
     generator_failure: str | None = None,
+    modify_mode: bool = False,
 ) -> None:
     """Best-effort: surface the gap task list to the SSE consumer.
 
@@ -364,7 +380,12 @@ def _emit_phase_details(
         if not tasks:
             return
         if fallback_label:
-            if generator_failure:
+            if modify_mode:
+                details = (
+                    "Editing the existing app in place — the deterministic "
+                    "generator is skipped so your current code is preserved."
+                )
+            elif generator_failure:
                 details = (
                     f"The deterministic generator failed ({generator_failure}). "
                     "The LLM will scaffold the entire codebase from the "

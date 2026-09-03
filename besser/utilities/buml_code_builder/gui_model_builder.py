@@ -23,7 +23,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
-    FieldColumn, LookupColumn, ExpressionColumn, Map, MapLayer, MapLayerType, MetricCard
+    FieldColumn, LookupColumn, ExpressionColumn, Map, MetricCard
 )
 from besser.BUML.metamodel.gui.events_actions import Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -1246,9 +1246,9 @@ def _write_map_layer(f, layer_var, layer_comp, layer_index):
                 f.write(
                     "_dm_ref = domain_model\n"
                 )
-                f.write(f"if _dm_ref is not None:\n")
+                f.write("if _dm_ref is not None:\n")
                 f.write(f"    _dc = _dm_ref.get_class_by_name(\"{escaped_domain}\")\n")
-                f.write(f"    if _dc:\n")
+                f.write("    if _dc:\n")
                 f.write(
                     f"        {layer_var}.{attr_name} = next(\n"
                     f"            (a for a in _dc.attributes if a.name == \"{escaped_field}\"), None\n"

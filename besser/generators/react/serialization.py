@@ -27,7 +27,6 @@ from besser.BUML.metamodel.gui.dashboard import (
     ExpressionColumn,
     LineChart,
     Map,
-    MapLayer,
     MetricCard,
     PieChart,
     RadarChart,

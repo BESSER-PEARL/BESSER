@@ -8,6 +8,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     CostEvent,
     DoneEvent,
     ErrorEvent,
+    ModelUpdateEvent,
     PhaseEvent,
     StartEvent,
     TextDeltaEvent,
@@ -69,6 +70,10 @@ class TestFormatSse:
             ),
             ErrorEvent(code="INVALID_KEY", message="No API key"),
             ErrorEvent(code="COST_CAP", message="Cost cap reached ($1.01 > $1.00)"),
+            ModelUpdateEvent(
+                model="qwen3-coder:30b",
+                previousModel="meituan/LongCat-2.0:free",
+            ),
         ],
     )
     def test_all_event_types_round_trip(self, event):
@@ -94,6 +99,46 @@ class TestEventValidation:
     def test_events_do_not_expose_api_key_field(self):
         """None of the event models should have an api_key field at all."""
         for cls in (StartEvent, PhaseEvent, TextDeltaEvent, ToolCallEvent,
-                    CostEvent, DoneEvent, ErrorEvent):
+                    CostEvent, DoneEvent, ErrorEvent, ModelUpdateEvent):
             assert "api_key" not in cls.model_fields
             assert "apiKey" not in cls.model_fields
+
+
+class TestModelUpdateEvent:
+    """Schema for the mid-run model-switch event (outage fallback)."""
+
+    def test_defaults(self):
+        ev = ModelUpdateEvent(model="qwen3-coder:30b")
+        assert ev.event == "model_update"
+        assert ev.model == "qwen3-coder:30b"
+        assert ev.previousModel is None
+        assert ev.reason == "primary_unavailable"
+
+    def test_frame_carries_both_models(self):
+        frame = format_sse(ModelUpdateEvent(
+            model="qwen3-coder:30b",
+            previousModel="meituan/LongCat-2.0:free",
+        )).decode("utf-8")
+        assert frame.startswith("event: model_update\n")
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["model"] == "qwen3-coder:30b"
+        assert payload["previousModel"] == "meituan/LongCat-2.0:free"
+        assert payload["reason"] == "primary_unavailable"
+
+
+class TestDoneEventBlockerCount:
+    """blockerCount defaults to 0 and serialises when set."""
+
+    def test_default_is_zero(self):
+        ev = DoneEvent(downloadUrl="/d/abc", fileName="a.zip", isZip=True)
+        assert ev.blockerCount == 0
+
+    def test_serialises_when_set(self):
+        ev = DoneEvent(
+            downloadUrl="/d/abc", fileName="a.zip", isZip=True, blockerCount=3,
+        )
+        frame = format_sse(ev).decode("utf-8")
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["blockerCount"] == 3

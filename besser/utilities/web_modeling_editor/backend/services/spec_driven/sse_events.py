@@ -92,6 +92,26 @@ class ToolCallEvent(BaseSseEvent):
     summary: Optional[str] = None
 
 
+class ModelUpdateEvent(BaseSseEvent):
+    """The LLM serving this run changed mid-run.
+
+    Emitted when the provider's outage fallback switches the run to a
+    different model (see ``OpenAIProvider._activate_fallback`` — the
+    switch is sticky for the rest of the run). Without this event the
+    run card keeps showing the model from the ``start`` event even
+    though every subsequent turn is served by the fallback.
+
+    ``reason`` is a short machine-readable cause the frontend maps to
+    user-facing copy; today the only producer is the outage fallback
+    (``primary_unavailable``).
+    """
+
+    event: Literal["model_update"] = "model_update"
+    model: str
+    previousModel: Optional[str] = None
+    reason: str = "primary_unavailable"
+
+
 class CostEvent(BaseSseEvent):
     """Periodic cost / runtime tick emitted by the cost emitter task.
 
@@ -142,6 +162,12 @@ class DoneEvent(BaseSseEvent):
     # may be incomplete rather than report an unqualified success.
     incomplete: bool = False
     incompleteReason: Optional[str] = None
+    # Number of unresolved blocker-severity validation issues left by a run
+    # whose customization loop COMPLETED. Lets the client distinguish
+    # "finished, but with issues that may stop the app from running" from a
+    # run that was genuinely cut short (which reports 0 here) — the two need
+    # different user-facing framing. 0 when there is nothing to distinguish.
+    blockerCount: int = 0
 
 
 ErrorCode = Literal[

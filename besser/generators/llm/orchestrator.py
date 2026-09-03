@@ -535,6 +535,12 @@ class LLMOrchestrator:
         # when emitting JSON.
         self._validation_issues: list[ValidationIssue] = []
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
+        # Last model name observed on the client. The provider's outage
+        # fallback (``OpenAIProvider._activate_fallback``) can swap the
+        # client's model mid-run; ``_notify_model_switch`` compares
+        # against this after each LLM call and surfaces the change
+        # through ``on_progress`` so the UI can show the actual model.
+        self._last_seen_model: str | None = getattr(llm_client, "model", None)
 
         # Observability + crash recovery. Both are output-dir-local and
         # opt-out via the constructor flags so unit tests that don't
@@ -2136,6 +2142,9 @@ class LLMOrchestrator:
                 generator_failure=self._phase1_failure_reason,
                 modify_mode=self._modify_mode,
             )
+            # The planning call may have switched the client to its
+            # outage fallback model — surface that before Phase 2 turns.
+            self._notify_model_switch()
             messages = [{"role": "user", "content": instructions}]
 
             # Short-circuit: the planner explicitly judged the scaffold
@@ -2282,6 +2291,10 @@ class LLMOrchestrator:
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = str(e)
                 break
+
+            # The call may have switched the client to its outage
+            # fallback model mid-flight — surface that to the UI.
+            self._notify_model_switch()
 
             # -- Cost cap check (after each API call) ---------------------
             current_cost = self.client.usage.estimated_cost
@@ -3948,6 +3961,9 @@ class LLMOrchestrator:
                 logger.error("Fix cycle API call failed: %s", e)
                 break
 
+            # Fix-cycle calls can trigger the outage fallback too.
+            self._notify_model_switch()
+
             # Capture LLM's text explanation
             for block in response.get("content", []):
                 if hasattr(block, "text") and block.text:
@@ -4088,6 +4104,39 @@ class LLMOrchestrator:
     def _summarize_messages(self, messages: list[dict]) -> str:
         """Delegate to compaction module."""
         return _summarize_messages(messages, self.tool_calls_log, self.output_dir)
+
+    # ==================================================================
+    # Model-switch visibility
+    # ==================================================================
+
+    def _notify_model_switch(self) -> None:
+        """Surface a mid-run model change to the progress channel.
+
+        The provider's outage fallback (``OpenAIProvider._activate_fallback``)
+        swaps the client's model sticky-for-the-run when the primary
+        endpoint stays down past the retry budget. That happens inside a
+        ``chat``/``chat_stream`` call, so the orchestrator only sees it
+        afterwards: compare ``self.client.model`` against the last value
+        we saw and, on change, emit the ``__model_switch__`` sentinel via
+        ``on_progress`` (the SSE runner translates it into a
+        ``model_update`` event). Cheap enough to call after every LLM
+        call; a no-op when nothing changed.
+        """
+        current = getattr(self.client, "model", None)
+        if not current or current == self._last_seen_model:
+            return
+        logger.info(
+            "LLM model changed mid-run: %s -> %s",
+            self._last_seen_model, current,
+        )
+        self._last_seen_model = current
+        if self.on_progress:
+            try:
+                self.on_progress(0, "__model_switch__", current)
+            except Exception:
+                logger.debug(
+                    "on_progress failed for model switch", exc_info=True
+                )
 
     # ==================================================================
     # Streaming

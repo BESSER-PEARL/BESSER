@@ -211,7 +211,8 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
     """Stream an LLM-orchestrated code generation run as SSE events.
 
     Emits events in order: ``start`` → zero or more of
-    ``phase`` / ``tool_call`` / ``text`` / ``cost`` → optional
+    ``phase`` / ``tool_call`` / ``text`` / ``cost`` / ``model_update``
+    (mid-run outage-fallback model switch) → optional
     ``error(COST_CAP|TIMEOUT)`` warning → terminal ``done`` (carrying a
     one-time ``downloadUrl``) or terminal ``error``.
 

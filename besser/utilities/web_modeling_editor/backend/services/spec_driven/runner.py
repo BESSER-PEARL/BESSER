@@ -73,6 +73,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     CostEvent,
     DoneEvent,
     ErrorEvent,
+    ModelUpdateEvent,
     PhaseEvent,
     PhaseUpdateEvent,
     StartEvent,
@@ -744,6 +745,11 @@ class SmartGenerationRunner:
         # Python assignments to dict entries are atomic with respect to
         # the GIL, so we don't need a lock for a one-shot toggle.
         phase_state: dict[str, bool] = {"customize_sent": False}
+        # The model the run is currently served by, seeded from the start
+        # event. Updated when the orchestrator reports a mid-run switch
+        # (``__model_switch__`` sentinel — the provider's outage fallback)
+        # so the ``model_update`` event can carry the previous name too.
+        model_state: dict[str, str] = {"current": llm_model}
 
         def _put(event: BaseSseEvent) -> None:
             try:
@@ -795,6 +801,22 @@ class SmartGenerationRunner:
                 )
 
         def on_progress(turn: int, tool: str, status: str) -> None:
+            if tool == "__model_switch__":
+                # The provider's outage fallback switched the run to a
+                # different model (sticky for the rest of the run).
+                # ``status`` carries the new model name. Surface it so
+                # the run card can update its header and show a note —
+                # without this, a run started on the primary model keeps
+                # displaying it even though every remaining turn is
+                # served by the fallback.
+                previous = model_state["current"]
+                model_state["current"] = status
+                _put(ModelUpdateEvent(
+                    model=status,
+                    previousModel=previous or None,
+                    reason="primary_unavailable",
+                ))
+                return
             if tool == "validation":
                 _put(PhaseEvent(phase="validate", message=status))
                 return
@@ -1376,6 +1398,14 @@ class SmartGenerationRunner:
                 )
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
+                # Completed-with-blockers vs cut-short need different
+                # client framing: a run whose loop finished but left
+                # blocker-severity issues did NOT "stop early". Only set
+                # when the loop exited cleanly — a genuinely cut-short
+                # run keeps 0 so clients use their cut-short copy.
+                done_event.blockerCount = (
+                    len(_unfixed_blockers) if exited_cleanly else 0
+                )
                 # Carry any vibe-MODIFY model-sync delta so the GitHub push
                 # writes buml/ from the UPDATED model rather than the stale
                 # request export. None for generate/resume runs (and modify

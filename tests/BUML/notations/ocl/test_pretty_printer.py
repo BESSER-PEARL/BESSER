@@ -59,3 +59,35 @@ def test_pretty_print_size(model):
         model,
     )
     assert pretty_print(constraint) == "context Department inv: self.employee->size() > 0"
+
+
+@pytest.mark.parametrize("source", [
+    # Collection operations reachable from the KG converter. Each of these used
+    # to come back as a method call named after the AST's internal operation
+    # constant — `self.employee.ASSET()`, `.INCLUDES(...)` — which re-parses as
+    # something entirely different instead of failing loudly.
+    "context Department inv: self.employee->asSet()->size() > 0",
+    "context Department inv: self.employee->includes(self)",
+    "context Department inv: self.employee->excludes(self)",
+    "context Department inv: self.employee->isUnique(name)",
+    "context Department inv: self.employee->intersection(self.employee)->isEmpty()",
+    "context Department inv: self.employee->union(self.employee)->size() > 0",
+    "context Department inv: self.employee->first()",
+    "context Department inv: self.employee->last()",
+    "context Department inv: self.employee->sum() > 0",
+    "context Department inv: self.employee->asSet()->forAll(e | e.age > 16)",
+    "context Employee inv: Employee::allInstances()->size() > 0",
+])
+def test_collection_operations_round_trip(source, model):
+    """``pretty_print`` must spell every arrow operation the way OCL does."""
+    assert pretty_print(parse_ocl(source, model)) == source
+
+
+def test_collection_operation_output_reparses(model):
+    """The printed form has to survive a second parse unchanged — a fixed point,
+    not merely something the grammar happens to accept."""
+    source = "context Department inv: self.employee->asSet()->forAll(e | self.employee->includes(e))"
+    once = pretty_print(parse_ocl(source, model))
+    twice = pretty_print(parse_ocl(once, model))
+    assert once == source
+    assert twice == once

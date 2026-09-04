@@ -257,6 +257,12 @@ class Mapper:
         return self.ensure_class(cls) if cls is not None else self.ensure_class(OWL.Thing)
 
     def literal_value(self, node) -> str:
+        """Render ``node`` for a *non-OCL* position: instance slots, datatype
+        facets, enumeration literal names.
+
+        Use :meth:`ocl_literal` for anything that ends up inside an invariant —
+        B-OCL only accepts single-quoted strings.
+        """
         if isinstance(node, Literal):
             v = node.value
             if isinstance(v, bool):
@@ -265,6 +271,24 @@ class Mapper:
                 return str(v)
             return '"' + str(node).replace('"', '\\"').replace("\n", " ") + '"'
         return '"' + str(node) + '"'
+
+    def ocl_literal(self, node) -> str:
+        """Render ``node`` as a B-OCL literal.
+
+        Numbers and booleans are bare, exactly as in :meth:`literal_value`;
+        strings are single-quoted because ``STRING_LITERAL`` in ``BOCL.g4``
+        accepts no other quote character. Backslash and quote are escaped —
+        unlike :func:`~besser.BUML.notations.kg_to_buml.owl2uml.shacl._regex_literal`,
+        which deliberately keeps backslashes raw so regexes survive intact.
+        """
+        if isinstance(node, Literal):
+            v = node.value
+            if isinstance(v, bool):
+                return "true" if v else "false"
+            if isinstance(v, (int, float)):
+                return str(v)
+        text = str(node).replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        return "'" + text + "'"
 
     def register_primitive(self, name: str) -> str:
         if name not in self.model.datatypes:

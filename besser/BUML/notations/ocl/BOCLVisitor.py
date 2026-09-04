@@ -219,6 +219,11 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BOCLParser#dotDateNavigation.
+    def visitDotDateNavigation(self, ctx:BOCLParser.DotDateNavigationContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BOCLParser#arrowIsEmpty.
     def visitArrowIsEmpty(self, ctx:BOCLParser.ArrowIsEmptyContext):
         return self.visitChildren(ctx)

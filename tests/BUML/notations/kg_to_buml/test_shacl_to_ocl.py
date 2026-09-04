@@ -117,7 +117,7 @@ def test_class_means_for_all_not_exists(tmp_path: Path):
 
 def test_has_value_maps_to_includes(tmp_path: Path):
     result = _convert(tmp_path, '    sh:property [ sh:path :name ; sh:hasValue "Alice" ] .')
-    _assert_body(result, 'self.name->includes("Alice")')
+    _assert_body(result, "self.name->includes('Alice')")
 
 
 def test_pattern_maps_to_matches(tmp_path: Path):
@@ -125,18 +125,31 @@ def test_pattern_maps_to_matches(tmp_path: Path):
     _assert_body(result, "self.name->forAll(v | v.matches('^[A-Z]'))")
 
 
-def test_in_maps_to_set_includes(tmp_path: Path):
+def test_in_maps_to_disjunction_of_equalities(tmp_path: Path):
+    """``sh:in`` expands to ``v = a or v = b``.
+
+    B-OCL has no collection literal, so ``Set{...}->includes(v)`` — which the
+    editor could not read back — is emitted as the equivalent disjunction.
+    """
     result = _convert(
         tmp_path, '    sh:property [ sh:path :name ; sh:in ( "Alice" "Bob" ) ] .'
     )
-    _assert_body(result, 'self.name->forAll(v | Set{"Alice", "Bob"}->includes(v))')
+    _assert_body(result, "self.name->forAll(v | v = 'Alice' or v = 'Bob')")
+
+
+def test_empty_in_list_requires_an_empty_property(tmp_path: Path):
+    """``sh:in ()`` admits no value at all, which is what ``isEmpty()`` says."""
+    result = _convert(tmp_path, '    sh:property [ sh:path :name ; sh:in ( ) ] .')
+    _assert_body(result, "self.name->isEmpty()")
 
 
 def test_unique_lang_maps_to_is_unique(tmp_path: Path):
+    """``isUnique(body)`` evaluates ``body`` per element under the implicit
+    iterator — the one-argument form is the only one B-OCL accepts."""
     result = _convert(
         tmp_path, '    sh:property [ sh:path :name ; sh:uniqueLang true ] .'
     )
-    _assert_body(result, "self.name->collect(p | p.language)->isUnique()")
+    _assert_body(result, "self.name->isUnique(language)")
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +221,9 @@ def test_xone_expands_to_exactly_one(tmp_path: Path):
     path = tmp_path / "ontology.ttl"
     path.write_text(ttl.strip(), encoding="utf-8")
     result = kg_to_class_diagram(owl_file_to_knowledge_graph(str(path)))
-    _assert_body(result, "->sum() = 1")
-    _assert_body(result, "if v.oclIsKindOf(Pet) then 1 else 0 endif")
+    _assert_body(result, "(if v.oclIsKindOf(Pet) then 1 else 0 endif)")
+    _assert_body(result, ") + (")
+    _assert_body(result, "= 1)")
 
 
 def test_qualified_value_shape_counts_matching_values(tmp_path: Path):
@@ -281,3 +295,45 @@ def test_every_constraint_is_parseable_by_the_editor(tmp_path: Path):
     recovered, errors = process_ocl_constraints(text, result.domain_model, 0)
     assert not errors
     assert len(recovered) == len(constraints)
+
+
+#: One shape per rule whose expression shape is not exercised above. Each of
+#: these emitted something the editor could not read back at some point:
+#: ``sh:in``/``sh:xone`` used ``Set{}``/``Sequence{}`` literals B-OCL has no
+#: production for, ``sh:uniqueLang`` used a zero-argument ``->isUnique()``,
+#: ``sh:hasValue`` double-quoted its string, and a ``date``-named path could
+#: not be navigated at all.
+_ROUND_TRIP_SHAPES = {
+    "in": '    sh:property [ sh:path :name ; sh:in ( "Alice" "Bob" ) ] .',
+    "in_empty": '    sh:property [ sh:path :name ; sh:in ( ) ] .',
+    "xone": '    sh:property [ sh:path :owns ; sh:xone ( [ sh:class :Pet ] [ sh:class :Person ] ) ] .',
+    "uniqueLang": '    sh:property [ sh:path :name ; sh:uniqueLang true ] .',
+    "hasValue": '    sh:property [ sh:path :name ; sh:hasValue "Alice" ] .',
+    "hasValue_apostrophe": '    sh:property [ sh:path :name ; sh:hasValue "O\'Brien" ] .',
+    "pattern": '    sh:property [ sh:path :name ; sh:pattern "^[A-Z]" ] .',
+    "disjoint": '    sh:property [ sh:path :name ; sh:disjoint :nickname ] .',
+    "minInclusive": '    sh:property [ sh:path :age ; sh:minInclusive 18 ] .',
+    "qualified": ('    sh:property [ sh:path :owns ; sh:qualifiedValueShape [ sh:class :Pet ] ;\n'
+                  '                  sh:qualifiedMinCount 1 ] .'),
+}
+
+
+@pytest.mark.parametrize("shape_body", _ROUND_TRIP_SHAPES.values(), ids=_ROUND_TRIP_SHAPES)
+def test_each_rule_survives_the_editor_round_trip(tmp_path: Path, shape_body: str):
+    """Emitting an invariant is only half the job — it has to parse.
+
+    Each expression is fed to ``process_ocl_constraints`` on its own, because
+    ANTLR recovers across ``context`` boundaries and a joined parse comes back
+    clean even when individual blocks are unreadable.
+    """
+    from besser.utilities.web_modeling_editor.backend.services.converters.parsers.ocl_parser import (
+        process_ocl_constraints,
+    )
+
+    result = _convert(tmp_path, shape_body)
+    for constraint in result.domain_model.constraints:
+        recovered, errors = process_ocl_constraints(
+            constraint.expression, result.domain_model, 0
+        )
+        assert not errors, f"{constraint.name}: {constraint.expression} -> {errors}"
+        assert len(recovered) == 1, constraint.expression

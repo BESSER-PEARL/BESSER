@@ -237,8 +237,12 @@ class ShaclMapper:
                                                  for e in RDFList(self.g, lst)) if c))
         if not checks:
             return []
-        terms = ", ".join(f"if {c} then 1 else 0 endif" for c in checks)
-        return [(f"self.{pname}->forAll(v | Sequence{{{terms}}}->sum() = 1)", "xone")]
+        # B-OCL has no collection literal, so the sum is folded with `+`
+        # instead of `Sequence{...}->sum()`. Same value: the sequence only ever
+        # held these indicator terms. Each `if ... endif` is parenthesised so
+        # the fold cannot be absorbed into an `else` branch.
+        terms = " + ".join(f"(if {c} then 1 else 0 endif)" for c in checks)
+        return [(f"self.{pname}->forAll(v | {terms} = 1)", "xone")]
 
     def _c_qualified(self, ps, pname):
         node = self.g.value(ps, SH.qualifiedValueShape)
@@ -250,9 +254,9 @@ class ShaclMapper:
         qmax = self.g.value(ps, SH.qualifiedMaxCount)
         sel = f"self.{pname}->select(v | {chk})->size()"
         if qmin is not None:
-            out.append((f"{sel} >= {self.m.literal_value(qmin)}", "qualifiedMinCount"))
+            out.append((f"{sel} >= {self.m.ocl_literal(qmin)}", "qualifiedMinCount"))
         if qmax is not None:
-            out.append((f"{sel} <= {self.m.literal_value(qmax)}", "qualifiedMaxCount"))
+            out.append((f"{sel} <= {self.m.ocl_literal(qmax)}", "qualifiedMaxCount"))
         return out
 
     # ---- scalar / literal resolvers --------------------------------------
@@ -261,15 +265,15 @@ class ShaclMapper:
         return [(f"self.{pname}->forAll(v | v.oclIsTypeOf({t}))", "datatype")]
 
     def _c_count(self, ps, pname, pred, op):
-        n = self.m.literal_value(self.g.value(ps, pred))
+        n = self.m.ocl_literal(self.g.value(ps, pred))
         return [(f"self.{pname}->size() {op} {n}", pred.split("#")[-1])]
 
     def _c_length(self, ps, pname, pred, op):
-        n = self.m.literal_value(self.g.value(ps, pred))
+        n = self.m.ocl_literal(self.g.value(ps, pred))
         return [(f"self.{pname}->forAll(v | v.size() {op} {n})", pred.split("#")[-1])]
 
     def _c_range(self, ps, pname, pred, op):
-        n = self.m.literal_value(self.g.value(ps, pred))
+        n = self.m.ocl_literal(self.g.value(ps, pred))
         return [(f"self.{pname}->forAll(v | v {op} {n})", pred.split("#")[-1])]
 
     def _c_pattern(self, ps, pname):
@@ -279,7 +283,11 @@ class ShaclMapper:
     def _c_uniquelang(self, ps, pname):
         v = self.g.value(ps, SH.uniqueLang)
         if isinstance(v, Literal) and v.value is True:
-            return [(f"self.{pname}->collect(p | p.language)->isUnique()", "uniqueLang")]
+            # `isUnique(body)` evaluates `body` per element under the implicit
+            # iterator and requires the results to be pairwise distinct — the
+            # same thing `collect(p | p.language)->isUnique()` meant, but in the
+            # form B-OCL accepts (the zero-argument spelling is not valid OCL).
+            return [(f"self.{pname}->isUnique(language)", "uniqueLang")]
         return []
 
     def _c_hasvalue(self, ps, pname):
@@ -290,8 +298,17 @@ class ShaclMapper:
         lst = self.g.value(ps, SH["in"])
         if lst is None:
             return []
-        members = ", ".join(self._ocl_value(x) for x in RDFList(self.g, lst))
-        return [(f"self.{pname}->forAll(v | Set{{{members}}}->includes(v))", "in")]
+        # An empty `sh:in ()` survives the KG projection as a one-element list
+        # holding rdf:nil, so drop the terminator before reading the members.
+        members = [self._ocl_value(x) for x in RDFList(self.g, lst) if x != RDF.nil]
+        if not members:
+            # `Set{}->includes(v)` is false for every v, so the invariant held
+            # only when the property had no values at all.
+            return [(f"self.{pname}->isEmpty()", "in")]
+        # Membership in a finite enumerated set is the disjunction of equality
+        # with its members; `=` binds tighter than `or`, so no parens needed.
+        choices = " or ".join(f"v = {m}" for m in members)
+        return [(f"self.{pname}->forAll(v | {choices})", "in")]
 
     def _c_disjoint(self, ps, pname):
         q = self.g.value(ps, SH.disjoint)
@@ -319,5 +336,5 @@ class ShaclMapper:
     def _ocl_value(self, node):
         """OCL literal for ``sh:in`` / ``sh:hasValue`` members."""
         if isinstance(node, Literal):
-            return self.m.literal_value(node)     # numeric -> bare, string -> "..."
+            return self.m.ocl_literal(node)       # numeric -> bare, string -> '...'
         return self.canon.name(node)              # IRI -> UML name (individual/class)

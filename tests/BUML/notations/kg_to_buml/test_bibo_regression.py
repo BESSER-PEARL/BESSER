@@ -313,7 +313,7 @@ def test_document_carries_the_full_shacl_workout(result):
         "context Document inv Document_shortTitle_maxLength: "
         "self.shortTitle->forAll(v | v.size() <= 40)",
         "context Document inv Document_shortTitle_uniqueLang: "
-        "self.shortTitle->collect(p | p.language)->isUnique()",
+        "self.shortTitle->isUnique(language)",
         "context Document inv Document_status_class: "
         "self.status->forAll(v | v.oclIsKindOf(DocumentStatus))",
         "context Document inv Document_volume_datatype: "
@@ -350,7 +350,7 @@ def test_sh_in_over_iris_resolves_to_individual_names(result):
     )
     assert thesis == (
         "context Thesis inv Thesis_degree_in: "
-        "self.degree->forAll(v | Set{ma, ms, phd}->includes(v))"
+        "self.degree->forAll(v | v = ma or v = ms or v = phd)"
     )
     manuscript = next(
         c.expression for c in result.domain_model.constraints
@@ -464,14 +464,6 @@ def test_every_constraint_is_well_formed(result):
         assert constraint.context.name in type_names
 
 
-#: Constructs the current ``BOCL.g4`` does not accept. Closing that gap is a
-#: separate piece of work; until it lands, an invariant using one of these
-#: reaches the editor but cannot be re-read.
-_UNSUPPORTED_OCL = re.compile(
-    r"->asSet\(\)|Set\{|Sequence\{|->intersection\(|->isUnique\(|oclIsTypeOf\(date\)"
-)
-
-
 def test_model_round_trips_through_the_editor(result):
     """The whole point of the conversion is that the editor can render it, and
     ``ocl_parser`` silently drops any expression it cannot re-read.
@@ -482,9 +474,11 @@ def test_model_round_trips_through_the_editor(result):
     across the block boundaries: at the time this was written, 50 of 127
     expressions failed on their own while the joined parse came back clean.
 
-    The count of unreadable blocks is asserted exactly, so that finishing the
-    grammar work turns this test red and it gets tightened back to zero rather
-    than being forgotten."""
+    This used to assert an exact count of unreadable blocks (30, then 8) while
+    the grammar could not read `->asSet()`, `->intersection()`, `.allInstances()`
+    or `self.date`, and while the KG emitted `Set{}`/`Sequence{}` literals,
+    zero-argument `->isUnique()` and double-quoted strings. All of that is
+    fixed, so the count is zero and stays zero."""
     from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
         class_buml_to_json,
     )
@@ -506,7 +500,4 @@ def test_model_round_trips_through_the_editor(result):
         else:
             assert len(recovered) == 1, block
 
-    assert len(unreadable) == 30
-    # Nothing is unreadable for any reason other than the known grammar gap.
-    for block in unreadable:
-        assert _UNSUPPORTED_OCL.search(block), block
+    assert unreadable == []

@@ -251,7 +251,7 @@ def test_has_value_data_restriction_materializes_aux_class(tmp_path: Path):
     aux = _class(result.domain_model, "_hasValue_country_US")
     assert _generalizes_to(result.domain_model, "Adult", "_hasValue_country_US")
     bodies = [c.expression for c in result.domain_model.constraints if c.context is aux]
-    assert any('self.country->asSet()->includes("US")' in b for b in bodies)
+    assert any("self.country->asSet()->includes('US')" in b for b in bodies)
     codes = {w.code for w in result.warnings}
     assert "ADV_RESTRICTION_UNSUPPORTED" not in codes
 

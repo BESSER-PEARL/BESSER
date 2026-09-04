@@ -163,6 +163,36 @@ class BOCLVisitorImpl(BOCLVisitor):
         pce.source = receiver
         return pce
 
+    def visitDotDateNavigation(self, ctx: BOCLParser.DotDateNavigationContext):
+        """Resolve ``self.date`` as a property when no parens follow.
+
+        Same collision as ``size`` above: ``date`` is a reserved keyword (it
+        opens ``Date::now()``), so the lexer always tokenizes it as ``DATE``
+        and ``dotNavigation`` (which expects ``ID``) never matches. BUML's own
+        ``DateType`` is named ``date``, and ontologies routinely declare a
+        ``date`` property, so without this fallback neither can be navigated.
+        """
+        name = ctx.DATE().getText()
+        receiver = self.visit(ctx.expression())
+        prop = None
+        target_type = self._receiver_type(receiver)
+        if target_type is not None:
+            prop = self._resolve_property(name, target_type)
+        if prop is None:
+            prop = self._resolve_property(name)
+        if prop is None:
+            prop = self._resolve_property_in_iterators(name)
+        if prop is None:
+            raise Exception(
+                f"Property '{name}' not found in context "
+                f"'{self.context_class.name if self.context_class else '?'}'"
+            )
+        if isinstance(receiver, VariableExp):
+            return prop
+        pce = PropertyCallExpression(prop.name, prop)
+        pce.source = receiver
+        return pce
+
     def visitDotMethodCall(self, ctx: BOCLParser.DotMethodCallContext):
         source = self.visit(ctx.expression())
         method_name = ctx.ID().getText()

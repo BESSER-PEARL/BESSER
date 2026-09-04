@@ -213,7 +213,7 @@ class ExpressionResolver:
                 self.m.add_association(name, ta, p, (0, "*"), (1, "*"))
                 self.m.add_ocl(name, f"self.{p}->includes({a})", origin="O08")
         else:
-            lit = self.m.literal_value(val)
+            lit = self.m.ocl_literal(val)
             name, new = self._aux(("hasValue", p, str(val), False),
                                   naming.restriction_name("hasValue", p, naming.sanitize(str(val))))
             if new:

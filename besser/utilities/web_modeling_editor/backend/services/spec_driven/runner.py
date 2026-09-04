@@ -23,6 +23,7 @@ import functools
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -68,6 +69,9 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    telemetry,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
@@ -522,8 +526,60 @@ class SmartGenerationRunner:
         self._seeded = False
         self.temp_dir: Optional[str] = None
         self._started_at: Optional[float] = None
+        # ---- Pilot telemetry (run_summary) state ----
+        # The request model already sanitized these (invalid values are
+        # nulled, never rejected); a summary is recorded only when both
+        # labels survived AND the server master switch is on.
+        self._telemetry_session = getattr(request, "telemetry_session", None)
+        self._telemetry_participant = getattr(request, "telemetry_participant", None)
+        self._summary_recorded = False
+        self._t_orchestrator: Any = None
+        self._t_client: Any = None
+        self._t_done_payload: Optional[dict] = None
+        self._t_last_error_code: Optional[str] = None
+        self._t_model_requested: Optional[str] = None
+        self._t_model_switched_to: Optional[str] = None
+        self._t_blockers_found: Optional[int] = None
+        self._t_stream_aborted: Optional[str] = None
 
     async def generate_and_stream(
+        self,
+        http_request: Any | None = None,
+    ) -> AsyncGenerator[bytes, None]:
+        """Run the pipeline and yield SSE frames.
+
+        Thin wrapper around ``_generate_and_stream_impl``. When the request
+        carries valid pilot-telemetry labels and telemetry is enabled, the
+        terminal frames are observed as they stream by and exactly one
+        ``run_summary`` telemetry event is recorded once the stream ends —
+        for successful AND failed runs (failures are the friction data).
+        Recording is best-effort and can never affect the stream itself.
+        """
+        inner = self._generate_and_stream_impl(http_request=http_request)
+        if not (
+            self._telemetry_session
+            and self._telemetry_participant
+            and telemetry.telemetry_enabled()
+        ):
+            async for frame in inner:
+                yield frame
+            return
+        try:
+            async for frame in inner:
+                self._telemetry_observe_frame(frame)
+                yield frame
+        except GeneratorExit:
+            # The consumer closed the stream (client disconnect) before a
+            # terminal frame was delivered.
+            self._t_stream_aborted = "DISCONNECTED"
+            raise
+        except BaseException:
+            self._t_stream_aborted = "STREAM_CRASH"
+            raise
+        finally:
+            self._record_run_summary()
+
+    async def _generate_and_stream_impl(
         self,
         http_request: Any | None = None,
     ) -> AsyncGenerator[bytes, None]:
@@ -739,6 +795,7 @@ class SmartGenerationRunner:
             ))
             self._cleanup_temp_dir()
             return
+        self._t_client = client
 
         # ---- 5. Build the orchestrator with thread-safe callbacks ------
         # Bounded queue so a runaway orchestrator can't pile up events
@@ -825,6 +882,7 @@ class SmartGenerationRunner:
                 ))
                 return
             if tool == "validation":
+                self._note_validation_counts(status)
                 _put(PhaseEvent(phase="validate", message=status))
                 return
             if tool == "gap_analysis":
@@ -986,6 +1044,7 @@ class SmartGenerationRunner:
             # ISO strings so the push can re-validate it as a ProjectInput.
             source_project_export=self._source_project_export_dict(),
         )
+        self._t_orchestrator = orchestrator
 
         # ---- 6. Spawn the worker + the cost emitter --------------------
         async def cost_emitter() -> None:
@@ -1413,6 +1472,18 @@ class SmartGenerationRunner:
                 done_event.blockerCount = (
                     len(_unfixed_blockers) if exited_cleanly else 0
                 )
+                # Best-effort authorship split (generator vs. LLM) over the
+                # final tree — the pilot's headline metric. Never blocks the
+                # done event.
+                try:
+                    done_event.fileSplit = self._compute_file_split(
+                        orchestrator, result_path
+                    )
+                except Exception:
+                    logger.debug(
+                        "File split computation failed for run %s",
+                        self.run_id, exc_info=True,
+                    )
                 # Carry any vibe-MODIFY model-sync delta so the GitHub push
                 # writes buml/ from the UPDATED model rather than the stale
                 # request export. None for generate/resume runs (and modify
@@ -1589,6 +1660,191 @@ class SmartGenerationRunner:
                 exc_info=True,
             )
             return None
+
+    # ------------------------------------------------------------------
+    # Pilot telemetry (run_summary)
+    # ------------------------------------------------------------------
+
+    def _compute_file_split(self, orchestrator: Any, result_path: str) -> dict:
+        """Three-way authorship split over the run's final output tree.
+
+        Sources of truth:
+
+        * ``orchestrator.executor._generator_files`` — workspace-relative
+          paths written by the deterministic Phase-1 generator. On a modify
+          run these are re-seeded from the previous run's
+          ``.besser_recipe.json`` tags, so the split stays meaningful for
+          incremental edits (with the caveat that the recipe tag is binary:
+          a file the LLM modified in an EARLIER run counts as
+          generator-untouched again unless this run touches it too).
+        * ``orchestrator.tool_calls_log`` — successful ``write_file`` /
+          ``modify_file`` calls mark the files the LLM edited THIS run.
+        """
+        executor = getattr(orchestrator, "executor", None)
+        generator_files = set(getattr(executor, "_generator_files", None) or ())
+        touched = telemetry.llm_touched_paths(
+            getattr(orchestrator, "tool_calls_log", None)
+        )
+        return telemetry.compute_file_split(
+            result_path, generator_files, touched, _EXCLUDED_OUTPUT_DIRS
+        )
+
+    def _note_validation_counts(self, status: str) -> None:
+        """Capture the initial Phase-3 blocker count for the run summary.
+
+        The orchestrator reports its first validation sweep through
+        ``on_progress("validation", "N blockers / M total")``; only the
+        first occurrence is kept — it is the "blockers found" number
+        before any auto-fix rounds ran.
+        """
+        if self._t_blockers_found is not None:
+            return
+        try:
+            match = re.search(r"(\d+)\s+blocker", status or "")
+            if match:
+                self._t_blockers_found = int(match.group(1))
+        except Exception:
+            logger.debug("Could not parse validation counts", exc_info=True)
+
+    def _telemetry_observe_frame(self, frame: bytes) -> None:
+        """Track the terminal-relevant SSE frames for the run summary."""
+        try:
+            header = frame.split(b"\n", 1)[0]
+            if header not in (
+                b"event: start", b"event: done",
+                b"event: error", b"event: model_update",
+            ):
+                return
+            data_line = next(
+                (ln for ln in frame.split(b"\n") if ln.startswith(b"data:")),
+                None,
+            )
+            if data_line is None:
+                return
+            payload = json.loads(data_line[5:].decode("utf-8"))
+            event = payload.get("event")
+            if event == "start":
+                self._t_model_requested = payload.get("llmModel")
+            elif event == "model_update":
+                self._t_model_switched_to = payload.get("model")
+            elif event == "done":
+                self._t_done_payload = payload
+            elif event == "error":
+                self._t_last_error_code = (
+                    payload.get("code") or self._t_last_error_code
+                )
+        except Exception:
+            logger.debug("Telemetry frame observation failed", exc_info=True)
+
+    def _record_run_summary(self) -> None:
+        """Record one ``run_summary`` telemetry event for this run.
+
+        Called exactly once when the SSE stream ends, for successful AND
+        failed runs. Best-effort throughout: any exception is swallowed
+        and logged at debug — telemetry can never affect a run.
+        """
+        if self._summary_recorded:
+            return
+        self._summary_recorded = True
+        try:
+            done = self._t_done_payload
+            if done is not None:
+                outcome = "incomplete" if done.get("incomplete") else "success"
+            elif self._t_last_error_code:
+                outcome = f"failed:{self._t_last_error_code}"
+            elif self._t_stream_aborted:
+                outcome = f"failed:{self._t_stream_aborted}"
+            else:
+                outcome = "failed:UNKNOWN"
+
+            orchestrator = self._t_orchestrator
+            client = self._t_client
+            elapsed = (
+                time.monotonic() - self._started_at
+                if self._started_at is not None else 0.0
+            )
+
+            tokens = 0
+            cost = 0.0
+            served_model = None
+            if client is not None:
+                usage = getattr(client, "usage", None)
+                try:
+                    tokens = int(usage.total_tokens)
+                except Exception:
+                    tokens = 0
+                try:
+                    cost = round(float(usage.estimated_cost), 4)
+                except Exception:
+                    cost = 0.0
+                served_model = getattr(usage, "served_model", None)
+
+            model_requested = (
+                self._t_model_requested or self.request.llm_model or ""
+            )
+            model_final = (
+                self._t_model_switched_to or served_model or model_requested
+            )
+
+            turns = 0
+            blockers_remaining: Optional[int] = None
+            if orchestrator is not None:
+                turns = int(getattr(orchestrator, "total_turns", 0) or 0)
+                try:
+                    blockers_remaining = sum(
+                        1
+                        for issue in (
+                            getattr(orchestrator, "_validation_issues", None) or []
+                        )
+                        if getattr(issue, "severity", None) == "blocker"
+                    )
+                except Exception:
+                    blockers_remaining = None
+
+            # Prefer the split already computed for the done event (same
+            # walk, guaranteed consistent); recompute only when missing.
+            file_split = (done or {}).get("fileSplit")
+            if (
+                not isinstance(file_split, dict)
+                and done is not None
+                and orchestrator is not None
+                and self.temp_dir
+                and os.path.isdir(self.temp_dir)
+            ):
+                file_split = self._compute_file_split(orchestrator, self.temp_dir)
+            if not isinstance(file_split, dict):
+                file_split = telemetry.compute_file_split(
+                    "", None, None, _EXCLUDED_OUTPUT_DIRS
+                )
+
+            payload = {
+                "run_id": self.run_id,
+                "mode": "resume" if self._resume_run_id else self._mode,
+                "provider": self.request.provider,
+                "model_requested": model_requested,
+                "model_final": model_final,
+                "model_switched": bool(self._t_model_switched_to),
+                "duration_seconds": round(elapsed, 1),
+                "turns": turns,
+                "tokens": tokens,
+                "estimated_cost_usd": cost,
+                "files_produced": int((done or {}).get("fileCount") or 0),
+                "blockers_found": self._t_blockers_found,
+                "blockers_remaining": blockers_remaining,
+                "outcome": outcome,
+                "file_split": file_split,
+            }
+            telemetry.record_event(
+                self._telemetry_session,
+                self._telemetry_participant,
+                "run_summary",
+                payload,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to record run summary telemetry for run %s",
+                self.run_id, exc_info=True,
+            )
 
     def _cleanup_temp_dir(self) -> None:
         if self.temp_dir and os.path.isdir(self.temp_dir):

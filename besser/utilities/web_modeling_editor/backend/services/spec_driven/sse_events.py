@@ -168,6 +168,11 @@ class DoneEvent(BaseSseEvent):
     # run that was genuinely cut short (which reports 0 here) — the two need
     # different user-facing framing. 0 when there is nothing to distinguish.
     blockerCount: int = 0
+    # Three-way authorship split over the final output tree —
+    # ``{generator_untouched, generator_llm_modified, llm_authored, total,
+    # *_pct}`` — how much of the app the deterministic pipeline carried vs.
+    # the LLM. Best-effort: ``None`` when the split could not be computed.
+    fileSplit: Optional[dict[str, Any]] = None
 
 
 ErrorCode = Literal[

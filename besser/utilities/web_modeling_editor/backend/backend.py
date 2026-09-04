@@ -68,6 +68,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     validation_router,
     deployment_router,
     spec_driven_router,
+    telemetry_router,
 )
 
 # Smart-generation download registry — started/cancelled in the lifespan below
@@ -226,6 +227,7 @@ app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
 app.include_router(spec_driven_router.router)
+app.include_router(telemetry_router.router)
 
 
 # Exception handlers

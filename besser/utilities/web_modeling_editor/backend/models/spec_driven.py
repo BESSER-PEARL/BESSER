@@ -107,6 +107,15 @@ class SmartGenerateRequest(BaseModel):
     # invalid pairing degrades gracefully rather than failing the request.
     base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     mode: Literal["generate", "modify"] = "generate"
+    # Pilot-experiment telemetry labels (services/spec_driven/telemetry.py).
+    # Optional and deliberately fail-open: a generation must NEVER fail
+    # because of telemetry, so values that don't match the collection
+    # patterns are silently nulled instead of rejected. Validated
+    # independently — a valid participant with an invalid session (or
+    # vice versa) keeps the valid half; the runner records a run summary
+    # only when BOTH survive sanitization.
+    telemetry_session: Optional[str] = None
+    telemetry_participant: Optional[str] = None
 
     @field_validator("instructions")
     @classmethod
@@ -114,6 +123,24 @@ class SmartGenerateRequest(BaseModel):
         if not value.strip():
             raise ValueError("instructions cannot be empty or whitespace-only")
         return value
+
+    @field_validator("telemetry_session", mode="before")
+    @classmethod
+    def _sanitize_telemetry_session(cls, value: object) -> Optional[str]:
+        # Lazy import to avoid a circular import at module load (the
+        # services.spec_driven package imports this module via its runner).
+        from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry import (
+            sanitize_session,
+        )
+        return sanitize_session(value)
+
+    @field_validator("telemetry_participant", mode="before")
+    @classmethod
+    def _sanitize_telemetry_participant(cls, value: object) -> Optional[str]:
+        from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry import (
+            sanitize_participant,
+        )
+        return sanitize_participant(value)
 
     @field_validator("base_url")
     @classmethod

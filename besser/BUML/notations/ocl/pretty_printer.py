@@ -31,6 +31,30 @@ _PREC_MUL = 70
 _PREC_UNARY = 80
 _PREC_POSTFIX = 90
 
+#: AST operation name -> its OCL ``->`` spelling. The visitors name these
+#: after the grammar token (``INCLUDES``, ``ASSET``, ...), which is not what
+#: they are called in OCL source; without this map they printed as
+#: ``.INCLUDES(v)`` / ``.ASSET()`` — text that re-parses as an unrelated
+#: method call instead of the collection operation it came from.
+_ARROW_OPS = {
+    "Size": "size",
+    "IsEmpty": "isEmpty",
+    "Sum": "sum",
+    "First": "first",
+    "Last": "last",
+    "INCLUDES": "includes",
+    "EXCLUDES": "excludes",
+    "UNION": "union",
+    "PREPEND": "prepend",
+    "APPEND": "append",
+    "SYMMETRICDIFFERENCE": "symmetricDifference",
+    "SUBSEQUENCE": "subSequence",
+    "SUBORDEREDSET": "subOrderedSet",
+    "ASSET": "asSet",
+    "INTERSECTION": "intersection",
+    "ISUNIQUE": "isUnique",
+}
+
 _OP_PREC = {
     "implies": _PREC_IMPLIES,
     "or": _PREC_OR,
@@ -120,11 +144,11 @@ def _render_operation(node: OperationCallExpression, parent_prec: int) -> str:
         # OCL spec uses ``::`` for class-scoped operations.
         return f"{_render(node.source, _PREC_POSTFIX)}::allInstances()"
 
-    if op == "Size":
-        return f"{_render(node.source, _PREC_POSTFIX)}->size()"
-
-    if op == "IsEmpty":
-        return f"{_render(node.source, _PREC_POSTFIX)}->isEmpty()"
+    if op in _ARROW_OPS:
+        rendered_args = ", ".join(
+            _render(a, _PREC_TOP) for a in args if not isinstance(a, InfixOperator)
+        )
+        return f"{_render(node.source, _PREC_POSTFIX)}->{_ARROW_OPS[op]}({rendered_args})"
 
     if op in _TYPE_TEST_NAMES:
         method = _TYPE_TEST_NAMES[op]

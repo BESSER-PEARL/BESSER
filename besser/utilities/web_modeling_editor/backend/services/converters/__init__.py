@@ -12,6 +12,7 @@ from .json_to_buml import (
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_kg_diagram,
 )
 from .buml_to_json import (
     class_buml_to_json,
@@ -29,6 +30,8 @@ from .buml_to_json import (
     nn_buml_to_json,
     bpmn_object_to_json,
     bpmn_buml_to_json,
+    kg_to_json,
+    kg_buml_to_json,
 )
 
 __all__ = [
@@ -41,6 +44,7 @@ __all__ = [
     "process_quantum_diagram",
     "process_nn_diagram",
     "process_bpmn_diagram",
+    "process_kg_diagram",
     "class_buml_to_json",
     "parse_buml_content",
     "state_machine_to_json",
@@ -56,4 +60,6 @@ __all__ = [
     "nn_buml_to_json",
     "bpmn_object_to_json",
     "bpmn_buml_to_json",
+    "kg_to_json",
+    "kg_buml_to_json",
 ]

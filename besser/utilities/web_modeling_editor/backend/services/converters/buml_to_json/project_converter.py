@@ -18,6 +18,7 @@ from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
 from .bpmn_diagram_converter import bpmn_buml_to_json
+from .kg_diagram_converter import kg_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ SECTION_CONFIG = {
     'agent': ('AGENT', 'AgentDiagram', 'Agent Diagram'),
     'gui_model': ('GUI', 'GUINoCodeDiagram', 'GUI Diagram'),
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
+    'kg_model': ('KNOWLEDGE_GRAPH', 'KnowledgeGraphDiagram', 'Knowledge Graph Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
     'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
     'bpmn_model': ('BPMN', 'BPMNDiagram', 'BPMN Diagram'),
@@ -36,7 +38,7 @@ SECTION_CONFIG = {
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
     'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
-    'BPMN',
+    'BPMN', 'KNOWLEDGE_GRAPH',
 ]
 
 
@@ -60,6 +62,15 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
             "styles": [],
             "assets": [],
             "symbols": []
+        }
+
+    # KnowledgeGraphDiagram stores nodes/edges rather than elements/relationships.
+    if diagram_type == "KnowledgeGraphDiagram":
+        return {
+            "version": "1.0.0",
+            "type": diagram_type,
+            "nodes": [],
+            "edges": [],
         }
 
     return {
@@ -198,6 +209,9 @@ def _convert_section(
 
         elif model_name == "bpmn_model":
             model = bpmn_buml_to_json(section_code)
+
+        elif model_name == "kg_model":
+            model = kg_buml_to_json(section_code)
 
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
@@ -508,6 +522,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
         "BPMNDiagram": "BPMNDiagram",
+        "KnowledgeGraphDiagram": "KnowledgeGraphDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

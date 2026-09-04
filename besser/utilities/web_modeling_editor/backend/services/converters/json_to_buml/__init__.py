@@ -13,6 +13,7 @@ from .bpmn_diagram_processor import process_bpmn_diagram
 from .gui_diagram_processor import process_gui_diagram
 from .quantum_diagram_processor import process_quantum_diagram
 from .nn_diagram_processor import process_nn_diagram
+from .kg_diagram_processor import process_kg_diagram
 # Importing project_converter last so it can pick up every processor above
 # (BPMN, …) via `from . import (...)` without hitting a partially-initialised package.
 from .project_converter import json_to_buml_project
@@ -27,4 +28,5 @@ __all__ = [
     'process_quantum_diagram',
     'process_nn_diagram',
     'process_bpmn_diagram',
+    'process_kg_diagram',
 ]

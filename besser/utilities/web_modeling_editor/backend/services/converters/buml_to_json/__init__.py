@@ -11,6 +11,7 @@ from .project_converter import project_to_json, empty_model
 from .quantum_diagram_converter import quantum_circuit_to_json, quantum_circuit_to_editor_json, quantum_buml_to_json
 from .nn_diagram_converter import nn_model_to_json, nn_buml_to_json
 from .bpmn_diagram_converter import bpmn_object_to_json, bpmn_buml_to_json
+from .kg_diagram_converter import kg_to_json, kg_buml_to_json
 
 __all__ = [
     'class_buml_to_json',
@@ -31,4 +32,6 @@ __all__ = [
     'nn_buml_to_json',
     'bpmn_object_to_json',
     'bpmn_buml_to_json',
+    'kg_to_json',
+    'kg_buml_to_json',
 ]

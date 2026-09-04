@@ -43,4 +43,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff
       - name: Check formatting
-        run: ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+        # F821 catches undefined names that `from __future__ import annotations`
+        # hides from every other rule here. The mockup_to_buml LLM prompt examples
+        # are few-shot snippets, not importable modules, so they are exempt from it
+        # (every other rule still applies to them).
+        run: ruff check besser/ --select F841,F401,F541,F811,F821,E711,E721,E731,E741 --ignore E501 --exclude "*/BESSERActionLanguageParser.py" --per-file-ignores "besser/BUML/notations/mockup_to_buml/llm_assistant/**:F821"

@@ -81,3 +81,114 @@ The result of this transformation is a string with the code specified in the Pla
         Organization "0..1" -- "0..1" Place : location
 
         @enduml
+
+From OWL 2 / SHACL to B-UML + OCL
+---------------------------------
+
+The LLM-based transformation above is a best-effort reading of an arbitrary
+graph. When the knowledge graph is a proper **OWL 2 ontology** — optionally with
+**SHACL shapes** — BESSER offers a second, fully deterministic path that needs no
+API key and preserves the graph's formal semantics, translating them into a
+:doc:`../model_types/structural` enriched with OCL constraints.
+
+It implements the transformation rules of *"Translating OWL 2 Ontologies and
+SHACL Shapes into UML/OCL Models"* (Dalle Lucca Tosi, Ul Haq & Cabot, KGMDSE
+2026): OWL 2 constructs that map directly onto UML (classes, associations,
+attributes, generalizations, enumerations, cardinality restrictions), those that
+additionally need an OCL invariant (class expressions, property
+characteristics, disjointness), and SHACL shapes, which become further OCL
+invariants over the classes the OWL phase produced.
+
+.. code-block:: python
+
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+    from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+
+    kg = owl_file_to_knowledge_graph("ontology.ttl")
+    result = kg_to_class_diagram(kg, model_name="MyDomain")
+
+    domain_model = result.domain_model          # classes, associations, generalizations
+    constraints = domain_model.constraints      # OCL invariants
+    for warning in result.warnings:             # non-fatal diagnostics
+        print(warning.code, warning.message)
+
+The same function serves knowledge graphs drawn directly in the
+`web modeling editor <https://editor.besser-pearl.org/>`_: the editor's node
+types (class, property, individual) stand in for the OWL declarations an
+imported ontology carries explicitly.
+
+Every generated invariant is a standard ``Constraint`` with ``language="OCL"``
+and an expression of the form ``context <Class> inv <name>: <body>``, so it
+round-trips through the editor and feeds the OCL-aware generators.
+
+How it works
+~~~~~~~~~~~~
+
+The conversion runs in three stages, each independently testable:
+
+``kg_to_rdf``
+    Projects the :class:`~besser.BUML.metamodel.kg.KnowledgeGraph` — however it
+    was built — into an in-memory RDF graph.
+
+``owl2uml``
+    Applies the paper's rule tables to that graph, producing a small,
+    dependency-free intermediate UML model.
+
+``to_buml``
+    Lowers the intermediate model onto B-UML, reconciling it with the
+    metamodel's validation rules (association end-name uniqueness, the fixed
+    primitive set, multiplicity bounds), and checks that every invariant can
+    navigate what it references from its own context.
+
+The transformation is deterministic: identical input always produces an
+identical model.
+
+.. note::
+
+    A few OWL constructs cannot be represented one-to-one in UML. Where the
+    lowering has to make a choice — merging associations that would otherwise
+    give a class two identically-named ends, clamping an out-of-range
+    multiplicity, breaking an inheritance cycle — it records a
+    ``KGConversionWarning`` on ``result.warnings`` rather than failing or
+    silently dropping the construct.
+
+Before converting, the KG can be checked with
+``analyze_kg_for_class_diagram()``, which reports ambiguities (a property with
+no domain, a class referenced but never declared, …) together with the
+resolutions available for each. This is what the editor's KG refinement dialog
+drives.
+
+Properties without a domain
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A property declared without an ``rdfs:domain`` has no class to attach to, so it
+is placed on a synthetic ``Thing``. In OWL every class is implicitly a subclass
+of ``owl:Thing``, but UML has no such rule: unless the classes are actually made
+to inherit from it, an OCL invariant that navigates the property resolves from
+nowhere, because OCL looks a feature up on the context class and its
+*ancestors* — never its subclasses.
+
+``analyze_kg_for_class_diagram()`` therefore raises a ``PROPERTY_NO_DOMAIN``
+issue for each such property that something references — an ABox assertion, an
+``rdfs:subPropertyOf`` axiom, or a SHACL ``sh:path``. Accepting the recommended
+``attach_to_thing`` resolution gives the property a domain *and* makes every
+top-level class inherit from ``Thing``, so those invariants resolve. Converting
+without accepting it is still fine; the invariants that cannot be navigated are
+dropped with an ``OCL_DROPPED_UNRESOLVED_FEATURE`` warning rather than shipped
+in a form no evaluator can read.
+
+Round-tripping a knowledge graph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A knowledge graph is a first-class project model, so it round-trips through
+B-UML source like every other diagram type — on its own via ``/export-buml``
+and ``/get-json-model``, or as one section of a whole project via
+``/export-project-as-buml`` and ``/get-project-json-model``. In Python, the
+same pair is :func:`besser.utilities.buml_code_builder.kg_model_to_code` and
+the ``kg_buml_to_json`` converter.
+
+Independently of B-UML, the graph can be written back out as RDF —
+:func:`besser.utilities.kg_to_owl.serialize_knowledge_graph` emits Turtle or
+RDF/XML, and chooses between OWL restrictions, SHACL shapes, or both. Importing
+an ontology, editing it in the graphical editor, and exporting it again is
+designed to be lossless.

@@ -845,7 +845,19 @@ class SmartGenerationRunner:
                         type(event).__name__,
                     )
 
+        # Text-flow state: each LLM turn is a separate message, and the
+        # model's next message starts with no whitespace ("...create the
+        # router:Now let me..."). Track when tool activity ended a turn's
+        # text so the next turn's first delta gets a paragraph break.
+        text_state: dict[str, bool] = {"emitted": False, "break_pending": False}
+
         def on_text(delta: str) -> None:
+            if delta:
+                if text_state["break_pending"]:
+                    text_state["break_pending"] = False
+                    if not delta.startswith(("\n", " ")):
+                        delta = "\n\n" + delta
+                text_state["emitted"] = True
             _put(TextDeltaEvent(delta=delta))
 
         def on_phase_details(phase: str, details: str) -> None:
@@ -865,6 +877,11 @@ class SmartGenerationRunner:
                 )
 
         def on_progress(turn: int, tool: str, status: str) -> None:
+            # Any tool/phase activity ends the current turn's prose; the
+            # next text delta should open a new paragraph.
+            if text_state["emitted"]:
+                text_state["emitted"] = False
+                text_state["break_pending"] = True
             if tool == "__model_switch__":
                 # The provider's outage fallback switched the run to a
                 # different model (sticky for the rest of the run).

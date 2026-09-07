@@ -942,20 +942,10 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         output_dir=temp_dir,
     )
 
-    # DjangoGenerator.generate() shells out to `django-admin startproject`
-    # without a cwd, and several internal paths are derived from os.getcwd().
-    # The caller therefore has to chdir into temp_dir for the duration of the
-    # generation; otherwise the project gets scaffolded in the FastAPI
-    # process's cwd and the harvester below finds an empty temp_dir/<project>.
-    def _run_generate_in_temp_dir():
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(temp_dir)
-            generator_instance.generate()
-        finally:
-            os.chdir(original_cwd)
-
-    await asyncio.to_thread(_run_generate_in_temp_dir)
+    # DjangoGenerator anchors all of its filesystem effects on output_dir
+    # (its subprocesses run with an explicit cwd), so it can run directly on
+    # a worker thread without touching the process-wide working directory.
+    await asyncio.to_thread(generator_instance.generate)
 
     # Validate generation
     if not os.path.exists(project_dir) or not os.listdir(project_dir):

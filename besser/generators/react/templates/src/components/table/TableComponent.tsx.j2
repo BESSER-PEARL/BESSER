@@ -490,10 +490,21 @@ export const TableComponent: React.FC<Props> = ({
     return value;
   };
 
+  // Canonical value of a related record: its lookup field (the entity's id
+  // attribute, which is not necessarily named `id` — e.g. Room.number),
+  // falling back to `id` for entities that use the default primary key.
+  const getOptionValue = (col: TableColumn, option: any): string => {
+    const raw =
+      col.lookupField && option?.[col.lookupField] !== undefined && option?.[col.lookupField] !== null
+        ? option[col.lookupField]
+        : option?.id;
+    return raw === undefined || raw === null ? "" : String(raw);
+  };
+
   // Label shown for a related record (same fallbacks as the lookup selects)
   const getLookupOptionLabel = (col: TableColumn, targetId: string): string => {
     const options = lookupOptions[(col.entity || "").toLowerCase()] || [];
-    const option = options.find((item: any) => String(item?.id) === String(targetId));
+    const option = options.find((item: any) => getOptionValue(col, item) === String(targetId));
     if (!option) {
       return `ID: ${targetId}`;
     }
@@ -532,7 +543,7 @@ export const TableComponent: React.FC<Props> = ({
               // For list-type lookups (1:N or N:M), get array of IDs from related objects
               const relatedArray = editRowData[col.relationshipKey || col.field];
               if (Array.isArray(relatedArray)) {
-                initialValues[col.field] = relatedArray.map((item: any) => String(item.id));
+                initialValues[col.field] = relatedArray.map((item: any) => getOptionValue(col, item));
               } else {
                 initialValues[col.field] = [];
               }
@@ -1004,10 +1015,10 @@ export const TableComponent: React.FC<Props> = ({
                               </div>
                             ) : (
                               options.map((option: any) => {
-                                const isChecked = selectedValues.includes(String(option.id));
+                                const isChecked = selectedValues.includes(getOptionValue(col, option));
                                 return (
                                   <div 
-                                    key={option.id} 
+                                    key={getOptionValue(col, option)}
                                     style={{ 
                                       display: "flex", 
                                       alignItems: "center", 
@@ -1019,7 +1030,7 @@ export const TableComponent: React.FC<Props> = ({
                                     onMouseEnter={(e) => e.currentTarget.style.background = "#e0e7ff"}
                                     onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                                     onClick={() => {
-                                      const valueStr = String(option.id);
+                                      const valueStr = getOptionValue(col, option);
                                       const newSelected = isChecked
                                         ? selectedValues.filter((v: string) => v !== valueStr)
                                         : [...selectedValues, valueStr];
@@ -1176,7 +1187,7 @@ export const TableComponent: React.FC<Props> = ({
                         >
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
-                            <option key={option.id} value={option.id}>
+                            <option key={getOptionValue(col, option)} value={getOptionValue(col, option)}>
                               {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
                             </option>
                           ))}

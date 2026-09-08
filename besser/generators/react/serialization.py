@@ -604,6 +604,14 @@ class GuiSerializationMixin:
 
                     form_columns.append(column_dict)
 
+                # Display fields the user configured on the table's lookup columns:
+                # the dialog's selects should show the same values as the table.
+                configured_lookup_fields = {
+                    c.get("path"): c.get("field")
+                    for c in columns
+                    if c.get("column_type") == "lookup" and c.get("path") and c.get("field")
+                }
+
                 ends = list(domain_concept.all_association_ends())
                 ends = sort_by_timestamp(ends) if ends else []
                 for end in ends:
@@ -614,7 +622,10 @@ class GuiSerializationMixin:
                     target_attrs = []
                     if target and hasattr(target, "all_attributes"):
                         target_attrs = sort_by_timestamp(list(target.all_attributes()))
-                    lookup_field = target_attrs[0].name if target_attrs else ""
+                    lookup_field = (
+                        configured_lookup_fields.get(end.name)
+                        or self._select_display_field(target_attrs)
+                    )
                     # The identifying attribute of the target class: option values,
                     # payload ids and edit prefill key on it, while lookup_field
                     # stays the human-readable label source.
@@ -1213,6 +1224,35 @@ class GuiSerializationMixin:
     @staticmethod
     def _to_pretty_json(payload: Dict[str, Any]) -> str:
         return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
+
+    @staticmethod
+    def _select_display_field(attributes: List[Any]) -> str:
+        """Pick the attribute shown for a related record in lookup selects.
+
+        Preference order: an attribute literally named ``name``, then the first
+        string attribute that is not the id, then the first non-id attribute,
+        then the first attribute.
+        """
+        if not attributes:
+            return ""
+        if any(attr.name == "name" for attr in attributes):
+            return "name"
+        string_attr = next(
+            (attr for attr in attributes
+             if not getattr(attr, "is_id", False) and attr.name != "id"
+             and getattr(getattr(attr, "type", None), "name", "") == "str"),
+            None,
+        )
+        if string_attr is not None:
+            return string_attr.name
+        non_id = next(
+            (attr for attr in attributes
+             if not getattr(attr, "is_id", False) and attr.name != "id"),
+            None,
+        )
+        if non_id is not None:
+            return non_id.name
+        return attributes[0].name
 
     @staticmethod
     def _select_lookup_field(attributes: List[Any]) -> str:

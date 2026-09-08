@@ -54,6 +54,23 @@ FROM_SCRATCH_MAX_TOKENS = int(
     os.environ.get("BESSER_LLM_FROM_SCRATCH_MAX_TOKENS", "32768")
 )
 
+# Output-token ceiling used for modify/fix runs (LLMOrchestrator.modify()).
+# A modify/fix run routinely rewrites a whole existing file in a single
+# ``write_file`` turn -- a "targeted" edit that still touches most of the
+# file, or a smaller model electing a full rewrite over a surgical patch --
+# which is the same large-single-response case that overruns the client's
+# default per-call output cap and truncates mid-file. Give the modify path
+# the same wider ceiling the from-scratch path already uses (see
+# FROM_SCRATCH_MAX_TOKENS for why raising the limit -- rather than
+# chunking/continuing a truncated tool call -- is the lower-risk fix). A
+# higher cap only ALLOWS a longer response; it never forces one, so on the
+# free tier it is $0 and on paid tiers it only costs when the extra output
+# is actually generated. Defaults to the from-scratch value; env-tunable
+# since the safe ceiling depends on the model/provider in use.
+MODIFY_MAX_TOKENS = int(
+    os.environ.get("BESSER_LLM_MODIFY_MAX_TOKENS", str(FROM_SCRATCH_MAX_TOKENS))
+)
+
 
 # ======================================================================
 # Cost tracking (inspired by claw-code/usage.rs)

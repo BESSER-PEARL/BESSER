@@ -56,6 +56,7 @@ from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
 from besser.generators.llm.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
+    MODIFY_MAX_TOKENS,
     _is_free_local_model,
 )
 from besser.generators.llm.prompt_builder import (
@@ -524,10 +525,11 @@ class LLMOrchestrator:
         self._phase0_5_stack: str | None = None
         self._phase0_5_files: list[str] = []
         self._inventory: str = ""
-        # Set by ``_apply_adaptive_budget`` when Phase 1 found no
-        # deterministic generator and the client's output-token limit was
-        # raised. The legacy recipe field name is retained for compatibility;
-        # cost and runtime limits are never raised.
+        # True once the client's per-call output-token limit was raised
+        # above its default: by ``_apply_adaptive_budget`` for a pure
+        # from-scratch ``run()``, or by ``_apply_modify_budget`` for a
+        # ``modify()`` run. The legacy recipe field name is retained for
+        # compatibility; cost and runtime limits are never raised.
         self._adaptive_budget_applied: bool = False
         self._start_time: float | None = None
         # Stored as ValidationIssue objects so the recipe captures severity.
@@ -623,6 +625,20 @@ class LLMOrchestrator:
         # is ``None`` unless at least one new class was actually added.
         self._source_project_export: dict | None = source_project_export
         self._updated_project_export: dict | None = None
+
+        # Fix/modify success gate (modify() only). When a modify run is
+        # seeded by a user-reported error (a pasted traceback, a broken
+        # endpoint, "it 400s"), the reported failure IS the run's success
+        # criterion: the loop must attempt exactly that and must not report
+        # a clean success while it is unresolved. ``_fix_target`` is the
+        # parsed :class:`ReportedTarget`; ``_is_fix_run`` gates every branch
+        # so from-scratch run()/resume() are byte-identical (they never set
+        # these). ``_fix_target_resolved`` / ``_fix_target_message`` are the
+        # end-of-run verdict the runner surfaces honestly.
+        self._is_fix_run: bool = False
+        self._fix_target = None  # ReportedTarget | None
+        self._fix_target_resolved: bool | None = None
+        self._fix_target_message: str | None = None
 
     _LOOP_THRESHOLD = 4
     # Tighter, per-file threshold for the modify_file streak guard.
@@ -922,6 +938,12 @@ class LLMOrchestrator:
         # rewrites are where modify-run regressions come from.
         self.executor.enable_modify_guard()
 
+        # Give the modify/fix path the wider per-call output ceiling: a
+        # single-turn file rewrite here overruns the client's default cap
+        # and truncates mid-file. Set once, before Phase 2. Cost/runtime
+        # caps are untouched; only the response-size ceiling is raised.
+        self._apply_modify_budget()
+
         # Re-hydrate generator-file tags + the seed's generator name from
         # the copied recipe BEFORE building the inventory (which needs a
         # generator name for its framing line).
@@ -955,6 +977,13 @@ class LLMOrchestrator:
         if session_recap:
             self._inventory = f"{self._inventory}\n{session_recap}"
 
+        # -- Fix/modify success gate: parse the user-reported failure ------
+        # A modify run seeded by a reported error (traceback / broken
+        # endpoint) makes that failure the run's success criterion. Detect
+        # + parse it once here; every downstream branch is gated on
+        # ``_is_fix_run`` so run()/resume() stay byte-identical.
+        self._detect_fix_target(instructions)
+
         self._trace.write(
             EVENT_RUN_START,
             mode="modify",
@@ -962,6 +991,8 @@ class LLMOrchestrator:
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
             max_turns=self.max_turns,
+            fix_run=self._is_fix_run,
+            fix_target=(self._fix_target.descriptor if self._fix_target else None),
         )
 
         # -- Phase 1.5: Validate the seeded output (no Phase 1 run) --------
@@ -982,10 +1013,23 @@ class LLMOrchestrator:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="seed_forward", message=issue,
                 )
+        # Feed the tool's OWN structural findings that match the reported
+        # target into Phase 2 as explicit fix instructions, so the LLM acts
+        # on the concrete defect (e.g. "the Watchlist create form is not
+        # wired") instead of only the user's paraphrase. Empty on a
+        # non-fix modify run and on run()/resume().
+        fix_seed_issues = self._fix_run_scoped_issues()
+        if fix_seed_issues:
+            for issue in fix_seed_issues:
+                self._trace.write(
+                    EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue,
+                )
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
         self._run_phase2(
             instructions,
-            extra_issues=phase1_issues + self._seed_unresolved_issues,
+            extra_issues=(
+                phase1_issues + self._seed_unresolved_issues + fix_seed_issues
+            ),
         )
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
@@ -1005,6 +1049,13 @@ class LLMOrchestrator:
                 1 for i in self._validation_issues if i.severity == "blocker"
             ),
         )
+
+        # -- Fix/modify success gate --------------------------------------
+        # After Phase 3, decide whether the reported failure is plausibly
+        # addressed. A matching finding still present marks the run
+        # incomplete with an honest, target-specific message instead of a
+        # clean "success / 0 blockers".
+        self._evaluate_fix_target_gate()
 
         elapsed = time.monotonic() - self._start_time
         logger.info(
@@ -1111,6 +1162,172 @@ class LLMOrchestrator:
                     self.executor._generator_files.add(entry["path"])
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
+
+    # ==================================================================
+    # Fix/modify success gate (modify() only)
+    # ==================================================================
+
+    # Prefix stamped on a finding promoted because it matches the reported
+    # failure. Self-contained and stable so the end-of-run gate can
+    # identify a promoted finding regardless of re-collection.
+    _FIX_TARGET_PREFIX = "reported-failure: "
+
+    def _detect_fix_target(self, instructions: str) -> None:
+        """MODIFY-only: parse the user-reported failure into a target.
+
+        Sets ``self._fix_target`` and ``self._is_fix_run``. Best-effort — a
+        parse failure (or a modify run with no fix/error vocabulary) leaves
+        the run ungated, so a plain feature-add modify behaves exactly as
+        before. NEVER invoked from run()/resume(); from-scratch generation
+        is untouched.
+        """
+        try:
+            from besser.generators.llm.fix_target import parse_reported_target
+            self._fix_target = parse_reported_target(
+                instructions, self.domain_model,
+            )
+        except Exception:
+            logger.debug("Fix-target parse failed", exc_info=True)
+            self._fix_target = None
+        self._is_fix_run = self._fix_target is not None
+        if self._is_fix_run:
+            logger.info(
+                "Fix/modify run: reported target = %s (kind=%s, entities=%s)",
+                self._fix_target.descriptor,
+                self._fix_target.kind,
+                ", ".join(self._fix_target.entities) or "none",
+            )
+
+    def _acceptance_seed_issues(self) -> list[str]:
+        """Acceptance-matrix findings on the current (seed) workspace."""
+        try:
+            from besser.generators.llm.acceptance import (
+                build_acceptance_matrix,
+                matrix_issues,
+            )
+            matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            return matrix_issues(matrix)
+        except Exception:
+            logger.debug("Seed acceptance computation failed", exc_info=True)
+            return []
+
+    def _fix_run_scoped_issues(self) -> list[str]:
+        """Explicit Phase-2 fix instructions derived from the reported target.
+
+        Always leads with a headline naming the reported failure (so the
+        LLM knows the success criterion even when nothing structural
+        matched), then appends the tool's OWN structural findings on the
+        SEED workspace that match the target (acceptance matrix +
+        data-contract lint). Empty on a non-fix run and on run()/resume().
+        """
+        if not self._is_fix_run or self._fix_target is None:
+            return []
+        from besser.generators.llm.fix_target import finding_matches_target
+
+        issues: list[str] = [
+            "The user reported this failure and it must be resolved in this "
+            f"run: {self._fix_target.descriptor}. Reproduce the cause, fix "
+            "it, and confirm the reported request/flow now succeeds; do not "
+            "end the run while it is unresolved."
+        ]
+        raw = list(self._acceptance_seed_issues()) + list(
+            self._collect_data_contract_issues()
+        )
+        for finding in raw:
+            if finding_matches_target(finding, self._fix_target):
+                issues.append(
+                    "Concrete defect behind the reported failure — "
+                    f"{finding}. Repair this so the reported request succeeds."
+                )
+        return issues
+
+    def _promote_fix_target_findings(
+        self, issues: list[ValidationIssue],
+    ) -> list[ValidationIssue]:
+        """Promote target-matching findings from warning to blocker.
+
+        Scoped to a fix run only; a no-op otherwise (so from-scratch
+        Phase 3 classification is identical). A promoted finding is
+        rewritten with a stable prefix + the target descriptor so it reads
+        honestly in the recipe and the end-of-run gate can identify it.
+        """
+        if not self._is_fix_run or self._fix_target is None:
+            return issues
+        from besser.generators.llm.fix_target import finding_matches_target
+
+        promoted: list[ValidationIssue] = []
+        for issue in issues:
+            if (
+                issue.severity != "blocker"
+                and not issue.message.startswith(self._FIX_TARGET_PREFIX)
+                and finding_matches_target(issue.message, self._fix_target)
+            ):
+                promoted.append(ValidationIssue(
+                    "blocker",
+                    f"{self._FIX_TARGET_PREFIX}{issue.message} "
+                    f"(matches the reported failure: {self._fix_target.descriptor})",
+                ))
+            else:
+                promoted.append(issue)
+        return promoted
+
+    def _evaluate_fix_target_gate(self) -> None:
+        """Decide whether the reported failure is plausibly addressed.
+
+        Sets ``_fix_target_resolved`` / ``_fix_target_message`` from the
+        FINAL Phase-3 issue list. A blocker that matches the target (either
+        one we promoted or a pre-existing data-contract blocker about the
+        same entity) means the run must NOT claim a clean success.
+
+        A soft target (no entities we could ground) is left as ``None`` —
+        we neither confirm nor deny a specific defect, rather than
+        over-claiming either way.
+        """
+        if not self._is_fix_run or self._fix_target is None:
+            return
+        if self._fix_target.is_soft:
+            self._fix_target_resolved = None
+            logger.info(
+                "Fix run: soft target %s — no structural signal to verify",
+                self._fix_target.descriptor,
+            )
+            return
+        from besser.generators.llm.fix_target import finding_matches_target
+
+        unresolved = [
+            i for i in self._validation_issues
+            if i.severity == "blocker"
+            and (
+                i.message.startswith(self._FIX_TARGET_PREFIX)
+                or finding_matches_target(i.message, self._fix_target)
+            )
+        ]
+        if unresolved:
+            self._fix_target_resolved = False
+            detail = unresolved[0].message
+            if detail.startswith(self._FIX_TARGET_PREFIX):
+                detail = detail[len(self._FIX_TARGET_PREFIX):]
+            self._fix_target_message = (
+                "I changed the app, but could not confirm the reported "
+                f"failure is fixed ({self._fix_target.descriptor}). "
+                f"Outstanding issue: {detail}"
+            )
+            logger.warning(
+                "Fix run: reported target NOT confirmed fixed — %s",
+                self._fix_target.descriptor,
+            )
+        else:
+            self._fix_target_resolved = True
+            logger.info(
+                "Fix run: reported target plausibly addressed — %s",
+                self._fix_target.descriptor,
+            )
+        self._trace.write(
+            EVENT_PHASE_EXIT,
+            phase="fix_target_gate",
+            resolved=self._fix_target_resolved,
+            target=self._fix_target.descriptor,
+        )
 
     # ==================================================================
     # Model-sync during vibe-MODIFY (class-diagram only)
@@ -1982,6 +2199,43 @@ class LLMOrchestrator:
                 current_max_tokens, FROM_SCRATCH_MAX_TOKENS,
             )
             self.client.max_tokens = FROM_SCRATCH_MAX_TOKENS
+            self._adaptive_budget_applied = True
+
+    def _apply_modify_budget(self) -> None:
+        """Raise only the output-token ceiling for modify/fix runs.
+
+        Called once at the start of ``modify()`` (before Phase 2). A
+        modify/fix run frequently rewrites a whole existing file in a
+        single ``write_file`` turn -- a targeted edit that still touches
+        most of the file, or a smaller model electing a full rewrite over
+        a surgical patch -- which is exactly the large-single-response
+        case that overruns the client's default per-call output cap and
+        truncates mid-file (see the ``stop_reason in ("max_tokens",
+        "length")`` handling in ``_run_customization_loop``).
+
+        Mirrors ``_apply_adaptive_budget`` (raises only the per-call
+        output limit; the caller-authorised cost and runtime caps are
+        never touched), but is keyed on the modify path rather than
+        ``self._generator_used`` -- a modify run adopts the seed's
+        generator name, so that "no scaffold ran" signal isn't available
+        here. NEVER invoked from ``run()`` / ``resume()``, so
+        first-generation output sizing (scaffolded stays at the client
+        default; pure from-scratch uses ``_apply_adaptive_budget``) is
+        unchanged.
+        """
+        try:
+            current_max_tokens = self.client.max_tokens
+        except (AttributeError, NotImplementedError):
+            # Defensive: a test double / older client without the
+            # max_tokens property. Don't fail the run over telemetry.
+            current_max_tokens = None
+        if current_max_tokens is not None and current_max_tokens < MODIFY_MAX_TOKENS:
+            logger.info(
+                "Adaptive response sizing: raising output-token limit %d -> %d for "
+                "modify/fix run",
+                current_max_tokens, MODIFY_MAX_TOKENS,
+            )
+            self.client.max_tokens = MODIFY_MAX_TOKENS
             self._adaptive_budget_applied = True
 
     # ==================================================================
@@ -3187,7 +3441,13 @@ class LLMOrchestrator:
                 "for this run"
             )
 
-        return [_classify_issue(s) for s in raw_issues]
+        issues = [_classify_issue(s) for s in raw_issues]
+        # For the duration of a fix/modify run, promote findings that match
+        # the user-reported target from warning to blocker so the Phase 3
+        # fix loop is driven to resolve them and the success gate keys on
+        # them. Non-matching findings keep their severity. No-op on
+        # from-scratch runs (``_is_fix_run`` is only set in modify()).
+        return self._promote_fix_target_findings(issues)
 
     _SCAFFOLD_FAMILIES = {
         "generate_fastapi_backend": "fastapi",
@@ -4356,8 +4616,9 @@ class LLMOrchestrator:
             "elapsed_seconds": round(elapsed, 1),
             "max_cost_usd": self.max_cost_usd,
             "max_runtime_seconds": self.max_runtime_seconds,
-            # Legacy field name: true only when from-scratch response-token
-            # sizing was raised. Cost/runtime caps remain caller-authorised.
+            # Legacy field name: true when the per-call response-token
+            # ceiling was raised (from-scratch or modify/fix run).
+            # Cost/runtime caps remain caller-authorised.
             "adaptive_budget_applied": self._adaptive_budget_applied,
             "usage": self.client.usage.summary(),
             "validation_issues": [
@@ -4382,6 +4643,19 @@ class LLMOrchestrator:
             # recipe's flattened summaries.
             "trace_file": TRACE_FILENAME if self._trace.path else None,
         }
+        # Fix/modify success-gate outcome. Present ONLY on a fix run so the
+        # from-scratch recipe stays byte-identical; records the reported
+        # target and whether it was confirmed fixed, so a later "what did
+        # the fix run actually do" is answerable from the recipe alone.
+        if self._is_fix_run and self._fix_target is not None:
+            recipe["fix_run"] = {
+                "detected": True,
+                "target": self._fix_target.descriptor,
+                "kind": self._fix_target.kind,
+                "entities": list(self._fix_target.entities),
+                "target_resolved": self._fix_target_resolved,
+                "target_message": self._fix_target_message,
+            }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
             with open(recipe_path, "w", encoding="utf-8") as f:

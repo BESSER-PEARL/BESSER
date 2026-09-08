@@ -30,6 +30,10 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
+from besser.generators.llm.llm_client import (
+    ClaudeLLMClient,
+    MODIFY_MAX_TOKENS,
+)
 from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.generators.llm.prompt_builder import build_system_prompt
 
@@ -463,3 +467,60 @@ def test_modify_inventory_carries_session_history(tmp_path, monkeypatch):
     assert '"add a search bar"' in orch._inventory
     assert "frontend/src/App.tsx" in orch._inventory
     assert "must survive your edits" in orch._inventory
+
+
+# ----------------------------------------------------------------------
+# (g) Output-token budget — modify/fix gets the wider per-call ceiling,
+# a scaffolded first generation keeps the client default.
+# ----------------------------------------------------------------------
+
+
+def test_modify_run_raises_output_budget(tmp_path, monkeypatch):
+    """A modify run must raise the client's per-call output ceiling to
+    ``MODIFY_MAX_TOKENS`` so a single-turn file rewrite truncates far
+    less, while a scaffolded first-generation ``run()`` keeps the client
+    default (16384). The pipeline is neutralised so this is a pure
+    budget-wiring test."""
+    default = ClaudeLLMClient.DEFAULT_MAX_TOKENS
+    assert default == 16384  # pins the from-scratch/scaffold default
+    assert MODIFY_MAX_TOKENS == 32768  # pins the raised modify budget
+
+    # --- modify() raises the ceiling to the modify budget ---
+    modify_client = _ScriptedClient([])
+    modify_client.max_tokens = default
+    orch = _make_orchestrator(tmp_path, modify_client)
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.modify("rewrite the whole endpoints file")
+
+    assert modify_client.max_tokens == MODIFY_MAX_TOKENS
+    assert orch._adaptive_budget_applied is True
+
+    # --- a scaffolded first-gen run() keeps the client default ---
+    scaffold_client = _ScriptedClient([])
+    scaffold_client.max_tokens = default
+    orch2 = _make_orchestrator(tmp_path, scaffold_client)
+
+    def _fake_phase1(instr):
+        # Simulate that a deterministic generator ran (scaffolded path):
+        # _apply_adaptive_budget only raises the cap when NO generator ran.
+        orch2._generator_used = "python"
+
+    monkeypatch.setattr(orch2, "_run_phase1", _fake_phase1)
+    monkeypatch.setattr(orch2, "_run_phase0_5_metadata", lambda instr: None)
+    monkeypatch.setattr(orch2, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch2, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch2, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch2, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch2, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch2, "_remove_snapshot", lambda: None)
+
+    orch2.run("build a library app")
+
+    assert scaffold_client.max_tokens == default  # unchanged: no bump
+    assert orch2._adaptive_budget_applied is False

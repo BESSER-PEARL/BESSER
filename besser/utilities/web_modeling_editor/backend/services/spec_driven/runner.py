@@ -772,7 +772,16 @@ class SmartGenerationRunner:
             self._cleanup_temp_dir()
             return
 
-        yield format_sse(PhaseEvent(phase="select", message="Selecting generator"))
+        # A seeded modify/fix run skips Phase 1 (no generator selection) —
+        # it loads the previous app and edits it in place. Emitting
+        # "Selecting generator" there is untrue, so use truthful copy while
+        # keeping the valid "select" phase key. First-generation and
+        # base-expired fallback (_seeded is False → run() from scratch) keep
+        # "Selecting generator".
+        if self._mode == "modify" and self._seeded:
+            yield format_sse(PhaseEvent(phase="select", message="Loading your app"))
+        else:
+            yield format_sse(PhaseEvent(phase="select", message="Selecting generator"))
 
         # ---- 4. Build the LLM client (may raise on invalid key) --------
         try:
@@ -1348,6 +1357,24 @@ class SmartGenerationRunner:
             except Exception:
                 self._final_tokens = 0
 
+            # Persist the run trace to a host-mounted dir (best-effort) so
+            # the per-turn detail survives the temp-workspace sweep on
+            # container recreate — this is what makes a later "what did this
+            # fix run actually do" answerable (the P2 lesson). No-op unless
+            # BESSER_INCIDENT_LOG_DIR / BESSER_TELEMETRY_DIR is configured.
+            try:
+                from besser.generators.llm.tracing import TRACE_FILENAME
+                from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+                    incidents,
+                )
+                incidents.persist_run_trace(
+                    self.run_id, os.path.join(result_path, TRACE_FILENAME),
+                )
+            except Exception:
+                logger.debug(
+                    "Trace persistence failed for run %s", self.run_id, exc_info=True,
+                )
+
             # Emit a final cost snapshot so the client always sees the
             # exact end-of-run usage, not the last periodic tick.
             yield format_sse(
@@ -1411,23 +1438,44 @@ class SmartGenerationRunner:
             ]
 
             _late_err = getattr(self, "_late_internal_error", None)
+            # A fix/modify run whose reported failure the orchestrator could
+            # not confirm fixed. When set, this is a promoted blocker in
+            # ``_validation_issues`` above (so ``incomplete`` is already
+            # True) — we surface its honest, target-specific message instead
+            # of the generic compile/boot wording. None on every other run.
+            _fix_msg = getattr(orchestrator, "_fix_target_message", None)
             incomplete = (not exited_cleanly) or bool(_unfixed_blockers) or bool(_late_err)
             incomplete_reason_msg: Optional[str] = None
             if incomplete and exited_cleanly and _unfixed_blockers:
-                # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
-                incomplete_reason_msg = (
-                    f"The app was built but {len(_unfixed_blockers)} blocker-level "
-                    "issue(s) remain that likely stop it from running "
-                    "(syntax / import / dependency errors). First: "
-                    + _unfixed_blockers[0][:160]
-                )
-                yield format_sse(ErrorEvent(
-                    code="INCOMPLETE",
-                    message=(
-                        incomplete_reason_msg
-                        + " The downloaded output may not run as-is."
-                    ),
-                ))
+                if _fix_msg:
+                    # Reported failure not confirmed fixed: the persisting
+                    # finding may be structural (e.g. a create form still
+                    # not wired), so the generic "syntax / import /
+                    # dependency" copy would be untrue. Say what we actually
+                    # know instead of claiming a clean success.
+                    incomplete_reason_msg = _fix_msg
+                    yield format_sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            incomplete_reason_msg
+                            + " The downloaded output may not fully resolve it."
+                        ),
+                    ))
+                else:
+                    # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                    incomplete_reason_msg = (
+                        f"The app was built but {len(_unfixed_blockers)} blocker-level "
+                        "issue(s) remain that likely stop it from running "
+                        "(syntax / import / dependency errors). First: "
+                        + _unfixed_blockers[0][:160]
+                    )
+                    yield format_sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            incomplete_reason_msg
+                            + " The downloaded output may not run as-is."
+                        ),
+                    ))
             if not exited_cleanly:
                 api_err = (getattr(orchestrator, "_phase2_api_error", "") or "")[:160]
                 _REASON_TEXT = {

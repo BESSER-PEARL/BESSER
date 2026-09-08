@@ -15,6 +15,8 @@ import datetime
 import json
 import logging
 import os
+import re
+import shutil
 import threading
 
 logger = logging.getLogger(__name__)
@@ -64,3 +66,40 @@ def record_incident(
                 fh.write(line + "\n")
     except Exception:  # pragma: no cover — must never break a run
         logger.debug("Could not record incident", exc_info=True)
+
+
+def persist_run_trace(run_id: str | None, trace_path: str | None) -> None:
+    """Copy a run's structured trace into a host-mounted dir, keyed by run id.
+
+    The run trace (``.besser_trace.jsonl``) normally lives only in the run's
+    temp workspace, which is swept when the container is recreated — so the
+    per-turn detail of a run (what the fix loop actually did) is lost. When
+    incident or telemetry logging is configured (``BESSER_INCIDENT_LOG_DIR``
+    or ``BESSER_TELEMETRY_DIR``), also copy the trace to
+    ``<dir>/traces/<run_id>.besser_trace.jsonl`` so a later "what did that
+    run do" is answerable after the workspace is gone.
+
+    Best-effort by design: never raises into a caller.
+    """
+    try:
+        if not run_id or not trace_path or not os.path.isfile(trace_path):
+            return
+        base = (
+            os.environ.get("BESSER_INCIDENT_LOG_DIR")
+            or os.environ.get("BESSER_TELEMETRY_DIR")
+        )
+        if not base:
+            return
+        dest_dir = os.path.join(base, "traces")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            return
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:64]
+        if not safe_id:
+            return
+        dest = os.path.join(dest_dir, f"{safe_id}.besser_trace.jsonl")
+        with _LOCK:
+            shutil.copyfile(trace_path, dest)
+    except Exception:  # pragma: no cover — must never break a run
+        logger.debug("Could not persist run trace for %s", run_id, exc_info=True)

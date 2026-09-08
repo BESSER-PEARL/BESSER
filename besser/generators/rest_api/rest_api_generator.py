@@ -5,7 +5,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators import GeneratorInterface
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import get_foreign_keys, normalize_method_code
 from besser.generators.action_language.RESTGenerator import bal_to_rest
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.utilities.utils import sort_by_timestamp
@@ -155,7 +155,8 @@ class RESTAPIGenerator(GeneratorInterface):
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
             env.filters['clean_method_name'] = clean_method_name
             env.filters['pk'] = pk_of
-            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
+                               normalize_code=normalize_method_code)
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w", encoding="utf-8") as f:
                 generated_code = template.render(
@@ -182,7 +183,8 @@ class RESTAPIGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
-            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
+                               normalize_code=normalize_method_code)
             template = env.get_template('fast_api_template.py.j2')
             with open(file_path, mode="w", encoding="utf-8") as f:
                 generated_code = template.render(

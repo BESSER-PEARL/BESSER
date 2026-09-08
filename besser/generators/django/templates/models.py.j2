@@ -140,7 +140,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {%- for method in sort_by_timestamp(class_obj.methods) %}
     {%- if method.code %}
     {#- If method has code, use it directly (it should contain the full function definition) #}
-{{ method.code | indent(4, first=true) }}
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- else %}
     {#- Otherwise generate method signature from metadata #}
     {%- set param_list = [] %}

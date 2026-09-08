@@ -1016,8 +1016,12 @@ export const TableComponent: React.FC<Props> = ({
                       const filterText = (lookupFilters[col.field] || "").toLowerCase();
                       const optionLabel = (option: any) =>
                         String((col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`);
+                      // Checked options stay visible even when the filter excludes
+                      // them, so their inline association panels never disappear.
                       const visibleOptions = filterText
-                        ? options.filter((option: any) => optionLabel(option).toLowerCase().includes(filterText))
+                        ? options.filter((option: any) =>
+                            selectedValues.includes(getOptionValue(col, option)) ||
+                            optionLabel(option).toLowerCase().includes(filterText))
                         : options;
 
                       return (
@@ -1046,7 +1050,7 @@ export const TableComponent: React.FC<Props> = ({
                             />
                           )}
                           <div style={{
-                            maxHeight: "170px",
+                            maxHeight: col.associationClass && col.associationClass.fields.length > 0 ? "320px" : "170px",
                             overflowY: "auto",
                             border: "1px solid #cbd5f5",
                             borderRadius: "6px",
@@ -1063,13 +1067,16 @@ export const TableComponent: React.FC<Props> = ({
                               </div>
                             ) : (
                               visibleOptions.map((option: any) => {
-                                const isChecked = selectedValues.includes(getOptionValue(col, option));
+                                const optionValue = getOptionValue(col, option);
+                                const isChecked = selectedValues.includes(optionValue);
+                                const hasLinkFields = Boolean(col.associationClass && col.associationClass.fields.length > 0);
+                                const targetId = optionValue;
                                 return (
-                                  <div 
-                                    key={getOptionValue(col, option)}
-                                    style={{ 
-                                      display: "flex", 
-                                      alignItems: "center", 
+                                  <React.Fragment key={optionValue}>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
                                       gap: "8px",
                                       padding: "6px 4px",
                                       cursor: "pointer",
@@ -1078,10 +1085,9 @@ export const TableComponent: React.FC<Props> = ({
                                     onMouseEnter={(e) => e.currentTarget.style.background = "#e0e7ff"}
                                     onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                                     onClick={() => {
-                                      const valueStr = getOptionValue(col, option);
                                       const newSelected = isChecked
-                                        ? selectedValues.filter((v: string) => v !== valueStr)
-                                        : [...selectedValues, valueStr];
+                                        ? selectedValues.filter((v: string) => v !== optionValue)
+                                        : [...selectedValues, optionValue];
                                       setFormValues(fv => ({ ...fv, [col.field]: newSelected }));
                                     }}
                                   >
@@ -1095,40 +1101,24 @@ export const TableComponent: React.FC<Props> = ({
                                         cursor: "pointer",
                                       }}
                                     />
-                                    <span style={{ fontSize: "14px", color: "#1e293b" }}>
-                                      {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
+                                    <span style={{ fontSize: "14px", color: "#1e293b", fontWeight: isChecked && hasLinkFields ? 600 : 400 }}>
+                                      {optionLabel(option)}
                                     </span>
                                   </div>
-                                );
-                              })
-                            )}
-                          </div>
-                          {col.associationClass && col.associationClass.fields.length > 0 && selectedValues.length > 0 && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                              <span style={{
-                                fontSize: "11px",
-                                fontWeight: 700,
-                                letterSpacing: "0.06em",
-                                textTransform: "uppercase",
-                                color: "#64748b",
-                                marginTop: "2px",
-                              }}>
-                                {humanize(col.associationClass.entity)} details
-                              </span>
-                              {selectedValues.map((targetId: string) => (
-                                <div
-                                  key={`${col.field}-link-${targetId}`}
-                                  style={{
-                                    border: "1px solid #dbe3f0",
-                                    borderRadius: "8px",
-                                    padding: "10px 12px",
-                                    background: "#f8fafc",
-                                  }}
-                                >
-                                  <div style={{ fontWeight: 600, fontSize: "13px", color: "#1e293b", marginBottom: "8px" }}>
-                                    {getLookupOptionLabel(col, String(targetId))}
-                                  </div>
-                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 14px" }}>
+                                  {/* The association attributes unfold right under the
+                                      option they describe: this room, at this price. */}
+                                  {isChecked && hasLinkFields && (
+                                    <div style={{
+                                      margin: "0 4px 8px 26px",
+                                      padding: "10px 12px",
+                                      border: "1px solid #dbe3f0",
+                                      borderLeft: "3px solid #6366f1",
+                                      borderRadius: "8px",
+                                      background: "#ffffff",
+                                      display: "grid",
+                                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                                      gap: "10px 14px",
+                                    }}>
                                   {col.associationClass!.fields.map((linkField) => {
                                     const linkInputId = `modal-input-${col.field}-${targetId}-${linkField.name}`;
                                     const linkValue = getLinkAttrValue(col.field, String(targetId), linkField.name);
@@ -1213,10 +1203,17 @@ export const TableComponent: React.FC<Props> = ({
                                       </div>
                                     );
                                   })}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                                    </div>
+                                  )}
+                                  </React.Fragment>
+                                );
+                              })
+                            )}
+                          </div>
+                          {col.associationClass && col.associationClass.fields.length > 0 && selectedValues.length === 0 && (
+                            <span style={{ fontSize: "12px", color: "#94a3b8" }}>
+                              Tick an option above to fill in its {humanize(col.associationClass.entity).toLowerCase()} values.
+                            </span>
                           )}
                         </div>
                       );

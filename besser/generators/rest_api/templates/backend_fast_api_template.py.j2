@@ -146,13 +146,17 @@ async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Handle HTTP exceptions with consistent format."""
+    """Handle HTTP exceptions with consistent format.
+
+    `detail` carries the endpoint's actual message — clients (including the
+    generated frontend dialog) read it to show the user what went wrong.
+    """
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.detail if isinstance(exc.detail, str) else "HTTP Error",
             "message": exc.detail,
-            "detail": f"HTTP {exc.status_code} error occurred"
+            "detail": exc.detail
         }
     )
 

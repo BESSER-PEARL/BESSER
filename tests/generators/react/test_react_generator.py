@@ -2,11 +2,11 @@ import json
 import os
 import pytest
 from besser.BUML.metamodel.structural import (
-    Class, DomainModel, Property, StringType, IntegerType, FloatType,
+    AssociationClass, Class, DomainModel, Property, StringType, IntegerType, FloatType,
     BinaryAssociation, Multiplicity
 )
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text, DataBinding
-from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType
+from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, Table
 from besser.generators.react import ReactGenerator
 
 
@@ -255,3 +255,213 @@ def test_react_no_map_no_leaflet_deps(domain_model, gui_model, tmpdir):
     assert not os.path.isfile(
         os.path.join(str(output_dir), "src", "components", "runtime", "MapBlock.tsx")
     ), "MapBlock.tsx must not be generated without a Map component"
+
+
+# ---------------------------------------------------------------------------
+# Association class attributes in the create/edit form
+# ---------------------------------------------------------------------------
+
+def _build_booking_models(with_association_class: bool):
+    """Booking -- Room N:M model with a table page, optionally with an association class."""
+    reference = Property(name="reference", type=StringType)
+    booking = Class(name="Booking", attributes={reference})
+
+    number = Property(name="number", type=StringType)
+    room = Class(name="Room", attributes={number})
+
+    booking_end = Property(name="bookings", type=booking, multiplicity=Multiplicity(0, "*"))
+    room_end = Property(name="rooms", type=room, multiplicity=Multiplicity(0, "*"))
+    booking_room = BinaryAssociation(name="booking_room", ends={booking_end, room_end})
+
+    types = {booking, room}
+    if with_association_class:
+        agreed_price = Property(name="agreed_price", type=FloatType)
+        additional_charges = Property(name="additional_charges", type=FloatType)
+        types.add(
+            AssociationClass(
+                name="ReservedRoom",
+                attributes={agreed_price, additional_charges},
+                association=booking_room,
+            )
+        )
+
+    domain_model = DomainModel(
+        name="BookingModel",
+        types=types,
+        associations={booking_room},
+    )
+
+    table = Table(
+        name="BookingTable",
+        title="Bookings",
+        action_buttons=True,
+        data_binding=DataBinding(name="booking_binding", domain_concept=booking),
+    )
+    screen = Screen(
+        name="Bookings",
+        description="Booking screen",
+        view_elements={table},
+        is_main_page=True,
+    )
+    module = Module(name="BookingModule", screens={screen})
+    gui_model = GUIModel(
+        name="BookingApp",
+        package="com.test.booking",
+        versionCode="1",
+        versionName="1.0",
+        modules={module},
+        description="Booking GUI",
+    )
+    return domain_model, gui_model
+
+
+@pytest.fixture
+def assoc_class_models():
+    """Booking -- Room N:M THROUGH the ReservedRoom association class."""
+    return _build_booking_models(with_association_class=True)
+
+
+@pytest.fixture
+def plain_nm_models():
+    """Booking -- Room plain N:M (no association class)."""
+    return _build_booking_models(with_association_class=False)
+
+
+def _form_columns(generator):
+    """Extract the formColumns metadata of the first table of the serialized GUI model."""
+    payload = json.loads(generator._build_generation_context()["components_json"])
+
+    def walk(nodes):
+        for node in nodes:
+            chart = node.get("chart") or {}
+            if "formColumns" in chart:
+                return chart["formColumns"]
+            found = walk(node.get("children") or [])
+            if found is not None:
+                return found
+        return None
+
+    for page in payload.get("pages", []):
+        found = walk(page.get("components", []))
+        if found is not None:
+            return found
+    return []
+
+
+def test_form_column_carries_association_class(assoc_class_models):
+    """A list lookup backed by an association class exposes its attributes."""
+    domain_model, gui_model = assoc_class_models
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+
+    form_columns = _form_columns(generator)
+    rooms = next(col for col in form_columns if col["field"] == "rooms")
+
+    assert rooms["column_type"] == "lookup"
+    assert rooms["type"] == "list"
+    assert rooms["association_class"] == {
+        "entity": "ReservedRoom",
+        "fields": [
+            {"name": "agreed_price", "type": "float", "required": True},
+            {"name": "additional_charges", "type": "float", "required": True},
+        ],
+    }
+
+    # Regular attribute columns are untouched
+    assert all(
+        "association_class" not in col for col in form_columns if col["field"] != "rooms"
+    )
+
+
+def test_form_column_without_association_class_unchanged(plain_nm_models):
+    """A plain N:M lookup keeps exactly the metadata it had before."""
+    domain_model, gui_model = plain_nm_models
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+
+    form_columns = _form_columns(generator)
+    rooms = next(col for col in form_columns if col["field"] == "rooms")
+
+    assert rooms == {
+        "column_type": "lookup",
+        "path": "rooms",
+        "field": "rooms",
+        "lookup_field": "number",
+        "entity": "Room",
+        "type": "list",
+        "required": False,
+    }
+    assert all("association_class" not in col for col in form_columns)
+
+
+def test_generated_page_embeds_association_class_metadata(assoc_class_models, tmp_path):
+    """The generated page passes the association class metadata to the table."""
+    domain_model, gui_model = assoc_class_models
+    generator = ReactGenerator(
+        model=domain_model, gui_model=gui_model, output_dir=str(tmp_path)
+    )
+    generator.generate()
+
+    pages_dir = os.path.join(str(tmp_path), "src", "pages")
+    page_content = ""
+    for page_file in os.listdir(pages_dir):
+        if page_file.endswith(".tsx"):
+            with open(os.path.join(pages_dir, page_file), "r", encoding="utf-8") as f:
+                page_content += f.read()
+
+    assert "association_class" in page_content
+    assert "ReservedRoom" in page_content
+    assert "agreed_price" in page_content
+
+
+def test_generated_table_component_renders_association_class_inputs(
+    assoc_class_models, tmp_path
+):
+    """The generated table component reads, renders and submits association class attributes."""
+    domain_model, gui_model = assoc_class_models
+    generator = ReactGenerator(
+        model=domain_model, gui_model=gui_model, output_dir=str(tmp_path)
+    )
+    generator.generate()
+
+    component_path = os.path.join(
+        str(tmp_path), "src", "components", "table", "TableComponent.tsx"
+    )
+    assert os.path.isfile(component_path), "TableComponent.tsx should be generated"
+    with open(component_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Metadata key coming from the serializer and its normalized column property
+    assert "association_class" in content
+    assert "associationClass" in content
+    # Per selected target inputs
+    assert "setLinkAttrValue(col.field, String(targetId), linkField.name" in content
+    # Edit prefill from the `<end>_links` payload
+    assert "_links`]" in content
+    # Submitted payload shape: [{ target: <id>, <association class attributes> }]
+    assert "{ target: parseInt(v, 10) }" in content
+
+
+def test_table_component_is_model_independent(assoc_class_models, plain_nm_models, tmp_path):
+    """The table component is data driven: models with and without an association
+    class generate byte-identical component code, so plain N:M rendering is unchanged."""
+    assoc_domain, assoc_gui = assoc_class_models
+    plain_domain, plain_gui = plain_nm_models
+
+    assoc_dir = os.path.join(str(tmp_path), "with_assoc")
+    plain_dir = os.path.join(str(tmp_path), "without_assoc")
+    ReactGenerator(model=assoc_domain, gui_model=assoc_gui, output_dir=assoc_dir).generate()
+    ReactGenerator(model=plain_domain, gui_model=plain_gui, output_dir=plain_dir).generate()
+
+    rel_path = os.path.join("src", "components", "table", "TableComponent.tsx")
+    with open(os.path.join(assoc_dir, rel_path), "rb") as f:
+        assoc_bytes = f.read()
+    with open(os.path.join(plain_dir, rel_path), "rb") as f:
+        plain_bytes = f.read()
+
+    assert assoc_bytes == plain_bytes
+
+    # ... and the plain model never emits the association class metadata
+    plain_pages_dir = os.path.join(plain_dir, "src", "pages")
+    for page_file in os.listdir(plain_pages_dir):
+        if page_file.endswith(".tsx"):
+            with open(os.path.join(plain_pages_dir, page_file), "r", encoding="utf-8") as f:
+                assert "association_class" not in f.read()

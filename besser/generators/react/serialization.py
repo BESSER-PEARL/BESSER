@@ -40,7 +40,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import Class, Enumeration
+from besser.BUML.metamodel.structural import AssociationClass, Class, Enumeration
 from besser.utilities import sort_by_timestamp
 
 
@@ -633,6 +633,14 @@ class GuiSerializationMixin:
                     if multiplicity and getattr(multiplicity, "min", 0) > 0:
                         column_dict["required"] = True
 
+                    # List ends whose association is materialized by an association class
+                    # carry the association class attributes so the create/edit form can
+                    # collect them per selected target.
+                    if is_list:
+                        association_class_meta = self._association_class_metadata(end)
+                        if association_class_meta:
+                            column_dict["association_class"] = association_class_meta
+
                     form_columns.append(column_dict)
 
             if form_columns:
@@ -1206,6 +1214,65 @@ class GuiSerializationMixin:
         non_id_attrs = [attr for attr in attributes if not getattr(attr, "is_id", False)]
         selected = non_id_attrs[0] if non_id_attrs else attributes[0]
         return getattr(selected, "name", "")
+
+    def _association_class_index(self) -> Dict[str, AssociationClass]:
+        """Map the name of each association to the AssociationClass materializing it."""
+        index: Dict[str, AssociationClass] = {}
+        domain_model = getattr(self, "model", None)
+        for type_ in getattr(domain_model, "types", None) or []:
+            if not isinstance(type_, AssociationClass):
+                continue
+            association_name = getattr(getattr(type_, "association", None), "name", None)
+            if association_name:
+                index[association_name] = type_
+        return index
+
+    def _association_class_metadata(self, end: Any) -> Optional[Dict[str, Any]]:
+        """Association class metadata for an association end, or None when there is none.
+
+        The generated create/edit form uses it to collect the association class
+        attributes for every selected target of the relationship.
+        """
+        association_name = getattr(getattr(end, "owner", None), "name", None)
+        if not association_name:
+            return None
+        association_class = self._association_class_index().get(association_name)
+        if association_class is None:
+            return None
+        return {
+            "entity": association_class.name,
+            "fields": self._association_class_fields(association_class),
+        }
+
+    @staticmethod
+    def _association_class_fields(association_class: AssociationClass) -> List[Dict[str, Any]]:
+        """Serialize the attributes of an association class in model (timestamp) order."""
+        if hasattr(association_class, "all_attributes"):
+            attributes = list(association_class.all_attributes())
+        else:
+            attributes = list(getattr(association_class, "attributes", None) or [])
+        attributes = sort_by_timestamp(attributes) if attributes else []
+
+        fields: List[Dict[str, Any]] = []
+        for attr in attributes:
+            attr_type = getattr(attr, "type", None)
+            field_dict: Dict[str, Any] = {"name": attr.name, "type": "str"}
+
+            if isinstance(attr_type, Enumeration):
+                field_dict["type"] = "enum"
+                field_dict["options"] = sorted([literal.name for literal in attr_type.literals])
+            elif attr_type is not None and getattr(attr_type, "name", None):
+                field_dict["type"] = attr_type.name
+
+            required = False
+            if not getattr(attr, "is_optional", False):
+                multiplicity = getattr(attr, "multiplicity", None)
+                if multiplicity and getattr(multiplicity, "min", 0) > 0:
+                    required = True
+            field_dict["required"] = required
+
+            fields.append(field_dict)
+        return fields
 
     @staticmethod
     def _sorted_by_name(items: Iterable[Any]) -> List[Any]:

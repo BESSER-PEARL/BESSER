@@ -80,3 +80,26 @@ When you run the code generated, the OpenAPI specifications will be generated:
    when you run the generated FastAPI application with ``uvicorn rest_api:app``.
 
         
+Association classes
+-------------------
+
+When a binary association carries an **association class** (e.g. ``Booking`` — ``Room``
+through ``ReservedRoom`` with attributes ``agreed_price`` and ``additional_charges``),
+the generated API manages the link through the association class instead of a plain
+join table:
+
+- The Create/Update payload of each navigable end carries **link objects** instead of
+  bare ids: ``"rooms": [{"target": 101, "agreed_price": 95.0, "additional_charges": 5.0}]``
+  (``target`` is the primary key of the linked entity; plain ids are still accepted, in
+  which case the association attributes are left unset). To-one ends through an
+  association class are optional at creation time — the link can be established later
+  from the other side or via the association class's own endpoint.
+- ``PUT`` reconciles links: removed targets delete the association row, new targets
+  create one, and kept targets have their association attributes updated.
+- ``GET ...?detailed=true`` additionally returns ``<end>_links`` with the full
+  association rows.
+- The association class gets its own endpoints; its Create model carries one id field
+  per association end plus the association attributes, and single-item routes are
+  keyed by both foreign keys.
+- Primary keys are respected everywhere: a class whose id attribute is not named
+  ``id`` (e.g. ``Room.number``) is queried by its actual primary key.

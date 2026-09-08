@@ -100,3 +100,15 @@ For each OCL constraint, the generator produces a Pydantic ``field_validator``:
 
 These validators automatically enforce constraints when creating or updating entities via the REST API, 
 and the error messages are displayed in the frontend web application.
+OCL constraint support details
+------------------------------
+
+- ``self.<attr>.matches('<regex>')`` becomes a ``re.match(...)`` field validator
+  (the module imports ``re`` automatically).
+- Constraints comparing two attributes of the same class (e.g.
+  ``self.check_in <= self.check_out``) become ``@model_validator(mode='after')``
+  validators.
+- Constraints that involve collections or relationships (``->size()``,
+  ``->collect()``, ``->sum()``, …) cannot be enforced on a Create payload; the
+  generator emits an explanatory ``# NOTE:`` comment instead of broken code, and
+  every emitted validator is syntax-checked before it is written.

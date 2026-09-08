@@ -6,6 +6,20 @@ import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
 import "./TableComponent.css";
 
+// Attribute of an association class carried by an N:M relationship
+interface AssociationClassField {
+  name: string;
+  type?: string;
+  required?: boolean;
+  options?: string[];
+}
+
+// Association class attached to a list lookup column (e.g. Booking -> Room through ReservedRoom)
+interface AssociationClassMeta {
+  entity: string;
+  fields: AssociationClassField[];
+}
+
 interface TableColumn {
   field: string;
   label: string;
@@ -17,6 +31,7 @@ interface TableColumn {
   required?: boolean;
   lookupField?: string;
   relationshipKey?: string;
+  associationClass?: AssociationClassMeta;
 }
 
 interface TableOptions {
@@ -103,8 +118,14 @@ export const TableComponent: React.FC<Props> = ({
       (col: any) => typeof col === 'object' && col.column_type === 'lookup'
     );
     
+    // Association class attributes (the `<end>_links` payload) are only part of the
+    // detailed response, and the edit form needs them to prefill the link attributes
+    const hasAssociationClassColumns = ((options as any)?.formColumns ?? (options as any)?.form_columns ?? []).some(
+      (col: any) => typeof col === 'object' && col && (col.association_class ?? col.associationClass)
+    );
+
     // Add detailed=true query param if there are lookup columns
-    const urlParams = hasLookupColumns ? '?detailed=true' : '';
+    const urlParams = (hasLookupColumns || hasAssociationClassColumns) ? '?detailed=true' : '';
     const url = endpoint.startsWith("/") 
       ? backendBase + endpoint + urlParams
       : endpoint + urlParams;
@@ -163,6 +184,13 @@ export const TableComponent: React.FC<Props> = ({
           ? col.path
           : undefined;
         const lookupField = (col as any).lookup_field ?? (col as any).lookupField ?? col.field;
+        const rawAssociationClass = (col as any).association_class ?? (col as any).associationClass;
+        const associationClass: AssociationClassMeta | undefined = rawAssociationClass
+          ? {
+              entity: rawAssociationClass.entity,
+              fields: Array.isArray(rawAssociationClass.fields) ? rawAssociationClass.fields : [],
+            }
+          : undefined;
         return {
           field: actualField,
           label: humanize(col.label || col.field),
@@ -174,6 +202,7 @@ export const TableComponent: React.FC<Props> = ({
           required: col.required ?? false,
           lookupField: col.column_type === "lookup" ? lookupField : undefined,
           relationshipKey: relationshipKey,
+          associationClass: col.column_type === "lookup" ? associationClass : undefined,
         };
       });
   };
@@ -427,6 +456,49 @@ export const TableComponent: React.FC<Props> = ({
   const [editRowData, setEditRowData] = useState<any>(null);
   const [lookupOptions, setLookupOptions] = useState<Record<string, any[]>>({});
   const [validationError, setValidationError] = useState<string>("");
+  // Association class attributes of the selected targets, keyed by
+  // { [column field]: { [target id]: { [association class attribute]: value } } }
+  const [linkAttrValues, setLinkAttrValues] = useState<Record<string, Record<string, Record<string, any>>>>({});
+
+  const getLinkAttrValue = (field: string, targetId: string, attribute: string): any => {
+    return linkAttrValues[field]?.[targetId]?.[attribute] ?? "";
+  };
+
+  const setLinkAttrValue = (field: string, targetId: string, attribute: string, value: any) => {
+    setLinkAttrValues(prev => ({
+      ...prev,
+      [field]: {
+        ...(prev[field] ?? {}),
+        [targetId]: { ...((prev[field] ?? {})[targetId] ?? {}), [attribute]: value },
+      },
+    }));
+  };
+
+  // Convert an association class attribute to the type expected by the API
+  const coerceLinkAttrValue = (type: string | undefined, value: any): any => {
+    if (type === 'int') {
+      const intValue = parseInt(value, 10);
+      return isNaN(intValue) ? 0 : intValue;
+    }
+    if (type === 'float') {
+      const floatValue = parseFloat(value);
+      return isNaN(floatValue) ? 0 : floatValue;
+    }
+    if (type === 'bool' || type === 'boolean') {
+      return Boolean(value);
+    }
+    return value;
+  };
+
+  // Label shown for a related record (same fallbacks as the lookup selects)
+  const getLookupOptionLabel = (col: TableColumn, targetId: string): string => {
+    const options = lookupOptions[(col.entity || "").toLowerCase()] || [];
+    const option = options.find((item: any) => String(item?.id) === String(targetId));
+    if (!option) {
+      return `ID: ${targetId}`;
+    }
+    return (col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`;
+  };
 
   useEffect(() => {
     setCurrentPage(1);
@@ -488,6 +560,39 @@ export const TableComponent: React.FC<Props> = ({
         }
       });
       setFormValues(initialValues);
+
+      // Prefill the association class attributes from the `<end>_links` payload
+      // returned by the detailed GET (falls back to empty attributes).
+      const initialLinkValues: Record<string, Record<string, Record<string, any>>> = {};
+      formColumns.forEach(col => {
+        if (!col.associationClass || col.columnType !== 'lookup' || col.type !== 'list') {
+          return;
+        }
+        const perTarget: Record<string, Record<string, any>> = {};
+        const relationshipKey = col.path || col.field;
+        const links = modalMode === 'edit' && editRowData
+          ? editRowData[`${relationshipKey}_links`]
+          : null;
+        if (Array.isArray(links)) {
+          links.forEach((link: any) => {
+            if (!link || typeof link !== 'object') {
+              return;
+            }
+            // `target` is the documented key; link rows expose the raw FK column
+            const targetId = String(link.target ?? link[`${relationshipKey}_id`] ?? "");
+            if (!targetId) {
+              return;
+            }
+            const attributes: Record<string, any> = {};
+            col.associationClass!.fields.forEach(linkField => {
+              attributes[linkField.name] = link[linkField.name] ?? "";
+            });
+            perTarget[targetId] = attributes;
+          });
+        }
+        initialLinkValues[col.field] = perTarget;
+      });
+      setLinkAttrValues(initialLinkValues);
 
       // Fetch lookup options for lookup columns
       const fetchLookupOptions = async () => {
@@ -695,8 +800,24 @@ export const TableComponent: React.FC<Props> = ({
                         }
                       }
                     }
+
+                    // Required association class attributes of every selected target
+                    if (col.columnType === 'lookup' && col.type === 'list' && col.associationClass) {
+                      const selected = Array.isArray(formValues[col.field]) ? formValues[col.field] : [];
+                      selected.forEach((targetId: string) => {
+                        col.associationClass!.fields.forEach(linkField => {
+                          if (!linkField.required || linkField.type === 'bool' || linkField.type === 'boolean') {
+                            return;
+                          }
+                          const value = getLinkAttrValue(col.field, String(targetId), linkField.name);
+                          if (value === undefined || value === null || value === "") {
+                            missingFields.push(`${col.label} - ${getLookupOptionLabel(col, String(targetId))} - ${linkField.name}`);
+                          }
+                        });
+                      });
+                    }
                   });
-                  
+
                   if (missingFields.length > 0) {
                     setValidationError(`Please fill in the following required fields: ${missingFields.join(', ')}`);
                     return;
@@ -711,10 +832,27 @@ export const TableComponent: React.FC<Props> = ({
                   formColumns.forEach(col => {
                     // For lookup columns, use the path as the API field name
                     if (col.columnType === 'lookup' && col.path) {
-                      if (col.type === 'list') {
+                      if (col.type === 'list' && col.associationClass) {
+                        // For N:M lookups through an association class, send
+                        // [{ target: <id>, <association class attributes> }]
+                        const value = formValues[col.field];
+                        const selected: string[] = Array.isArray(value) ? value : [];
+                        processedValues[col.path] = selected
+                          .filter(v => !isNaN(parseInt(v, 10)))
+                          .map(v => {
+                            const link: Record<string, any> = { target: parseInt(v, 10) };
+                            col.associationClass!.fields.forEach(linkField => {
+                              link[linkField.name] = coerceLinkAttrValue(
+                                linkField.type,
+                                getLinkAttrValue(col.field, String(v), linkField.name)
+                              );
+                            });
+                            return link;
+                          });
+                      } else if (col.type === 'list') {
                         // For list-type lookups (N:M or 1:N), send array of IDs
                         const value = formValues[col.field];
-                        processedValues[col.path] = Array.isArray(value) 
+                        processedValues[col.path] = Array.isArray(value)
                           ? value.map(v => parseInt(v, 10)).filter(v => !isNaN(v))
                           : [];
                       } else {
@@ -906,10 +1044,116 @@ export const TableComponent: React.FC<Props> = ({
                               })
                             )}
                           </div>
+                          {col.associationClass && col.associationClass.fields.length > 0 && selectedValues.length > 0 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                              <span style={{ fontSize: "11px", color: "#64748b" }}>
+                                {humanize(col.associationClass.entity)} details
+                              </span>
+                              {selectedValues.map((targetId: string) => (
+                                <div
+                                  key={`${col.field}-link-${targetId}`}
+                                  style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "8px",
+                                    border: "1px solid #cbd5f5",
+                                    borderRadius: "6px",
+                                    padding: "8px",
+                                    background: "#f8fafc",
+                                  }}
+                                >
+                                  {col.associationClass!.fields.map((linkField) => {
+                                    const linkInputId = `modal-input-${col.field}-${targetId}-${linkField.name}`;
+                                    const linkValue = getLinkAttrValue(col.field, String(targetId), linkField.name);
+                                    const linkLabel = (
+                                      <label htmlFor={linkInputId} style={{ fontWeight: 500, color: "#334155", fontSize: "13px" }}>
+                                        {getLookupOptionLabel(col, String(targetId))} &mdash; {linkField.name}
+                                        {linkField.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+                                      </label>
+                                    );
+
+                                    if (linkField.type === 'enum' && linkField.options && linkField.options.length > 0) {
+                                      return (
+                                        <div key={linkInputId} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                          {linkLabel}
+                                          <select
+                                            id={linkInputId}
+                                            value={linkValue ?? ""}
+                                            onChange={e => setLinkAttrValue(col.field, String(targetId), linkField.name, e.target.value)}
+                                            style={{
+                                              padding: "6px 10px",
+                                              borderRadius: "6px",
+                                              border: "1px solid #cbd5f5",
+                                              fontSize: "14px",
+                                              color: "#1e293b",
+                                              background: "#ffffff",
+                                            }}
+                                          >
+                                            <option value="">-- Select {linkField.name} --</option>
+                                            {linkField.options.map((option: string) => (
+                                              <option key={option} value={option}>
+                                                {option}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      );
+                                    }
+
+                                    if (linkField.type === 'bool' || linkField.type === 'boolean') {
+                                      return (
+                                        <div key={linkInputId} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                          <input
+                                            id={linkInputId}
+                                            type="checkbox"
+                                            checked={Boolean(linkValue)}
+                                            onChange={e => setLinkAttrValue(col.field, String(targetId), linkField.name, e.target.checked)}
+                                            style={{
+                                              width: "16px",
+                                              height: "16px",
+                                              cursor: "pointer",
+                                            }}
+                                          />
+                                          {linkLabel}
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div key={linkInputId} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                        {linkLabel}
+                                        <input
+                                          id={linkInputId}
+                                          type={
+                                            linkField.type === 'int' || linkField.type === 'float' ? 'number' :
+                                            linkField.type === 'date' ? 'date' :
+                                            linkField.type === 'datetime' ? 'datetime-local' :
+                                            linkField.type === 'time' ? 'time' :
+                                            'text'
+                                          }
+                                          step={linkField.type === 'float' ? 'any' : undefined}
+                                          value={linkValue ?? ""}
+                                          onChange={e => setLinkAttrValue(col.field, String(targetId), linkField.name, e.target.value)}
+                                          style={{
+                                            padding: "6px 10px",
+                                            borderRadius: "6px",
+                                            border: "1px solid #cbd5f5",
+                                            fontSize: "14px",
+                                            color: "#1e293b",
+                                            background: "#ffffff",
+                                          }}
+                                        />
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       );
                     }
-                    
+
                     // For single lookups (N:1), use regular select
                     return (
                       <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>

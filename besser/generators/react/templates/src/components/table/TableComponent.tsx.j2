@@ -462,6 +462,8 @@ export const TableComponent: React.FC<Props> = ({
   // Association class attributes of the selected targets, keyed by
   // { [column field]: { [target id]: { [association class attribute]: value } } }
   const [linkAttrValues, setLinkAttrValues] = useState<Record<string, Record<string, Record<string, any>>>>({});
+  // Text filters for the multi-select option lists, keyed by column field
+  const [lookupFilters, setLookupFilters] = useState<Record<string, string>>({});
 
   const getLinkAttrValue = (field: string, targetId: string, attribute: string): any => {
     return linkAttrValues[field]?.[targetId]?.[attribute] ?? "";
@@ -539,6 +541,7 @@ export const TableComponent: React.FC<Props> = ({
   useEffect(() => {
     if (showModal) {
       setValidationError("");
+      setLookupFilters({});
       const initialValues: Record<string, any> = {};
       formColumns.forEach(col => {
         if (modalMode === 'edit' && editRowData) {
@@ -758,24 +761,30 @@ export const TableComponent: React.FC<Props> = ({
           }}
           >
             <div
+              className="bsr-modal"
               onClick={e => e.stopPropagation()}
               style={{
               background: "#fff",
-              borderRadius: "12px",
-              boxShadow: "0 4px 24px rgba(30,41,59,0.18)",
-              padding: "32px 24px 24px 24px",
+              borderRadius: "14px",
+              boxShadow: "0 20px 50px rgba(15,23,42,0.25)",
+              padding: "24px",
               minWidth: "320px",
-              maxWidth: "90vw",
-              width: "400px",
+              maxWidth: "92vw",
+              width: "620px",
               position: "relative",
               maxHeight: "90vh",
               display: "flex",
               flexDirection: "column",
             }}
             >
-              <h4 style={{ margin: 0, marginBottom: "18px", color: "#1e293b" }}>
-                {modalMode === 'edit' ? `Edit ${dataBinding?.entity || 'Register'}` : `Add ${dataBinding?.entity || 'Register'}`}
-              </h4>
+              <div style={{ marginBottom: "16px", paddingRight: "28px" }}>
+                <h4 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>
+                  {modalMode === 'edit' ? `Edit ${dataBinding?.entity || 'Register'}` : `Add ${dataBinding?.entity || 'Register'}`}
+                </h4>
+                <div style={{ marginTop: "3px", fontSize: "13px", color: "#64748b" }}>
+                  Fields marked <span style={{ color: "#ef4444" }}>*</span> are required
+                </div>
+              </div>
               {validationError && (
                 <div style={{
                   padding: "12px",
@@ -980,14 +989,22 @@ export const TableComponent: React.FC<Props> = ({
                 }}
               >
                 <div style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: "14px 18px",
+                  alignItems: "start",
                   overflowY: "auto",
-                  maxHeight: "60vh",
-                  paddingRight: "4px",
+                  maxHeight: "62vh",
+                  padding: "2px 6px 8px 2px",
                 }}>
-                {formColumns.map(col => {
+                {formColumns.map((col, colIdx) => {
+                  const prevCol = formColumns[colIdx - 1];
+                  const isRelation = Boolean(col.columnType === 'lookup' && col.entity);
+                  const prevIsRelation = Boolean(prevCol && prevCol.columnType === 'lookup' && prevCol.entity);
+                  const sectionTitle = colIdx === 0
+                    ? (isRelation ? 'Relationships' : 'Details')
+                    : (isRelation && !prevIsRelation ? 'Relationships' : null);
+                  const fieldNode = (() => {
                   // For lookup columns, render a select dropdown
                   if (col.columnType === 'lookup' && col.entity) {
                     const endpoint = col.entity.toLowerCase();
@@ -996,9 +1013,15 @@ export const TableComponent: React.FC<Props> = ({
                     // For list-type lookups (1:N or N:M), use checkbox list
                     if (col.type === 'list') {
                       const selectedValues = formValues[col.field] || [];
-                      
+                      const filterText = (lookupFilters[col.field] || "").toLowerCase();
+                      const optionLabel = (option: any) =>
+                        String((col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`);
+                      const visibleOptions = filterText
+                        ? options.filter((option: any) => optionLabel(option).toLowerCase().includes(filterText))
+                        : options;
+
                       return (
-                        <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        <div key={col.field} style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: "8px" }}>
                           <label style={{ fontWeight: 500, color: "#334155" }}>
                             {col.label}
                             {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
@@ -1006,8 +1029,24 @@ export const TableComponent: React.FC<Props> = ({
                               ({selectedValues.length} selected)
                             </span>
                           </label>
+                          {options.length > 6 && (
+                            <input
+                              type="search"
+                              value={lookupFilters[col.field] || ""}
+                              onChange={e => setLookupFilters(f => ({ ...f, [col.field]: e.target.value }))}
+                              placeholder={`Filter ${col.label.toLowerCase()}...`}
+                              style={{
+                                padding: "6px 10px",
+                                borderRadius: "6px",
+                                border: "1px solid #cbd5f5",
+                                fontSize: "13px",
+                                color: "#1e293b",
+                                background: "#ffffff",
+                              }}
+                            />
+                          )}
                           <div style={{
-                            maxHeight: "160px",
+                            maxHeight: "170px",
                             overflowY: "auto",
                             border: "1px solid #cbd5f5",
                             borderRadius: "6px",
@@ -1018,8 +1057,12 @@ export const TableComponent: React.FC<Props> = ({
                               <div style={{ padding: "8px", color: "#64748b", fontSize: "14px" }}>
                                 No options available
                               </div>
+                            ) : visibleOptions.length === 0 ? (
+                              <div style={{ padding: "8px", color: "#64748b", fontSize: "14px" }}>
+                                No matches
+                              </div>
                             ) : (
-                              options.map((option: any) => {
+                              visibleOptions.map((option: any) => {
                                 const isChecked = selectedValues.includes(getOptionValue(col, option));
                                 return (
                                   <div 
@@ -1062,28 +1105,36 @@ export const TableComponent: React.FC<Props> = ({
                           </div>
                           {col.associationClass && col.associationClass.fields.length > 0 && selectedValues.length > 0 && (
                             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                              <span style={{ fontSize: "11px", color: "#64748b" }}>
+                              <span style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                letterSpacing: "0.06em",
+                                textTransform: "uppercase",
+                                color: "#64748b",
+                                marginTop: "2px",
+                              }}>
                                 {humanize(col.associationClass.entity)} details
                               </span>
                               {selectedValues.map((targetId: string) => (
                                 <div
                                   key={`${col.field}-link-${targetId}`}
                                   style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: "8px",
-                                    border: "1px solid #cbd5f5",
-                                    borderRadius: "6px",
-                                    padding: "8px",
+                                    border: "1px solid #dbe3f0",
+                                    borderRadius: "8px",
+                                    padding: "10px 12px",
                                     background: "#f8fafc",
                                   }}
                                 >
+                                  <div style={{ fontWeight: 600, fontSize: "13px", color: "#1e293b", marginBottom: "8px" }}>
+                                    {getLookupOptionLabel(col, String(targetId))}
+                                  </div>
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 14px" }}>
                                   {col.associationClass!.fields.map((linkField) => {
                                     const linkInputId = `modal-input-${col.field}-${targetId}-${linkField.name}`;
                                     const linkValue = getLinkAttrValue(col.field, String(targetId), linkField.name);
                                     const linkLabel = (
                                       <label htmlFor={linkInputId} style={{ fontWeight: 500, color: "#334155", fontSize: "13px" }}>
-                                        {getLookupOptionLabel(col, String(targetId))} &mdash; {linkField.name}
+                                        {humanize(linkField.name)}
                                         {linkField.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                                       </label>
                                     );
@@ -1162,6 +1213,7 @@ export const TableComponent: React.FC<Props> = ({
                                       </div>
                                     );
                                   })}
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -1290,34 +1342,66 @@ export const TableComponent: React.FC<Props> = ({
                       />
                     </div>
                   );
+                  })();
+
+                  return (
+                    <React.Fragment key={`section-${col.field}`}>
+                      {sectionTitle && (
+                        <div style={{
+                          gridColumn: "1 / -1",
+                          marginTop: colIdx === 0 ? 0 : "8px",
+                          paddingBottom: "4px",
+                          borderBottom: "1px solid #e2e8f0",
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                          color: "#64748b",
+                        }}>
+                          {sectionTitle}
+                        </div>
+                      )}
+                      {fieldNode}
+                    </React.Fragment>
+                  );
                 })}
                 </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "8px" }}>
+                <div style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                  marginTop: "16px",
+                  paddingTop: "14px",
+                  borderTop: "1px solid #e2e8f0",
+                }}>
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
                     style={{
-                      padding: "8px 18px",
-                      borderRadius: "6px",
-                      border: "1px solid #cbd5f5",
-                      background: "#f8fafc",
+                      padding: "9px 18px",
+                      borderRadius: "8px",
+                      border: "1px solid #cbd5e1",
+                      background: "#ffffff",
                       color: "#475569",
-                      fontWeight: 500,
+                      fontWeight: 600,
+                      fontSize: "14px",
                       cursor: "pointer",
                     }}
                   >Cancel</button>
                   <button
                     type="submit"
                     style={{
-                      padding: "8px 18px",
-                      borderRadius: "6px",
+                      padding: "9px 22px",
+                      borderRadius: "8px",
                       border: "none",
-                      background: "linear-gradient(90deg, #2563eb 0%, #1e40af 100%)",
+                      background: "#2563eb",
                       color: "#fff",
                       fontWeight: 700,
+                      fontSize: "14px",
                       cursor: "pointer",
+                      boxShadow: "0 1px 2px rgba(37,99,235,0.4)",
                     }}
-                  >Save</button>
+                  >{modalMode === 'edit' ? 'Save changes' : `Add ${dataBinding?.entity || ''}`}</button>
                 </div>
               </form>
               <button
@@ -1325,16 +1409,21 @@ export const TableComponent: React.FC<Props> = ({
                 onClick={() => setShowModal(false)}
                 style={{
                   position: "absolute",
-                  top: "12px",
-                  right: "12px",
-                  background: "none",
+                  top: "14px",
+                  right: "14px",
+                  width: "28px",
+                  height: "28px",
+                  lineHeight: "26px",
+                  textAlign: "center",
+                  borderRadius: "8px",
+                  background: "#f1f5f9",
                   border: "none",
-                  fontSize: "20px",
-                  color: "#64748b",
+                  fontSize: "16px",
+                  color: "#475569",
                   cursor: "pointer",
                 }}
                 aria-label="Close"
-              >x</button>
+              >&times;</button>
             </div>
           </div>,
           document.body

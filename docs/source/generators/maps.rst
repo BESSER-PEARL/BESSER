@@ -4,9 +4,8 @@ Map Component Reference
 =======================
 
 The BESSER Map component generates an interactive, multi-layer map in the produced
-React application. It is powered by `Leaflet <https://leafletjs.com/>`_ and
-`react-leaflet <https://react-leaflet.js.org/>`_ with OpenStreetMap tiles — no API
-key is required.
+React application. It is powered by `Leaflet <https://leafletjs.com/>`_ (used
+directly, no wrapper library) with OpenStreetMap tiles — no API key is required.
 
 A single ``Map`` can stack multiple **typed layers** on top of the same tile base,
 each fetching data from its own domain class:
@@ -35,20 +34,20 @@ Each layer has a ``layer_type`` that controls how its data is fetched and render
    * - ``points``
      - ``latitude: float``, ``longitude: float``
      - ``label: str``
-     - ``<Marker>`` + ``<Popup>`` for every row
+     - ``L.marker`` + popup for every row
    * - ``geojson``
      - ``geometry: str`` (GeoJSON string)
      - ``label: str``
-     - react-leaflet ``<GeoJSON>``; label shown in popup on click
+     - ``L.geoJSON``; label shown in popup on click
    * - ``choropleth``
      - ``geometry: str``, ``value: float``
      - ``label: str``
-     - ``<GeoJSON>`` coloured by value + auto legend; gracefully falls back to
+     - ``L.geoJSON`` coloured by value + auto legend; gracefully falls back to
        plain GeoJSON when ``value_field`` is absent
    * - ``heatmap``
      - ``latitude: float``, ``longitude: float``
      - ``weight: float``
-     - ``leaflet.heat`` via ``useMap()``; weight controls intensity
+     - ``leaflet.heat``; weight controls intensity
 
 .. note::
    Column names above are the **field names on the bound domain class**. The column
@@ -67,12 +66,12 @@ the bound class:
 3. ``geojson_field`` set (no ``value_field``) → ``geojson``.
 4. ``weight_field`` set → ``heatmap``.
 5. ``latitude_field`` and ``longitude_field`` set → ``points``.
-6. Inspect bound class attributes by name/type:
+6. Inspect bound class attributes by name (exact, case-insensitive matches):
 
-   - an attribute named ``geometry`` of ``StringType`` → ``geojson`` (or
-     ``choropleth`` if a ``value``-like float attribute also exists).
-   - attributes named ``lat*`` + ``lon*`` or ``lng*`` of ``FloatType`` → ``points``.
-   - lat/lng + a ``weight`` float → ``heatmap``.
+   - an attribute named ``geometry`` → ``geojson`` (or ``choropleth`` if an
+     attribute named ``value`` also exists).
+   - attributes named ``latitude``/``lat`` + ``longitude``/``lng``/``lon`` →
+     ``points`` (or ``heatmap`` if an attribute named ``weight`` also exists).
 7. Default: ``points``.
 
 Metamodel
@@ -237,8 +236,8 @@ locations and a choropleth colouring each canton by population.
 Running ``WebAppGenerator(domain, gui, output_dir="output").generate()`` on this
 model produces a React application with ``MapBlock.tsx`` that:
 
-- Fetches rows from ``GET /Store/`` and renders a pin for each store.
-- Fetches rows from ``GET /Canton/`` and colours each polygon by ``population``
+- Fetches rows from ``GET /store/`` and renders a pin for each store.
+- Fetches rows from ``GET /canton/`` and colours each polygon by ``population``
   with a sequential white-to-red scale and an auto-generated legend.
 - Both layers overlay the same OpenStreetMap tile base.
 
@@ -328,10 +327,7 @@ when the GUI model contains at least one ``Map`` component:
      - Purpose
    * - ``leaflet``
      - ``^1.9.4``
-     - Core Leaflet mapping library.
-   * - ``react-leaflet``
-     - ``^5.0.0``
-     - React bindings for Leaflet (React 19 compatible).
+     - Core Leaflet mapping library (BSD-2-Clause), used directly.
    * - ``leaflet.heat``
      - ``^0.2.0``
      - Heat-map plugin (used when any layer is ``heatmap`` type).

@@ -554,10 +554,11 @@ def _apply_map_attributes(map_comp: Map, attrs: Dict[str, Any]) -> None:
 
     Emits ``map-title``, ``map-latitude``, ``map-longitude``, ``map-zoom``, and
     ``map-layers`` (a JSON string).  The ``map-layers`` array uses class and field
-    **names** rather than UUIDs so that the value survives the BUML→JSON→BUML
-    round-trip even when GrapesJS element IDs are unavailable (e.g. when the map
-    was created programmatically rather than via the editor).  The JSON→BUML parser
-    accepts both names and UUIDs.
+    **names** rather than UUIDs so that the value survives the backend's
+    BUML→JSON→BUML round-trip even when GrapesJS element IDs are unavailable
+    (e.g. when the map was created programmatically rather than via the editor).
+    The JSON→BUML parser accepts both names and UUIDs; the editor's layer-manager
+    trait likewise resolves either form when populating its selects.
     """
     attrs.setdefault("map-title", getattr(map_comp, "title", None) or map_comp.name)
     attrs.setdefault("map-latitude", getattr(map_comp, "center_latitude", 0.0))
@@ -590,8 +591,11 @@ def _apply_map_attributes(map_comp: Map, attrs: Dict[str, Any]) -> None:
             "valueField": _field_name(getattr(layer, "value_field", None)),
         })
 
-    if layer_entries:
-        attrs.setdefault("map-layers", json.dumps(layer_entries))
+    # The BUML model is the source of truth for the layer list: assign
+    # unconditionally (setdefault would let a stale editor payload in
+    # custom_attributes resurrect deleted layers), and emit "[]" so a map
+    # whose layers were all removed is representable.
+    attrs["map-layers"] = json.dumps(layer_entries)
 
 
 def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:

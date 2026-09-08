@@ -247,7 +247,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
         f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,\n")
         f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn,\n")
-        f.write("    Map, MapLayer, MapLayerType, MetricCard, Series\n")
+        f.write("    Map, MapLayer, MapLayerType, WorldMap, LocationMap, MetricCard, Series\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -441,7 +441,7 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
     elif isinstance(component, MetricCard):
         _write_metric_card(f, comp_var, component)
     elif isinstance(component, Map):
-        _write_map(f, comp_var, component)
+        _write_map(f, comp_var, component, created_vars)
     elif isinstance(component, AgentComponent):
         _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
@@ -1202,22 +1202,18 @@ def _write_styling(f, component_var, styling, created_vars):
     f.write(f'{component_var}.styling = {styling_var}\n')
 
 
-def _write_map_layer(f, layer_var, layer_comp, layer_index):
+def _write_map_layer(f, layer_var, layer_comp, created_vars):
     """Write code for a single MapLayer (helper called from _write_map)."""
     params = [f'name="{_escape_string(layer_comp.name)}"']
     lt = getattr(layer_comp, "layer_type", None)
     if lt is not None:
         params.append(f"layer_type=MapLayerType.{lt.name}")
 
-    # Constructor call (no styling/metadata needed — MapLayer is a sub-object)
-    if len(params) <= 2:
-        f.write(f"{layer_var} = MapLayer({', '.join(params)})\n")
-    else:
-        f.write(f"{layer_var} = MapLayer(\n")
-        for i, p in enumerate(params):
-            comma = "," if i < len(params) - 1 else ""
-            f.write(f"    {p}{comma}\n")
-        f.write(")\n")
+    f.write(f"{layer_var} = MapLayer({', '.join(params)})\n")
+    created_vars.add(layer_var)
+
+    if getattr(layer_comp, "styling", None):
+        _write_styling(f, layer_var, layer_comp.styling, created_vars)
 
     # Data binding
     binding = getattr(layer_comp, "data_binding", None)
@@ -1240,11 +1236,11 @@ def _write_map_layer(f, layer_var, layer_comp, layer_index):
             if field_name:
                 escaped_domain = _escape_string(domain_name)
                 escaped_field = _escape_string(field_name)
-                # domain_model is either in local_vars (structural model included in
-                # the same file) or seeded as None in safe_globals.  Reference it
-                # directly — works in plain exec() and in the sandboxed converter exec.
+                # domain_model may be absent entirely when the GUI model is
+                # emitted standalone — resolve it via globals() so the generated
+                # code degrades to a no-op instead of raising NameError.
                 f.write(
-                    "_dm_ref = domain_model\n"
+                    "_dm_ref = globals().get('domain_model')\n"
                 )
                 f.write("if _dm_ref is not None:\n")
                 f.write(f"    _dc = _dm_ref.get_class_by_name(\"{escaped_domain}\")\n")
@@ -1256,7 +1252,7 @@ def _write_map_layer(f, layer_var, layer_comp, layer_index):
                 )
 
 
-def _write_map(f, var_name, map_comp):
+def _write_map(f, var_name, map_comp, created_vars):
     """Write code for a Map component and its layers."""
     params = [f'name="{_escape_string(map_comp.name)}"']
     if hasattr(map_comp, "title") and map_comp.title:
@@ -1268,13 +1264,14 @@ def _write_map(f, var_name, map_comp):
     if hasattr(map_comp, "zoom") and map_comp.zoom is not None:
         params.append(f"zoom={map_comp.zoom}")
 
-    _write_constructor(f, var_name, "Map", params, map_comp)
+    # Preserve the concrete subclass (WorldMap / LocationMap) on round-trip
+    _write_constructor(f, var_name, type(map_comp).__name__, params, map_comp)
 
     # Write each layer and collect variable names
     layer_var_names = []
     for idx, layer in enumerate(getattr(map_comp, "layers", None) or []):
         layer_var = f"{var_name}_layer_{idx}"
-        _write_map_layer(f, layer_var, layer, idx)
+        _write_map_layer(f, layer_var, layer, created_vars)
         layer_var_names.append(layer_var)
 
     # Assign the layers list back to the map
@@ -1372,7 +1369,7 @@ def _write_data_binding(f, binding_var, binding):
         return None
 
     escaped_domain = _escape_string(domain_name)
-    f.write("domain_model_ref = domain_model\n")
+    f.write("domain_model_ref = globals().get('domain_model')\n")
     f.write(f"{binding_var}_domain = None\n")
     f.write("if domain_model_ref is not None:\n")
     f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
@@ -1437,7 +1434,7 @@ def _update_data_source_element(f, var_name, source):
     if not any([domain_name, field_names, label_name, value_name]):
         return
 
-    f.write("domain_model_ref = domain_model\n")
+    f.write("domain_model_ref = globals().get('domain_model')\n")
     f.write(f"{var_name}_domain = None\n")
     if domain_name:
         escaped_domain = _escape_string(domain_name)

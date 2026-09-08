@@ -5,12 +5,16 @@
 //  Each layer type has a clearly labelled section (===== SECTION =====)
 //  so you can jump directly to the renderer you need to customise.
 //
+//  Implementation note: this component drives Leaflet directly (no
+//  react-leaflet wrapper) — the map instance lives in a ref, layers are
+//  plain Leaflet layer groups, and popup text is always HTML-escaped.
+//
 //  Quick reference:
-//    • POINTS LAYER    → Marker + Popup (lines ≈80)
-//    • GEOJSON LAYER   → react-leaflet GeoJSON polygons / lines (lines ≈130)
-//    • CHOROPLETH LAYER→ GeoJSON with colour-scale + legend (lines ≈180)
-//    • HEATMAP LAYER   → leaflet.heat intensity map (lines ≈240)
-//    • CUSTOM ICONS / IMAGE POPUPS → commented-out extension section (lines ≈300)
+//    • POINTS LAYER    → L.marker + popup            (renderPointsLayer)
+//    • GEOJSON LAYER   → L.geoJSON polygons / lines  (renderGeoJsonLayer)
+//    • CHOROPLETH LAYER→ L.geoJSON + colour scale    (renderChoroplethLayer)
+//    • HEATMAP LAYER   → leaflet.heat intensity map  (renderHeatLayer)
+//    • CUSTOM ICONS / IMAGE POPUPS → commented-out extension section (bottom)
 //
 //  Column contracts per layer type:
 //    points     : latitude (float), longitude (float), [label (any)]
@@ -19,28 +23,10 @@
 //    heatmap    : latitude (float), longitude (float), [weight (0-1)]
 // ============================================================
 
-import React, { useEffect, useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  GeoJSON,
-  useMap,
-} from "react-leaflet";
+import React, { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import axios from "axios";
-
-// ── Leaflet default-icon fix (required for CRA / Vite bundling) ──────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface DataBindingConfig {
@@ -78,6 +64,11 @@ interface MapBlockProps {
   styles?: React.CSSProperties;
 }
 
+/** A rendered layer plus everything needed to take it off the map again. */
+interface LayerHandle {
+  remove: () => void;
+}
+
 // ── Fetch helper (shared normaliser — matches TableBlock.tsx) ─────────────────
 const BACKEND = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -100,6 +91,35 @@ async function fetchRows(endpoint: string): Promise<Record<string, unknown>[]> {
   return [];
 }
 
+// ── HTML escaping ─────────────────────────────────────────────────────────────
+// Leaflet's bindPopup() renders its string argument as HTML, and popup labels
+// come from database rows (user-writable). Always escape them.
+function escapeHtml(value: unknown): string {
+  return String(value).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ] as string
+  );
+}
+
+// ── Default marker icon ───────────────────────────────────────────────────────
+// Inline SVG pin — self-contained (no CDN, no bundler asset config needed).
+// To use an image icon instead, see the CUSTOM ICONS extension at the bottom.
+const DEFAULT_PIN_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="25" height="41" viewBox="0 0 25 41">' +
+  '<path d="M12.5 0C5.6 0 0 5.6 0 12.5c0 9.4 12.5 28.5 12.5 28.5S25 21.9 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB" stroke="#1a5a94" stroke-width="1"/>' +
+  '<circle cx="12.5" cy="12.5" r="5" fill="white"/></svg>';
+
+const defaultIcon = L.divIcon({
+  className: "",
+  html: DEFAULT_PIN_SVG,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [0, -34],
+});
+
 // ── Choropleth colour scale (sequential: white → dark-red) ───────────────────
 function choroplethColor(value: number, min: number, max: number): string {
   const t = max === min ? 0 : (value - min) / (max - min);
@@ -110,49 +130,42 @@ function choroplethColor(value: number, min: number, max: number): string {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  Per-layer renderers
+//  Per-layer renderers — each returns a LayerHandle (or null when skipped)
 // ────────────────────────────────────────────────────────────────────────────
 
 // ===== POINTS LAYER ==========================================================
-// Renders each DB row as a Leaflet Marker.  Required columns: latitude, longitude.
+// Renders each DB row as a Leaflet marker.  Required columns: latitude, longitude.
 // Optional: any column for the popup label (labelField).
 //
 // To customise markers:
-//   - Custom icon:   replace `<Marker …>` with `<Marker icon={myIcon} …>`
-//                    See the "CUSTOM ICONS" extension block at the bottom of this file.
-//   - Rich popups:   replace `<Popup>{String(label)}</Popup>` with any JSX.
+//   - Custom icon:   pass `{ icon: myIcon }` to L.marker — see the
+//                    "CUSTOM ICONS" extension block at the bottom of this file.
+//   - Rich popups:   build an HTML string — escape every dynamic value with
+//                    escapeHtml() before concatenating.
 // =============================================================================
-function PointsLayer({ layer }: { layer: LayerConfig }) {
-  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+async function renderPointsLayer(
+  map: L.Map,
+  layer: LayerConfig
+): Promise<LayerHandle | null> {
   const latF = layer.latitudeField;
   const lngF = layer.longitudeField;
   const lblF = layer.labelField;
   const endpoint = layer.dataBinding?.endpoint;
+  if (!endpoint || !latF || !lngF) return null;
 
-  useEffect(() => {
-    if (!endpoint || !latF || !lngF) return;
-    fetchRows(endpoint)
-      .then(setRows)
-      .catch((err) => console.warn(`[MapBlock] ${layer.name} fetch error:`, err));
-  }, [endpoint, latF, lngF]);
-
-  return (
-    <>
-      {rows.map((row, idx) => {
-        const lat = parseFloat(String(row[latF!]));
-        const lng = parseFloat(String(row[lngF!]));
-        if (isNaN(lat) || isNaN(lng)) return null;
-        const label = lblF ? row[lblF] : undefined;
-        return (
-          <Marker key={idx} position={[lat, lng]}>
-            {label !== undefined && (
-              <Popup>{String(label)}</Popup>
-            )}
-          </Marker>
-        );
-      })}
-    </>
-  );
+  const rows = await fetchRows(endpoint);
+  const group = L.layerGroup();
+  for (const row of rows) {
+    const lat = parseFloat(String(row[latF]));
+    const lng = parseFloat(String(row[lngF]));
+    if (isNaN(lat) || isNaN(lng)) continue;
+    const marker = L.marker([lat, lng], { icon: defaultIcon });
+    const label = lblF ? row[lblF] : undefined;
+    if (label !== undefined) marker.bindPopup(escapeHtml(label));
+    marker.addTo(group);
+  }
+  group.addTo(map);
+  return { remove: () => map.removeLayer(group) };
 }
 
 // ===== GEOJSON LAYER =========================================================
@@ -161,52 +174,38 @@ function PointsLayer({ layer }: { layer: LayerConfig }) {
 // Optional: labelField for click popups.
 //
 // To customise polygon style:
-//   Modify the `style` prop on <GeoJSON> below.
+//   Pass a `style` option to L.geoJSON below.
 //   See: https://leafletjs.com/reference.html#geojson-style
 // =============================================================================
-function GeoJsonLayer({ layer }: { layer: LayerConfig }) {
-  const [geoData, setGeoData] = useState<unknown[]>([]);
+async function renderGeoJsonLayer(
+  map: L.Map,
+  layer: LayerConfig
+): Promise<LayerHandle | null> {
   const geojsonF = layer.geojsonField;
   const lblF = layer.labelField;
   const endpoint = layer.dataBinding?.endpoint;
+  if (!endpoint || !geojsonF) return null;
 
-  useEffect(() => {
-    if (!endpoint || !geojsonF) return;
-    fetchRows(endpoint)
-      .then((rows) => {
-        const parsed: unknown[] = [];
-        for (const row of rows) {
-          try {
-            const raw = row[geojsonF!];
-            parsed.push(typeof raw === "string" ? JSON.parse(raw) : raw);
-          } catch {
-            console.warn(`[MapBlock] ${layer.name}: could not parse geometry row`);
-          }
-        }
-        setGeoData(parsed);
-      })
-      .catch((err) => console.warn(`[MapBlock] ${layer.name} fetch error:`, err));
-  }, [endpoint, geojsonF]);
-
-  return (
-    <>
-      {geoData.map((feature, idx) => (
-        <GeoJSON
-          key={idx}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          data={feature as any}
-          onEachFeature={
-            lblF
-              ? (feature, leafletLayer) => {
-                  const label = feature?.properties?.[lblF];
-                  if (label != null) leafletLayer.bindPopup(String(label));
-                }
-              : undefined
-          }
-        />
-      ))}
-    </>
-  );
+  const rows = await fetchRows(endpoint);
+  const group = L.layerGroup();
+  for (const row of rows) {
+    try {
+      const raw = row[geojsonF];
+      const feature = typeof raw === "string" ? JSON.parse(raw) : raw;
+      L.geoJSON(feature as GeoJSON.GeoJsonObject, {
+        onEachFeature: lblF
+          ? (feat, leafletLayer) => {
+              const label = feat?.properties?.[lblF];
+              if (label != null) leafletLayer.bindPopup(escapeHtml(label));
+            }
+          : undefined,
+      }).addTo(group);
+    } catch {
+      console.warn(`[MapBlock] ${layer.name}: could not parse geometry row`);
+    }
+  }
+  group.addTo(map);
+  return { remove: () => map.removeLayer(group) };
 }
 
 // ===== CHOROPLETH LAYER ======================================================
@@ -219,18 +218,16 @@ function GeoJsonLayer({ layer }: { layer: LayerConfig }) {
 //
 // To customise the colour scale:
 //   Modify `choroplethColor()` above or replace it with a d3-scale call.
-// To add a legend:
-//   Uncomment the <ChoroplethLegend> component or write your own.
 // =============================================================================
-function ChoroplethLayer({ layer }: { layer: LayerConfig }) {
-  type GeoRow = { feature: unknown; value: number };
-  const [rows, setRows] = useState<GeoRow[]>([]);
-  const [minVal, setMinVal] = useState(0);
-  const [maxVal, setMaxVal] = useState(1);
+async function renderChoroplethLayer(
+  map: L.Map,
+  layer: LayerConfig
+): Promise<LayerHandle | null> {
   const geojsonF = layer.geojsonField;
   const valueF = layer.valueField;
   const lblF = layer.labelField;
   const endpoint = layer.dataBinding?.endpoint;
+  if (!endpoint || !geojsonF) return null;
 
   if (!valueF) {
     console.warn(
@@ -238,93 +235,64 @@ function ChoroplethLayer({ layer }: { layer: LayerConfig }) {
     );
   }
 
-  useEffect(() => {
-    if (!endpoint || !geojsonF) return;
-    fetchRows(endpoint)
-      .then((rawRows) => {
-        const parsed: GeoRow[] = [];
-        let mn = Infinity,
-          mx = -Infinity;
-        for (const row of rawRows) {
-          try {
-            const raw = row[geojsonF!];
-            const feature = typeof raw === "string" ? JSON.parse(raw) : raw;
-            const val = valueF ? parseFloat(String(row[valueF])) : 0;
-            if (!isNaN(val)) {
-              mn = Math.min(mn, val);
-              mx = Math.max(mx, val);
-            }
-            parsed.push({ feature, value: isNaN(val) ? 0 : val });
-          } catch {
-            console.warn(`[MapBlock] ${layer.name}: could not parse geometry row`);
-          }
-        }
-        setRows(parsed);
-        setMinVal(mn === Infinity ? 0 : mn);
-        setMaxVal(mx === -Infinity ? 1 : mx);
-      })
-      .catch((err) => console.warn(`[MapBlock] ${layer.name} fetch error:`, err));
-  }, [endpoint, geojsonF, valueF]);
+  const rawRows = await fetchRows(endpoint);
+  const parsed: { feature: unknown; value: number }[] = [];
+  let mn = Infinity;
+  let mx = -Infinity;
+  for (const row of rawRows) {
+    try {
+      const raw = row[geojsonF];
+      const feature = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const val = valueF ? parseFloat(String(row[valueF])) : 0;
+      if (!isNaN(val)) {
+        mn = Math.min(mn, val);
+        mx = Math.max(mx, val);
+      }
+      parsed.push({ feature, value: isNaN(val) ? 0 : val });
+    } catch {
+      console.warn(`[MapBlock] ${layer.name}: could not parse geometry row`);
+    }
+  }
+  const minVal = mn === Infinity ? 0 : mn;
+  const maxVal = mx === -Infinity ? 1 : mx;
 
-  return (
-    <>
-      {rows.map(({ feature, value }, idx) => (
-        <GeoJSON
-          key={idx}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          data={feature as any}
-          style={() => ({
-            fillColor: valueF
-              ? choroplethColor(value, minVal, maxVal)
-              : "#3388ff",
-            weight: 1,
-            opacity: 1,
-            color: "#666",
-            fillOpacity: 0.7,
-          })}
-          onEachFeature={(feat, leafletLayer) => {
-            const parts: string[] = [];
-            if (lblF && feat?.properties?.[lblF] != null)
-              parts.push(String(feat.properties[lblF]));
-            if (valueF) parts.push(`Value: ${value}`);
-            if (parts.length) leafletLayer.bindPopup(parts.join("<br/>"));
-          }}
-        />
-      ))}
-      {/* ── Simple choropleth legend ─────────────────────────────────────── */}
-      {valueF && rows.length > 0 && (
-        <ChoroplethLegend min={minVal} max={maxVal} name={layer.name ?? ""} />
-      )}
-    </>
-  );
-}
+  const group = L.layerGroup();
+  for (const { feature, value } of parsed) {
+    L.geoJSON(feature as GeoJSON.GeoJsonObject, {
+      style: () => ({
+        fillColor: valueF ? choroplethColor(value, minVal, maxVal) : "#3388ff",
+        weight: 1,
+        opacity: 1,
+        color: "#666",
+        fillOpacity: 0.7,
+      }),
+      onEachFeature: (feat, leafletLayer) => {
+        const parts: string[] = [];
+        if (lblF && feat?.properties?.[lblF] != null)
+          parts.push(escapeHtml(feat.properties[lblF]));
+        if (valueF) parts.push(`Value: ${escapeHtml(value)}`);
+        if (parts.length) leafletLayer.bindPopup(parts.join("<br/>"));
+      },
+    }).addTo(group);
+  }
+  group.addTo(map);
 
-/** Small Leaflet control legend rendered via a React portal into the map container. */
-function ChoroplethLegend({
-  min,
-  max,
-  name,
-}: {
-  min: number;
-  max: number;
-  name: string;
-}) {
-  // Inject legend as a non-blocking overlay div into the map container
-  const map = useMap();
-  useEffect(() => {
-    const legend = L.control({ position: "bottomright" });
+  // ── Simple choropleth legend (bottom-right Leaflet control) ────────────────
+  let legend: L.Control | null = null;
+  if (valueF && parsed.length > 0) {
+    legend = new L.Control({ position: "bottomright" });
     legend.onAdd = () => {
       const div = L.DomUtil.create("div", "leaflet-control-choropleth-legend");
       div.style.cssText =
         "background:white;padding:8px 12px;border-radius:4px;" +
         "box-shadow:0 1px 4px rgba(0,0,0,.3);font-size:12px;line-height:1.6;";
       const stops = ["#FFEDA0", "#FED976", "#FEB24C", "#FC4E2A", "#800026"];
-      const step = (max - min) / (stops.length - 1);
+      const step = (maxVal - minVal) / (stops.length - 1);
       div.innerHTML =
-        `<strong style="display:block;margin-bottom:4px">${name}</strong>` +
+        `<strong style="display:block;margin-bottom:4px">${escapeHtml(layer.name ?? "")}</strong>` +
         stops
           .map((c, i) => {
-            const v = (min + step * i).toFixed(1);
+            const v = (minVal + step * i).toFixed(1);
             return (
               `<span style="display:inline-block;width:14px;height:14px;` +
               `background:${c};margin-right:4px;vertical-align:middle;` +
@@ -335,11 +303,14 @@ function ChoroplethLegend({
       return div;
     };
     legend.addTo(map);
-    return () => {
-      legend.remove();
-    };
-  }, [map, min, max, name]);
-  return null;
+  }
+
+  return {
+    remove: () => {
+      map.removeLayer(group);
+      legend?.remove();
+    },
+  };
 }
 
 // ===== HEATMAP LAYER =========================================================
@@ -352,87 +323,71 @@ function ChoroplethLegend({
 //   radius, blur, maxZoom, max, gradient.
 //   See: https://github.com/Leaflet/Leaflet.heat#reference
 // =============================================================================
-function HeatLayer({ layer }: { layer: LayerConfig }) {
-  // leaflet.heat is loaded as a side-effect import — no TypeScript types available
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [heatLayerRef, setHeatLayerRef] = useState<any>(null);
-  const map = useMap();
+async function renderHeatLayer(
+  map: L.Map,
+  layer: LayerConfig
+): Promise<LayerHandle | null> {
   const latF = layer.latitudeField;
   const lngF = layer.longitudeField;
   const wgtF = layer.weightField;
   const endpoint = layer.dataBinding?.endpoint;
+  if (!endpoint || !latF || !lngF) return null;
 
-  useEffect(() => {
-    // Dynamic import of leaflet.heat (it registers itself on L)
-    import("leaflet.heat").catch(() => {
-      console.warn("[MapBlock] leaflet.heat not installed — run: npm install leaflet.heat");
-    });
-  }, []);
+  try {
+    // leaflet.heat registers itself on the global L
+    await import("leaflet.heat");
+  } catch {
+    console.warn(
+      "[MapBlock] leaflet.heat not installed — run: npm install leaflet.heat"
+    );
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const L_ = L as any;
+  if (typeof L_.heatLayer !== "function") {
+    console.warn("[MapBlock] L.heatLayer not available — is leaflet.heat installed?");
+    return null;
+  }
 
-  useEffect(() => {
-    if (!endpoint || !latF || !lngF) return;
-    fetchRows(endpoint)
-      .then((rows) => {
-        const points: [number, number, number][] = [];
-        for (const row of rows) {
-          const lat = parseFloat(String(row[latF!]));
-          const lng = parseFloat(String(row[lngF!]));
-          if (isNaN(lat) || isNaN(lng)) continue;
-          const weight = wgtF
-            ? parseFloat(String(row[wgtF])) || 0.5
-            : 0.5;
-          points.push([lat, lng, weight]);
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const L_ = L as any;
-        if (typeof L_.heatLayer !== "function") {
-          console.warn("[MapBlock] L.heatLayer not available — is leaflet.heat installed?");
-          return;
-        }
-        // Remove previous heatmap layer if re-rendered
-        if (heatLayerRef) map.removeLayer(heatLayerRef);
-        const hl = L_.heatLayer(points, {
-          radius: 25,
-          blur: 15,
-          maxZoom: 17,
-        }).addTo(map);
-        setHeatLayerRef(hl);
-      })
-      .catch((err) => console.warn(`[MapBlock] ${layer.name} fetch error:`, err));
-
-    return () => {
-      if (heatLayerRef) map.removeLayer(heatLayerRef);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint, latF, lngF, wgtF, map]);
-
-  return null; // leaflet.heat injects directly into the map — no JSX needed
+  const rows = await fetchRows(endpoint);
+  const points: [number, number, number][] = [];
+  for (const row of rows) {
+    const lat = parseFloat(String(row[latF]));
+    const lng = parseFloat(String(row[lngF]));
+    if (isNaN(lat) || isNaN(lng)) continue;
+    const weight = wgtF ? parseFloat(String(row[wgtF])) || 0.5 : 0.5;
+    points.push([lat, lng, weight]);
+  }
+  const heat = L_.heatLayer(points, {
+    radius: 25,
+    blur: 15,
+    maxZoom: 17,
+  }).addTo(map);
+  return { remove: () => map.removeLayer(heat) };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Layer dispatcher — picks the right renderer for each layer
 // ────────────────────────────────────────────────────────────────────────────
-function LayerRenderer({ layer }: { layer: LayerConfig }) {
-  try {
-    switch (layer.type) {
-      case "points":
-        return <PointsLayer layer={layer} />;
-      case "geojson":
-        return <GeoJsonLayer layer={layer} />;
-      case "choropleth":
-        return <ChoroplethLayer layer={layer} />;
-      case "heatmap":
-        return <HeatLayer layer={layer} />;
-      default:
-        // Unknown / unset type: fall back to points
-        console.warn(
-          `[MapBlock] Unknown layer type "${layer.type}" for layer "${layer.name}" — falling back to points`
-        );
-        return <PointsLayer layer={layer} />;
-    }
-  } catch (err) {
-    console.warn(`[MapBlock] Error rendering layer "${layer.name}":`, err);
-    return null;
+async function renderLayer(
+  map: L.Map,
+  layer: LayerConfig
+): Promise<LayerHandle | null> {
+  switch (layer.type) {
+    case "points":
+      return renderPointsLayer(map, layer);
+    case "geojson":
+      return renderGeoJsonLayer(map, layer);
+    case "choropleth":
+      return renderChoroplethLayer(map, layer);
+    case "heatmap":
+      return renderHeatLayer(map, layer);
+    default:
+      // Unknown / unset type: fall back to points
+      console.warn(
+        `[MapBlock] Unknown layer type "${layer.type}" for layer "${layer.name}" — falling back to points`
+      );
+      return renderPointsLayer(map, layer);
   }
 }
 
@@ -440,10 +395,11 @@ function LayerRenderer({ layer }: { layer: LayerConfig }) {
 //  MapBlock — public component exported and consumed by generated pages
 // ────────────────────────────────────────────────────────────────────────────
 export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlockProps) {
-  const center: [number, number] = [
-    mapConfig?.centerLatitude ?? 0,
-    mapConfig?.centerLongitude ?? 0,
-  ];
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+
+  const lat = mapConfig?.centerLatitude ?? 0;
+  const lng = mapConfig?.centerLongitude ?? 0;
   const zoom = mapConfig?.zoom ?? 10;
 
   const containerStyle: React.CSSProperties = {
@@ -452,35 +408,75 @@ export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlock
     ...styles,
   };
 
+  // Create the Leaflet map once, destroy it on unmount.
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    const map = L.map(containerRef.current, { scrollWheelZoom: true }).setView(
+      [lat, lng],
+      zoom
+    );
+    // OpenStreetMap tile layer — no API key required. Attribution is mandatory
+    // under the OSM tile usage policy; keep it if you swap the tile server.
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+    mapRef.current = map;
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep centre / zoom in sync with props after mount.
+  useEffect(() => {
+    mapRef.current?.setView([lat, lng], zoom);
+  }, [lat, lng, zoom]);
+
+  // (Re)build the data layers whenever the layer config changes.
+  const layersKey = JSON.stringify(layers);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    let cancelled = false;
+    const handles: LayerHandle[] = [];
+
+    // Static fallback marker when no layers are defined
+    if (layers.length === 0) {
+      const marker = L.marker([lat, lng], { icon: defaultIcon })
+        .bindPopup("Map centre")
+        .addTo(map);
+      handles.push({ remove: () => map.removeLayer(marker) });
+    }
+
+    (async () => {
+      // Render in order (bottom → top)
+      for (const layer of layers) {
+        try {
+          const handle = await renderLayer(map, layer);
+          if (!handle) continue;
+          if (cancelled) handle.remove();
+          else handles.push(handle);
+        } catch (err) {
+          console.warn(`[MapBlock] ${layer.name} fetch error:`, err);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      handles.forEach((h) => h.remove());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layersKey]);
+
   return (
     <div id={id}>
       {title && (
         <h3 style={{ marginBottom: "8px", fontWeight: 600 }}>{title}</h3>
       )}
-      <MapContainer
-        center={center}
-        zoom={zoom}
-        style={containerStyle}
-        scrollWheelZoom={true}
-      >
-        {/* OpenStreetMap tile layer — no API key required */}
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-
-        {/* Render each data layer in order (bottom → top) */}
-        {layers.map((layer, idx) => (
-          <LayerRenderer key={layer.name ?? idx} layer={layer} />
-        ))}
-
-        {/* Static fallback marker when no layers are defined */}
-        {layers.length === 0 && (
-          <Marker position={center}>
-            <Popup>Map centre</Popup>
-          </Marker>
-        )}
-      </MapContainer>
+      <div ref={containerRef} style={containerStyle} />
     </div>
   );
 }
@@ -502,24 +498,19 @@ export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlock
 //    popupAnchor: [0, -32],   // where the popup opens relative to the icon
 //  });
 //
-//  Then inside PointsLayer, replace:
-//    <Marker key={idx} position={[lat, lng]}>
+//  Then inside renderPointsLayer, replace:
+//    L.marker([lat, lng], { icon: defaultIcon })
 //  with:
-//    <Marker key={idx} position={[lat, lng]} icon={myIcon}>
+//    L.marker([lat, lng], { icon: myIcon })
 //
 //  ── Image popup ──────────────────────────────────────────────
 //
 //  // Assuming your DB table has an "image_url" column:
-//  const imgUrl = String(row["image_url"] ?? "");
-//  return (
-//    <Marker key={idx} position={[lat, lng]}>
-//      <Popup>
-//        <div>
-//          {imgUrl && <img src={imgUrl} alt="marker" style={{ maxWidth: 180 }} />}
-//          <p>{String(label)}</p>
-//        </div>
-//      </Popup>
-//    </Marker>
+//  // (escape every dynamic value — popups render HTML)
+//  const imgUrl = escapeHtml(row["image_url"] ?? "");
+//  marker.bindPopup(
+//    (imgUrl ? `<img src="${imgUrl}" alt="marker" style="max-width:180px"/>` : "") +
+//    `<p>${escapeHtml(label)}</p>`
 //  );
 //
 //  ── Per-layer colour override (points layer) ─────────────────
@@ -527,8 +518,10 @@ export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlock
 //  const coloredIcon = (color: string) =>
 //    L.divIcon({
 //      className: "",
-//      html: `<span style="font-size:24px;color:${color}">📍</span>`,
+//      html: DEFAULT_PIN_SVG.replace("#2A81CB", color),
+//      iconSize: [25, 41],
+//      iconAnchor: [12, 41],
 //    });
 //
-//  <Marker icon={coloredIcon("#e74c3c")} position={[lat, lng]}>
+//  L.marker([lat, lng], { icon: coloredIcon("#e74c3c") })
 // ============================================================

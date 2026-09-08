@@ -53,18 +53,19 @@ Visualization components including:
 MapBlock
 ^^^^^^^^
 
-Interactive multi-layer map powered by `Leaflet <https://leafletjs.com/>`_ and
-`react-leaflet <https://react-leaflet.js.org/>`_ with OpenStreetMap tiles (no API
-key required).  Each ``MapLayer`` on the metamodel ``Map`` component produces one
-rendered layer in the generated output.  Supported layer types:
+Interactive multi-layer map powered by `Leaflet <https://leafletjs.com/>`_ (used
+directly, no wrapper library) with OpenStreetMap tiles (no API key required).
+Each ``MapLayer`` on the metamodel ``Map`` component produces one rendered layer
+in the generated output.  Popup labels come from database rows and are always
+HTML-escaped.  Supported layer types:
 
-- **points** — ``<Marker>`` + ``<Popup>`` per row (lat/lng columns required).
-- **geojson** — react-leaflet ``<GeoJSON>`` (geometry column required).
-- **choropleth** — ``<GeoJSON>`` with a value-driven fill colour + auto legend
+- **points** — ``L.marker`` + popup per row (lat/lng columns required).
+- **geojson** — ``L.geoJSON`` (geometry column required).
+- **choropleth** — ``L.geoJSON`` with a value-driven fill colour + auto legend
   (geometry + value columns required; degrades to plain GeoJSON with a console
   warning when the value column is absent).
-- **heatmap** — ``leaflet.heat`` heat layer via ``useMap()`` (lat/lng columns
-  required; weight column optional).
+- **heatmap** — ``leaflet.heat`` heat layer (lat/lng columns required; weight
+  column optional).
 
 The generated ``MapBlock.tsx`` loops over the ``layers`` prop and dispatches to the
 correct per-type renderer.  Each renderer is preceded by a section-comment banner
@@ -83,10 +84,7 @@ when the GUI model contains at least one ``Map`` component:
      - Purpose
    * - ``leaflet``
      - ``^1.9.4``
-     - Core Leaflet mapping library.
-   * - ``react-leaflet``
-     - ``^5.0.0``
-     - React bindings for Leaflet (React 19 compatible).
+     - Core Leaflet mapping library (BSD-2-Clause), used directly.
    * - ``leaflet.heat``
      - ``^0.2.0``
      - Heat-map plugin (used when any layer is ``heatmap`` type).

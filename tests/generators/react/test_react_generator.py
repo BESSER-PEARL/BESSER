@@ -221,7 +221,7 @@ def test_react_map_page_contains_mapblock(map_domain_model, map_gui_model, tmpdi
 
 
 def test_react_map_leaflet_in_package_json(map_domain_model, map_gui_model, tmpdir):
-    """leaflet and react-leaflet are present in the generated package.json."""
+    """leaflet deps are present in package.json when the model contains a Map."""
     domain, *_ = map_domain_model
     output_dir = tmpdir.mkdir("map_output4")
     generator = ReactGenerator(model=domain, gui_model=map_gui_model,
@@ -235,5 +235,23 @@ def test_react_map_leaflet_in_package_json(map_domain_model, map_gui_model, tmpd
 
     deps = pkg.get("dependencies", {})
     assert "leaflet" in deps, "leaflet must be in package.json dependencies"
-    assert "react-leaflet" in deps, "react-leaflet must be in package.json dependencies"
+    assert "react-leaflet" not in deps, "react-leaflet (Hippocratic-2.1) must NOT be shipped"
     assert "leaflet.heat" in deps, "leaflet.heat must be in package.json dependencies"
+    assert "@types/leaflet" in pkg.get("devDependencies", {}), "@types/leaflet must be in devDependencies"
+
+
+def test_react_no_map_no_leaflet_deps(domain_model, gui_model, tmpdir):
+    """leaflet deps and MapBlock.tsx are absent when the model has no Map component."""
+    output_dir = tmpdir.mkdir("map_output5")
+    generator = ReactGenerator(model=domain_model,
+                                gui_model=gui_model,
+                                output_dir=str(output_dir))
+    generator.generate()
+
+    with open(os.path.join(str(output_dir), "package.json"), "r", encoding="utf-8") as f:
+        pkg = json.load(f)
+    assert "leaflet" not in pkg.get("dependencies", {})
+    assert "@types/leaflet" not in pkg.get("devDependencies", {})
+    assert not os.path.isfile(
+        os.path.join(str(output_dir), "src", "components", "runtime", "MapBlock.tsx")
+    ), "MapBlock.tsx must not be generated without a Map component"

@@ -977,10 +977,9 @@ def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
             layer_entries = json.loads(raw_layers) if isinstance(raw_layers, str) else raw_layers
             if isinstance(layer_entries, list):
                 for entry in layer_entries:
-                    try:
-                        layers.append(_parse_map_layer(entry, class_model, domain_model))
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("Skipping malformed map layer entry %r: %s", entry, exc)
+                    if not isinstance(entry, dict):
+                        continue
+                    layers.append(_parse_map_layer(entry, class_model, domain_model))
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning("Could not parse map-layers JSON: %s", exc)
 

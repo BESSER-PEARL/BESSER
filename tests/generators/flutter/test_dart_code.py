@@ -371,9 +371,9 @@ def test_flutter_map_main_dart_contains_flutter_map(tmp_path):
     assert "flutter_map" in content, "import for flutter_map should be present"
 
 
-def test_flutter_map_pubspec_contains_flutter_map_dep(tmp_path):
+def test_flutter_map_pubspec_contains_flutter_map_dep(tmp_path, monkeypatch):
     """FlutterPubspecGenerator includes flutter_map and latlong2 dependencies."""
-    import shutil, os
+    import os
     from besser.BUML.metamodel.gui.dashboard import Map
 
     map_comp = Map(name="PubspecMap", center_latitude=0.0, center_longitude=0.0, zoom=5)
@@ -393,16 +393,15 @@ def test_flutter_map_pubspec_contains_flutter_map_dep(tmp_path):
     from besser.generators.flutter import FlutterPubspecGenerator
     # FlutterPubspecGenerator has a pre-existing bug: it passes output_dir as the
     # model arg to super().__init__, so output_dir is always None and files are
-    # written to <cwd>/output/. We work around it here.
+    # written to <cwd>/output/. Chdir into tmp_path so the writes (and cleanup)
+    # never touch a real working directory.
+    monkeypatch.chdir(tmp_path)
     gen = FlutterPubspecGenerator(gui_model=gui)
     gen.generate()
 
-    pubspec_path = os.path.join(os.path.abspath(''), 'output', 'pubspec.yaml')
-    try:
-        assert os.path.exists(pubspec_path), "pubspec.yaml should be generated"
-        with open(pubspec_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        assert "flutter_map" in content, "pubspec.yaml should list flutter_map dependency"
-        assert "latlong2" in content, "pubspec.yaml should list latlong2 dependency"
-    finally:
-        shutil.rmtree(os.path.join(os.path.abspath(''), 'output'), ignore_errors=True)
+    pubspec_path = os.path.join(str(tmp_path), 'output', 'pubspec.yaml')
+    assert os.path.exists(pubspec_path), "pubspec.yaml should be generated"
+    with open(pubspec_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    assert "flutter_map" in content, "pubspec.yaml should list flutter_map dependency"
+    assert "latlong2" in content, "pubspec.yaml should list latlong2 dependency"

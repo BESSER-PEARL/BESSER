@@ -58,14 +58,17 @@ OpenStreetMap tiles (no API key required).
 
 **Generated output**
 
-- The map screen renders a ``FlutterMap`` widget with a ``TileLayer`` for OpenStreetMap.
-- When a ``DataBinding`` is configured, the map fetches records from the SQLite database
-  and places a ``Marker`` for each row using the configured ``latitude_field``,
-  ``longitude_field``, and ``marker_label_field`` attributes.
-- Without a data binding, a single static marker is placed at the configured centre
-  coordinates.
-- The widget is wrapped in an ``Expanded`` / ``SizedBox`` container to fill the available
-  screen area responsively.
+- The map screen renders a ``FlutterMap`` widget with a ``TileLayer`` for OpenStreetMap
+  and the mandatory OSM attribution, centred at the configured
+  ``center_latitude`` / ``center_longitude`` and ``zoom``.
+- The widget is wrapped in a ``SizedBox`` container to fill the available screen area
+  responsively.
+
+.. note::
+   Data-bound layers (markers, GeoJSON, choropleth, heatmap — see
+   :doc:`maps <./maps>`) are currently rendered by the **React** generator only.
+   The Flutter generator produces a static tile view; layer rendering is planned
+   as a follow-up.
 
 **Dependencies added to** ``pubspec.yaml``
 
@@ -87,19 +90,23 @@ OpenStreetMap tiles (no API key required).
 
 .. code-block:: python
 
-    from besser.BUML.metamodel.gui.dashboard import Map
+    from besser.BUML.metamodel.gui.dashboard import Map, MapLayer
     from besser.BUML.metamodel.gui import DataBinding
 
-    # Bind the map to a domain class with geo attributes
+    # Bind a layer to a domain class with geo attributes
     binding = DataBinding(name="location_binding", domain_concept=location_class)
+    store_layer = MapLayer(
+        name="stores",
+        latitude_field=latitude_property,
+        longitude_field=longitude_property,
+        label_field=name_property,
+        data_binding=binding,
+    )
     store_map = Map(
         name="StoreMap",
         title="Store Locations",
         center_latitude=48.8566,
         center_longitude=2.3522,
         zoom=12,
-        latitude_field=latitude_property,
-        longitude_field=longitude_property,
-        marker_label_field=name_property,
-        data_binding=binding,
+        layers=[store_layer],
     )

@@ -1,3 +1,4 @@
+import warnings
 from enum import Enum
 from typing import Optional, Sequence
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
@@ -1254,8 +1255,8 @@ class MetricCard(ViewComponent):
 class MapLayerType(Enum):
     """Supported rendering types for a :class:`MapLayer`.
 
-    * ``points``     — ``latitude + longitude`` → :class:`~react_leaflet.Marker` + ``Popup``
-    * ``geojson``    — ``geometry`` (GeoJSON string) → :class:`~react_leaflet.GeoJSON`
+    * ``points``     — ``latitude + longitude`` → Leaflet marker + popup
+    * ``geojson``    — ``geometry`` (GeoJSON string) → Leaflet ``L.geoJSON`` layer
     * ``choropleth`` — ``geometry + value`` → ``GeoJSON`` with colour-scale style function + legend
     * ``heatmap``    — ``latitude + longitude [+ weight]`` → ``leaflet.heat`` heatmap
     """
@@ -1330,7 +1331,7 @@ class MapLayer(ViewComponent):
     @layer_type.setter
     def layer_type(self, value: Optional[MapLayerType]):
         if value is not None and not isinstance(value, MapLayerType):
-            raise TypeError(f"layer_type must be a MapLayerType instance, got {type(value)}")
+            raise ValueError(f"layer_type must be a MapLayerType value, got {value!r}.")
         self._layer_type = value
 
     # --- latitude_field ---
@@ -1432,26 +1433,23 @@ class MapLayer(ViewComponent):
         if self._latitude_field is not None and self._longitude_field is not None:
             return MapLayerType.points
 
-        # Attribute-name inspection of the bound domain class (best-effort)
-        domain_class = getattr(getattr(self, "data_binding", None), "domain_concept", None)
+        # Attribute-name inspection of the bound domain class
+        domain_class = self.data_binding.domain_concept if self.data_binding else None
         if domain_class is not None:
-            try:
-                attr_names = {a.name.lower() for a in domain_class.attributes}
-                if "geometry" in attr_names:
-                    return MapLayerType.choropleth if "value" in attr_names else MapLayerType.geojson
-                has_lat = bool(attr_names & {"latitude", "lat"})
-                has_lng = bool(attr_names & {"longitude", "lng", "lon"})
-                if has_lat and has_lng:
-                    return MapLayerType.heatmap if "weight" in attr_names else MapLayerType.points
-            except Exception:
-                pass
+            attr_names = {a.name.lower() for a in domain_class.attributes}
+            if "geometry" in attr_names:
+                return MapLayerType.choropleth if "value" in attr_names else MapLayerType.geojson
+            has_lat = bool(attr_names & {"latitude", "lat"})
+            has_lng = bool(attr_names & {"longitude", "lng", "lon"})
+            if has_lat and has_lng:
+                return MapLayerType.heatmap if "weight" in attr_names else MapLayerType.points
 
         return MapLayerType.points
 
     def __repr__(self):
         return (
             f"MapLayer(name={self.name}, layer_type={self.layer_type}, "
-            f"data_binding={getattr(self, 'data_binding', None)})"
+            f"data_binding={self.data_binding})"
         )
 
 
@@ -1466,21 +1464,25 @@ class Map(ViewComponent):
     Args:
         name (str): The name of the map component.
         title (str | None): Optional display title shown above the map.
-        center_latitude (float | None): Initial map centre latitude (default: 0.0).
-        center_longitude (float | None): Initial map centre longitude (default: 0.0).
-        zoom (int | None): Initial zoom level (default: 10).
+        center_latitude (float): Initial map centre latitude (default: 0.0).
+        center_longitude (float): Initial map centre longitude (default: 0.0).
+        zoom (int): Initial zoom level (default: 10).
         layers (list[MapLayer] | None): Data layers to render; defaults to an empty list.
+        data (list | None): Deprecated, ignored — kept so pre-7.14 ``Map(name, data=[...])``
+            callers fail softly instead of binding the list to another parameter.
         **kwargs: Forwarded to :class:`ViewComponent` (e.g. ``styling``).
     """
 
     def __init__(
         self,
         name: str,
+        *,
         title: Optional[str] = None,
-        center_latitude: Optional[float] = None,
-        center_longitude: Optional[float] = None,
-        zoom: Optional[int] = None,
+        center_latitude: float = 0.0,
+        center_longitude: float = 0.0,
+        zoom: int = 10,
         layers: Optional[list] = None,
+        data: Optional[list] = None,
         **kwargs,
     ):
         super().__init__(name, **kwargs)
@@ -1489,6 +1491,13 @@ class Map(ViewComponent):
         self.center_longitude = center_longitude
         self.zoom = zoom
         self.layers = layers
+        if data is not None:
+            warnings.warn(
+                "Map(data=...) is deprecated and ignored; bind rows through MapLayer "
+                "data bindings instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     # --- title ---
     @property

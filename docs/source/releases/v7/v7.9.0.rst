@@ -1,0 +1,203 @@
+Version 7.9.0
+=============
+
+Minor release headlined by **new agent action types** and **BAF generator
+enhancements**.  It adds ``LLMChatReply`` and ``WebCrawlLLMReply`` actions,
+nine ``WebSocketReply*`` action classes for rich-media replies, a new
+``llm_prompt`` parameter on ``RAG``, and generator improvements including
+pre-rendered YAML config injection, automatic ``tools.py`` generation, and
+per-skill Markdown file output.
+
+New Action Types
+----------------
+
+LLMChatReply
+~~~~~~~~~~~~
+
+* New ``LLMChatReply`` action sends a chat-style reply using an LLM.  Unlike
+  ``LLMReply``, it invokes ``llm.chat(...)`` with the conversation history,
+  making it appropriate for multi-turn dialogue states.
+* Accepts an optional ``prompt`` (system prompt injected into the call) and
+  an optional ``llm_name`` to target a specific registered LLM; falls back
+  to the agent's default LLM when not set.
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.state_machine.agent import LLMChatReply
+
+    my_state.set_body(Body('chat_body', [LLMChatReply(prompt='Be concise.')]))
+
+WebCrawlLLMReply
+~~~~~~~~~~~~~~~~
+
+* New ``WebCrawlLLMReply`` action performs a BFS web crawl starting at
+  ``initial_url`` and queries an LLM with the retrieved content.
+* The crawl result is cached in the agent session under the key
+  ``f"web_crawl_{initial_url}"``; set ``run_crawl=False`` in subsequent
+  states to reuse the cached content without re-fetching.
+* Configurable via ``max_depth``, ``max_pages``, ``crawl_format``
+  (``"markdown"`` or ``"html"``), ``base_url_prefix``, ``system_message_prefix``,
+  ``no_crawl_error_message``, and ``llm_name``.
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.state_machine.agent import WebCrawlLLMReply
+
+    crawl_state.set_body(Body('crawl_body', [
+        WebCrawlLLMReply(
+            initial_url='https://example.com/docs',
+            max_depth=2,
+            max_pages=20,
+            crawl_format='markdown',
+            run_crawl=True,
+        )
+    ]))
+
+WebSocket reply actions
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Nine new action classes map directly to the ``WebSocketPlatform`` rich-media
+reply methods, letting you model structured replies in the B-UML agent
+diagram without writing custom body code:
+
++----------------------------------+-----------------------------------------------+
+| Class                            | Mapped platform method                        |
++==================================+===============================================+
+| ``WebSocketReplyMarkdown``       | ``platform.reply_markdown(message)``          |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyHTML``           | ``platform.reply_html(message)``              |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplySpeech``         | ``platform.reply_speech(message, speed)``     |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyOptions``        | ``platform.reply_options(options)``           |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyLocation``       | ``platform.reply_location(lat, lon)``         |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyFile``           | ``platform.reply_file(file)``                 |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyImage``          | ``platform.reply_image(image)``               |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyDataframe``      | ``platform.reply_dataframe(df)``              |
++----------------------------------+-----------------------------------------------+
+| ``WebSocketReplyPlotly``         | ``platform.reply_plotly(fig)``                |
++----------------------------------+-----------------------------------------------+
+
+.. note::
+
+    ``WebSocketReplyFile``, ``WebSocketReplyImage``, ``WebSocketReplyDataframe``,
+    and ``WebSocketReplyPlotly`` generate stub code that requires the developer
+    to supply the runtime object (``File``, NumPy ``ndarray``, pandas
+    ``DataFrame``, or Plotly ``Figure`` respectively) inside the body.
+
+RAG Enhancement
+---------------
+
+* ``RAG`` now accepts an optional ``llm_prompt`` parameter — a string of
+  prefix instructions injected before each RAG prompt at generation time.
+  This allows agents to enforce domain-specific constraints or tone guidelines
+  on every RAG query without modifying the user-facing question.
+* ``Agent.new_rag()`` forwards ``llm_prompt`` transparently to the ``RAG``
+  constructor.
+
+.. code-block:: python
+
+    kb = agent.new_rag(
+        name='Knowledge Base',
+        vector_store=vector_store,
+        splitter=splitter,
+        llm_name='gpt-4o-mini',
+        llm_prompt='Answer only from the provided documents.',
+    )
+
+BAF Generator Enhancements
+---------------------------
+
+Pre-rendered YAML config injection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``BAFGenerator`` now accepts a ``config_yaml`` parameter.  When provided,
+  its value is written verbatim to ``config.yaml`` instead of rendering the
+  config from the agent model's ``ConfigProperty`` list.  This is useful when
+  the caller has already serialised a YAML configuration (e.g., from the web
+  editor) and wants to preserve it exactly.
+
+tools.py generation
+~~~~~~~~~~~~~~~~~~~
+
+* When the agent model contains one or more ``Tool`` objects, the generator
+  now emits a ``tools.py`` file in the output directory containing the
+  Python implementation of every tool function.  This separates tool
+  definitions from the main agent script and makes them easier to edit and
+  test independently.
+
+skills/ directory generation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* When the agent model contains one or more ``Skill`` objects, the generator
+  creates a ``skills/`` subdirectory and writes one Markdown file per skill
+  (``<skill_name>.md``) containing the skill's ``content`` field.  Reasoning
+  states load skill instructions from these files at runtime.
+
+Web Modeling Editor
+-------------------
+
+The agent diagram editor gains a major UX expansion that surfaces the new
+action types and reasoning capabilities directly in the visual editor:
+
+* **New state and action types**: reasoning states (modelled as an
+  ``AgentState`` with ``stateType: "reasoning"``), plus ``LLM Chat``,
+  ``Web Crawl + LLM`` and the nine WebSocket reply actions, each with a
+  dedicated configuration panel. A state can now hold multiple ordered action
+  bodies, reorderable by drag-and-drop, with a configurable fallback-body
+  toggle.
+* **RAG configuration**: the RAG element exposes the new ``llm_prompt``, ``k``
+  and ``num_previous_messages`` fields, and RAG reply actions accept an
+  optional per-action prompt.
+* **config.yaml editor**: a CodeMirror-based editor authors the agent
+  ``config.yaml`` directly in the tool — a structured form view plus a
+  free-text custom-YAML block — and ships it to the ``BAFGenerator`` through
+  the new ``config_yaml`` parameter. Tool bodies and custom-code actions are
+  edited with syntax-highlighted CodeMirror editors.
+* **Validation and polish**: warnings for WebSocket/LLM/reasoning primitives
+  when a required platform, LLM, or reasoning state is missing, and palette
+  label truncation to prevent layout overflow.
+* **Transition normalization** (#139): agent transitions are always stored in
+  the canonical nested shape and normalized at the storage boundary, so models
+  that bypass the editor round-trip through the backend cleanly.
+
+Auto-layout and headless SVG export
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **ELK-based auto-layout**: a one-click auto-layout (powered by the Eclipse
+  Layout Kernel) re-arranges any diagram, exposed both as
+  ``ApollonEditor.autoLayout()`` and as an auto-layout button in the editor's
+  zoom control box.
+* **Headless SVG export pipeline**: a new ``POST /besser_api/get-svg`` backend
+  endpoint converts a B-UML model to the editor JSON model and renders it to
+  SVG by delegating to the editor server's new ``POST /api/svg`` route, which
+  draws the diagram headlessly (jsdom + Apollon) with ELK auto-layout enabled
+  by default — a browser-free B-UML → SVG rendering path.
+
+Follow-up correctness fixes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The ``buml_to_json`` converter now emits reasoning states as an
+  ``AgentState`` carrying ``stateType: "reasoning"`` instead of the legacy
+  ``AgentReasoningState`` element type (which the editor no longer registers),
+  so exported reasoning states round-trip without failing to deserialize on
+  import.
+* Fixed a crash when dragging an action card between the body and fallback
+  lists, hardened ``config.yaml`` scalar quoting so secrets containing
+  YAML-significant characters cannot corrupt the generated config, and
+  normalized personalization variant models to the canonical transition shape
+  before generation.
+
+Internal updates
+----------------
+
+* ``besser/utilities/buml_code_builder/agent_model_builder.py`` updated to
+  handle the new action types in the agent-model-to-code conversion.
+* ``besser/utilities/web_modeling_editor/backend/services/converters/buml_to_json/agent_diagram_converter.py``
+  extended to serialise the new action classes to the frontend JSON format.
+* ``besser/utilities/web_modeling_editor/backend/routers/generation_router.py``
+  updated to pass ``config_yaml`` through the generation pipeline.

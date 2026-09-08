@@ -86,17 +86,15 @@ expression
     | expression DOT OCLISKINDOF LPAREN typeRef RPAREN                              #dotOclIsKindOf
     | expression DOT ID LPAREN argList? RPAREN                                      #dotMethodCall
     | expression DOT ID                                                             #dotNavigation
-    // Fallback: `size` is also a valid attribute name when no parens follow.
-    // ANTLR's longest-match keeps `dotSize` (`.size()`) winning when parens are
-    // present, so `collection->size()` and `string.size()` still parse.
-    // See BESSER-PEARL/BESSER#198.
     | expression DOT SIZE                                                           #dotSizeNavigation
+    | expression DOT ALLINSTANCES LPAREN RPAREN                                     #allInstancesExp
 
     // --- Postfix: arrow operations ---
     | expression ARROW iteratorOp LPAREN iteratorVarDecl PIPE expression RPAREN     #arrowIterator
     | expression ARROW iteratorOp LPAREN expression RPAREN                          #arrowIteratorShort
     | expression ARROW SIZE LPAREN RPAREN                                           #arrowSize
     | expression ARROW ISEMPTY LPAREN RPAREN                                        #arrowIsEmpty
+    | expression ARROW ASSET LPAREN RPAREN                                        #arrowasSet
     | expression ARROW SUM LPAREN RPAREN                                            #arrowSum
     | expression ARROW INCLUDES LPAREN expression RPAREN                            #arrowIncludes
     | expression ARROW EXCLUDES LPAREN expression RPAREN                            #arrowExcludes
@@ -108,7 +106,8 @@ expression
     | expression ARROW SYMMETRICDIFFERENCE LPAREN expression RPAREN                 #arrowSymDiff
     | expression ARROW SUBSEQUENCE LPAREN expression COMMA expression RPAREN        #arrowSubSequence
     | expression ARROW SUBORDEREDSET LPAREN expression COMMA expression RPAREN      #arrowSubOrderedSet
-
+    | expression ARROW INTERSECTION LPAREN expression RPAREN                        #intersection
+    | expression ARROW ISUNIQUE LPAREN expression RPAREN                            #isunique
     // --- Unary ---
     | (NOT | MINUS) expression                                                      #unaryExpr
 
@@ -180,6 +179,9 @@ EXISTS     : 'exists' ;
 SELECT     : 'select' ;
 REJECT     : 'reject' ;
 COLLECT    : 'collect' ;
+INTERSECTION: 'intersection';
+ISUNIQUE    : 'isUnique';
+ASSET       : 'asSet';
 
 // Collection/type operations
 SIZE               : 'size' ;

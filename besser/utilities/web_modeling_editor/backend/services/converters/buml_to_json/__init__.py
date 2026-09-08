@@ -10,6 +10,8 @@ from .gui_diagram_converter import gui_buml_to_json, parse_gui_buml_content
 from .project_converter import project_to_json, empty_model
 from .quantum_diagram_converter import quantum_circuit_to_json, quantum_circuit_to_editor_json, quantum_buml_to_json
 from .platform_customization_converter import platform_customization_to_json
+from .nn_diagram_converter import nn_model_to_json, nn_buml_to_json
+from .bpmn_diagram_converter import bpmn_object_to_json, bpmn_buml_to_json
 
 __all__ = [
     'class_buml_to_json',
@@ -27,4 +29,8 @@ __all__ = [
     'quantum_circuit_to_editor_json',
     'quantum_buml_to_json',
     'platform_customization_to_json',
+    'nn_model_to_json',
+    'nn_buml_to_json',
+    'bpmn_object_to_json',
+    'bpmn_buml_to_json',
 ]

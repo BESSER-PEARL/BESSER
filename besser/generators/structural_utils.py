@@ -40,3 +40,42 @@ def get_foreign_keys(model: DomainModel) -> Dict[str, List[str]]:
             fkeys[association.name] = [end1.type.name, end0.name]
 
     return fkeys
+
+
+def normalize_method_code(code, method_name="method"):
+    """Normalize user-written method code so it can be embedded in generated files.
+
+    The editor's code box lets users mix tabs and spaces, which Python rejects
+    with an IndentationError the moment the generated module is imported --
+    taking the whole application down with it. Tabs are expanded to 4 spaces
+    and whitespace-only lines are blanked; if the result still does not
+    compile, a stub carrying the original code as comments is emitted instead,
+    so one broken method body can never prevent the generated app from
+    starting.
+    """
+    if not code or not code.strip():
+        return code or ""
+
+    lines = []
+    for line in code.splitlines():
+        line = line.expandtabs(4).rstrip()
+        lines.append(line if line.strip() else "")
+    normalized = "\n".join(lines)
+
+    try:
+        compile(normalized, f"<{method_name}>", "exec")
+        return normalized
+    except SyntaxError:
+        pass
+
+    commented = "\n".join(
+        ("    # " + line) if line else "    #" for line in normalized.splitlines()
+    )
+    return (
+        f"def {method_name}(self):\n"
+        f"    # NOTE: the original code of '{method_name}' does not compile and was\n"
+        f"    # commented out so the generated application can still start.\n"
+        f"    # Fix the method body in the editor and regenerate.\n"
+        f"{commented}\n"
+        f"    raise NotImplementedError(\"Method '{method_name}' has invalid code\")"
+    )

@@ -21,18 +21,47 @@ method as follows:
     pytorch_model.generate()
 
 
-The configuration parameters for the `PytorchGenerator` are as follows:
+Parameters
+----------
 
 - **model**: The neural network model.
-- **output_dir**: The name of the output directory where the ``pytorch_nn.py`` file will be generated.
+- **output_dir**: The name of the output directory where the generated file will be placed.
 - **generation_type**: The type of NN architecture. Either ``subclassing`` or ``sequential``.
+- **channel_last**: When ``True``, PyTorch convolutional layers permute their
+  input and output to match the TensorFlow channel-last convention. Default
+  ``False``.
 
+The filename embeds the generation type, so a ``PytorchGenerator`` invoked with
+``generation_type="subclassing"`` produces ``pytorch_nn_subclassing.py``, and
+``generation_type="sequential"`` produces ``pytorch_nn_sequential.py``.
 
-The ``pytorch_nn.py`` file will be generated inside ``output_folder`` and it will look as follows:
+Web Modeling Editor Support
+---------------------------
 
+Neural networks can also be designed visually in the
+:doc:`BESSER Web Modeling Editor <../web_editor>` using the ``NNDiagram`` type.
+The backend converts the diagram into an ``NN`` metamodel instance and passes
+it to the PyTorch generator. From the editor's **Generate** menu you can choose
+between the **Subclassing** and **Sequential** variants; the diagram is
+validated through ``NN.validate()`` before code is produced.
 
+Output
+------
 
-.. note::
-   The generated file ``pytorch_nn.py`` will contain a PyTorch ``nn.Module`` subclass
-   with the layers and forward method defined by your B-UML neural network model.
-   Run the generated script to train and evaluate the model.
+The generated file ``pytorch_nn_<generation_type>.py`` contains:
+
+- **Imports**: PyTorch and supporting modules required by the generated code.
+- **Network architecture**: in ``subclassing`` mode, a
+  ``NeuralNetwork(nn.Module)`` class with an ``__init__`` that instantiates
+  the layers and a ``forward`` method that chains them. In ``sequential``
+  mode, an ``nn.Sequential`` definition.
+- **Training and evaluation block** (emitted only when a Training Dataset is
+  attached to the NN): dataset loading, loss function and optimizer setup,
+  the training loop, evaluation against the test dataset, and saving the
+  trained model.
+
+The generated output for the tutorial example is shown below.
+
+.. literalinclude:: ../../../tests/BUML/metamodel/nn/output/tutorial_example/pytorch_nn_subclassing.py
+   :language: python
+   :linenos:

@@ -1,35 +1,34 @@
-"""Stub optional `bocl` dep when it isn't importable locally.
+"""Mock optional heavy backend dependencies only when they aren't installed.
 
-Importing any submodule under `backend.services.*` triggers
-`backend/services/__init__.py`, which eagerly imports validators that
-depend on the external `bocl` package. `bocl` isn't a declared runtime
-dependency in `requirements.txt` (it's CI-installed separately). When it
-isn't available, we stub just enough of it to let the rest of the import
-chain load. If `bocl` *is* available and importable, the stub is a no-op.
+The backend's ``services/__init__.py`` eagerly imports several backend-only packages
+(``bocl``, ``yaml``, ``docker``, ``github``, …) that aren't relevant to the converter
+unit tests in this directory. In a minimal local environment those imports fail and
+pytest aborts collection before any test runs.
+
+Pattern copied from ``tests/utilities/web_modeling_editor/converters/nn/conftest.py``:
+try the real import first, only register a ``MagicMock`` if it isn't installed. This
+avoids polluting the import cache for environments that *do* have the real package.
 """
 
+import importlib
 import sys
-import types
+from unittest.mock import MagicMock
 
+_OPTIONAL = [
+    "bocl",
+    "bocl.OCLWrapper",
+    "yaml",
+    "docker",
+    "docker.errors",
+    "github",
+    "github.Github",
+    "openai",
+]
 
-def _install_bocl_stub() -> None:
+for _mod in _OPTIONAL:
+    if _mod in sys.modules:
+        continue
     try:
-        from bocl.OCLWrapper import OCLWrapper  # noqa: F401
-        return  # real bocl is healthy; do nothing
-    except Exception:  # ImportError or downstream errors inside bocl
-        pass
-
-    bocl = types.ModuleType("bocl")
-    ocl_wrapper_mod = types.ModuleType("bocl.OCLWrapper")
-
-    class _OCLWrapperStub:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    ocl_wrapper_mod.OCLWrapper = _OCLWrapperStub
-    bocl.OCLWrapper = ocl_wrapper_mod  # type: ignore[attr-defined]
-    sys.modules["bocl"] = bocl
-    sys.modules["bocl.OCLWrapper"] = ocl_wrapper_mod
-
-
-_install_bocl_stub()
+        importlib.import_module(_mod)
+    except ImportError:
+        sys.modules[_mod] = MagicMock()

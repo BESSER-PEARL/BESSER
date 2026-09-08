@@ -79,6 +79,83 @@ The *Deploy chatbot* action reuses the same pipeline to push a standalone,
 Streamlit-based agent to a GitHub repository with a ready-to-use Render
 blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
 
+Neural Network Diagram
+----------------------
+
+The editor supports neural network architecture modeling through the *NN*
+diagram type. The underlying B-UML model captures layers, tensor operations,
+and training metadata in a form that the code generators use to produce
+runnable training code.
+
+- **Layers** cover the standard catalog (Conv1D/2D/3D, Pooling,
+  SimpleRNN/LSTM/GRU, Linear, Flatten, Embedding, Dropout, LayerNorm,
+  BatchNorm). Each layer carries the parameters needed to define it, such
+  as ``kernel_dim``, ``hidden_size`` or ``return_type``.
+- **Tensor operations** (``concatenate``, ``multiply``, ``matmultiply``,
+  ``reshape``, ``transpose``, ``permute``) compose layer outputs and are
+  placed inline with layers in the same container.
+- **NNContainer** holds the modules of a neural network. A diagram has one
+  top-level container and may include additional containers used as
+  sub-networks, linked into the main one via **NNReference** elements.
+- **NNNext** relationships order modules within a container, defining the
+  flow of data through the network.
+- **Training Dataset** and **Test Dataset** elements describe the data
+  feeding into the model: name, path, task type
+  (``binary``/``multi_class``/``regression``), and input format
+  (``csv``/``images``). When the input format is ``images``, an **Image**
+  element is attached to the dataset, holding the shape and an optional
+  normalization flag.
+- A **Configuration** element captures training hyperparameters: batch size,
+  epochs, learning rate, optimizer, loss function, metrics, plus optional
+  weight decay and momentum.
+
+The *Generate* menu offers four output variants: **PyTorch** or
+**TensorFlow**, each in **Subclassing** or **Sequential** form. Diagrams are
+checked against a set of metamodel rules (cross-reference integrity,
+identifier safety, numerical bounds, dataset consistency) and the
+**Validate** action surfaces any violations before code is generated. See
+:doc:`buml_language/model_types/nn` for the metamodel reference and
+:doc:`generators/pytorch` / :doc:`generators/tensorflow` for the generator
+details.
+
+BPMN Diagram
+------------
+
+The editor supports BPMN 2.0 process modelling through the *BPMN* diagram
+type. The underlying B-UML model (see :doc:`buml_language/model_types/bpmn`)
+covers the WME palette one-to-one and follows the OMG BPMN 2.0.2 abstract
+syntax.
+
+- **Flow nodes** cover the standard catalog: ``BPMNTask`` (with
+  ``taskType`` user / service / send / receive / manual / business-rule /
+  script / default and an optional ``marker`` for loops or multi-instance),
+  ``BPMNSubprocess``, ``BPMNTransaction``, ``BPMNCallActivity``,
+  ``BPMNStartEvent`` / ``BPMNIntermediateEvent`` / ``BPMNEndEvent`` (with
+  a flat ``eventType`` enum the backend splits into the spec's orthogonal
+  direction × event-definition pair), and ``BPMNGateway``
+  (``exclusive`` / ``inclusive`` / ``parallel`` / ``complex`` /
+  ``event-based``).
+- **Data and artifacts** are ``BPMNDataObject``, ``BPMNDataStore``,
+  ``BPMNAnnotation``, ``BPMNGroup``.
+- **Containment** is expressed via ``BPMNPool`` (a participant) holding
+  ``BPMNSwimlane``\ s and flow nodes; sub-processes can nest flow nodes.
+  Pool-less diagrams (one bare process) are valid.
+- **Flows** all use the single ``BPMNFlow`` relationship type; the
+  ``flowType`` field (``sequence`` / ``message`` / ``association`` /
+  ``data association``) and ``isDefault`` flag select the four metamodel
+  edge classes on the backend side.
+
+The editor round-trips ``.bpmn`` files entirely in the browser (BPMN 2.0
+XML import / export). The backend converters
+(``process_bpmn_diagram`` / ``bpmn_object_to_json``) handle the
+JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close the
+round-trip through executable BUML ``.py`` files.
+
+.. note::
+   The frontend BPMN editor is being integrated into the
+   `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
+   repository; check there for the latest availability.
+
 Backend API Reference
 ---------------------
 

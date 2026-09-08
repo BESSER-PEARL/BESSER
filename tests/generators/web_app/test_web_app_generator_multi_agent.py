@@ -91,7 +91,7 @@ def mock_baf_generator():
         instance = MagicMock()
         instance.generate.side_effect = lambda: _fake_generate(instance)
         # Captures the ctor args per call so we can inspect in assertions
-        def _side_effect(agent, output_dir=None, config=None):
+        def _side_effect(agent, output_dir=None, config=None, config_yaml=None):
             inst = MagicMock()
             inst.output_dir = output_dir
             inst.config = config

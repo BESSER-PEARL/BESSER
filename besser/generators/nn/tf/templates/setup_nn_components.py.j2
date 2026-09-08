@@ -395,6 +395,6 @@ print("Mean Absolute Error (MAE):", mae)
 
 {% macro save_model(model) -%}
 print('##### Saving the model')
-{{ model.name }}.save(f"{{ model.name | lower }}_{datetime.now}")
+{{ model.name }}.save(f"{{ model.name | lower }}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 print("The model is saved successfully")
 {% endmacro -%}

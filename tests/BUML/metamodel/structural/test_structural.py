@@ -213,6 +213,71 @@ def test_parameters_same_name():
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
     assert "A method cannot have parameters with duplicate names: parameter_1" in str(excinfo.value)
 
+# Testing default empty pre and post lists
+def test_method_default_empty_pre_post():
+    method: Method = Method(name="m1")
+    assert method.pre == []
+    assert method.post == []
+
+# Testing pre and post initialization
+def test_method_pre_post_initialization():
+    cls: Class = Class(name="C")
+    pre1: Constraint = Constraint(name="pre1", context=cls, expression="self.x > 0", language="OCL")
+    post1: Constraint = Constraint(name="post1", context=cls, expression="self.x = self.x + 1", language="OCL")
+    method: Method = Method(name="op", owner=cls, pre=[pre1], post=[post1])
+    assert method.pre == [pre1]
+    assert method.post == [post1]
+
+# Testing pre with duplicate constraint names
+def test_pre_same_name():
+    cls: Class = Class(name="C")
+    c1: Constraint = Constraint(name="dup", context=cls, expression="self.x > 0", language="OCL")
+    c2: Constraint = Constraint(name="dup", context=cls, expression="self.x < 5", language="OCL")
+    with pytest.raises(ValueError) as excinfo:
+        Method(name="op", pre=[c1, c2])
+    assert "A method cannot have preconditions with duplicate names: dup" in str(excinfo.value)
+
+# Testing post with duplicate constraint names
+def test_post_same_name():
+    cls: Class = Class(name="C")
+    c1: Constraint = Constraint(name="dup", context=cls, expression="self.x > 0", language="OCL")
+    c2: Constraint = Constraint(name="dup", context=cls, expression="self.x < 5", language="OCL")
+    with pytest.raises(ValueError) as excinfo:
+        Method(name="op", post=[c1, c2])
+    assert "A method cannot have postconditions with duplicate names: dup" in str(excinfo.value)
+
+# Testing Constraint.expression strict typing (Pre-work B)
+def test_constraint_expression_must_be_string():
+    cls: Class = Class(name="C")
+    with pytest.raises(TypeError, match="must be a string"):
+        Constraint(name="bad", context=cls, expression=12345, language="OCL")
+
+
+def test_constraint_expression_setter_rejects_non_string():
+    cls: Class = Class(name="C")
+    constraint: Constraint = Constraint(name="ok", context=cls, expression="self.x > 0", language="OCL")
+    with pytest.raises(TypeError, match="must be a string"):
+        constraint.expression = ["not", "a", "string"]
+
+
+# Testing add_pre and add_post helpers
+def test_method_add_pre_add_post():
+    cls: Class = Class(name="C")
+    method: Method = Method(name="op")
+    pre1: Constraint = Constraint(name="pre1", context=cls, expression="self.x > 0", language="OCL")
+    pre2: Constraint = Constraint(name="pre2", context=cls, expression="self.y > 0", language="OCL")
+    post1: Constraint = Constraint(name="post1", context=cls, expression="self.x = 1", language="OCL")
+    method.add_pre(pre1)
+    method.add_pre(pre2)
+    method.add_post(post1)
+    assert method.pre == [pre1, pre2]
+    assert method.post == [post1]
+    # Adding duplicate-named precondition raises
+    pre_dup: Constraint = Constraint(name="pre1", context=cls, expression="self.z > 0", language="OCL")
+    with pytest.raises(ValueError) as excinfo:
+        method.add_pre(pre_dup)
+    assert "A method cannot have two preconditions with the same name: 'pre1'" in str(excinfo.value)
+
 # Testing sort attributes by timestamp
 def test_sort_attributes():
     attribute1: Property = Property(name="attribute_1", type=PrimitiveDataType(name="str"))

@@ -29,20 +29,99 @@ class CollectionSourceType(Enum):
 
 # InputFieldType
 class InputFieldType(Enum):
-    """Represents the type of a Input Field.
+    """Represents the widget type of an InputField.
+
+    Values are grouped by the kind of data they capture.  All original values are
+    preserved for backward compatibility; new values add widget-level specificity
+    required when agents generate forms programmatically.
     """
-    Text = "Text"
-    Number = "Number"
+    # --- Text input widgets ---
+    Text = "Text"                      # single-line text box
+    TextArea = "TextArea"              # multi-line text box
+    RichText = "RichText"              # WYSIWYG / rich-text editor
+    Password = "Password"              # masked text
+    Search = "Search"                  # search box with clear button
+    Tags = "Tags"                      # tag / chip input (multi-value text)
+    OTP = "OTP"                        # one-time-password / PIN code input
+    Hidden = "Hidden"                  # hidden field (value not shown to user)
+
+    # --- Formatted / validated text ---
     Email = "Email"
-    Password = "Password"
-    Date = "Date"
-    Time = "Time"
-    File = "File"
-    Color = "Color"
-    Range = "Range"
     URL = "URL"
     Tel = "Tel"
-    Search = "Search"
+
+    # --- Numeric widgets ---
+    Number = "Number"                  # numeric text box
+    Slider = "Slider"                  # range slider
+    Spinner = "Spinner"                # numeric stepper (up / down arrows)
+    Rating = "Rating"                  # star or numeric rating (e.g. 1–5)
+    Range = "Range"                    # kept for backward compatibility (= Slider)
+
+    # --- Boolean widgets ---
+    Checkbox = "Checkbox"              # single checkbox  (true / false)
+    Toggle = "Toggle"                  # toggle / switch   (true / false)
+
+    # --- Selection widgets ---
+    Dropdown = "Dropdown"              # single-select dropdown
+    RadioGroup = "RadioGroup"          # radio buttons (single selection)
+    CheckboxGroup = "CheckboxGroup"    # checkbox list (multi-selection)
+    MultiSelect = "MultiSelect"        # multi-select dropdown
+
+    # --- Date / time widgets ---
+    Date = "Date"                      # date picker
+    Time = "Time"                      # time picker
+    DateTime = "DateTime"              # combined date + time picker
+    DateRange = "DateRange"            # date-range picker (start / end)
+
+    # --- File widgets ---
+    File = "File"                      # generic file upload
+    ImageUpload = "ImageUpload"        # image-specific upload with preview
+
+    # --- Miscellaneous ---
+    Color = "Color"                    # colour picker
+
+
+class SelectOption(Element):
+    """A single selectable choice for Dropdown, RadioGroup, CheckboxGroup, or MultiSelect fields.
+
+    Args:
+        label (str): The human-readable text shown to the user.
+        value (str): The underlying value sent on form submission.
+    """
+
+    def __init__(self, label: str, value: str):
+        super().__init__()
+        self.label = label
+        self.value = value
+
+    @property
+    def label(self) -> str:
+        """str: Display text shown to the user."""
+        return self.__label
+
+    @label.setter
+    def label(self, label: str):
+        self.__label = label
+
+    @property
+    def value(self) -> str:
+        """str: Submitted value for this option."""
+        return self.__value
+
+    @value.setter
+    def value(self, value: str):
+        self.__value = value
+
+    def __repr__(self):
+        return f'SelectOption(label={self.label}, value={self.value})'
+
+
+class AlertSeverity(Enum):
+    """Visual severity level for an Alert component."""
+    Info = "info"
+    Success = "success"
+    Warning = "warning"
+    Error = "error"
 
 
 class ButtonActionType(Enum):
@@ -1038,91 +1117,315 @@ class Image(ViewComponent):
 
 # InputField is a type of ViewComponent
 class InputField(ViewComponent):
-    """Represents an input field component and encapsulates specific properties of an input field, such as its type and validation rules.
+    """Represents an input field component.
 
-     Args:
+    Args:
         name (str): The name of the input field.
         description (str): The description of the input field.
-        timestamp (datetime): Object creation datetime (default is current time).
-        field_type (InputFieldType): The type of the input field.
-        validationRules (str): The validation rules for the input field.
-        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
-
-    Attributes:
-        name (str): The name of the input field.
-        description (str): The description of the input field.
-        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        field_type (InputFieldType): The type of the input field.
-        validationRules (str): The validation rules for the input field.
-        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        field_type (InputFieldType): The widget type of the input field.
+        label (str): Human-readable label shown above or beside the field.
+        placeholder (str): Hint text displayed inside the widget when empty.
+        required (bool): Whether the field must be filled before form submission.
+        default_value (str | None): Pre-filled value shown when the form loads.
+        options (list[SelectOption] | None): Choices for Dropdown / RadioGroup /
+            CheckboxGroup / MultiSelect fields.
+        min_value (float | None): Minimum allowed value for numeric, Slider, or date fields.
+        max_value (float | None): Maximum allowed value for numeric, Slider, or date fields.
+        step (float | None): Increment size for Slider and Spinner fields.
+        help_text (str | None): Explanatory text rendered below the field.
+        disabled (bool): Whether the field is visible but non-interactive.
+        readonly (bool): Whether the field value is shown but cannot be edited.
+        multiple (bool): Whether multiple values can be selected (File / MultiSelect).
+        validationRules (str): Free-text validation rules (legacy).
+        timestamp (int | None): Creation timestamp.
+        visibility (str): Visibility scope.
+        styling (Styling | None): Visual styling configuration.
     """
 
-    def __init__(self, name: str, description: str, field_type: InputFieldType, timestamp: int = None, validationRules: str = None, visibility: str = "public", styling: Styling = None, **kwargs):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        field_type: InputFieldType,
+        label: str = "",
+        placeholder: str = "",
+        required: bool = False,
+        default_value: str | None = None,
+        options: "list[SelectOption] | None" = None,
+        min_value: float | None = None,
+        max_value: float | None = None,
+        step: float | None = None,
+        help_text: str | None = None,
+        disabled: bool = False,
+        readonly: bool = False,
+        multiple: bool = False,
+        timestamp: int = None,
+        validationRules: str = None,
+        visibility: str = "public",
+        styling: Styling = None,
+        **kwargs,
+    ):
         super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.field_type: InputFieldType = field_type
+        self.label: str = label
+        self.placeholder: str = placeholder
+        self.required: bool = required
+        self.default_value: str | None = default_value
+        self.options: list = options if options is not None else []
+        self.min_value: float | None = min_value
+        self.max_value: float | None = max_value
+        self.step: float | None = step
+        self.help_text: str | None = help_text
+        self.disabled: bool = disabled
+        self.readonly: bool = readonly
+        self.multiple: bool = multiple
         self.validationRules: str = validationRules
-
 
     @property
     def field_type(self) -> InputFieldType:
-        """InputFieldType: Get the type of the input field."""
+        """InputFieldType: Get the widget type of the input field."""
         return self.__field_type
 
     @field_type.setter
     def field_type(self, field_type: InputFieldType):
-        """InputFieldType: Set the type of the collection data source."""
         self.__field_type = field_type
 
+    @property
+    def label(self) -> str:
+        """str: Human-readable label for the field."""
+        return self.__label
+
+    @label.setter
+    def label(self, label: str):
+        self.__label = label or ""
+
+    @property
+    def placeholder(self) -> str:
+        """str: Hint text shown inside the widget when empty."""
+        return self.__placeholder
+
+    @placeholder.setter
+    def placeholder(self, placeholder: str):
+        self.__placeholder = placeholder or ""
+
+    @property
+    def required(self) -> bool:
+        """bool: Whether the field must be filled before submission."""
+        return self.__required
+
+    @required.setter
+    def required(self, required: bool):
+        self.__required = bool(required)
+
+    @property
+    def default_value(self) -> str | None:
+        """str | None: Pre-filled value when the form loads."""
+        return self.__default_value
+
+    @default_value.setter
+    def default_value(self, default_value: str | None):
+        self.__default_value = default_value
+
+    @property
+    def options(self) -> list:
+        """list[SelectOption]: Choices for selection-type fields."""
+        return self.__options
+
+    @options.setter
+    def options(self, options):
+        self.__options = list(options) if options is not None else []
+
+    @property
+    def min_value(self) -> float | None:
+        """float | None: Minimum allowed value."""
+        return self.__min_value
+
+    @min_value.setter
+    def min_value(self, min_value: float | None):
+        self.__min_value = min_value
+
+    @property
+    def max_value(self) -> float | None:
+        """float | None: Maximum allowed value."""
+        return self.__max_value
+
+    @max_value.setter
+    def max_value(self, max_value: float | None):
+        self.__max_value = max_value
+
+    @property
+    def step(self) -> float | None:
+        """float | None: Increment for Slider / Spinner fields."""
+        return self.__step
+
+    @step.setter
+    def step(self, step: float | None):
+        self.__step = step
+
+    @property
+    def help_text(self) -> str | None:
+        """str | None: Explanatory text below the field."""
+        return self.__help_text
+
+    @help_text.setter
+    def help_text(self, help_text: str | None):
+        self.__help_text = help_text
+
+    @property
+    def disabled(self) -> bool:
+        """bool: Whether the field is visible but non-interactive."""
+        return self.__disabled
+
+    @disabled.setter
+    def disabled(self, disabled: bool):
+        self.__disabled = bool(disabled)
+
+    @property
+    def readonly(self) -> bool:
+        """bool: Whether the field value is shown but not editable."""
+        return self.__readonly
+
+    @readonly.setter
+    def readonly(self, readonly: bool):
+        self.__readonly = bool(readonly)
+
+    @property
+    def multiple(self) -> bool:
+        """bool: Whether multiple values are allowed."""
+        return self.__multiple
+
+    @multiple.setter
+    def multiple(self, multiple: bool):
+        self.__multiple = bool(multiple)
 
     @property
     def validationRules(self) -> str:
-        """str: Get the validation rules of the input field."""
+        """str: Validation rules for the input field."""
         return self.__validationRules
-
 
     @validationRules.setter
     def validationRules(self, validationRules: str):
-        """str: Set the validation rules of the input field."""
         self.__validationRules = validationRules
 
     def __repr__(self):
-        return f'InputField({self.name},{self.description}, {self.field_type}, {self.timestamp}, {self.validationRules}, {self.visibility}, {self.styling})'
+        return (
+            f'InputField({self.name}, {self.description}, {self.field_type}, '
+            f'label={self.label!r}, required={self.required}, '
+            f'{self.timestamp}, {self.validationRules}, {self.visibility}, {self.styling})'
+        )
 
 # Form is a type of ViewComponent
 class Form(ViewComponent):
-    """Represents a form component and encapsulates the specific properties of a form, such as its name.
+    """Represents a form component.
 
     Args:
         name (str): The name of the form.
         description (str): The description of the form.
-        timestamp (datetime): Object creation datetime (default is current time).
         inputFields (set[InputField]): The set of input fields contained in the form.
-        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        title (str | None): Optional heading displayed above the form fields.
+        submit_label (str): Text shown on the primary submit button (default: "Submit").
+        show_cancel (bool): Whether to render a secondary cancel button (default: False).
+        cancel_label (str): Text shown on the cancel button (default: "Cancel").
+        columns (int): Number of equal-width columns for the field grid layout (1–4, default: 1).
+        visibility (str): Visibility scope.
+        timestamp (int | None): Creation timestamp.
+        styling (Styling | None): Visual styling configuration.
 
     Attributes:
-        name (str): The name of the form.
-        description (str): The description of the form.
-        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         inputFields (set[InputField]): The set of input fields contained in the form.
-        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        title (str | None): Optional form heading.
+        submit_label (str): Label for the submit button.
+        show_cancel (bool): Whether a cancel button is shown.
+        cancel_label (str): Label for the cancel button.
+        columns (int): Number of layout columns (1–4).
     """
 
-    def __init__(self, name: str, description: str, inputFields: set[InputField], visibility: str = "public", timestamp: int = None, styling: Styling = None, **kwargs):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        inputFields: set,
+        title: str | None = None,
+        submit_label: str = "Submit",
+        show_cancel: bool = False,
+        cancel_label: str = "Cancel",
+        columns: int = 1,
+        visibility: str = "public",
+        timestamp: int = None,
+        styling: Styling = None,
+        **kwargs,
+    ):
         super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
-        self.inputFields: set[InputField] = inputFields
+        self.inputFields: set = inputFields
+        self.title: str | None = title
+        self.submit_label: str = submit_label
+        self.show_cancel: bool = show_cancel
+        self.cancel_label: str = cancel_label
+        self.columns: int = columns
 
     @property
-    def inputFields(self) -> set[InputField]:
-        """set[InputField]: Get the set of input Fields contained in the form."""
+    def inputFields(self) -> set:
+        """set[InputField]: Get the set of input fields contained in the form."""
         return self.__inputFields
 
     @inputFields.setter
-    def inputFields(self, inputFields: set[InputField]):
-        """set[InputField]: Set the set of input Fields contained in the form."""
+    def inputFields(self, inputFields: set):
+        """set[InputField]: Set the set of input fields contained in the form."""
         self.__inputFields = inputFields
 
+    @property
+    def title(self) -> str | None:
+        """str | None: Optional heading displayed above the form."""
+        return self.__title
+
+    @title.setter
+    def title(self, title: str | None):
+        self.__title = title
+
+    @property
+    def submit_label(self) -> str:
+        """str: Text on the submit button."""
+        return self.__submit_label
+
+    @submit_label.setter
+    def submit_label(self, submit_label: str):
+        self.__submit_label = submit_label or "Submit"
+
+    @property
+    def show_cancel(self) -> bool:
+        """bool: Whether a cancel button is rendered."""
+        return self.__show_cancel
+
+    @show_cancel.setter
+    def show_cancel(self, show_cancel: bool):
+        self.__show_cancel = bool(show_cancel)
+
+    @property
+    def cancel_label(self) -> str:
+        """str: Text on the cancel button."""
+        return self.__cancel_label
+
+    @cancel_label.setter
+    def cancel_label(self, cancel_label: str):
+        self.__cancel_label = cancel_label or "Cancel"
+
+    @property
+    def columns(self) -> int:
+        """int: Number of equal-width field columns (1–4)."""
+        return self.__columns
+
+    @columns.setter
+    def columns(self, columns: int):
+        if not isinstance(columns, int) or not (1 <= columns <= 4):
+            raise ValueError("Form columns must be an integer between 1 and 4.")
+        self.__columns = columns
+
     def __repr__(self):
-        return f'Form({self.name},{self.description}, {self.inputFields}, {self.visibility}, {self.timestamp}, {self.styling})'
+        return (
+            f'Form({self.name}, {self.description}, {self.inputFields}, '
+            f'title={self.title!r}, columns={self.columns}, '
+            f'{self.visibility}, {self.timestamp}, {self.styling})'
+        )
 
 # MenuItem
 class MenuItem(Element):
@@ -1221,6 +1524,96 @@ class Text(ViewComponent):
     def __repr__(self):
         return (f'Text({self.name}, {self.content}, {self.description}, '
                 f'{self.visibility}, {self.timestamp}, {self.styling})')
+
+class Alert(ViewComponent):
+    """An inline message banner for displaying status, feedback, or informational content.
+
+    Particularly useful for agent-generated GUIs where the agent needs to surface
+    success confirmations, validation errors, warnings, or contextual information
+    alongside forms or interactive components.
+
+    Args:
+        name (str): The name of the alert component.
+        description (str): A brief description.
+        content (str): The main message text to display.
+        severity (AlertSeverity): Visual style indicating the nature of the message
+            (Info, Success, Warning, Error). Defaults to AlertSeverity.Info.
+        title (str | None): Optional bold heading shown above the content.
+        dismissible (bool): Whether the user can close/dismiss the alert. Defaults to False.
+        visibility (str): Visibility scope.
+        timestamp (int | None): Creation timestamp.
+        styling (Styling | None): Visual styling configuration.
+
+    Attributes:
+        content (str): The main message text.
+        severity (AlertSeverity): Visual severity level.
+        title (str | None): Optional heading.
+        dismissible (bool): Whether the alert can be dismissed.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        severity: AlertSeverity = AlertSeverity.Info,
+        title: str | None = None,
+        dismissible: bool = False,
+        visibility: str = "public",
+        timestamp: int = None,
+        styling: Styling = None,
+        **kwargs,
+    ):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
+        self.content: str = content
+        self.severity: AlertSeverity = severity
+        self.title: str | None = title
+        self.dismissible: bool = dismissible
+
+    @property
+    def content(self) -> str:
+        """str: Main message text displayed in the alert."""
+        return self.__content
+
+    @content.setter
+    def content(self, content: str):
+        self.__content = content
+
+    @property
+    def severity(self) -> AlertSeverity:
+        """AlertSeverity: Visual severity level of the alert."""
+        return self.__severity
+
+    @severity.setter
+    def severity(self, severity: AlertSeverity):
+        if not isinstance(severity, AlertSeverity):
+            raise ValueError(f"severity must be an AlertSeverity value, got {severity!r}.")
+        self.__severity = severity
+
+    @property
+    def title(self) -> str | None:
+        """str | None: Optional heading shown above the content."""
+        return self.__title
+
+    @title.setter
+    def title(self, title: str | None):
+        self.__title = title
+
+    @property
+    def dismissible(self) -> bool:
+        """bool: Whether the user can close the alert."""
+        return self.__dismissible
+
+    @dismissible.setter
+    def dismissible(self, dismissible: bool):
+        self.__dismissible = bool(dismissible)
+
+    def __repr__(self):
+        return (
+            f'Alert({self.name}, severity={self.severity.value}, '
+            f'title={self.title!r}, dismissible={self.dismissible})'
+        )
+
 
 #GUIModel
 class GUIModel(Model):

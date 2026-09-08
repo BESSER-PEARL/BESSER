@@ -2,8 +2,10 @@ from besser.BUML.metamodel.ocl.ocl import (
     OperationCallExpression, LoopExp, IfExp, IteratorExp,
     IntegerLiteralExpression, RealLiteralExpression,
     BooleanLiteralExpression, StringLiteralExpression,
-    DateLiteralExpression, InfixOperator, TypeExp, VariableExp,
+    DateLiteralExpression, InfixOperator, PropertyCallExpression,
+    TypeExp, VariableExp,
 )
+from besser.BUML.metamodel.structural.structural import Property
 from .BOCLVisitor import BOCLVisitor
 from .BOCLParser import BOCLParser
 
@@ -43,6 +45,18 @@ class BOCLVisitorImpl(BOCLVisitor):
             prop = self._resolve_property(name, cls)
             if prop is not None:
                 return prop
+        return None
+
+    def _receiver_type(self, receiver):
+        """Return the static type of `receiver`, or None if it can't be inferred."""
+        if isinstance(receiver, VariableExp):
+            if receiver.name == "self":
+                return self.context_class
+            return self.iterators_context.get(receiver.name)
+        if isinstance(receiver, Property):
+            return receiver.type
+        if isinstance(receiver, PropertyCallExpression):
+            return receiver.property.type
         return None
 
     def _get_class_by_name(self, name):
@@ -87,18 +101,31 @@ class BOCLVisitorImpl(BOCLVisitor):
 
     # --- Dot postfix ---
     def visitDotNavigation(self, ctx: BOCLParser.DotNavigationContext):
-        self.visit(ctx.expression())
+        receiver = self.visit(ctx.expression())
         name = ctx.ID().getText()
-        # Resolve as property in context class or iterator context
-        prop = self._resolve_property(name)
+        # Resolve against the receiver's actual type so chained navigation
+        # like `self.dept.maxsalary` looks up `maxsalary` on Dept (the type
+        # of `self.dept`), not on the constraint's context class.
+        prop = None
+        target_type = self._receiver_type(receiver)
+        if target_type is not None:
+            prop = self._resolve_property(name, target_type)
+        if prop is None:
+            prop = self._resolve_property(name)
         if prop is None:
             prop = self._resolve_property_in_iterators(name)
-        if prop is not None:
+        if prop is None:
+            ctx_name = self.context_class.name if self.context_class else "?"
+            raise Exception(f"Property '{name}' not found in context '{ctx_name}'")
+        # Top-level access (`self.x`, `iter.x`) keeps the legacy bare-Property
+        # AST so existing evaluator paths still work. Chained navigation
+        # (`self.x.y`) wraps in a PropertyCallExpression so the evaluator can
+        # walk the chain by traversing association ends.
+        if isinstance(receiver, VariableExp):
             return prop
-        # For properties accessed on iterator variables (e.g., b.pages),
-        # the source is the iterator variable expression
-        # Fall back to returning a PropertyCallExpression-like Property
-        raise Exception(f"Property '{name}' not found in context '{self.context_class.name}'")
+        pce = PropertyCallExpression(prop.name, prop)
+        pce.source = receiver
+        return pce
 
     def visitDotSize(self, ctx: BOCLParser.DotSizeContext):
         source = self.visit(ctx.expression())
@@ -116,16 +143,25 @@ class BOCLVisitorImpl(BOCLVisitor):
         named ``size`` fails to parse even though the metamodel allows it
         (see BESSER-PEARL/BESSER#198).
         """
-        self.visit(ctx.expression())
-        prop = self._resolve_property("size")
+        receiver = self.visit(ctx.expression())
+        prop = None
+        target_type = self._receiver_type(receiver)
+        if target_type is not None:
+            prop = self._resolve_property("size", target_type)
+        if prop is None:
+            prop = self._resolve_property("size")
         if prop is None:
             prop = self._resolve_property_in_iterators("size")
-        if prop is not None:
+        if prop is None:
+            raise Exception(
+                f"Property 'size' not found in context "
+                f"'{self.context_class.name if self.context_class else '?'}'"
+            )
+        if isinstance(receiver, VariableExp):
             return prop
-        raise Exception(
-            f"Property 'size' not found in context "
-            f"'{self.context_class.name if self.context_class else '?'}'"
-        )
+        pce = PropertyCallExpression(prop.name, prop)
+        pce.source = receiver
+        return pce
 
     def visitDotMethodCall(self, ctx: BOCLParser.DotMethodCallContext):
         source = self.visit(ctx.expression())

@@ -183,8 +183,7 @@ def process_state_machine(json_data):
             state = sm.new_state(name=raw_name, initial=is_initial, final=is_final)
         except ValueError as e:
             # Handle duplicate state names or other validation errors gracefully
-            logger.warning("Could not create state '%s': %s", raw_name, e)
-            continue
+            raise ConversionError(str(e)) from e
 
         states_by_id[element_id] = state
 
@@ -263,10 +262,7 @@ def process_state_machine(json_data):
                         builder = builder.with_condition(guard_condition)
                     builder.go_to(target_state)
                 except ValueError as e:
-                    logger.warning(
-                        "Could not create transition from '%s' to '%s': %s",
-                        source_state.name, target_state.name, e
-                    )
+                    raise ConversionError(str(e)) from e
 
                 # Store event_params on the transition for round-trip fidelity.
                 # The metamodel Transition class does not have a formal event_params
@@ -280,10 +276,7 @@ def process_state_machine(json_data):
                 try:
                     source_state.when_condition(guard_condition).go_to(target_state)
                 except ValueError as e:
-                    logger.warning(
-                        "Could not create guard-only transition from '%s' to '%s': %s",
-                        source_state.name, target_state.name, e
-                    )
+                    raise ConversionError(str(e)) from e
 
     # Process comments - apply as metadata
     for comment_id, comment_text in comment_elements.items():

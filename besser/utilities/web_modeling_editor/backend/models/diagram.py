@@ -21,6 +21,7 @@ class DiagramInput(BaseModel):
     lastUpdate: Optional[datetime] = None
     generator: Optional[str] = None
     config: Optional[dict] = None
+    configYaml: Optional[str] = None
     referenceDiagramData: Optional[Dict[str, Any]] = None
     references: Optional[Dict[str, str]] = None  # Per-diagram cross-references by ID (e.g. {"ClassDiagram": "uuid-..."})
 

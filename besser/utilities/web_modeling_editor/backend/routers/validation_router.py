@@ -22,9 +22,14 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
+    process_nn_diagram,
+    process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -35,6 +40,9 @@ from besser.utilities.web_modeling_editor.backend.services.validators import (
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,6 +161,36 @@ async def validate_diagram(input_data: DiagramInput):
                 "errors": [],
                 "warnings": []
             }
+
+        elif diagram_type == "NNDiagram":
+            try:
+                nn_model = process_nn_diagram(input_data.model_dump())
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                if nn_model is not None:
+                    nn_validation = nn_model.validate(raise_exception=False)
+                    validation_errors.extend(nn_validation["errors"])
+                    validation_warnings.extend(nn_validation["warnings"])
+
+        elif diagram_type == BPMN_DIAGRAM_TYPE:
+            try:
+                bpmn_model = process_bpmn_diagram(input_data.model_dump())
+            except (ConversionError, ValueError) as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                bpmn_validation = bpmn_model.validate(raise_exception=False)
+                validation_errors.extend(bpmn_validation["errors"])
+                validation_warnings.extend(bpmn_validation["warnings"])
+
+        elif diagram_type == "QuantumCircuitDiagram":
+            return {
+                "isValid": True,
+                "message": "\u2705 Quantum Circuit diagram is valid",
+                "errors": [],
+                "warnings": []
+            }
+
         else:
             return {
                 "isValid": False,
@@ -161,6 +199,11 @@ async def validate_diagram(input_data: DiagramInput):
                 "message": "\u274c Validation failed"
             }
 
+    except ConversionError as e:
+        # Structured conversion errors (e.g. malformed multiplicity strings).
+        # These are expected user-input problems, not server bugs.
+        logger.warning("Conversion error during validation: %s", e)
+        validation_errors.extend(str(e).splitlines())
     except ValueError as e:
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)

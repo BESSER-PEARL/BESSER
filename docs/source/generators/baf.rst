@@ -73,12 +73,31 @@ name is derived from the RAG element name (e.g. ``"Knowledge Base"`` becomes
 ``knowledge_base/``).
 
 
+Reasoning States and Multi-LLM
+-------------------------------
+
+The generator emits the multi-LLM and reasoning constructs described in
+:doc:`../buml_language/model_types/agent`:
+
+- Every LLM registered via ``agent.new_llm()`` is generated as an
+  ``agent.new_llm(...)`` call, and ``agent.set_default_llm(...)`` is emitted
+  when the chosen default differs from the first-registered (auto) default.
+- ``ReasoningState`` states are generated through the ``new_reasoning_state``
+  factory, carrying their ``llm`` reference, ``max_steps``,
+  ``enable_task_planning``, ``stream_steps``, ``system_prompt`` and
+  ``fallback_message``.
+- Agent-level tools, skills and workspaces are emitted as ``agent.new_tool()``,
+  ``agent.new_skill()`` and ``agent.new_workspace()`` calls.
+
+Consumers (``LLMReply``, ``DBReply``, RAG, reasoning states) reference their
+LLM by ``llm_name``; when omitted, the agent's default LLM is used.
+
+
 Missing BAF Features
 --------------------
 
 Currently, some features available in BAF are stil missing in the B-UML agent model and the BAF Generator. Most notably:
 
-- **LLM Configuration**
 - **Platform Configuration**
 - **Entities**
 - **Processors**

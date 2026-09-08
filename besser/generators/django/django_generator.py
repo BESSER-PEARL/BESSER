@@ -8,6 +8,8 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators import GeneratorInterface
+from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
+from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
 
 ##############################
@@ -48,6 +50,7 @@ class DjangoGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        self.env.globals.update(normalize_code=normalize_method_code)
         # Register custom Jinja2 tests once for all methods
         self.env.tests['is_Button'] = self.is_button
         self.env.tests['is_List'] = self.is_list
@@ -150,12 +153,17 @@ class DjangoGenerator(GeneratorInterface):
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         template = self.env.get_template('models.py.j2')
 
+        # Build constraints map for OCL validation (reuses the same OCL parser
+        # as PydanticGenerator; see ocl_utils.py for the extraction logic).
+        constraints_map = build_constraints_map(self.model)
+
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(model=self.model,
                                             sort_by_timestamp=sort_by_timestamp,
                                             one_to_one = self.one_to_one,
                                             many_to_many = self.many_to_many,
-                                            fkeys = self.fkeys)
+                                            fkeys = self.fkeys,
+                                            constraints_map = constraints_map)
             f.write(generated_code)
 
     ## DjangoGeneratorURLsFile:

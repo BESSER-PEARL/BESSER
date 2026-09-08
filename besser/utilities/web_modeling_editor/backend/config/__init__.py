@@ -7,6 +7,7 @@ from .generators import (
     GeneratorInfo,
     get_generator_info,
     get_filename_for_generator,
+    get_nn_filename,
     is_generator_supported,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "GeneratorInfo",
     "get_generator_info",
     "get_filename_for_generator",
+    "get_nn_filename",
     "is_generator_supported",
 ]

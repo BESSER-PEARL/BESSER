@@ -338,11 +338,13 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
     {# Collect all constructor arguments #}
     {% set ns_args = namespace(args=[]) %}
-    {# `id` is server-owned (autoincrement PK) — it is not in the Create
-       schema, so it must never be read off the payload here. #}
+    {# A surrogate `id` is server-owned (autoincrement PK) and is absent from
+       the Create schema, so it must never be read off the payload. A PK the
+       user declared (is_id) — including one named `id` — is client-supplied
+       and is read from the payload like any other field. #}
     {% for parent in all_parents %}
     {% for attrparent in parent.attributes %}
-    {% if attrparent.name != 'id' %}
+    {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.value') %}
     {% else %}
@@ -352,7 +354,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
-    {% if attribute.name != 'id' %}
+    {% if not (attribute.name == 'id' and not attribute.is_id) %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.value') %}
     {% else %}
@@ -535,12 +537,13 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endfor %}
             {% endfor %}
 
-            {# Collect all constructor arguments for bulk create.
-               `id` is server-owned — never read off the payload. #}
+            {# Collect all constructor arguments for bulk create. A surrogate
+               `id` is server-owned (never read off the payload); a declared
+               PK (is_id), whatever its name, is client-supplied. #}
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
             {% for attrparent in parent.attributes %}
-            {% if attrparent.name != 'id' %}
+            {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.value') %}
             {% else %}
@@ -550,7 +553,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endfor %}
             {% endfor %}
             {% for attribute in class.attributes %}
-            {% if attribute.name != 'id' %}
+            {% if not (attribute.name == 'id' and not attribute.is_id) %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.value') %}
             {% else %}

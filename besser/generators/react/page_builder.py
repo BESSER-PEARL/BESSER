@@ -121,6 +121,8 @@ class PageBuilderMixin:
             imports.append("import { TableBlock } from \"../components/runtime/TableBlock\";")
         if "MetricCardBlock" in context.imports:
             imports.append("import { MetricCardBlock } from \"../components/runtime/MetricCardBlock\";")
+        if "MapBlock" in context.imports:
+            imports.append("import { MapBlock } from \"../components/runtime/MapBlock\";")
         if "DataListBlock" in context.imports:
             imports.append("import { DataListBlock } from \"../components/runtime/DataListBlock\";")
         if "AgentComponent" in context.imports:
@@ -432,6 +434,23 @@ class PageBuilderMixin:
                 include_class_name=False,
             )
             return f"{indent_str}<MetricCardBlock{props} />"
+
+        # Map component (Leaflet / OpenStreetMap)
+        if comp_type == "map":
+            context.imports.add("MapBlock")
+            props = self._build_component_props(
+                component_id=component_id,
+                class_list=class_list,
+                style=style,
+                extra_props={
+                    "title": node.get("title"),
+                    "mapConfig": node.get("map_config"),
+                    "layers": node.get("layers"),
+                },
+                style_prop_name="styles",
+                include_class_name=False,
+            )
+            return f"{indent_str}<MapBlock{props} />"
 
         # Agent component
         if comp_type == "agent-component":

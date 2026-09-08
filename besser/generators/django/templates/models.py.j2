@@ -1,6 +1,18 @@
 {#- Django model template generator #}
 {%- import "django_fields.py.j2" as django_fields -%}
 {%- import "method_body.py.j2" as method_body -%}
+{%- set ns_re = namespace(uses_re=false) %}
+{%- for cls_constraints in (constraints_map or {}).values() %}
+{%- for constraint in cls_constraints %}
+{%- if constraint.python_expression is defined and 're.match(' in constraint.python_expression %}
+{%- set ns_re.uses_re = true %}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- if ns_re.uses_re %}
+import re
+
+{% endif %}
 from django.db import models
 {% if constraints_map %}
 from django.core.exceptions import ValidationError
@@ -115,11 +127,10 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         {% if constraint.python_expression is defined %}
         v = self.{{ constraint.property }}
         if not ({{ constraint.python_expression }}):
-            errors.setdefault('{{ constraint.property }}', []).append('{{ constraint.message }}')
+            errors.setdefault('{{ constraint.property }}', []).append({{ constraint.message_repr }})
         {% else %}
         if not (self.{{ constraint.property }} {{ constraint.python_operator }} {{ constraint.value_repr }}):
-            errors.setdefault('{{ constraint.property }}', []).append(
-                '{{ constraint.property }} must be {{ constraint.python_operator }} {{ constraint.value_repr }}')
+            errors.setdefault('{{ constraint.property }}', []).append({{ constraint.message_repr }})
         {% endif %}
         {%- endfor %}
         if errors:
@@ -130,7 +141,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {%- for method in sort_by_timestamp(class_obj.methods) %}
     {%- if method.code %}
     {#- If method has code, use it directly (it should contain the full function definition) #}
-{{ method.code | indent(4, first=true) }}
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- else %}
     {#- Otherwise generate method signature from metadata #}
     {%- set param_list = [] %}

@@ -249,6 +249,52 @@ class TestExportImportRoundTrip:
             _cleanup_imports(backend_dir)
 
 
+    def test_role_survives_roundtrip_and_upgrades_in_place(self, tmp_path, region_sensor_model):
+        """``role`` is optional link metadata (portless connection-class
+        endpoints). It must survive export -> clear -> import, and a second
+        ``create_link`` call for the same (association, target_class,
+        target_id) triple that carries a role must upgrade the existing
+        record in place rather than being silently dropped or duplicated."""
+        out = tmp_path / "platform_role"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        backend_dir = out / "backend"
+        try:
+            im_mod, exp_mod = _import_platform_services(backend_dir)
+            im = im_mod.instance_manager
+            exp = exp_mod.export_service
+
+            r = im.create_instance("Region", "alpha", {"label": "North"})
+            s = im.create_instance("Sensor", "thermo", {"kind": "temperature"})
+
+            # First call: no role.
+            im.create_link("Region", r["id"], "Sensor", s["id"], "has")
+            stored = im.get_instance("Region", r["id"])
+            assert stored["links"] == [
+                {"association_name": "has", "target_class": "Sensor", "target_id": s["id"]}
+            ]
+
+            # Second call, same identity triple, now carrying a role -- must
+            # upgrade in place, not append a duplicate.
+            im.create_link("Region", r["id"], "Sensor", s["id"], "has", role="source")
+            stored = im.get_instance("Region", r["id"])
+            assert len(stored["links"]) == 1
+            assert stored["links"][0]["role"] == "source"
+
+            payload = exp.export_to_json()
+            im.clear_all()
+            result = exp.import_from_json(payload)
+            assert result == {"instances": 2, "links": 1}
+
+            reimported = im.get_instance("Region", r["id"])
+            assert len(reimported["links"]) == 1
+            assert reimported["links"][0]["role"] == "source"
+            assert reimported["links"][0]["association_name"] == "has"
+            assert reimported["links"][0]["target_id"] == s["id"]
+
+        finally:
+            _cleanup_imports(backend_dir)
+
+
 class TestImportEndpointWired:
     """Confirm the router exposes POST /import/json — the wire contract
     between frontend Load and backend import_from_json."""

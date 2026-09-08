@@ -35,6 +35,7 @@ from besser.generators.platform.template_helpers import (
     build_representation_registries,
     build_subclass_registry,
     compute_addable_port_classes,
+    validate_representation,
 )
 
 
@@ -440,3 +441,109 @@ class TestAddablePortClasses:
         assert "shape:" not in models
         assert "borderStyle:" not in models
         assert "labelPosition:" not in models
+
+
+class TestValidateRepresentation:
+    """`validate_representation` gates whether PlatformGenerator.generate()
+    is allowed to run at all -- these check the portless / auto-detect
+    connection-class semantics (zero endpoint flags is valid; exactly one is
+    an error) alongside the pre-existing port-centric error paths."""
+
+    @pytest.fixture
+    def tank_house_waterflow_model(self):
+        """Mirrors the shape of the user's water-network project: Tank and
+        House are plain classes, WaterFlow bridges them via two associations
+        with no endpoint flags set by default."""
+        tank = Class(name="Tank", attributes=set())
+        house = Class(name="House", attributes=set())
+        waterflow = Class(name="WaterFlow", attributes=set())
+        water_to_tank = BinaryAssociation(
+            name="water_to_tank",
+            ends={
+                Property(name="tank", type=tank, multiplicity=Multiplicity(0, 9999)),
+                Property(name="flow", type=waterflow, multiplicity=Multiplicity(0, 9999)),
+            },
+        )
+        water_to_house = BinaryAssociation(
+            name="water_to_house",
+            ends={
+                Property(name="flow", type=waterflow, multiplicity=Multiplicity(0, 9999)),
+                Property(name="house", type=house, multiplicity=Multiplicity(0, 9999)),
+            },
+        )
+        return DomainModel(
+            name="WaterNetwork",
+            types={tank, house, waterflow},
+            associations={water_to_tank, water_to_house},
+        )
+
+    @pytest.fixture
+    def isolated_connection_class_model(self):
+        """A connection class flagged but with zero association ends of its
+        own -- it can never bridge anything, which is the one error case
+        still reachable in portless mode."""
+        lonely = Class(name="Lonely", attributes=set())
+        other = Class(name="Other", attributes=set())
+        # An association that doesn't involve `lonely` at all.
+        unrelated = Class(name="Unrelated", attributes=set())
+        deco = BinaryAssociation(
+            name="deco",
+            ends={
+                Property(name="a", type=other, multiplicity=Multiplicity(0, 9999)),
+                Property(name="b", type=unrelated, multiplicity=Multiplicity(0, 9999)),
+            },
+        )
+        return DomainModel(
+            name="Lonely",
+            types={lonely, other, unrelated},
+            associations={deco},
+        )
+
+    def test_zero_endpoint_flags_is_valid_portless_mode(self, tank_house_waterflow_model):
+        cust = PlatformCustomizationModel(
+            name="Portless",
+            class_overrides={"WaterFlow": ClassCustomization(is_connection_class=True)},
+        )
+        issues = validate_representation(list(tank_house_waterflow_model.types), cust)
+        assert issues == []
+
+    def test_exactly_one_endpoint_flag_is_an_error(self, tank_house_waterflow_model):
+        cust = PlatformCustomizationModel(
+            name="HalfWired",
+            class_overrides={"WaterFlow": ClassCustomization(is_connection_class=True)},
+            association_overrides={
+                "water_to_tank": AssociationCustomization(is_source_endpoint=True),
+            },
+        )
+        issues = validate_representation(list(tank_house_waterflow_model.types), cust)
+        assert any("no association marked as Target endpoint" in i for i in issues)
+        assert not any("no association marked as Source endpoint" in i for i in issues)
+
+    def test_flagged_endpoint_targeting_non_port_class_is_an_error(self, tank_house_waterflow_model):
+        # Both sides flagged, but neither Tank nor House is a Port class.
+        cust = PlatformCustomizationModel(
+            name="FullyWiredNoPort",
+            class_overrides={"WaterFlow": ClassCustomization(is_connection_class=True)},
+            association_overrides={
+                "water_to_tank": AssociationCustomization(is_source_endpoint=True),
+                "water_to_house": AssociationCustomization(is_target_endpoint=True),
+            },
+        )
+        issues = validate_representation(list(tank_house_waterflow_model.types), cust)
+        assert any("not flagged as a Port" in i for i in issues)
+        # The portless "no associations" and half-wired errors must not fire.
+        assert not any("has no associations and cannot" in i for i in issues)
+        assert not any("no association marked as" in i for i in issues)
+
+    def test_connection_class_with_no_association_ends_is_an_error(
+        self, isolated_connection_class_model
+    ):
+        cust = PlatformCustomizationModel(
+            name="Isolated",
+            class_overrides={"Lonely": ClassCustomization(is_connection_class=True)},
+        )
+        issues = validate_representation(list(isolated_connection_class_model.types), cust)
+        assert any("has no associations and cannot be drawn as a connection" in i for i in issues)
+
+    def test_none_customization_short_circuits_to_no_issues(self, tank_house_waterflow_model):
+        assert validate_representation(list(tank_house_waterflow_model.types), None) == []

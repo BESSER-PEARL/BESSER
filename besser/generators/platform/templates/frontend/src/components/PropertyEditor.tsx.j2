@@ -45,6 +45,10 @@ export interface SelectedLink {
   associationName: string;
   targetClass: string;
   targetId: string;
+  /** Carried forward only for a link that already had a role (portless
+   *  connection-class endpoints) so a re-add during reconcileLinks doesn't
+   *  silently drop it. Absent for every ordinary association. */
+  role?: 'source' | 'target';
 }
 
 interface PropertyEditorProps {
@@ -389,7 +393,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     for (const assoc of classMetadata.associations) {
       const direct = instance.links
         .filter(
-          (l) => l.association_name === assoc.name && l.target_class === assoc.targetClass,
+          (l) => l.association_name === assoc.name && isAssignableTo(l.target_class, assoc.targetClass),
         )
         .map((l) => l.target_id);
       const inverse = existingInstances
@@ -404,6 +408,20 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     }
     return initial;
   });
+
+  // Remembers the ``role`` (if any) recorded on this instance's own direct
+  // links, keyed by `${associationName}::${targetId}`, so a re-add during
+  // reconcileLinks (e.g. an unrelated attribute edit that still round-trips
+  // through the diff) carries the role forward instead of dropping it.
+  const directRoleByKey = useMemo(() => {
+    const map = new Map<string, 'source' | 'target'>();
+    for (const link of instance.links) {
+      if (link.role === 'source' || link.role === 'target') {
+        map.set(`${link.association_name}::${link.target_id}`, link.role);
+      }
+    }
+    return map;
+  }, [instance.links]);
 
   const candidatesByAssociation = useMemo(() => {
     const map: Record<string, BaseInstance[]> = {};
@@ -480,10 +498,12 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     for (const assoc of associations) {
       const targets = selections[assoc.name] ?? [];
       for (const targetId of targets) {
+        const role = directRoleByKey.get(`${assoc.name}::${targetId}`);
         selectedLinks.push({
           associationName: assoc.name,
           targetClass: assoc.targetClass,
           targetId,
+          ...(role ? { role } : {}),
         });
       }
     }

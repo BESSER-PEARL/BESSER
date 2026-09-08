@@ -316,17 +316,36 @@ def validate_representation(classes, customization):
     registry = build_representation_registries(classes, customization)
     port_class_names = set(registry["port_classes"].keys())
 
-    # Per connection-class, ensure exactly one source & one target endpoint exist
-    # and their target classes are port-classes.
+    # Per connection-class, endpoints are either fully flagged (both source and
+    # target endpoint associations set) or fully unflagged (portless /
+    # auto-detect mode, resolved at runtime from the drawn nodes). Having
+    # exactly one of the two flags set is the only invalid combination -- it
+    # leaves the wiring ambiguous. When flags are present, their target
+    # classes must be port-classes.
     for conn_name, info in registry["connection_classes"].items():
         cls = classes_by_name.get(conn_name)
         if cls is None:
             continue
-        if not info["sourceAssociation"]:
+
+        has_source = bool(info["sourceAssociation"])
+        has_target = bool(info["targetAssociation"])
+
+        if not has_source and not has_target:
+            # Portless / auto-detect mode: valid as long as the class can
+            # actually reach other classes via some association.
+            ends_method = getattr(cls, "all_association_ends", None)
+            if not callable(ends_method) or not list(ends_method()):
+                issues.append(
+                    f"Connection class '{conn_name}' has no associations and cannot "
+                    f"be drawn as a connection."
+                )
+            continue
+
+        if not has_source:
             issues.append(
                 f"Connection class '{conn_name}' has no association marked as Source endpoint."
             )
-        if not info["targetAssociation"]:
+        if not has_target:
             issues.append(
                 f"Connection class '{conn_name}' has no association marked as Target endpoint."
             )

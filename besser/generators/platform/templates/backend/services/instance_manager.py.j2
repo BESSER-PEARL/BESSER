@@ -130,40 +130,69 @@ class InstanceManager:
         
         return False
     
-    def create_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str):
-        """Create a link (association) between two instances."""
+    def create_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str, role: str = None):
+        """Create a link (association) between two instances.
+
+        ``role`` (optional, 'source' or 'target') records which endpoint of
+        the association this link represents, for connection classes wired
+        without ports. Identity for dedupe/removal purposes is always the
+        triple (association_name, target_class, target_id) -- ``role`` is
+        metadata carried alongside it, not part of the link's identity.
+        """
         source_instance = self.get_instance(source_class, source_id)
         target_instance = self.get_instance(target_class, target_id)
-        
+
         if source_instance is None:
             raise ValueError(f"Source instance not found: {source_class}#{source_id}")
         if target_instance is None:
             raise ValueError(f"Target instance not found: {target_class}#{target_id}")
-        
-        link_data = {
-            "association_name": association_name,
-            "target_class": target_class,
-            "target_id": target_id
-        }
-        
-        if link_data not in source_instance["links"]:
+
+        existing = next(
+            (
+                link for link in source_instance["links"]
+                if link["association_name"] == association_name
+                and link["target_class"] == target_class
+                and link["target_id"] == target_id
+            ),
+            None,
+        )
+        if existing is None:
+            link_data = {
+                "association_name": association_name,
+                "target_class": target_class,
+                "target_id": target_id
+            }
+            if role is not None:
+                link_data["role"] = role
             source_instance["links"].append(link_data)
-    
+        elif role is not None and existing.get("role") != role:
+            # Same identity triple already linked (e.g. re-created via a
+            # port-based call, or via reconcileLinks re-adding it) but this
+            # call carries a role the existing record lacks or disagrees
+            # with -- upgrade in place instead of silently no-op'ing, so a
+            # portless connection's endpoint role is never lost.
+            existing["role"] = role
+
     def delete_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str):
-        """Delete a link between two instances."""
+        """Delete a link between two instances.
+
+        Matches on the identity triple (association_name, target_class,
+        target_id) only, so links carrying an optional ``role`` are still
+        removable.
+        """
         source_instance = self.get_instance(source_class, source_id)
-        
+
         if source_instance is None:
             raise ValueError(f"Source instance not found: {source_class}#{source_id}")
-        
-        link_data = {
-            "association_name": association_name,
-            "target_class": target_class,
-            "target_id": target_id
-        }
-        
-        if link_data in source_instance["links"]:
-            source_instance["links"].remove(link_data)
+
+        source_instance["links"] = [
+            link for link in source_instance["links"]
+            if not (
+                link["association_name"] == association_name
+                and link["target_class"] == target_class
+                and link["target_id"] == target_id
+            )
+        ]
     
     def _remove_instance_links(self, class_name: str, instance_id: str):
         """Remove all links involving a specific instance."""

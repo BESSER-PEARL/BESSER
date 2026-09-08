@@ -59,6 +59,12 @@ class LinkData(BaseModel):
     association_name: str
     target_class: str
     target_id: str
+    role: Optional[str] = Field(
+        default=None,
+        description="Which endpoint of the association this link represents "
+                    "('source' or 'target'), when the link was created without "
+                    "ports and the endpoint had to be recorded explicitly."
+    )
 
 
 class InstanceResponse(BaseModel):
@@ -94,7 +100,13 @@ class LinkCreate(BaseModel):
     target_class: str = Field(..., description="Target instance class name")
     target_id: str = Field(..., description="Target instance ID")
     association_name: str = Field(..., description="Name of the association/relationship")
-    
+    role: Optional[str] = Field(
+        default=None,
+        description="Which endpoint of the association this link represents "
+                    "('source' or 'target'), when the link was created without "
+                    "ports and the endpoint had to be recorded explicitly."
+    )
+
     model_config = {
         "json_schema_extra": {
             "example": {

@@ -856,6 +856,15 @@ class PlatformGenerator(GeneratorInterface):
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())
 
+        # Generate ConnectionEndpointSelector component (the modal shown when
+        # a portless node-to-node drag has an ambiguous connection class or
+        # endpoint association to resolve).
+        template = self.env.get_template('frontend/src/components/ConnectionEndpointSelector.tsx.j2')
+        output_path = os.path.join(components_dir, 'ConnectionEndpointSelector.tsx')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
         # Generate shared lib (cn helper)
         lib_dir = os.path.join(frontend_dir, 'src', 'lib')
         template = self.env.get_template('frontend/src/lib/utils.ts.j2')

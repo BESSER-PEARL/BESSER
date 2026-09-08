@@ -130,7 +130,8 @@ async def create_link(link_data: LinkCreate):
             source_id=link_data.source_id,
             target_class=link_data.target_class,
             target_id=link_data.target_id,
-            association_name=link_data.association_name
+            association_name=link_data.association_name,
+            role=link_data.role
         )
         return {"message": "Link created successfully"}
     except ValueError as e:

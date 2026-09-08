@@ -50,6 +50,12 @@ interface InstanceCreationModalProps {
    *  the canvas auto-binds those links after submit, so showing them would
    *  let the user double-pick endpoints. */
   hideEndpointAssociations?: boolean;
+  /** Hide associations by exact name. Used by the portless connection-class
+   *  flow: the two endpoint associations were already resolved (auto-bound
+   *  or picked via ``ConnectionEndpointSelector``) before this modal opened,
+   *  and they carry no ``isSourceEndpoint``/``isTargetEndpoint`` flag for
+   *  ``hideEndpointAssociations`` to key off, so they're named explicitly. */
+  hideAssociationNames?: string[];
 }
 
 const inputTypeFor = (attrType: string): string => {
@@ -201,6 +207,7 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
   onCancel,
   hideAssociationsToClass,
   hideEndpointAssociations,
+  hideAssociationNames,
 }) => {
   const [instanceName, setInstanceName] = useState('');
   const [attributes, setAttributes] = useState<Record<string, any>>(() => {
@@ -227,9 +234,18 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
         if (hideEndpointAssociations && (a.isSourceEndpoint || a.isTargetEndpoint)) {
           return false;
         }
+        if (hideAssociationNames && hideAssociationNames.includes(a.name)) {
+          return false;
+        }
         return true;
       }),
-    [classMetadata.associations, availableClasses, hideAssociationsToClass, hideEndpointAssociations],
+    [
+      classMetadata.associations,
+      availableClasses,
+      hideAssociationsToClass,
+      hideEndpointAssociations,
+      hideAssociationNames,
+    ],
   );
 
   const candidatesByAssociation = useMemo(() => {

@@ -1,0 +1,244 @@
+/**
+ * ConnectionEndpointSelector Component
+ * Modal shown when a connection class is drawn directly between two ordinary
+ * nodes (no ports involved) and the wiring is ambiguous: either more than one
+ * connection class can bridge the two dragged classes, or one of the two
+ * endpoint sides has more than one candidate association (e.g. Tank has both
+ * `water_to_tank` and `water_from_tank` toward WaterFlow). A side with a
+ * single candidate is bound silently by the caller and never reaches this
+ * modal -- see `endpointAssociationsFor` in `types/models.ts`.
+ */
+{% raw %}
+import React, { useMemo, useState } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { ArrowRight } from 'lucide-react';
+import type { AssociationMetadata, ClassMetadata } from '../types/models';
+import { endpointAssociationsFor } from '../types/models';
+
+interface ConnectionEndpointSelectorProps {
+  /** Class of the node the drag started from. */
+  sourceEndpointClass: string;
+  /** Class of the node the drag ended on. */
+  targetEndpointClass: string;
+  /** Connection classes that can bridge the two dragged classes. */
+  candidateClasses: string[];
+  availableClasses: ClassMetadata[];
+  onSelect: (result: {
+    className: string;
+    sourceAssociation: string;
+    targetAssociation: string;
+  }) => void;
+  onCancel: () => void;
+}
+
+function multiplicityLabel(assoc: AssociationMetadata): string {
+  const max = assoc.multiplicity.max === 9999 ? '*' : String(assoc.multiplicity.max);
+  return `${assoc.multiplicity.min}..${max}`;
+}
+
+export const ConnectionEndpointSelector: React.FC<ConnectionEndpointSelectorProps> = ({
+  sourceEndpointClass,
+  targetEndpointClass,
+  candidateClasses,
+  availableClasses,
+  onSelect,
+  onCancel,
+}) => {
+  const [pickedClass, setPickedClass] = useState<string>(candidateClasses[0] ?? '');
+
+  const sourceOptions = useMemo(
+    () => endpointAssociationsFor(availableClasses, pickedClass, sourceEndpointClass),
+    [availableClasses, pickedClass, sourceEndpointClass],
+  );
+  const targetOptions = useMemo(
+    () => endpointAssociationsFor(availableClasses, pickedClass, targetEndpointClass),
+    [availableClasses, pickedClass, targetEndpointClass],
+  );
+
+  // When both sides draw from the same option pool, default the target pick
+  // to the first option that differs from the source pick (falling back to
+  // the plain first option if there's only one to offer) so the modal
+  // doesn't open already showing an invalid same-association selection.
+  const defaultTargetPick = (
+    sourceName: string,
+    options: AssociationMetadata[],
+  ): string => options.find((o) => o.name !== sourceName)?.name ?? options[0]?.name ?? '';
+
+  const [pickedSource, setPickedSource] = useState<string>(sourceOptions[0]?.name ?? '');
+  const [pickedTarget, setPickedTarget] = useState<string>(
+    defaultTargetPick(sourceOptions[0]?.name ?? '', targetOptions),
+  );
+
+  // Reset the per-side picks whenever the candidate connection class changes,
+  // since its association names are unrelated to the previous class's.
+  const handlePickClass = (name: string) => {
+    setPickedClass(name);
+    const nextSourceOptions = endpointAssociationsFor(availableClasses, name, sourceEndpointClass);
+    const nextTargetOptions = endpointAssociationsFor(availableClasses, name, targetEndpointClass);
+    const nextSource = nextSourceOptions[0]?.name ?? '';
+    setPickedSource(nextSource);
+    setPickedTarget(defaultTargetPick(nextSource, nextTargetOptions));
+  };
+
+  // When the source and target endpoint classes are the same (or related),
+  // both sides can list the same association names (e.g. a Tank->Tank drag
+  // sees {water_to_tank, water_from_tank} on both sides). Picking the same
+  // association for both endpoints is never valid -- it can't represent two
+  // distinct link records -- so require the two picks to differ whenever
+  // they're drawn from the same option pool.
+  const sameOptionPool = sourceOptions.some((s) => targetOptions.some((t) => t.name === s.name));
+  const sameAssociationPicked = sameOptionPool && !!pickedSource && pickedSource === pickedTarget;
+
+  const canContinue =
+    !!pickedClass && !!pickedSource && !!pickedTarget && !sameAssociationPicked;
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="p-0 sm:max-w-lg">
+        <DialogHeader className="border-b bg-accent/40 px-6 py-5">
+          <DialogTitle className="text-xl">Select connection</DialogTitle>
+          <DialogDescription>
+            Choose how to connect{' '}
+            <span className="font-semibold text-foreground">{sourceEndpointClass}</span> and{' '}
+            <span className="font-semibold text-foreground">{targetEndpointClass}</span>.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="scrollbar-thin max-h-[60vh] space-y-5 overflow-y-auto px-6 py-5">
+          {candidateClasses.length > 1 && (
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Connection type
+              </div>
+              <div className="space-y-2">
+                {candidateClasses.map((name) => {
+                  const isPicked = name === pickedClass;
+                  return (
+                    <label
+                      key={name}
+                      className={`flex cursor-pointer items-center gap-3 rounded-md border p-3 transition-colors hover:bg-accent ${
+                        isPicked ? 'border-primary bg-primary/5' : 'border-border'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="connectionClass"
+                        className="size-4 cursor-pointer accent-primary"
+                        checked={isPicked}
+                        onChange={() => handlePickClass(name)}
+                      />
+                      <span className="font-semibold text-foreground">{name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {sourceOptions.length > 1 && (
+            <AssociationSideGroup
+              title={`${sourceEndpointClass} side`}
+              endpointClass={sourceEndpointClass}
+              options={sourceOptions}
+              picked={pickedSource}
+              onPick={setPickedSource}
+              groupName="sourceAssociation"
+            />
+          )}
+
+          {targetOptions.length > 1 && (
+            <AssociationSideGroup
+              title={`${targetEndpointClass} side`}
+              endpointClass={targetEndpointClass}
+              options={targetOptions}
+              picked={pickedTarget}
+              onPick={setPickedTarget}
+              groupName="targetAssociation"
+            />
+          )}
+          {sameAssociationPicked && (
+            <p className="text-xs font-medium text-destructive">
+              Pick a different association for each side -- the same association can't serve as
+              both endpoints.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="border-t bg-accent/40 px-6 py-4">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            disabled={!canContinue}
+            onClick={() =>
+              onSelect({
+                className: pickedClass,
+                sourceAssociation: pickedSource,
+                targetAssociation: pickedTarget,
+              })
+            }
+          >
+            Continue
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const AssociationSideGroup: React.FC<{
+  title: string;
+  endpointClass: string;
+  options: AssociationMetadata[];
+  picked: string;
+  onPick: (name: string) => void;
+  groupName: string;
+}> = ({ title, endpointClass, options, picked, onPick, groupName }) => (
+  <div>
+    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {title}
+    </div>
+    <div className="space-y-2">
+      {options.map((assoc) => {
+        const isPicked = assoc.name === picked;
+        return (
+          <label
+            key={assoc.name}
+            className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-accent ${
+              isPicked ? 'border-primary bg-primary/5' : 'border-border'
+            }`}
+          >
+            <input
+              type="radio"
+              name={groupName}
+              className="mt-1 size-4 cursor-pointer accent-primary"
+              checked={isPicked}
+              onChange={() => onPick(assoc.name)}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-foreground">{assoc.name}</div>
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{assoc.sourceEndName || endpointClass}</span>
+                <ArrowRight className="h-3 w-3" />
+                <span>{assoc.targetEndName || endpointClass}</span>
+              </div>
+              <div className="mt-1 text-[11px] font-semibold text-primary">
+                Multiplicity: {multiplicityLabel(assoc)}
+              </div>
+            </div>
+          </label>
+        );
+      })}
+    </div>
+  </div>
+);
+{% endraw %}

@@ -12,7 +12,7 @@ import { AddPortPopover } from './AddPortPopover';
 import { AddAssociationPopover } from './AddAssociationPopover';
 import { cn } from '@/lib/utils';
 import type { AssociationMetadata, BaseInstance, ClassMetadata, NodeStyle, PortSideName } from '../types/models';
-import { PORT_CLASSES, isPortClass } from '../types/models';
+import { PORT_CLASSES, isPortClass, isConnectionClass } from '../types/models';
 
 export type InstanceNodeData = {
   instance: BaseInstance;
@@ -222,13 +222,18 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
 
   // Associations the user can create from the "â†”" affordance. Filters out
   // links already covered by other UI: container nesting, port spawning ("+"),
-  // and connection-class endpoints (handled at port-handle level).
+  // connection-class endpoints (handled at port-handle level), and associations
+  // that target a connection class directly (those are wired by dragging to
+  // another node and picking an endpoint, not by this popover -- offering them
+  // here would let the user link to a bare, unconnected connection-class
+  // instance with no way to attach its other endpoint).
   const associationOptions: AssociationMetadata[] = React.useMemo(
     () =>
       classMetadata.associations.filter((a) => {
         if (a.isContainerAssociation) return false;
         if (a.isSourceEndpoint || a.isTargetEndpoint) return false;
         if (isPortClass(a.targetClass)) return false;
+        if (isConnectionClass(a.targetClass)) return false;
         return true;
       }),
     [classMetadata.associations],

@@ -25,6 +25,12 @@ export interface LinkData {
   association_name: string;
   target_class: string;
   target_id: string;
+  // Which endpoint of the association this link represents, when the link
+  // was created without ports and the endpoint had to be recorded
+  // explicitly. Absent on links created via the port-handle flow, or on
+  // links persisted before this field existed -- callers fall back to link
+  // order in that case.
+  role?: 'source' | 'target';
 }
 
 // Instance creation request
@@ -47,6 +53,7 @@ export interface LinkCreateRequest {
   target_class: string;
   target_id: string;
   association_name: string;
+  role?: 'source' | 'target';
 }
 
 // Export response types
@@ -338,7 +345,7 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
       {%- endfor %}
     ],
     associations: [
-      {%- for end in cls.all_association_ends() %}
+      {%- for end in cls.all_association_ends() | sort(attribute='owner.name,name') %}
       {%- set assoc = end.owner %}
       {%- set other_ends = assoc.ends | reject('eq', end) | list %}{%- set other_end = other_ends[0] if other_ends else none %}
       {%- set assoc_cust = customization.get_association_customization(assoc.name) if customization else None %}
@@ -461,4 +468,55 @@ export function isAssignableTo(actualClass: string, expectedClass: string): bool
   const list = SUBCLASSES_OF[expectedClass];
   if (list) return list.includes(actualClass);
   return actualClass === expectedClass;
+}
+
+// ---------------------------------------------------------------------------
+// Portless connection-class candidate derivation
+// ---------------------------------------------------------------------------
+// A connection class can also be drawn between two ordinary nodes (no ports
+// involved) when the model gives it associations reaching both endpoints.
+// No extra generation-time registry is needed for this: DOMAIN_CLASSES[].
+// associations (from ``all_association_ends()``) already lists every
+// association of a connection class together with its ``targetClass``.
+
+/** Connection classes that can legitimately bridge two given classes via two
+ *  *distinct* associations -- one whose target accepts ``classA``, a
+ *  different one whose target accepts ``classB``. Requiring distinct
+ *  associations is what keeps an association unrelated to one of the two
+ *  sides (e.g. a third association toward an unrelated class) from being
+ *  offered, and stops a single association from being counted for both
+ *  endpoints. Abstract connection classes are excluded -- they cannot be
+ *  instantiated. */
+export function connectionCandidatesBetween(
+  classes: ClassMetadata[],
+  classA: string,
+  classB: string,
+): string[] {
+  const results: string[] = [];
+  for (const connName of Object.keys(CONNECTION_CLASSES)) {
+    const meta = classes.find((c) => c.name === connName);
+    if (!meta || meta.isAbstract) continue;
+    const assocs = meta.associations ?? [];
+    const matchesA = assocs.filter((a) => isAssignableTo(classA, a.targetClass));
+    const matchesB = assocs.filter((a) => isAssignableTo(classB, a.targetClass));
+    if (matchesA.length === 0 || matchesB.length === 0) continue;
+    const canPickDistinct = matchesA.some((a) => matchesB.some((b) => b !== a));
+    if (canPickDistinct) results.push(connName);
+  }
+  return results;
+}
+
+/** A connection class's candidate associations toward a given endpoint class
+ *  (own + inherited, filtered by polymorphic assignability). Used both to
+ *  decide whether a side is ambiguous (more than one candidate -- prompt the
+ *  user) and to populate the ``ConnectionEndpointSelector`` picker's option
+ *  list for that side. */
+export function endpointAssociationsFor(
+  classes: ClassMetadata[],
+  connectionClassName: string,
+  endpointClassName: string,
+): AssociationMetadata[] {
+  const meta = classes.find((c) => c.name === connectionClassName);
+  if (!meta) return [];
+  return (meta.associations ?? []).filter((a) => isAssignableTo(endpointClassName, a.targetClass));
 }

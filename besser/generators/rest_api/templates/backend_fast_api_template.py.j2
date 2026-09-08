@@ -1,3 +1,4 @@
+{% macro link_attr_names(assoc_class_name) %}({% for attribute in assoc_classes[assoc_class_name].attributes %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 import uvicorn
 import os, json
 import time as time_module
@@ -145,13 +146,17 @@ async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Handle HTTP exceptions with consistent format."""
+    """Handle HTTP exceptions with consistent format.
+
+    `detail` carries the endpoint's actual message — clients (including the
+    generated frontend dialog) read it to show the user what went wrong.
+    """
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.detail if isinstance(exc.detail, str) else "HTTP Error",
             "message": exc.detail,
-            "detail": f"HTTP {exc.status_code} error occurred"
+            "detail": exc.detail
         }
     )
 
@@ -265,6 +270,52 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         aggregator = reduce_fn(aggregator, elem)
     return aggregator
 
+{% if assoc_classes %}
+
+############################################
+#
+#   Association class link helpers
+#
+############################################
+from enum import Enum as _Enum
+
+_UNSET = object()
+
+
+def _link_target(link):
+    """Return the id of the entity a relationship link payload points to.
+
+    A payload is either a plain id, a mapping, or a model exposing a ``target`` field.
+    """
+    if link is None or isinstance(link, (int, str)):
+        return link
+    if isinstance(link, dict):
+        return link.get("target")
+    return getattr(link, "target", link)
+
+
+def _link_attrs(link, names):
+    """Return the association class attributes carried by a relationship link payload.
+
+    Attributes the payload does not provide are left out, so that they are neither
+    inserted as NULL nor used to overwrite the stored values of an existing link.
+    """
+    if link is None or isinstance(link, (int, str)):
+        return {}
+    values = {}
+    for name in names:
+        if isinstance(link, dict):
+            if name not in link:
+                continue
+            value = link[name]
+        else:
+            value = getattr(link, name, _UNSET)
+            if value is _UNSET:
+                continue
+        values[name] = value.value if isinstance(value, _Enum) else value
+    return values
+
+{% endif %}
 
 {% for class in classes %}
 ############################################
@@ -272,7 +323,9 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
 #   {{ class.name }} functions
 #
 ############################################
-{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[]) %}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[], assoc_links=[]) %}
+{% set pk = class.name | pk %}
+{% set is_assoc_class = class.name in assoc_classes %}
 {% set all_parents = class.all_parents() | sort(attribute='name') %}
 {% for association in class.associations %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
@@ -292,7 +345,10 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% set name_end1 = lns.end1.name %}
         {% set name_end2 = lns.end2.name %}
         {% if lns.end2.is_navigable %}
-        {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+        {% if association.name in assoc_by_association %}
+            {# The association is materialized by an association class, not by a foreign key or a secondary table #}
+            {% do ns.assoc_links.append((class1_name, class2_name, name_end1, name_end2, assoc_by_association[association.name], lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
+        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
             {# 1:N relationship - Library has many Books #}
@@ -325,7 +381,10 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% set name_end1 = plns.end1.name %}
         {% set name_end2 = plns.end2.name %}
         {% if plns.end2.is_navigable %}
-        {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
+        {% if association.name in assoc_by_association %}
+            {# The inherited association is materialized by an association class #}
+            {% do ns.assoc_links.append((class1_name, class2_name, name_end1, name_end2, assoc_by_association[association.name], plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
+        {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
             {# 1:N inherited relationship #}
@@ -345,7 +404,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
 def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = Depends(get_db)) -> list:
     from sqlalchemy.orm import joinedload
 
-    {% if ns.end_name_one or ns.end_name_multiple or ns.one_to_many %}
+    {% if ns.end_name_one or ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     # Use detailed=true to get entities with eagerly loaded relationships (for tables with lookup columns)
     if detailed:
         # Eagerly load all relationships to avoid N+1 queries
@@ -375,7 +434,7 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {% if ns.end_name_multiple or ns.one_to_many %}
             # Add many-to-many and one-to-many relationship objects (full details)
             {% for x in ns.end_name_multiple %}
-            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.id == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[3]}}'] = []
             for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
                 {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
@@ -383,12 +442,28 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
                 item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
             {% endfor %}
             {% for x in ns.one_to_many %}
-            {{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+            {{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[2]}}'] = []
             for {{x[0] | lower}}_obj in {{x[0] | lower}}_list:
                 {{x[0] | lower}}_dict = {{x[0] | lower}}_obj.__dict__.copy()
                 {{x[0] | lower}}_dict.pop('_sa_instance_state', None)
                 item_dict['{{x[2]}}'].append({{x[0] | lower}}_dict)
+            {% endfor %}
+            {% endif %}
+            {% if ns.assoc_links %}
+            # Add association class links (target entities and the link rows themselves)
+            {% for x in ns.assoc_links %}
+            {{x[3]}}_link_rows = database.query({{x[4]}}).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
+            item_dict['{{x[3]}}_links'] = []
+            for link_row in {{x[3]}}_link_rows:
+                link_dict = link_row.__dict__.copy()
+                link_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[3]}}_links'].append(link_dict)
+            item_dict['{{x[3]}}'] = []
+            for {{x[1] | lower}}_obj in database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([getattr(link_row, '{{x[3]}}_id') for link_row in {{x[3]}}_link_rows])).all():
+                {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
+                {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
             {% endfor %}
             {% endif %}
 
@@ -414,7 +489,7 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     """Get paginated list of {{ class.name }} entities"""
     total = database.query({{ class.name }}).count()
     {{ class.name | lower}}_list = database.query({{ class.name }}).offset(skip).limit(limit).all()
-    {% if ns.end_name_multiple or ns.one_to_many %}
+    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     # By default, return flat entities (for charts/widgets)
     # Use detailed=true to get entities with relationships
     if not detailed:
@@ -428,15 +503,21 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     result = []
     for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
         {% for x in ns.end_name_multiple %}
-        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
         {% endfor %}
         {% for x in ns.one_to_many %}
-        {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+        {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
         {% endfor %}
         item_data = {
             "{{class.name | lower}}": {{ class.name | lower}}_item,
             {% for x in ns.end_name_multiple %}
             "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+            {% endfor %}
+            {% for x in ns.assoc_links %}
+            "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
             {% endfor %}
             {% for x in ns.one_to_many %}
             "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
@@ -486,20 +567,40 @@ def search_{{ class.name | lower}}(
     return results
 
 
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+{# An association class is keyed by the foreign keys of its two association ends, so it is
+   addressed as /{{ class.name | lower }}/{<{{ ac_ends[0].name }} id>}/{<{{ ac_ends[1].name }} id>}/ #}
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def get_{{ class.name | lower}}({{ ac_ends[0].name }}_id: int, {{ ac_ends[1].name }}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
+    """Get the {{ class.name }} link between a {{ ac_ends[0].type_name }} and a {{ ac_ends[1].type_name }}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
+        ({{ class.name }}.{{ ac_ends[0].name }}_id == {{ ac_ends[0].name }}_id) &
+        ({{ class.name }}.{{ ac_ends[1].name }}_id == {{ ac_ends[1].name }}_id)
+    ).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    return db_{{ class.name | lower}}
+{% else %}
 @app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% endif %}
+    {% if ns.assoc_links %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% endif %}
     {% if ns.one_to_many %}
     {% for x in ns.one_to_many %}
-    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% endif %}
     response_data = {
@@ -507,16 +608,52 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
         {% for x in ns.end_name_multiple %}
         "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
         {% endfor %}
+        {% for x in ns.assoc_links %}
+        "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
+        {% endfor %}
         {% for x in ns.one_to_many %}
         "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
         {% endfor -%}
     }
     return response_data
+{% endif %}
 
 {% endif %}
 
 
 {% if "POST" in http_methods %}
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+@app.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
+async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    """Create a {{ class.name }} link.
+
+    The Create model carries one field per association end ({% for end in ac_ends %}`{{ end.name }}`{% if not loop.last %}, {% endif %}{% endfor %}) holding
+    the id of the linked entity, plus the attributes of the association class.
+    """
+    {% for end in ac_ends %}
+    {{ end.name }}_target = _link_target(getattr({{ class.name | lower}}_data, '{{ end.name }}', None))
+    if {{ end.name }}_target is None:
+        raise HTTPException(status_code=400, detail="{{ end.type_name }} ID is required")
+    db_{{ end.name }} = database.query({{ end.type_name }}).filter({{ end.type_name }}.{{ end.type_name | pk }} == {{ end.name }}_target).first()
+    if db_{{ end.name }} is None:
+        raise HTTPException(status_code=404, detail=f"{{ end.type_name }} with ID {% raw %}{{% endraw %}{{ end.name }}_target{% raw %}}{% endraw %} not found")
+    {% endfor %}
+
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for end in ac_ends %}
+        {{ end.name }}_id={{ end.name }}_target,
+        {% endfor %}
+        {% for attribute in assoc_classes[class.name].attributes %}
+        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %}{% if not loop.last %},{% endif %}
+        {% endfor %}
+        )
+
+    database.add(db_{{ class.name | lower}})
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+    return db_{{ class.name | lower}}
+{% else %}
 @app.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
 async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
 
@@ -525,7 +662,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
     {% if has_fk %}
     if {{ class.name | lower}}_data.{{x[2]}} {% if x[1]==1 %}is not None{%endif%}:
-        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{ class.name | lower}}_data.{{x[2]}}).first()
+        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{ class.name | lower}}_data.{{x[2]}}).first()
         if not db_{{x[2]}}:
             raise HTTPException(status_code=400, detail="{{x[0]}} not found")
     {%if x[1] == 1 %}
@@ -551,10 +688,10 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                 {% endfor %}
             {% endif %}
             {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
-                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
                 {% if parent_has_fk %}
     if {{ class.name | lower}}_data.{{plns.end2.name}} {% if plns.end2.multiplicity.min==1 %}is not None{%endif%}:
-        db_{{plns.end2.name}} = database.query({{plns.end2.type.name}}).filter({{plns.end2.type.name}}.id == {{ class.name | lower}}_data.{{plns.end2.name}}).first()
+        db_{{plns.end2.name}} = database.query({{plns.end2.type.name}}).filter({{plns.end2.type.name}}.{{ plns.end2.type.name | pk }} == {{ class.name | lower}}_data.{{plns.end2.name}}).first()
         if not db_{{plns.end2.name}}:
             raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} not found")
     {%if plns.end2.multiplicity.min == 1 %}
@@ -577,9 +714,39 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     if {{ class.name | lower}}_data.{{x[3]}}:
         for id in {{ class.name | lower}}_data.{{x[3]}}:
             # Entity already validated before creation
-            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == id).first()
             if not db_{{x[1] | lower}}:
                 raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
+    {% endfor %}
+    {% endif %}
+    {% if ns.assoc_links %}
+    {# Validate the targets of the association class links before creating the main entity.
+       The link payloads are read with getattr because the Create model only exposes the
+       navigable ends of the association. #}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_payload = getattr({{ class.name | lower}}_data, '{{x[3]}}', None)
+    {% if x[6] > 1 %}
+    {% if x[5] > 0 %}
+    if not {{x[3]}}_payload or len({{x[3]}}_payload) < {{x[5]}}:
+        raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+    {% endif %}
+    if {{x[3]}}_payload:
+        for link in {{x[3]}}_payload:
+            {{x[3]}}_target = _link_target(link)
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
+            if not db_{{x[1] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+    {% else %}
+    {# To-one end through an association class: the link is optional at creation
+       time (it can be established later from the other side or via the
+       association-class endpoint), otherwise neither entity could be created
+       first. #}
+    if {{x[3]}}_payload is not None:
+        {{x[3]}}_target = _link_target({{x[3]}}_payload)
+        db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
+        if not db_{{x[1] | lower}}:
+            raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+    {% endif %}
     {% endfor %}
     {% endif %}
 
@@ -625,12 +792,12 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                 {% endfor %}
             {% endif %}
             {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
-                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
                 {% if parent_has_fk %}
     {% do ns_args.args.append(plns.end2.name ~ '_id=' ~ class.name|lower ~ '_data.' ~ plns.end2.name) %}
                 {% endif -%}
             {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
-                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
                 {% if parent_has_fk %}
     {% do ns_args.args.append(plns.end2.name ~ '_id=' ~ class.name|lower ~ '_data.' ~ plns.end2.name) %}
                 {% endif -%}
@@ -655,26 +822,49 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     if {{ class.name | lower }}_data.{{x[2]}}:
         # Validate that all {{x[0]}} IDs exist
         for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
-            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0] | lower}}_id).first()
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{x[0] | lower}}_id).first()
             if not db_{{x[0] | lower}}:
                 raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
 
         # Update the related entities with the new foreign key
-        database.query({{x[0]}}).filter({{x[0]}}.id.in_({{ class.name | lower }}_data.{{x[2]}})).update(
-            {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.id{{"}"}}, synchronize_session=False
+        database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+            {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.{{ pk }}{{"}"}}, synchronize_session=False
         )
         database.commit()
     {% endfor %}
     {% endif %}
 
+    {# Create the association class rows carrying the links of this entity #}
+    {% if ns.assoc_links %}
+    {% for x in ns.assoc_links %}
+    {% if x[6] > 1 %}
+    if {{x[3]}}_payload:
+        for link in {{x[3]}}_payload:
+            database.add({{x[4]}}(
+                {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
+                {{x[3]}}_id=_link_target(link),
+                **_link_attrs(link, {{ link_attr_names(x[4]) }})
+            ))
+        database.commit()
+    {% else %}
+    if {{x[3]}}_payload is not None:
+        database.add({{x[4]}}(
+            {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
+            {{x[3]}}_id=_link_target({{x[3]}}_payload),
+            **_link_attrs({{x[3]}}_payload, {{ link_attr_names(x[4]) }})
+        ))
+        database.commit()
+    {% endif %}
+    {% endfor %}
+    {% endif %}
     {% if ns.end_name_multiple and not nested_creations %}
     {% for x in ns.end_name_multiple %}
     if {{ class.name | lower}}_data.{{x[3]}}:
         for id in {{ class.name | lower}}_data.{{x[3]}}:
             # Entity already validated before creation
-            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == id).first()
             # Create the association
-            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
+            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.{{ pk }}, {{ x[3] }}=db_{{ x[1]|lower }}.{{ x[1] | pk }})
             database.execute(association)
             database.commit()
     {% endfor -%}
@@ -687,7 +877,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             {%for lk_class in classes%}
             {% if lk_class.name == x[1] %}
             if isinstance(x, int):
-                db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == x).first()
+                db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == x).first()
                 if db_{{x[1] | lower}} is None:
                     raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {x} not found")
             else:
@@ -699,7 +889,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             database.add(db_{{x[1] | lower}})
             database.commit()
             # Create the association
-            association = {{x[4]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[1]|lower }}_id=db_{{ x[1]|lower }}.id)
+            association = {{x[4]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.{{ pk }}, {{ x[1]|lower }}_id=db_{{ x[1]|lower }}.{{ x[1] | pk }})
             database.execute(association)
             database.commit()
             {% endif %}
@@ -707,18 +897,24 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endif %}
 
-    {% if ns.end_name_multiple or ns.one_to_many %}
+    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% for x in ns.one_to_many %}
-    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     response_data = {
         "{{class.name | lower}}": db_{{ class.name | lower}},
         {% for x in ns.end_name_multiple %}
         "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
         {% endfor %}
         {% for x in ns.one_to_many %}
         "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
@@ -728,10 +924,11 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% else %}
     return db_{{ class.name | lower}}
     {% endif %}
+{% endif %}
 
 {% endif %}
 
-{% if "POST" in http_methods %}
+{% if "POST" in http_methods and not is_assoc_class %}
 @app.post("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
 async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create], database: Session = Depends(get_db)) -> dict:
     """Create multiple {{ class.name }} entities at once"""
@@ -766,7 +963,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
                         {% endfor %}
                     {% endif %}
                     {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
-                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
                         {% if parent_has_fk and plns.end2.multiplicity.min == 1 %}
             if not item_data.{{plns.end2.name}}:
                 raise ValueError("{{plns.end2.type.name}} ID is required")
@@ -818,12 +1015,12 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
                         {% endfor %}
                     {% endif %}
                     {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
-                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
                         {% if parent_has_fk %}
             {% do ns_bulk_args.args.append(plns.end2.name ~ '_id=item_data.' ~ plns.end2.name) %}
                         {% endif -%}
                     {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
-                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
                         {% if parent_has_fk %}
             {% do ns_bulk_args.args.append(plns.end2.name ~ '_id=item_data.' ~ plns.end2.name) %}
                         {% endif -%}
@@ -838,7 +1035,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             )
             database.add(db_{{ class.name | lower}})
             database.flush()  # Get ID without committing
-            created_items.append(db_{{ class.name | lower}}.id)
+            created_items.append(db_{{ class.name | lower}}.{{ pk }})
         except Exception as e:
             errors.append({"index": idx, "error": str(e)})
 
@@ -861,7 +1058,7 @@ async def bulk_delete_{{ class.name | lower}}(ids: list[int], database: Session 
     not_found = []
 
     for item_id in ids:
-        db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == item_id).first()
+        db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == item_id).first()
         if db_{{ class.name | lower}}:
             database.delete(db_{{ class.name | lower}})
             deleted_count += 1
@@ -879,9 +1076,28 @@ async def bulk_delete_{{ class.name | lower}}(ids: list[int], database: Session 
 
 {% if class.is_read_only == False %}
 {% if "PUT" in http_methods %}
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+@app.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: int, {{ ac_ends[1].name }}_id: int, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    """Update the attributes of the {{ class.name }} link identified by both foreign keys"""
+    db_{{ class.name | lower }} = database.query({{ class.name }}).filter(
+        ({{ class.name }}.{{ ac_ends[0].name }}_id == {{ ac_ends[0].name }}_id) &
+        ({{ class.name }}.{{ ac_ends[1].name }}_id == {{ ac_ends[1].name }}_id)
+    ).first()
+    if db_{{ class.name | lower }} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {% for attribute in assoc_classes[class.name].attributes %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %})
+    {% endfor %}
+    database.commit()
+    database.refresh(db_{{ class.name | lower }})
+    return db_{{ class.name | lower }}
+{% else %}
 @app.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
-    db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
+    db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
     if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
@@ -895,7 +1111,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
     {% if has_fk %}
     if {{ class.name | lower}}_data.{{x[2]}} is not None:
-        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{ class.name | lower}}_data.{{x[2]}}).first()
+        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{ class.name | lower}}_data.{{x[2]}}).first()
         if not db_{{x[2]}}:
             raise HTTPException(status_code=400, detail="{{x[0]}} not found")
         setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', {{ class.name | lower }}_data.{{x[2]}})
@@ -912,7 +1128,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
     if {{ class.name | lower }}_data.{{x[2]}} is not None:
         # Clear all existing relationships (set foreign key to NULL)
-        database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower }}.id).update(
+        database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower }}.{{ pk }}).update(
             {{"{"}}{{x[0]}}.{{x[1]}}_id: None{{"}"}}, synchronize_session=False
         )
 
@@ -920,51 +1136,89 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
         if {{ class.name | lower }}_data.{{x[2]}}:
             # Validate that all IDs exist
             for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
-                db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0] | lower}}_id).first()
+                db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{x[0] | lower}}_id).first()
                 if not db_{{x[0] | lower}}:
                     raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
 
             # Update the related entities with the new foreign key
-            database.query({{x[0]}}).filter({{x[0]}}.id.in_({{ class.name | lower }}_data.{{x[2]}})).update(
-                {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.id{{"}"}}, synchronize_session=False
+            database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+                {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.{{ pk }}{{"}"}}, synchronize_session=False
             )
+    {% endfor %}
+    {% endif %}
+    {# Reconcile the association class links -#}
+    {% if ns.assoc_links %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_payload = getattr({{ class.name | lower }}_data, '{{x[3]}}', None)
+    if {{x[3]}}_payload is not None:
+        existing_{{x[3]}}_links = {getattr(link_row, '{{x[3]}}_id'): link_row for link_row in database.query({{x[4]}}).filter(
+            {{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower }}.{{ pk }}).all()}
+        incoming_{{x[3]}}_links = {}
+        for link in {% if x[6] > 1 %}{{x[3]}}_payload{% else %}[{{x[3]}}_payload]{% endif %}:
+            {{x[3]}}_target = _link_target(link)
+            db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
+            if db_{{x[1]|lower}} is None:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+            incoming_{{x[3]}}_links[{{x[3]}}_target] = link
+
+        for {{x[3]}}_target, link_row in existing_{{x[3]}}_links.items():
+            if {{x[3]}}_target not in incoming_{{x[3]}}_links:
+                database.delete(link_row)
+
+        for {{x[3]}}_target, link in incoming_{{x[3]}}_links.items():
+            link_row = existing_{{x[3]}}_links.get({{x[3]}}_target)
+            if link_row is None:
+                database.add({{x[4]}}(
+                    {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
+                    {{x[3]}}_id={{x[3]}}_target,
+                    **_link_attrs(link, {{ link_attr_names(x[4]) }})
+                ))
+            else:
+                for link_attr_name, link_attr_value in _link_attrs(link, {{ link_attr_names(x[4]) }}).items():
+                    setattr(link_row, link_attr_name, link_attr_value)
     {% endfor %}
     {% endif %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
     existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
-        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.id))]
+        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}))]
 
     {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%})
     for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
         association = {{x[4]}}.delete().where(
-            ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.id) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
+            ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
         database.execute(association)
 
     new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%}) - set(existing_{{x[1]|lower}}_ids)
     for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
-        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == {{x[1]|lower}}_id).first()
+        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
         if db_{{x[1]|lower}} is None:
             raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %} not found")
-        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.id, {{x[2]}}=db_{{ class.name | lower }}.id)
+        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.{{ x[1] | pk }}, {{x[2]}}=db_{{ class.name | lower }}.{{ pk }})
         database.execute(association)
     {% endfor %}
     {% endif %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
 
-    {% if ns.end_name_multiple or ns.one_to_many %}
+    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% for x in ns.one_to_many %}
-    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     response_data = {
         "{{class.name | lower}}": db_{{ class.name | lower}},
         {% for x in ns.end_name_multiple %}
         "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
         {% endfor %}
         {% for x in ns.one_to_many %}
         "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
@@ -975,17 +1229,34 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     return db_{{ class.name | lower }}
     {% endif %}
 {% endif %}
+{% endif %}
 
 
 {% if "DELETE" in http_methods %}
-@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
-async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: int, {{ ac_ends[1].name }}_id: int, database: Session = Depends(get_db)):
+    """Delete the {{ class.name }} link identified by both foreign keys"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
+        ({{ class.name }}.{{ ac_ends[0].name }}_id == {{ ac_ends[0].name }}_id) &
+        ({{ class.name }}.{{ ac_ends[1].name }}_id == {{ ac_ends[1].name }}_id)
+    ).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
     database.delete(db_{{ class.name | lower}})
     database.commit()
     return db_{{ class.name | lower}}
+{% else %}
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    database.delete(db_{{ class.name | lower}})
+    database.commit()
+    return db_{{ class.name | lower}}
+{% endif %}
 {% endif %}
 
 {% if ns.end_name_multiple %}
@@ -997,11 +1268,11 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, databa
 @app.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
 async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ related_param_name }}: int, database: Session = Depends(get_db)):
     """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship"""
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == {{ related_param_name }}).first()
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{ related_param_name }}).first()
     if db_{{x[1]|lower}} is None:
         raise HTTPException(status_code=404, detail="{{x[1]}} not found")
 
@@ -1025,7 +1296,7 @@ async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: in
 @app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
 async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ related_param_name }}: int, database: Session = Depends(get_db)):
     """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
@@ -1052,17 +1323,101 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
 @app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
 async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
     """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}"""
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
     {{x[1]|lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id).all()
-    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.id.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
+    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
 
     return {
         "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
         "{{x[3]}}_count": len({{x[1]|lower}}_list),
         "{{x[3]}}": {{x[1]|lower}}_list
+    }
+
+{% endfor %}
+{% endif %}
+{% if ns.assoc_links %}
+
+{# Add relationship-specific endpoints for the associations materialized by an association class #}
+{% for x in ns.assoc_links %}
+{# Handle self-referential relationships by using different parameter names #}
+{% set related_param_name = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
+@app.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_param_name }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ related_param_name }}: int, link: dict = Body(default=None), database: Session = Depends(get_db)):
+    """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship.
+
+    The request body carries the {{x[4]}} attributes ({% for attribute in assoc_classes[x[4]].attributes %}{{ attribute.name }}{% if not loop.last %}, {% endif %}{% endfor %}).
+    A `target` field in the body is ignored: the target is taken from the path.
+    """
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{ related_param_name }}).first()
+    if db_{{x[1]|lower}} is None:
+        raise HTTPException(status_code=404, detail="{{x[1]}} not found")
+
+    # Check if relationship already exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_id) &
+        ({{x[4]}}.{{x[3]}}_id == {{ related_param_name }})
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Relationship already exists")
+
+    # Create the association class row
+    database.add({{x[4]}}(
+        {{x[2]}}_id={{ class.name | lower}}_id,
+        {{x[3]}}_id={{ related_param_name }},
+        **_link_attrs(link, {{ link_attr_names(x[4]) }})
+    ))
+    database.commit()
+
+    return {"message": "{{x[1]}} added to {{x[3]}} successfully"}
+
+
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_param_name }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ related_param_name }}: int, database: Session = Depends(get_db)):
+    """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    # Check if relationship exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_id) &
+        ({{x[4]}}.{{x[3]}}_id == {{ related_param_name }})
+    ).first()
+
+    if not existing:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+
+    # Delete the association class row
+    database.delete(existing)
+    database.commit()
+
+    return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}, with their {{x[4]}} links"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {{x[3]}}_link_rows = database.query({{x[4]}}).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_(
+        [getattr(link_row, '{{x[3]}}_id') for link_row in {{x[3]}}_link_rows])).all()
+
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[3]}}_count": len({{x[1]|lower}}_list),
+        "{{x[3]}}": {{x[1]|lower}}_list,
+        "{{x[3]}}_links": {{x[3]}}_link_rows
     }
 
 {% endfor %}
@@ -1073,7 +1428,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 @app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[2]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
 async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
     """Get all {{x[0]}} entities related to this {{ class.name }} through {{x[2]}}"""
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
@@ -1120,6 +1475,9 @@ async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% elif method.implementation_type.name == "CODE" %}
 {% set method_code = method.code %}
 {% endif %}
+{# Users mix tabs and spaces in the editor's code box; normalize (and
+   compile-gate) the body so one broken method cannot break the whole app. #}
+{% set method_code = normalize_code(method_code, method.name) %}
 
 {# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
 {% set is_class_method = '(self' not in method_code and '(self,' not in method_code %}
@@ -1227,7 +1585,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     {% endif %}
     """
     # Retrieve the entity from the database
-    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
+    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
     if _{{ class.name | lower }}_object is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 

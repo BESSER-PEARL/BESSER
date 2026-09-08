@@ -266,7 +266,7 @@ def _build_booking_models(with_association_class: bool):
     reference = Property(name="reference", type=StringType)
     booking = Class(name="Booking", attributes={reference})
 
-    number = Property(name="number", type=StringType)
+    number = Property(name="number", type=StringType, is_id=True)
     room = Class(name="Room", attributes={number})
 
     booking_end = Property(name="bookings", type=booking, multiplicity=Multiplicity(0, "*"))
@@ -385,6 +385,7 @@ def test_form_column_without_association_class_unchanged(plain_nm_models):
         "path": "rooms",
         "field": "rooms",
         "lookup_field": "number",
+        "target_field": "number",
         "entity": "Room",
         "type": "list",
         "required": False,

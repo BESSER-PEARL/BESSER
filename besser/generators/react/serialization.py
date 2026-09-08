@@ -615,6 +615,12 @@ class GuiSerializationMixin:
                     if target and hasattr(target, "all_attributes"):
                         target_attrs = sort_by_timestamp(list(target.all_attributes()))
                     lookup_field = target_attrs[0].name if target_attrs else ""
+                    # The identifying attribute of the target class: option values,
+                    # payload ids and edit prefill key on it, while lookup_field
+                    # stays the human-readable label source.
+                    target_field = next(
+                        (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
+                    )
 
                     max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
                     is_list = max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
@@ -624,6 +630,7 @@ class GuiSerializationMixin:
                         "path": end.name,
                         "field": end.name,
                         "lookup_field": lookup_field,
+                        "target_field": target_field,
                         "entity": getattr(target, "name", "") if target else "",
                         "type": "list" if is_list else "str",
                         "required": False,

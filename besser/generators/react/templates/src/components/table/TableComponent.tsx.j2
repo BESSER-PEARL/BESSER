@@ -30,6 +30,7 @@ interface TableColumn {
   options?: string[];
   required?: boolean;
   lookupField?: string;
+  targetField?: string;
   relationshipKey?: string;
   associationClass?: AssociationClassMeta;
 }
@@ -184,6 +185,7 @@ export const TableComponent: React.FC<Props> = ({
           ? col.path
           : undefined;
         const lookupField = (col as any).lookup_field ?? (col as any).lookupField ?? col.field;
+        const targetField = (col as any).target_field ?? (col as any).targetField;
         const rawAssociationClass = (col as any).association_class ?? (col as any).associationClass;
         const associationClass: AssociationClassMeta | undefined = rawAssociationClass
           ? {
@@ -201,6 +203,7 @@ export const TableComponent: React.FC<Props> = ({
           options: col.options,
           required: col.required ?? false,
           lookupField: col.column_type === "lookup" ? lookupField : undefined,
+          targetField: col.column_type === "lookup" ? targetField : undefined,
           relationshipKey: relationshipKey,
           associationClass: col.column_type === "lookup" ? associationClass : undefined,
         };
@@ -490,15 +493,17 @@ export const TableComponent: React.FC<Props> = ({
     return value;
   };
 
-  // Canonical value of a related record: its lookup field (the entity's id
-  // attribute, which is not necessarily named `id` — e.g. Room.number),
-  // falling back to `id` for entities that use the default primary key.
+  // Canonical value of a related record: the target class's identifying
+  // attribute (target_field — not necessarily named `id`, e.g. Room.number).
+  // Falls back to `id`, then to the display field, for older metadata.
   const getOptionValue = (col: TableColumn, option: any): string => {
-    const raw =
-      col.lookupField && option?.[col.lookupField] !== undefined && option?.[col.lookupField] !== null
-        ? option[col.lookupField]
-        : option?.id;
-    return raw === undefined || raw === null ? "" : String(raw);
+    const candidates = [col.targetField, "id", col.lookupField];
+    for (const key of candidates) {
+      if (key && option?.[key] !== undefined && option?.[key] !== null) {
+        return String(option[key]);
+      }
+    }
+    return "";
   };
 
   // Label shown for a related record (same fallbacks as the lookup selects)

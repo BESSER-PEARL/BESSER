@@ -652,7 +652,7 @@ class ClaudeLLMClient(LLMProvider):
                     "model": effective_model,
                     "max_tokens": self._max_tokens,
                     "system": _with_cache_control(system),
-                    "messages": messages,
+                    "messages": _with_message_cache(messages),
                     "tools": _with_tool_cache(tools),
                 }
                 if force_tool:
@@ -695,7 +695,7 @@ class ClaudeLLMClient(LLMProvider):
                     model=self._model,
                     max_tokens=self._max_tokens,
                     system=_with_cache_control(system),
-                    messages=messages,
+                    messages=_with_message_cache(messages),
                     tools=_with_tool_cache(tools),
                 ) as stream:
                     for text in stream.text_stream:
@@ -760,6 +760,53 @@ def _with_tool_cache(tools: list[dict]) -> list[dict]:
     cached = [dict(t) for t in tools]
     cached[-1] = {**cached[-1], "cache_control": {"type": "ephemeral"}}
     return cached
+
+
+# Rolling prompt-cache breakpoint on the GROWING conversation. Today only the
+# system prompt and the last tool definition carry a cache breakpoint, so the
+# whole message history — the part that actually grows each turn — is re-billed
+# as fresh input on every call (O(N^2) over a run). Every mature agent loop
+# (Cline, Roo, OpenHands, SWE-agent) instead marks cache_control on the LAST
+# message each turn, so the entire prior prefix is served from cache at ~0.1x.
+# Anthropic path only (the OpenAI/free path caches automatically by prefix).
+#
+# Gated OFF by default: it changes the request shape on the paid Anthropic path,
+# which can't be live-verified here (gen is rate-limited). Enable with
+# BESSER_LLM_ROLLING_CACHE=1 after a single paid run confirms cache_read climbs
+# turn-over-turn. cache_control is already used on system+tools in production,
+# so the mechanism itself is proven; this only adds a third breakpoint on the
+# message tail (well under the 4-breakpoint cap: system + last tool + tail = 3).
+_ROLLING_MESSAGE_CACHE = os.environ.get("BESSER_LLM_ROLLING_CACHE", "0") == "1"
+
+
+def _with_message_cache(messages: list[dict]) -> list[dict]:
+    """Return *messages* with a rolling cache breakpoint on the last content
+    block (so the prior prefix is a cache read, not fresh input).
+
+    Pure — copies only the last message. No-op when disabled, when there is no
+    message, or when the last block is an SDK object we can't safely annotate
+    (assistant tool_use turns); in the loop the last message before a call is
+    the user tool_result (plain dicts), which is exactly what we want to cache.
+    """
+    if not _ROLLING_MESSAGE_CACHE or not messages:
+        return messages
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return messages
+    content = last.get("content")
+    if isinstance(content, str) and content:
+        new_last = {
+            **last,
+            "content": [
+                {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        new_block = {**content[-1], "cache_control": {"type": "ephemeral"}}
+        new_last = {**last, "content": [*content[:-1], new_block]}
+    else:
+        return messages
+    return [*messages[:-1], new_last]
 
 
 # ======================================================================

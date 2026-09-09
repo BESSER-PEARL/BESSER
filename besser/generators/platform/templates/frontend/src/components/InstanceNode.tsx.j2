@@ -21,6 +21,10 @@ export type InstanceNodeData = {
    *  Handle whose id is the port instance's UUID â€” connection-class edges bind
    *  to those handles. */
   ports?: BaseInstance[];
+  /** True for ~200ms right after one of this instance's attributes changed
+   *  (a sim tick or a Step) — drives a brief highlight so the user can see
+   *  which node just updated. */
+  flash?: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onPortClick?: (port: BaseInstance) => void;
@@ -113,6 +117,11 @@ const ShapeBackground: React.FC<{
   return null;
 };
 
+/** Shared ~200ms "something changed" highlight, layered on top of whatever
+ *  selection ring a variant already applies. `transition-shadow` lets the
+ *  ring fade out over the same window once ``flash`` flips back to false. */
+const FLASH_CLASSES = 'ring-4 ring-amber-400/90 ring-offset-2 ring-offset-background transition-shadow duration-200';
+
 const DASH_FOR_LINE: Record<string, string | undefined> = {
   solid: undefined,
   dashed: '8 4',
@@ -199,6 +208,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
   const {
     instance,
     classMetadata,
+    flash,
     onEdit,
     onDelete,
     ports,
@@ -259,7 +269,8 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
       <div
         className={cn(
           'group relative h-full w-full rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
-          selected && 'border-primary ring-2 ring-ring ring-offset-2 ring-offset-background'
+          selected && 'border-primary ring-2 ring-ring ring-offset-2 ring-offset-background',
+          flash && FLASH_CLASSES
         )}
         style={{ minWidth: size.width, minHeight: size.height, ...inlineStyle }}
       >
@@ -351,7 +362,8 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
       <div
         className={cn(
           'group relative flex items-center justify-center text-center',
-          selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
+          selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background',
+          flash && FLASH_CLASSES
         )}
         style={{ width: size.width, height: size.height }}
         onMouseEnter={() => setIsHovered(true)}
@@ -458,7 +470,8 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           className={cn(
             'relative z-10 flex h-[60px] w-[60px] items-center justify-center rounded-md text-primary transition-transform',
             isHovered && 'scale-110',
-            selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
+            selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background',
+            flash && FLASH_CLASSES
           )}
         >
           <div
@@ -473,7 +486,8 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           className={cn(
             'relative z-10 min-w-[160px] overflow-hidden rounded-lg border-2 border-primary bg-card text-left shadow-sm transition-shadow',
             isHovered && 'shadow-md',
-            selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
+            selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background',
+            flash && FLASH_CLASSES
           )}
           style={inlineStyle}
         >

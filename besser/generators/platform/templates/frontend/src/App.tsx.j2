@@ -168,6 +168,24 @@ function AppContent() {
     }
   };
 
+  // Fold a drag-end position (already persisted by InstanceCanvas) into local
+  // state so the next render's `backendPosition` reflects it instead of the
+  // stale pre-drag value — otherwise any later `instances` update (a Step, a
+  // tick, ...) snaps the node back to where it was before the drag.
+  const handleInstanceMove = (
+    className: string,
+    instanceId: string,
+    position: { x: number; y: number },
+  ) => {
+    setInstances((prev) =>
+      prev.map((inst) =>
+        inst.class_name === className && inst.id === instanceId
+          ? { ...inst, position }
+          : inst,
+      ),
+    );
+  };
+
   const handleInstanceDelete = async (className: string, instanceId: string) => {
     if (!confirm('Are you sure you want to delete this instance?')) return;
     try {
@@ -449,6 +467,7 @@ function AppContent() {
           onInstanceDelete={handleInstanceDelete}
           onLinkCreate={handleLinkCreate}
           onInstanceCreate={handleInstanceCreate}
+          onInstanceMove={handleInstanceMove}
         />
       </main>
     </div>

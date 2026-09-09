@@ -19,6 +19,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 import type {
   AssociationMetadata,
   BaseInstance,
@@ -374,6 +375,70 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 }) => {
   const [instanceName, setInstanceName] = useState(instance.instance_name);
   const [attributes, setAttributes] = useState<Record<string, any>>(instance.attributes);
+  // Attribute keys the user has touched (typed into) since this instance was
+  // selected — resync below skips these so an in-progress edit isn't
+  // clobbered by a simulation tick updating some other attribute.
+  const [dirtyFields, setDirtyFields] = useState<Set<string>>(new Set());
+  // Attribute keys that changed on the most recent resync — highlighted for
+  // ~200ms, mirroring the on-canvas node blink.
+  const [flashingFields, setFlashingFields] = useState<Set<string>>(new Set());
+  const prevInstanceAttributesRef = React.useRef(instance.attributes);
+  const prevInstanceIdRef = React.useRef(instance.id);
+  const fieldFlashTimeoutsRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Keep displayed values live while the panel stays open across simulation
+  // ticks/Steps. ``instance`` is the caller's live reference (InstanceCanvas
+  // re-derives it from the ``instances`` prop), so its ``attributes`` object
+  // only gets a new reference when something on it actually changed.
+  useEffect(() => {
+    if (instance.id !== prevInstanceIdRef.current) {
+      // Selection changed to a different instance — reset editing state.
+      prevInstanceIdRef.current = instance.id;
+      prevInstanceAttributesRef.current = instance.attributes;
+      setInstanceName(instance.instance_name);
+      setAttributes(instance.attributes);
+      setDirtyFields(new Set());
+      setFlashingFields(new Set());
+      return;
+    }
+    if (instance.attributes === prevInstanceAttributesRef.current) return;
+
+    const changedKeys = Object.keys(instance.attributes).filter(
+      (key) => instance.attributes[key] !== prevInstanceAttributesRef.current[key],
+    );
+    prevInstanceAttributesRef.current = instance.attributes;
+
+    setAttributes((prev) => {
+      const next = { ...prev };
+      for (const key of changedKeys) {
+        if (!dirtyFields.has(key)) next[key] = instance.attributes[key];
+      }
+      return next;
+    });
+
+    const fieldsToFlash = changedKeys.filter((key) => !dirtyFields.has(key));
+    if (fieldsToFlash.length === 0) return;
+    setFlashingFields((prev) => {
+      const next = new Set(prev);
+      for (const key of fieldsToFlash) next.add(key);
+      return next;
+    });
+    for (const key of fieldsToFlash) {
+      const existing = fieldFlashTimeoutsRef.current.get(key);
+      if (existing) clearTimeout(existing);
+      const timeoutId = setTimeout(() => {
+        setFlashingFields((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+        fieldFlashTimeoutsRef.current.delete(key);
+      }, 200);
+      fieldFlashTimeoutsRef.current.set(key, timeoutId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance]);
 
   const associations = useMemo(
     () =>
@@ -436,6 +501,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 
   const handleAttributeChange = (key: string, value: any) => {
     setAttributes((prev) => ({ ...prev, [key]: value }));
+    setDirtyFields((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
   };
 
   const validationError = useMemo<string | null>(() => {
@@ -556,8 +622,15 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 // Enum-typed attributes render as a <select> populated from
                 // the ENUMERATIONS registry. Empty string represents "unset".
                 const enumValues = getEnumerationValues(attrMeta.type);
+                const isFlashing = flashingFields.has(attrMeta.name);
                 return (
-                  <div key={attrMeta.name} className="space-y-2">
+                  <div
+                    key={attrMeta.name}
+                    className={cn(
+                      'space-y-2 rounded-md transition-shadow duration-200',
+                      isFlashing && '-m-1 p-1 ring-2 ring-amber-400/70',
+                    )}
+                  >
                     <Label htmlFor={fieldId}>
                       {attrMeta.name}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">

@@ -253,6 +253,13 @@ interface InstanceCanvasProps {
   onInstanceDelete: (className: string, instanceId: string) => void;
   onLinkCreate: (sourceId: string, targetId: string, label: string) => void;
   onInstanceCreate: (className: string, position: { x: number; y: number }) => void;
+  /** Called once a drag-end position PATCH resolves, so the caller can fold
+   *  the new position into `instances`. Without this, `instance.position`
+   *  stays at its pre-drag value and the next render (a Step, a tick, or
+   *  anything else that touches `instances`) resolves `backendPosition` back
+   *  to that stale value, snapping the node back to where it was before the
+   *  drag. */
+  onInstanceMove: (className: string, instanceId: string, position: { x: number; y: number }) => void;
 }
 
 /** Inner component — needs a ReactFlowProvider parent so useReactFlow works. */
@@ -263,11 +270,18 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   onInstanceDelete,
   onLinkCreate,
   onInstanceCreate,
+  onInstanceMove,
 }) => {
   const reactFlow = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedInstance, setSelectedInstance] = useState<BaseInstance | null>(null);
+  // Instance ids whose attributes changed on the most recent ``instances``
+  // update (a sim tick or a Step) — drives a ~200ms highlight on the node.
+  // Cleared automatically via the timeouts in flashTimeoutsRef.
+  const [flashingInstanceIds, setFlashingInstanceIds] = useState<Set<string>>(new Set());
+  const prevAttributesRef = React.useRef<Map<string, Record<string, any>>>(new Map());
+  const flashTimeoutsRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [pendingConnection, setPendingConnection] = useState<{
     sourceId: string;
     targetId: string;
@@ -458,6 +472,45 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   );
 
   React.useEffect(() => {
+    // === Change detection (for the ~200ms blink on updated nodes) ===========
+    // ``applyDeltas`` in App.tsx only replaces the ``attributes`` object of
+    // instances a delta actually touched, preserving reference equality for
+    // everything else. So a reference change here IS the "this instance just
+    // changed" signal — no need to diff values ourselves.
+    const changedInstanceIds: string[] = [];
+    for (const inst of instances) {
+      const prevAttrs = prevAttributesRef.current.get(inst.id);
+      if (prevAttrs !== undefined && prevAttrs !== inst.attributes) {
+        changedInstanceIds.push(inst.id);
+      }
+      prevAttributesRef.current.set(inst.id, inst.attributes);
+    }
+    const liveInstanceIds = new Set(instances.map((i) => i.id));
+    for (const id of Array.from(prevAttributesRef.current.keys())) {
+      if (!liveInstanceIds.has(id)) prevAttributesRef.current.delete(id);
+    }
+    if (changedInstanceIds.length > 0) {
+      setFlashingInstanceIds((prev) => {
+        const next = new Set(prev);
+        for (const id of changedInstanceIds) next.add(id);
+        return next;
+      });
+      for (const id of changedInstanceIds) {
+        const existingTimeout = flashTimeoutsRef.current.get(id);
+        if (existingTimeout) clearTimeout(existingTimeout);
+        const timeoutId = setTimeout(() => {
+          setFlashingInstanceIds((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+          flashTimeoutsRef.current.delete(id);
+        }, 200);
+        flashTimeoutsRef.current.set(id, timeoutId);
+      }
+    }
+
     // === Port & Connection partitioning =====================================
     // Port-class instances render as Handles on their owner equipment node
     // when they have an owner. Orphan ports (no owner equipment yet) keep
@@ -697,6 +750,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           instance,
           classMetadata: classMetadata!,
           ports: portsByOwner.get(instance.id) ?? [],
+          flash: flashingInstanceIds.has(instance.id),
           onEdit: () => setSelectedInstance(instance),
           onDelete: () => onInstanceDelete(instance.class_name, instance.id),
           onPortClick: (port: BaseInstance) => setSelectedInstance(port),
@@ -919,7 +973,19 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     }
 
     setEdges(flowEdges);
-  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges, rememberEdgeHandles, pickSpreadHandle]);
+  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges, rememberEdgeHandles, pickSpreadHandle, flashingInstanceIds]);
+
+  // Keep the open inspector panel's instance live: ``selectedInstance`` was
+  // otherwise a frozen snapshot from whichever ``instances`` array was
+  // current when the node's onEdit fired, so simulation-driven attribute
+  // changes never reached PropertyEditor while it was open.
+  useEffect(() => {
+    setSelectedInstance((prev) => {
+      if (!prev) return prev;
+      const live = instances.find((i) => i.id === prev.id);
+      return live ?? null;
+    });
+  }, [instances]);
 
   // Single-click on a node opens the right-side inspector for that
   // instance. Double-click on a connection edge (handled separately
@@ -970,11 +1036,17 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           x: node.position.x,
           y: node.position.y,
         })
+        .then(() => {
+          onInstanceMove(instanceData.class_name, instanceData.id, {
+            x: node.position.x,
+            y: node.position.y,
+          });
+        })
         .catch((error) => {
           console.error('Failed to persist node position:', error);
         });
     },
-    [],
+    [onInstanceMove],
   );
 
   const handleNodesChange = useCallback(

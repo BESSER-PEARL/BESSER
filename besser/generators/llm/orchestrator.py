@@ -36,9 +36,11 @@ from besser.generators.llm.compaction import (
     COMPACT_TOKEN_THRESHOLD,
     COMPACT_PRESERVE_RECENT,
     _estimate_tokens,
+    effective_threshold,
     maybe_compact,
     _summarize_messages,
 )
+from besser.generators.llm.history_eviction import evict_stale_file_bodies
 from besser.generators.llm.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
     Checkpoint,
@@ -324,6 +326,13 @@ _MAX_PARALLEL_WORKERS = 4
 # steadily converging — the no-progress-streak guard below handles the
 # stuck case.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
+
+# Checkpoint history eviction (see history_eviction.py). When enabled, stale
+# file bodies in older messages are stubbed at the compaction checkpoint to cut
+# the re-sent context. OFF by default: it rewrites history the provider
+# re-serializes and hasn't been live-verified (gen is rate-limited). Enable with
+# BESSER_LLM_HISTORY_EVICTION=1 after a verification run.
+_HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") == "1"
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles, so
 # offering them to the Phase-2 agent only lets it scatter redundant top-level
@@ -4365,7 +4374,27 @@ class LLMOrchestrator:
         return build_inventory(self.output_dir, self.domain_model, generator_name)
 
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:
-        """Delegate to compaction module."""
+        """Delegate to compaction module.
+
+        When history eviction is enabled (``BESSER_LLM_HISTORY_EVICTION=1``),
+        first run a lossless checkpoint eviction: stub stale write_file/read_file
+        bodies in older messages (the files are on disk, re-readable). This runs
+        ONLY at the compaction checkpoint (when history already exceeds the
+        threshold), never per turn — so it doesn't repeatedly bust the prompt
+        cache. It's lighter-touch than summarization and often drops the history
+        back under the threshold so no summarize is needed; if not, the summarize
+        below still runs on top. Gated OFF by default and unverified live — see
+        history_eviction.py.
+        """
+        model = getattr(self.client, "model", None)
+        if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(model):
+            messages, evicted = evict_stale_file_bodies(messages)
+            if evicted:
+                self._eviction_count = getattr(self, "_eviction_count", 0) + 1
+                logger.info(
+                    "Checkpoint eviction: stubbed %d stale file body/bodies "
+                    "(history now ~%d tokens)", evicted, _estimate_tokens(messages),
+                )
         result, did_compact = maybe_compact(
             messages=messages,
             tool_calls_log=self.tool_calls_log,
@@ -4382,7 +4411,7 @@ class LLMOrchestrator:
             # Clamps the threshold to the model's context window — the
             # fixed default overflows small local models (free qwen tier)
             # long before it trips.
-            model=getattr(self.client, "model", None),
+            model=model,
         )
         if did_compact:
             self._compaction_count += 1

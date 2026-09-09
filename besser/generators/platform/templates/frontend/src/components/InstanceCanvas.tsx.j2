@@ -299,19 +299,21 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
   // ``fitView`` (the boolean prop) runs exactly once, at xyflow's own mount --
   // which happens before ``instances`` has been fetched, so it fits an empty
-  // canvas. Fitting a zero/unmeasured node set can leave the viewport
-  // transform degenerate (in some browsers this paints as a fully blank
-  // canvas even though the nodes are in the DOM), and nothing ever re-fits
-  // it afterward -- not the real data arriving, not a "Refresh" click.
-  // Any unrelated re-render that nudges the browser into a fresh paint (e.g.
-  // toggling the "Show class names" button) can incidentally un-stick it,
-  // which is why that button "fixes" it. Fit explicitly instead, the first
-  // time real nodes actually exist.
+  // canvas and nothing ever re-fits it afterward. Fit explicitly instead, the
+  // first time real nodes actually exist.
   const hasFitOnceRef = React.useRef(false);
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
-  // Wraps the <ReactFlow> pane so we can force a browser repaint after the
-  // first real data lands -- see the comment at its one use below.
-  const flowWrapperRef = React.useRef<HTMLDivElement | null>(null);
+  // xyflow measures each node's real DOM size via ResizeObserver and stores
+  // it on the node object as ``measured`` (used for e.g. resolving a child's
+  // absolute position from its parent's size, and for edge routing). The
+  // synthesis effect below rebuilds every node as a brand-new plain object on
+  // every ``instances`` change -- including every WS tick while Run is going
+  // -- so without carrying this forward, xyflow would have to treat every
+  // single tick as if all nodes were freshly mounted and unmeasured again.
+  // Cache the last known ``measured`` per node id (updated as xyflow reports
+  // it via onNodesChange) and re-attach it below so a data refresh never
+  // discards it.
+  const nodeMeasuredRef = React.useRef<Map<string, { width?: number; height?: number }>>(new Map());
   // Persists user-driven NodeResizer changes across re-renders. Without it, the
   // useEffect below would re-apply defaultSize on every instances/availableClasses
   // change and undo any resize the user just performed.
@@ -845,6 +847,14 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       // xyflow respects an explicit zIndex on a node, so selection no longer
       // bumps the container in front.
       node.zIndex = isContainer ? 0 : 10;
+      // Re-attach the last known measured size (see nodeMeasuredRef's
+      // declaration) so this freshly-built object doesn't read as
+      // unmeasured to xyflow, which would otherwise force it to
+      // re-resolve this node's on-screen rect from scratch.
+      const knownMeasured = nodeMeasuredRef.current.get(instance.id);
+      if (knownMeasured) {
+        node.measured = knownMeasured;
+      }
       return node;
     });
 
@@ -1016,30 +1026,14 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
     setEdges(flowEdges);
 
-    if (flowNodes.length > 0) {
-      const shouldFit = !hasFitOnceRef.current;
+    if (flowNodes.length > 0 && !hasFitOnceRef.current) {
       hasFitOnceRef.current = true;
-      // Defer to the next frame so xyflow has measured the freshly-set nodes.
+      // Defer to the next frame so xyflow has measured the freshly-set nodes
+      // before we fit the viewport to them. Only done the first time real
+      // data lands -- refitting on every later Refresh/Step/Run update would
+      // fight the user's own pan/zoom.
       requestAnimationFrame(() => {
-        // Only fit/reset the viewport the first time real data lands --
-        // refitting on every later Refresh/Step/Run update would fight the
-        // user's own pan/zoom.
-        if (shouldFit) reactFlow.fitView({ padding: 0.2 });
-        // Some browsers leave the pane's transform-positioned nodes unpainted
-        // (present and correctly positioned in the DOM, just not drawn) after
-        // a data refresh, until some unrelated style mutation forces a
-        // repaint -- this is why toggling "Show class names" used to "fix"
-        // it. Force that repaint ourselves on every update instead of
-        // leaving it to chance: briefly removing the pane from the render
-        // tree and reinserting it forces every browser to repaint it fresh.
-        // Synchronous (no await between the two style writes), so the
-        // browser never actually paints the empty state -- no flicker.
-        const wrapper = flowWrapperRef.current;
-        if (wrapper) {
-          wrapper.style.display = 'none';
-          void wrapper.offsetHeight;
-          wrapper.style.display = '';
-        }
+        reactFlow.fitView({ padding: 0.2 });
       });
     }
   }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges, rememberEdgeHandles, pickSpreadHandle, flashingInstanceIds, reactFlow]);
@@ -1124,8 +1118,12 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         if (change.type === 'position' && 'position' in change && change.position) {
           nodePositionsRef.current.set(change.id, change.position);
         }
-        // NodeResizer dispatches dimensions changes — capture them so the next
-        // re-render of this useEffect doesn't reset the size back to defaultSize.
+        // Dimensions changes fire both from NodeResizer (user resize) and from
+        // xyflow's own ResizeObserver (initial/ongoing measurement of every
+        // node). Capture both: the resizer ones so the next re-render of this
+        // useEffect doesn't reset the size back to defaultSize, and all of
+        // them into nodeMeasuredRef so a later rebuild can re-attach the real
+        // measured size instead of forcing xyflow to re-measure from scratch.
         if (
           change.type === 'dimensions' &&
           'dimensions' in change &&
@@ -1133,6 +1131,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           typeof change.dimensions.width === 'number' &&
           typeof change.dimensions.height === 'number'
         ) {
+          nodeMeasuredRef.current.set(change.id, {
+            width: change.dimensions.width,
+            height: change.dimensions.height,
+          });
           nodeSizesRef.current.set(change.id, {
             width: change.dimensions.width,
             height: change.dimensions.height,
@@ -1958,7 +1960,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       style={wrapperStyle}
     >
       <SvgMarkerDefs />
-      <div ref={flowWrapperRef} className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
+      <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
           edges={edges}

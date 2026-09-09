@@ -294,6 +294,57 @@ class TestExportImportRoundTrip:
         finally:
             _cleanup_imports(backend_dir)
 
+    def test_handles_survive_roundtrip_and_upgrade_in_place(self, tmp_path, region_sensor_model):
+        """``source_handle``/``target_handle`` are optional link metadata
+        (which side of each instance the edge was drawn from/to). They must
+        survive export -> clear -> import, and a second ``create_link`` call
+        for the same identity triple that carries handles must upgrade the
+        existing record in place -- this is what makes a page reload keep
+        the connection point instead of resetting to xyflow's default."""
+        out = tmp_path / "platform_handles"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        backend_dir = out / "backend"
+        try:
+            im_mod, exp_mod = _import_platform_services(backend_dir)
+            im = im_mod.instance_manager
+            exp = exp_mod.export_service
+
+            r = im.create_instance("Region", "alpha", {"label": "North"})
+            s = im.create_instance("Sensor", "thermo", {"kind": "temperature"})
+
+            # First call: no handles.
+            im.create_link("Region", r["id"], "Sensor", s["id"], "has")
+            stored = im.get_instance("Region", r["id"])
+            assert stored["links"] == [
+                {"association_name": "has", "target_class": "Sensor", "target_id": s["id"]}
+            ]
+
+            # Second call, same identity triple, now carrying handles -- must
+            # upgrade in place, not append a duplicate.
+            im.create_link(
+                "Region", r["id"], "Sensor", s["id"], "has",
+                source_handle="right", target_handle="left",
+            )
+            stored = im.get_instance("Region", r["id"])
+            assert len(stored["links"]) == 1
+            assert stored["links"][0]["source_handle"] == "right"
+            assert stored["links"][0]["target_handle"] == "left"
+
+            payload = exp.export_to_json()
+            im.clear_all()
+            result = exp.import_from_json(payload)
+            assert result == {"instances": 2, "links": 1}
+
+            reimported = im.get_instance("Region", r["id"])
+            assert len(reimported["links"]) == 1
+            assert reimported["links"][0]["source_handle"] == "right"
+            assert reimported["links"][0]["target_handle"] == "left"
+            assert reimported["links"][0]["association_name"] == "has"
+            assert reimported["links"][0]["target_id"] == s["id"]
+
+        finally:
+            _cleanup_imports(backend_dir)
+
 
 class TestImportEndpointWired:
     """Confirm the router exposes POST /import/json — the wire contract
@@ -408,3 +459,99 @@ class TestQuickCreateOnDrop:
         canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
         assert "onCreateAssociationTarget" in canvas_src
         assert "handleCreateFromModal" in canvas_src
+
+
+class TestChangeHighlighting:
+    """When a simulation tick or Step changes an instance's attributes, the
+    canvas node must blink for ~200ms and, if the inspector panel is open on
+    that instance, the changed field must highlight and the displayed value
+    must actually update (it previously never did)."""
+
+    def test_canvas_tracks_and_flashes_changed_instances(self, tmp_path, region_sensor_model):
+        out = tmp_path / "platform_flash_canvas"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "flashingInstanceIds" in canvas_src
+        assert "prevAttributesRef" in canvas_src
+        assert "}, 200)" in canvas_src
+        # Passed down into the node's data so InstanceNode can render it.
+        assert "flash: flashingInstanceIds.has(instance.id)" in canvas_src
+
+    def test_canvas_resyncs_selected_instance_from_live_instances(self, tmp_path, region_sensor_model):
+        """Regression: the inspector panel's instance must be re-derived from
+        the live ``instances`` prop, not frozen at the moment it was opened —
+        otherwise attribute updates during a Run/Step never reach it."""
+        out = tmp_path / "platform_flash_selected_sync"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "instances.find((i) => i.id === prev.id)" in canvas_src
+
+    def test_canvas_syncs_dragged_position_back_into_instances(self, tmp_path, region_sensor_model):
+        """Regression: onNodeDragStop only PATCHed the backend and never told
+        the caller about it, so `instance.position` in App.tsx stayed stale.
+        The next `instances`-driven re-render (a Step, a tick, ...) then
+        resolved `backendPosition` back to the pre-drag value, snapping the
+        node back — reported as nodes "reorganizing" on Step and, when
+        several snapped to the same spot, appearing to vanish."""
+        out = tmp_path / "platform_position_sync"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "onInstanceMove:" in canvas_src
+        assert "onInstanceMove(instanceData.class_name, instanceData.id" in canvas_src
+        app_src = (out / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        assert "const handleInstanceMove = " in app_src
+        assert "onInstanceMove={handleInstanceMove}" in app_src
+
+    def test_canvas_reads_persisted_handles_on_edges(self, tmp_path, region_sensor_model):
+        """Regression: edgeHandlesRef is an in-memory cache only, so a page
+        reload always lost the chosen handle side and every edge fell back
+        to xyflow's default (visually always 'top'). The link's own
+        source_handle/target_handle field must now win in the synthesis
+        effect, and every createLink call site that already remembers a
+        handle locally must also send it to the backend."""
+        out = tmp_path / "platform_persisted_handles"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        # Raw-link edges prefer the persisted value over the session cache.
+        assert "sourceHandle: link.source_handle ?? savedHandles?.sourceHandle" in canvas_src
+        assert "targetHandle: link.target_handle ?? savedHandles?.targetHandle" in canvas_src
+        # Portless connection edges resolve handles from the role-tagged
+        # links' own target_handle before falling back to the session cache.
+        assert "roleSourceHandle = bySourceRole.target_handle" in canvas_src
+        assert "roleTargetHandle = byTargetRole.target_handle" in canvas_src
+        assert "sourceHandle = info.sourceHandle ?? saved?.sourceHandle" in canvas_src
+        # onLinkCreate call sites forward the handles they already compute.
+        assert "onLinkCreate(connection.source, connection.target, assocName, assocSrcHandle, assocTgtHandle)" in canvas_src
+        # The portless stream-creation branch persists handles on the role links.
+        assert "role: 'source' as const, target_handle: resolvedSourceHandle" in canvas_src
+        assert "role: 'target' as const, target_handle: resolvedTargetHandle" in canvas_src
+
+        app_src = (out / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        assert "source_handle: sourceHandle" in app_src
+        assert "target_handle: targetHandle" in app_src
+
+        schemas_src = (out / "backend" / "schemas" / "instance_schemas.py").read_text(encoding="utf-8")
+        assert "source_handle: Optional[str]" in schemas_src
+        assert "target_handle: Optional[str]" in schemas_src
+
+    def test_instance_node_consumes_flash_flag(self, tmp_path, region_sensor_model):
+        out = tmp_path / "platform_flash_node"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        node_src = (out / "frontend" / "src" / "components" / "InstanceNode.tsx").read_text(encoding="utf-8")
+        assert "flash?: boolean" in node_src
+        assert "FLASH_CLASSES" in node_src
+        # All three render variants (container, SVG shape, default box/icon)
+        # must apply the highlight, not just one.
+        assert node_src.count("flash && FLASH_CLASSES") >= 4
+
+    def test_property_editor_resyncs_live_values_and_flashes_changed_fields(self, tmp_path, region_sensor_model):
+        out = tmp_path / "platform_flash_property_editor"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        editor_src = (out / "frontend" / "src" / "components" / "PropertyEditor.tsx").read_text(encoding="utf-8")
+        # Resync effect keyed off the live `instance` prop.
+        assert "prevInstanceAttributesRef" in editor_src
+        assert "flashingFields" in editor_src
+        # Dirty-field protection so an in-progress edit isn't clobbered by an
+        # unrelated attribute update arriving mid-edit.
+        assert "dirtyFields" in editor_src
+        assert "setDirtyFields" in editor_src

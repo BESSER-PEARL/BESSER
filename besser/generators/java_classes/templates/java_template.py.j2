@@ -1,31 +1,3 @@
-{#
-  java_template.py.j2
-  --------------------
-  Jinja2 template that generates a single Java class file from a BESSER B-UML class object.
-
-  Context variables (passed by JavaGenerator):
-    class_obj               : Class         - The B-UML class to generate.
-    processed_associations  : list[str]     - Names of associations already generated in a previous class to avoid duplicates.
-    package_name            : str | None    - Java package declaration; None or empty means no package statement.
-
-  What is generated per class:
-    - Package declaration (if package_name is set)
-    - Import statements (java.time.*, java.util.UUID, List, ArrayList) based on used types
-    - Class declaration with optional extends for single inheritance
-    - Private fields for all attributes and navigable association ends
-    - Default constructor (initialises List fields to new ArrayList<>())
-    - Overloaded constructor accepting List association fields as parameters (only when List fields exist)
-    - Getters and setters for all attribute fields
-    - Getters and add-methods for association fields (addTo<Name> for self-associations, add<Type> for others)
-    - Method stubs for all methods defined on the class (skips methods already generated as association adders)
-
-  Enhancements vs original BESSER generator:
-    - Respects is_navigable on association ends — only generates fields for navigable ends
-    - Supports bidirectional associations: generates back-references (e.g., many-to-one relationships)
-    - Each class generates fields for all its association ends (doesn't skip already-processed associations)
-    - Generates method stubs from class_obj.methods
-    - Fixes leading comma bug in overloaded constructor when attribs is empty
-#}
 // This is a template example to list the name of the classes
 {% if package_name %}
 package {{ package_name }};

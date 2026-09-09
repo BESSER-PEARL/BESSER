@@ -17,10 +17,11 @@ from typing import Dict, List, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators.action_language.RESTGenerator import bal_to_rest
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import get_foreign_keys, normalize_method_code
+from besser.utilities.utils import sort_by_timestamp
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -51,6 +52,56 @@ def clean_method_name(name):
     if '(' in str(name):
         return str(name).split('(')[0].strip()
     return str(name).strip()
+
+
+def get_pk_names(model: DomainModel) -> Dict[str, str]:
+    """Map every class name to the name of its primary-key attribute.
+
+    Mirrors the SQLAlchemy generator's selection: the ``is_id`` attribute,
+    else one literally named ``id``, else the surrogate ``id`` column. Used
+    by the ``pk`` Jinja filter so routers address each resource by its real
+    primary key (e.g. ``Seat.code``), not a hardcoded ``.id``.
+    """
+    pk_names: Dict[str, str] = {}
+    for cls in model.get_classes():
+        attributes = sort_by_timestamp(cls.attributes)
+        id_attr = next((attr.name for attr in attributes if attr.is_id), None)
+        if not id_attr:
+            id_attr = next((attr.name for attr in attributes if attr.name == "id"), None)
+        pk_names[cls.name] = id_attr or "id"
+    return pk_names
+
+
+def get_association_classes(model: DomainModel) -> Dict[str, dict]:
+    """Describe each association class of the model.
+
+    An association carrying an association class is materialized by the
+    SQLAlchemy generator as a mapped class (one ``<end>_id`` FK per end plus
+    the association-class attributes) instead of a plain secondary table, so
+    the REST layer reads and writes the links through that class. Returns
+    ``{assoc_class_name: {association, ends, attributes}}`` — the same shape
+    the monolithic ``RESTAPIGenerator`` consumes, so both generators share
+    one association-class contract.
+    """
+    assoc_classes: Dict[str, dict] = {}
+    for cls in model.get_classes():
+        if not isinstance(cls, AssociationClass):
+            continue
+        assoc_classes[cls.name] = {
+            "association": cls.association.name,
+            "ends": [
+                {"name": end.name, "type_name": end.type.name}
+                for end in sorted(cls.association.ends, key=lambda end: end.name)
+            ],
+            "attributes": [
+                {
+                    "name": attribute.name,
+                    "is_enum": attribute.type.__class__.__name__ == "Enumeration",
+                }
+                for attribute in sort_by_timestamp(cls.attributes)
+            ],
+        }
+    return assoc_classes
 
 
 def cross_router_calls(method_code: str, current_class_name: str, class_names: List[str]) -> List[Tuple[str, str]]:
@@ -104,7 +155,8 @@ def _make_env() -> Environment:
         extensions=['jinja2.ext.do'],
     )
     env.filters['clean_method_name'] = clean_method_name
-    env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
+    env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
+                       normalize_code=normalize_method_code)
     return env
 
 
@@ -140,10 +192,23 @@ def generate_modular_api(
             type_name = (getattr(id_attr.type, "name", "") or "").lower()
             pk_types[cls.name] = _pk_map.get(type_name, "int")
 
+    # Association-class support: which classes ARE association classes, and
+    # which plain associations are materialized by one. Shared shape with the
+    # monolithic RESTAPIGenerator so both produce the identical link contract.
+    assoc_classes = get_association_classes(model)
+    assoc_by_association = {
+        info["association"]: assoc_class_name
+        for assoc_class_name, info in assoc_classes.items()
+    }
+    pk_names = get_pk_names(model)
+
     env = _make_env()
     env.globals['cross_router_calls'] = (
         lambda method_code, current_class_name: cross_router_calls(method_code, current_class_name, class_names)
     )
+    # `pk` returns the primary-key attribute name of a class, so routers query
+    # and join by the real PK (e.g. Seat.code) instead of a hardcoded `.id`.
+    env.filters['pk'] = lambda class_name: pk_names.get(str(class_name), "id")
 
     routers_dir = os.path.join(output_dir, "routers")
     os.makedirs(routers_dir, exist_ok=True)
@@ -173,6 +238,8 @@ def generate_modular_api(
                 "fkeys": fkeys,
                 "model": model,
                 "pk_types": pk_types,
+                "assoc_classes": assoc_classes,
+                "assoc_by_association": assoc_by_association,
             }
         )
         router_path = os.path.join(routers_dir, f"{cls.name.lower()}.py")

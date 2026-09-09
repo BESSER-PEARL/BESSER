@@ -692,8 +692,17 @@ export const TableComponent: React.FC<Props> = ({
     return endpoint;
   };
 
-  // Helper to get row id
+  // The path segment(s) that address a row in the REST API. The binding names
+  // the key fields: the declared primary key (e.g. Room.number) or, for an
+  // association class, both foreign keys in the backend's route order.
   const getRowId = (row: any) => {
+    const keyFields: string[] | undefined = dataBinding?.row_key_fields ?? dataBinding?.rowKeyFields;
+    if (row && Array.isArray(keyFields) && keyFields.length > 0) {
+      const parts = keyFields.map((field) => row[field]);
+      if (parts.every((part) => part !== undefined && part !== null)) {
+        return parts.join("/");
+      }
+    }
     return row?.id ?? row?.ID ?? row?.Id ?? Object.values(row)[0];
   };
 

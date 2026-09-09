@@ -1,0 +1,46 @@
+import os
+import logging
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sql_alchemy import Base
+
+logger = logging.getLogger(__name__)
+
+############################################
+#
+#   Initialize the database
+#
+############################################
+
+def init_db():
+    SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/{{name}}.db")
+    # Ensure local SQLite directory exists (safe no-op for other DBs)
+    os.makedirs("data", exist_ok=True)
+    # check_same_thread is a SQLite-only argument; do not pass it to other drivers
+    connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        connect_args=connect_args,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        echo=False
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    return SessionLocal
+
+# Initialize database session
+SessionLocal = init_db()
+
+# Dependency to get DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        logger.error("Database session rollback due to exception")
+        raise
+    finally:
+        db.close()

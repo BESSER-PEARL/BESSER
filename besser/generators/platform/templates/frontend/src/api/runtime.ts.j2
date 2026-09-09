@@ -3,7 +3,7 @@
  * Wraps /api/control/* endpoints and the WebSocket delta channel.
  */
 {% raw %}
-import apiClient from './client';
+import apiClient, { API_BASE_URL } from './client';
 
 // ------------------------------------------------------------------ types
 
@@ -98,11 +98,15 @@ export async function getHistory(
  *   }, []);
  */
 export function subscribeWs(onMessage: (msg: WsMessage) => void): () => void {
-  // Derive WebSocket URL from the current page's origin.
-  const wsBase = window.location.origin
+  // Derive the WebSocket URL from the same backend base URL the REST client
+  // uses (rather than the page's own origin) so it keeps working when the
+  // frontend is served from somewhere that isn't reverse-proxying to the
+  // backend on the same origin -- e.g. the generated docker-compose stack,
+  // where nginx serves the frontend on :3000 with no proxy for :8000 at all.
+  const wsBase = API_BASE_URL
     .replace(/^https/, 'wss')
     .replace(/^http/, 'ws');
-  const url = `${wsBase}/api/control/ws`;
+  const url = `${wsBase}/control/ws`;
 
   let ws: WebSocket | null = null;
   let stopped = false;

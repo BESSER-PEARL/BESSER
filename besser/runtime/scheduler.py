@@ -205,8 +205,10 @@ class Scheduler:
         # 6. Advance tick counter
         self.tick_count += 1
 
-        # 7. Notify WebSocket listeners
-        if self._listeners and deltas:
+        # 7. Notify WebSocket listeners. Always fire, even with no deltas, so
+        # the tick counter in the UI advances every dt seconds while running
+        # instead of only updating when an attribute happens to change.
+        if self._listeners:
             for listener in list(self._listeners):
                 try:
                     await listener(self.tick_count - 1, deltas)

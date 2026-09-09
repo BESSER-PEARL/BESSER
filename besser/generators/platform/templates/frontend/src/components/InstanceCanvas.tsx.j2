@@ -297,7 +297,21 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     targetHandle?: string;
   } | null>(null);
 
+  // ``fitView`` (the boolean prop) runs exactly once, at xyflow's own mount --
+  // which happens before ``instances`` has been fetched, so it fits an empty
+  // canvas. Fitting a zero/unmeasured node set can leave the viewport
+  // transform degenerate (in some browsers this paints as a fully blank
+  // canvas even though the nodes are in the DOM), and nothing ever re-fits
+  // it afterward -- not the real data arriving, not a "Refresh" click.
+  // Any unrelated re-render that nudges the browser into a fresh paint (e.g.
+  // toggling the "Show class names" button) can incidentally un-stick it,
+  // which is why that button "fixes" it. Fit explicitly instead, the first
+  // time real nodes actually exist.
+  const hasFitOnceRef = React.useRef(false);
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Wraps the <ReactFlow> pane so we can force a browser repaint after the
+  // first real data lands -- see the comment at its one use below.
+  const flowWrapperRef = React.useRef<HTMLDivElement | null>(null);
   // Persists user-driven NodeResizer changes across re-renders. Without it, the
   // useEffect below would re-apply defaultSize on every instances/availableClasses
   // change and undo any resize the user just performed.
@@ -1001,7 +1015,34 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     }
 
     setEdges(flowEdges);
-  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges, rememberEdgeHandles, pickSpreadHandle, flashingInstanceIds]);
+
+    if (flowNodes.length > 0) {
+      const shouldFit = !hasFitOnceRef.current;
+      hasFitOnceRef.current = true;
+      // Defer to the next frame so xyflow has measured the freshly-set nodes.
+      requestAnimationFrame(() => {
+        // Only fit/reset the viewport the first time real data lands --
+        // refitting on every later Refresh/Step/Run update would fight the
+        // user's own pan/zoom.
+        if (shouldFit) reactFlow.fitView({ padding: 0.2 });
+        // Some browsers leave the pane's transform-positioned nodes unpainted
+        // (present and correctly positioned in the DOM, just not drawn) after
+        // a data refresh, until some unrelated style mutation forces a
+        // repaint -- this is why toggling "Show class names" used to "fix"
+        // it. Force that repaint ourselves on every update instead of
+        // leaving it to chance: briefly removing the pane from the render
+        // tree and reinserting it forces every browser to repaint it fresh.
+        // Synchronous (no await between the two style writes), so the
+        // browser never actually paints the empty state -- no flicker.
+        const wrapper = flowWrapperRef.current;
+        if (wrapper) {
+          wrapper.style.display = 'none';
+          void wrapper.offsetHeight;
+          wrapper.style.display = '';
+        }
+      });
+    }
+  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges, rememberEdgeHandles, pickSpreadHandle, flashingInstanceIds, reactFlow]);
 
   // Keep the open inspector panel's instance live: ``selectedInstance`` was
   // otherwise a frozen snapshot from whichever ``instances`` array was
@@ -1917,7 +1958,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       style={wrapperStyle}
     >
       <SvgMarkerDefs />
-      <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
+      <div ref={flowWrapperRef} className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -1938,7 +1979,6 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           deleteKeyCode={['Delete', 'Backspace']}
           edgesFocusable
           edgesReconnectable={false}
-          fitView
           snapToGrid={snapEnabled}
           snapGrid={[gridSize, gridSize]}
           proOptions={{ hideAttribution: true }}

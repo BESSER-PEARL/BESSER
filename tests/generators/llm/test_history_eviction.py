@@ -11,9 +11,18 @@ object-shaped blocks.
 import copy
 import json
 
+import pytest
+
+from besser.generators.llm import orchestrator as orch_mod
+from besser.generators.llm.compaction import COMPACT_TOKEN_THRESHOLD
 from besser.generators.llm.history_eviction import (
     evict_stale_file_bodies,
     DEFAULT_PRESERVE_RECENT,
+)
+from besser.generators.llm.orchestrator import LLMOrchestrator
+from besser.generators.llm.llm_client import UsageTracker
+from besser.BUML.metamodel.structural import (
+    Class, DomainModel, PrimitiveDataType, Property,
 )
 
 
@@ -165,6 +174,51 @@ def test_purity_input_is_not_mutated():
     # Original object + dict blocks are unchanged.
     assert obj_block.input["content"] == before[0]["content"]
     assert dict_result["content"] == before[1]["content"]
+
+
+class _MockClient:
+    model = "mock"
+
+    def __init__(self):
+        self.usage = UsageTracker("mock")
+
+    def chat(self, **kw):
+        return {"stop_reason": "end_turn", "content": []}
+
+
+def _simple_model():
+    cls = Class(name="Item")
+    cls.attributes = {Property(name="name", type=PrimitiveDataType("str"))}
+    return DomainModel(name="Test", types={cls})
+
+
+def test_checkpoint_eviction_fires_only_when_enabled(tmp_path, monkeypatch):
+    """_maybe_compact runs eviction at the checkpoint when the flag is ON."""
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(),
+        domain_model=_simple_model(),
+        output_dir=str(tmp_path),
+    )
+    body = _big(4000)  # a large write_file body
+    # A history that exceeds the compaction threshold, with the big write early
+    # (outside the preserve window) so it's eligible for eviction.
+    messages = [
+        {"role": "assistant", "content": [_write_use("t1", "app/main.py", body)]},
+        {"role": "user", "content": [_result("t1", '{"status":"written"}')]},
+    ]
+    filler = "y" * (COMPACT_TOKEN_THRESHOLD * 4)
+    messages.append({"role": "user", "content": [_result("t2", filler)]})
+    messages += _padding(DEFAULT_PRESERVE_RECENT)
+
+    # Flag OFF (default): eviction does not run.
+    monkeypatch.setattr(orch_mod, "_HISTORY_EVICTION_ENABLED", False)
+    out_off = orch._maybe_compact([dict(m) for m in messages])
+    assert getattr(orch, "_eviction_count", 0) == 0
+
+    # Flag ON: eviction stubs the stale write body at the checkpoint.
+    monkeypatch.setattr(orch_mod, "_HISTORY_EVICTION_ENABLED", True)
+    orch._maybe_compact([dict(m) for m in messages])
+    assert getattr(orch, "_eviction_count", 0) == 1
 
 
 def test_pairing_count_is_preserved():

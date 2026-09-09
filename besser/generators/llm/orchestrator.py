@@ -315,12 +315,15 @@ _MAX_PARALLEL_WORKERS = 4
 
 # Phase 3 toolchain-fix outer cap. The LLM gets up to this many
 # (collect → fix-loop → re-collect) iterations before we accept the
-# remaining toolchain errors and move on. Each iteration is the
-# existing 5-turn LLM fix loop, so the worst-case extra cost is
-# 3 × 5 = 15 LLM turns. Kept low to bound the bill — if tsc / cargo
-# / kotlinc errors don't converge in 3 rounds, more rounds aren't
-# going to help.
-_MAX_TOOLCHAIN_FIX_ITERATIONS = 3
+# remaining toolchain errors and move on. Each iteration is the existing
+# 5-turn LLM fix loop, and the actual spend is bounded by ``max_cost_usd``
+# (the inner loop stops when the cost cap is hit), so this cap just keeps
+# a truly stuck run from looping forever. It is deliberately NOT tiny: as
+# long as each round keeps reducing blockers (or we still have cost
+# budget), the loop should keep going rather than abandon a run that is
+# steadily converging — the no-progress-streak guard below handles the
+# stuck case.
+_MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles, so
 # offering them to the Phase-2 agent only lets it scatter redundant top-level
@@ -2959,14 +2962,17 @@ class LLMOrchestrator:
             return
 
         # Outer cap: up to _MAX_TOOLCHAIN_FIX_ITERATIONS rounds of
-        # (LLM-fix → re-validate). Each round is the existing 5-turn
-        # fix loop, so worst-case extra cost is bounded at 3 × 5 = 15
-        # LLM turns. Toolchain blockers (tsc / cargo / kotlinc) are
-        # the typical reason for multiple rounds: the LLM fixes one
-        # type error and uncovers the next downstream of it.
+        # (LLM-fix → re-validate); the actual spend is bounded by the cost
+        # cap inside each round. Toolchain blockers (tsc / cargo / kotlinc)
+        # are the typical reason for multiple rounds: the LLM fixes one type
+        # error and uncovers the next downstream of it. We keep iterating
+        # while blockers keep dropping (or budget remains) and only abandon
+        # after two consecutive rounds that fail to beat the best count so
+        # far — a single stalled round is not enough to give up.
         current_blockers = blockers_before
         prev_blocker_count = len(blockers_before)
         last_issues = list(issues)
+        no_progress_streak = 0
 
         for attempt in range(_MAX_TOOLCHAIN_FIX_ITERATIONS):
             is_first_attempt = attempt == 0
@@ -3018,17 +3024,38 @@ class LLMOrchestrator:
                 return
 
             if len(blockers_after) >= prev_blocker_count:
-                # No progress this round (same or more blockers than
-                # we started this attempt with). Spending another
-                # 5 turns isn't going to help — exit early instead of
-                # exhausting the iteration budget.
-                logger.warning(
+                # No progress this round (didn't beat the best blocker count
+                # so far). A single stalled round is often just the LLM
+                # needing another pass to uncover the next error, so don't
+                # bail immediately: retry while we still have cost budget,
+                # and only give up after two consecutive no-progress rounds
+                # (or when the cost cap leaves nothing to retry with). The
+                # outer attempt cap still bounds the worst case.
+                no_progress_streak += 1
+                budget_left = (
+                    self.max_cost_usd is None
+                    or self.client.usage.estimated_cost < self.max_cost_usd
+                )
+                if no_progress_streak >= 2 or not budget_left:
+                    logger.warning(
+                        "Phase 3: Attempt %d made no progress (%d -> %d "
+                        "blockers); ending fix loop (%d consecutive "
+                        "no-progress round(s), budget_left=%s).",
+                        attempt + 1, prev_blocker_count,
+                        len(blockers_after), no_progress_streak, budget_left,
+                    )
+                    break
+                logger.info(
                     "Phase 3: Attempt %d made no progress (%d -> %d "
-                    "blockers); ending fix loop early.",
+                    "blockers); retrying once more (budget remains).",
                     attempt + 1, prev_blocker_count, len(blockers_after),
                 )
-                break
+                # Re-attempt against the current state on the next round.
+                current_blockers = blockers_after
+                continue
 
+            # Progress this round: reset the stall counter and keep going.
+            no_progress_streak = 0
             prev_blocker_count = len(blockers_after)
             current_blockers = blockers_after
 

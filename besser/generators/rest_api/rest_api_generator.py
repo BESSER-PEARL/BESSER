@@ -1,15 +1,12 @@
 import os
-from typing import Dict
 
 from jinja2 import Environment, FileSystemLoader
-from besser.generators.pk_types import pk_python_types
-from besser.BUML.metamodel.structural import AssociationClass, DomainModel
+from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators import GeneratorInterface
-from besser.generators.structural_utils import get_foreign_keys, normalize_method_code
+from besser.generators.structural_utils import normalize_method_code
 from besser.generators.action_language.RESTGenerator import bal_to_rest
 from besser.generators.pydantic_classes import PydanticGenerator
-from besser.utilities.utils import sort_by_timestamp
 
 class RESTAPIGenerator(GeneratorInterface):
     """
@@ -45,60 +42,6 @@ class RESTAPIGenerator(GeneratorInterface):
         self.backend = backend
         self.nested_creations = nested_creations
         self.port = port
-
-    def get_pk_names(self) -> Dict[str, str]:
-        """
-        Maps every class name of the model to the name of its primary key attribute.
-
-        The selection mirrors the one of the SQLAlchemy generator: the attribute flagged
-        with ``is_id``, otherwise an attribute literally named ``id``, otherwise the
-        surrogate ``id`` column that SQLAlchemy adds to the table.
-
-        Returns:
-            dict: A dictionary with class names as keys and primary key attribute names as values.
-        """
-        pk_names: Dict[str, str] = {}
-        for cls in self.model.get_classes():
-            attributes = sort_by_timestamp(cls.attributes)
-            id_attr = next((attr.name for attr in attributes if attr.is_id), None)
-            if not id_attr:
-                id_attr = next((attr.name for attr in attributes if attr.name == "id"), None)
-            pk_names[cls.name] = id_attr or "id"
-        return pk_names
-
-    def get_association_classes(self) -> Dict[str, dict]:
-        """
-        Describes the association classes of the model.
-
-        An association carrying an association class is materialized by the SQLAlchemy
-        generator as a mapped class (with one ``<end name>_id`` foreign key column per
-        association end plus the attributes of the association class) instead of a plain
-        secondary table, so the REST API has to go through that class to read and write
-        the links.
-
-        Returns:
-            dict: A dictionary with association class names as keys and a description
-            (``association``, ``ends`` and ``attributes``) as values.
-        """
-        assoc_classes: Dict[str, dict] = {}
-        for cls in self.model.get_classes():
-            if not isinstance(cls, AssociationClass):
-                continue
-            assoc_classes[cls.name] = {
-                "association": cls.association.name,
-                "ends": [
-                    {"name": end.name, "type_name": end.type.name}
-                    for end in sorted(cls.association.ends, key=lambda end: end.name)
-                ],
-                "attributes": [
-                    {
-                        "name": attribute.name,
-                        "is_enum": attribute.type.__class__.__name__ == "Enumeration",
-                    }
-                    for attribute in sort_by_timestamp(cls.attributes)
-                ],
-            }
-        return assoc_classes
 
     def generate_requirements(self):
         """
@@ -138,43 +81,22 @@ class RESTAPIGenerator(GeneratorInterface):
             return str(name).strip()
 
         if self.backend:
-            pk_names = self.get_pk_names()
-            assoc_classes = self.get_association_classes()
-            assoc_by_association = {
-                info["association"]: assoc_class_name
-                for assoc_class_name, info in assoc_classes.items()
-            }
-
-            def pk_of(class_name: str) -> str:
-                """Jinja filter returning the primary key attribute name of a class."""
-                return pk_names.get(str(class_name), "id")
-
-            file_path = self.build_generation_path(file_name="main_api.py")
-            templates_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "templates")
-            env = Environment(loader=FileSystemLoader(templates_path),
-                          trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
-            env.filters['clean_method_name'] = clean_method_name
-            env.filters['pk'] = pk_of
-            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
-                               normalize_code=normalize_method_code)
-            template = env.get_template('backend_fast_api_template.py.j2')
-            with open(file_path, mode="w", encoding="utf-8") as f:
-                generated_code = template.render(
-                    pk_types=pk_python_types(self.model),
-                    name=self.model.name,
-                    model=self.model,
-                    classes=self.model.classes_sorted_by_inheritance(),
-                    http_methods=self.http_methods,
-                    nested_creations=self.nested_creations,
-                    port=self.port,
-                    fkeys=get_foreign_keys(self.model),
-                    pk_names=pk_names,
-                    assoc_classes=assoc_classes,
-                    assoc_by_association=assoc_by_association
-                )
-                f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            # The full FastAPI backend is produced by the modular per-file
+            # BackendGenerator (a slim main_api.py + routers/<class>.py +
+            # database.py + bal_stdlib.py), which is the single source of truth
+            # for backend generation. It reaches full parity with — and has
+            # replaced — the retired monolithic main_api.py template, so the
+            # association-class / OCL / method-normalization logic lives in one
+            # place and can never drift between two generators again. Imported
+            # lazily to avoid a circular import (BackendGenerator reuses
+            # RESTAPIGenerator.generate_requirements()).
+            from besser.generators.backend import BackendGenerator
+            BackendGenerator(
+                model=self.model,
+                http_methods=self.http_methods,
+                nested_creations=self.nested_creations,
+                output_dir=self.output_dir,
+            ).generate()
 
         else:
             pydantic_model = PydanticGenerator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)

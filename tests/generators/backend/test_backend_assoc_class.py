@@ -23,11 +23,49 @@ import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
 
+from besser.BUML.metamodel.structural import (
+    AssociationClass, BinaryAssociation, Class, DomainModel, FloatType,
+    IntegerType, Multiplicity, Property, StringType,
+)
 from besser.generators.backend.backend_generator import BackendGenerator
 
-# Reuse the exact model the rest_api association-class test uses.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "rest_api"))
-from test_rest_api_assoc_class import _trip_seat_model  # noqa: E402
+
+def _trip_seat_model() -> DomainModel:
+    """Trip -- Seat N:M carrying a Reservation association class, plus a plain N:M.
+
+    ``Seat`` is keyed by ``code`` instead of ``id`` so the generated queries have
+    to use the real primary key of the class.
+    """
+    trip = Class(name="Trip", attributes={
+        Property(name="id", type=IntegerType, is_id=True),
+        Property(name="reference", type=StringType),
+    })
+    seat = Class(name="Seat", attributes={
+        Property(name="code", type=IntegerType, is_id=True),
+        Property(name="label", type=StringType),
+    })
+    tag = Class(name="Tag", attributes={
+        Property(name="id", type=IntegerType, is_id=True),
+        Property(name="label", type=StringType),
+    })
+    trip_seat = BinaryAssociation(name="trip_seat", ends={
+        Property(name="trips", type=trip, multiplicity=Multiplicity(0, "*")),
+        Property(name="seats", type=seat, multiplicity=Multiplicity(0, "*")),
+    })
+    reservation = AssociationClass(
+        name="Reservation",
+        attributes={Property(name="price", type=FloatType)},
+        association=trip_seat,
+    )
+    trip_tag = BinaryAssociation(name="trip_tag", ends={
+        Property(name="tagged_trips", type=trip, multiplicity=Multiplicity(0, "*")),
+        Property(name="tags", type=tag, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(
+        name="TripModel",
+        types={trip, seat, tag, reservation},
+        associations={trip_seat, trip_tag},
+    )
 
 # main_api.py imports: pydantic_classes, sql_alchemy, database, routers.<class>
 GENERATED_MODULES = (

@@ -476,6 +476,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         rag_llm_prompt = ""
                         rag_k = 4
                         rag_num_previous_messages = 0
+                        rag_use_hybrid_rag = False
+                        rag_bm25_weight = 0.6
                         rag_vector_store_var = None
                         if (
                             node.value.args
@@ -506,6 +508,16 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             elif kw.arg == "num_previous_messages":
                                 if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
                                     rag_num_previous_messages = kw.value.value
+                            elif kw.arg == "use_hybrid_rag":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
+                                    rag_use_hybrid_rag = kw.value.value
+                            elif kw.arg == "bm25_weight":
+                                if (
+                                    isinstance(kw.value, ast.Constant)
+                                    and isinstance(kw.value.value, (int, float))
+                                    and not isinstance(kw.value.value, bool)
+                                ):
+                                    rag_bm25_weight = float(kw.value.value)
                             elif kw.arg == "vector_store" and isinstance(kw.value, ast.Name):
                                 rag_vector_store_var = kw.value.id
 
@@ -534,6 +546,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 "k": rag_k,
                                 "num_previous_messages": rag_num_previous_messages,
                                         "numPreviousMessages": rag_num_previous_messages,
+                                "use_hybrid_rag": rag_use_hybrid_rag,
+                                "bm25_weight": rag_bm25_weight,
                                 "embedding_provider": rag_embedding_provider,
                                 "embedding_base_url": rag_embedding_base_url,
                                 "embedding_model": rag_embedding_model,

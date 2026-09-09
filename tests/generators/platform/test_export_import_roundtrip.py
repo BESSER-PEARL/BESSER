@@ -375,3 +375,36 @@ class TestPositionPersistence:
         canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
         # Backend position must come first in the fallback chain.
         assert "backendPosition ?? storedPosition ?? defaultPosition" in canvas_src
+
+
+class TestQuickCreateOnDrop:
+    """Dropping a class from the palette must create the instance right
+    away, under an auto-generated `<ClassName>-<n>` name, with no modal."""
+
+    def test_ondrop_quick_creates_without_modal(self, tmp_path, region_sensor_model):
+        out = tmp_path / "platform_quickcreate"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "function nextInstanceName(" in canvas_src
+        assert "const quickCreateInstance = " in canvas_src
+        # onDrop must call the quick-create path, not open the naming modal.
+        drop_body = canvas_src[canvas_src.index("const onDrop = useCallback("):canvas_src.index("const onDragOver = useCallback(")]
+        assert "quickCreateInstance(" in drop_body
+        assert "setCreateInstanceModal(" not in drop_body
+
+    def test_next_instance_name_skips_used_names(self, tmp_path, region_sensor_model):
+        out = tmp_path / "platform_quickcreate_naming"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "`${className}-${n}`" in canvas_src
+        assert "while (used.has(" in canvas_src
+
+    def test_modal_still_used_for_other_creation_paths(self, tmp_path, region_sensor_model):
+        """The naming/attribute modal must stay wired for the paths that
+        aren't a plain drag-and-drop (e.g. the "+" association affordance),
+        so this change doesn't remove that flow."""
+        out = tmp_path / "platform_quickcreate_modal_survives"
+        PlatformGenerator(region_sensor_model, customization=None, output_dir=str(out)).generate()
+        canvas_src = (out / "frontend" / "src" / "components" / "InstanceCanvas.tsx").read_text(encoding="utf-8")
+        assert "onCreateAssociationTarget" in canvas_src
+        assert "handleCreateFromModal" in canvas_src

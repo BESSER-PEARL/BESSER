@@ -1832,6 +1832,13 @@ class SmartGenerationRunner:
             tokens = 0
             cost = 0.0
             served_model = None
+            # Cache breakdown: `tokens` (total) re-counts the context we re-send
+            # each turn, so on a caching provider most of it is a cheap cache
+            # read, not fresh compute. Recording the split lets the report show
+            # the real cache hit rate instead of leaving the big total unexplained.
+            input_tokens = 0
+            output_tokens = 0
+            cache_read_tokens = 0
             if client is not None:
                 usage = getattr(client, "usage", None)
                 try:
@@ -1842,6 +1849,18 @@ class SmartGenerationRunner:
                     cost = round(float(usage.estimated_cost), 4)
                 except Exception:
                     cost = 0.0
+                try:
+                    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+                except Exception:
+                    input_tokens = 0
+                try:
+                    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                except Exception:
+                    output_tokens = 0
+                try:
+                    cache_read_tokens = int(getattr(usage, "cache_read_tokens", 0) or 0)
+                except Exception:
+                    cache_read_tokens = 0
                 served_model = getattr(usage, "served_model", None)
 
             model_requested = (
@@ -1892,6 +1911,9 @@ class SmartGenerationRunner:
                 "duration_seconds": round(elapsed, 1),
                 "turns": turns,
                 "tokens": tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read_tokens": cache_read_tokens,
                 "estimated_cost_usd": cost,
                 "files_produced": int((done or {}).get("fileCount") or 0),
                 "blockers_found": self._t_blockers_found,

@@ -51,6 +51,15 @@ services:
   #   depends_on:
   #     - besser_redis
 
+  besser-wme-agent-simulator:
+    image: artefacts.list.lu/besser/web_modeling_editor/agent_simulator:latest
+    container_name: besser-wme-agent-simulator
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    networks:
+      - besser_network
+
 volumes: {}
 
 networks:

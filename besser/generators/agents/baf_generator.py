@@ -17,7 +17,9 @@ from besser.generators.agents.agent_personalization import configure_agent, flat
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.common import safe_var_name
+from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import process_gui_diagram
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +104,13 @@ class BAFGenerator(GeneratorInterface):
         openai_api_key: str = None,
         generation_mode: GenerationMode | str = GenerationMode.FULL,
         config_yaml: Optional[str] = None,
+        test_mode: bool = False,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
+        self.test_mode = test_mode
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -172,6 +176,24 @@ class BAFGenerator(GeneratorInterface):
                 slug = f"rag_{index}"
             return slug
 
+        def workspace_rel_dir(path: str, name: str, index: int) -> str:
+            """Return a safe workspace directory relative to the output dir.
+
+            Test sessions run generated agents inside an isolated session folder,
+            so workspace folders must be created relative to that folder.
+            """
+            candidate = (path or '').strip().replace('\\', '/')
+            if candidate:
+                # Strip drive letters / leading separators and remove traversal.
+                if ':' in candidate:
+                    candidate = candidate.split(':', 1)[1]
+                candidate = candidate.lstrip('/')
+                parts = [p for p in candidate.split('/') if p not in ('', '.', '..')]
+                if parts:
+                    return os.path.join(*parts)
+            fallback = safe_var_name(name) if name else ''
+            return fallback or f"workspace_{index}"
+
         def resolve_rag_var_name(agent: Agent, rag_db_name: str) -> str:
             """Return the generated RAG variable name for ``rag_db_name``.
 
@@ -210,6 +232,10 @@ class BAFGenerator(GeneratorInterface):
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        def extract_braced_vars(template: str) -> list:
+            """Return unique ``{identifier}`` names found in *template*, preserving order."""
+            return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
+
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
@@ -218,6 +244,7 @@ class BAFGenerator(GeneratorInterface):
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
+        env.globals['extract_braced_vars'] = extract_braced_vars
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
@@ -276,12 +303,13 @@ class BAFGenerator(GeneratorInterface):
                     agent=self.model,
                     config=self.config,
                     personalization_mapping=config_for_personalization['personalizationMapping'],
+                    test_mode=self.test_mode,
                 )
                 f.write(generated_code)
         else:
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 # TODO: how to handle llm variable names that are used in bodies?
-                generated_code = agent_template.render(agent=self.model, config=self.config)
+                generated_code = agent_template.render(agent=self.model, config=self.config, test_mode=self.test_mode)
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
         if generate_code_assets:
@@ -326,6 +354,21 @@ class BAFGenerator(GeneratorInterface):
                         f.write(skill.content)
                 logger.info("Skills directory generated at %s", skills_dir)
 
+            # Test sessions run generated agents in an isolated sandbox folder.
+            # Pre-create declared workspaces there so tooling can rely on them.
+            if self.test_mode:
+                workspaces = getattr(self.model, 'workspaces', []) or []
+                if workspaces:
+                    base_dir = self.build_generation_dir()
+                    for idx, ws in enumerate(workspaces):
+                        ws_dir = workspace_rel_dir(
+                            getattr(ws, 'path', ''),
+                            getattr(ws, 'name', ''),
+                            idx,
+                        )
+                        os.makedirs(os.path.join(base_dir, ws_dir), exist_ok=True)
+                    logger.info("Workspace directories generated for test mode in %s", base_dir)
+
             rag_configs = getattr(self.model, 'rags', []) or []
             if rag_configs:
                 rag_base_dir = self.build_generation_dir()
@@ -339,3 +382,46 @@ class BAFGenerator(GeneratorInterface):
                                 "Place your PDF documents for this RAG database inside this "
                                 "folder before running the agent.\n"
                             )
+
+            # Generate guis/ directory — one .py file per unique GUIReplyAction
+            gui_models = getattr(self.model, 'gui_models', {}) or {}
+            # Collect all unique GUIReplyAction instances from all state bodies.
+            seen_gui_ids: set = set()
+            unique_gui_actions = []
+            for state in self.model.states:
+                for body in (state.body, getattr(state, 'fallback_body', None)):
+                    if body is None:
+                        continue
+                    for action in (body.actions or []):
+                        if action.__class__.__name__ == 'GUIReplyAction':
+                            if action.gui_id not in seen_gui_ids:
+                                seen_gui_ids.add(action.gui_id)
+                                unique_gui_actions.append(action)
+            if unique_gui_actions:
+                guis_dir = os.path.join(self.build_generation_dir(), "guis")
+                os.makedirs(guis_dir, exist_ok=True)
+                open(os.path.join(guis_dir, "__init__.py"), "w").close()
+                for gui_action in unique_gui_actions:
+                    gui_var = safe_var_name(gui_action.gui_id)
+                    gui_model_data = gui_models.get(gui_action.gui_id)
+                    gui_file_path = os.path.join(guis_dir, f"{gui_var}.py")
+                    if gui_model_data is not None:
+                        try:
+                            buml_gui_model = process_gui_diagram(gui_model_data, class_model=None, domain_model=None)
+                            gui_model_to_code(buml_gui_model, gui_file_path, domain_model=None, model_var_name="gui_model")
+                        except Exception as exc:
+                            logger.warning("Could not convert GUI model for '%s' to BUML: %s", gui_action.gui_id, exc)
+                            gui_model_data = None
+                    if gui_model_data is None:
+                        with open(gui_file_path, mode="w", encoding="utf-8") as gf:
+                            gf.write("# No GUI design available yet.\ngui_model = None\n")
+                    with open(gui_file_path, mode="a", encoding="utf-8") as gf:
+                        gf.write("\nfrom baf.core.gui.agent_gui import AgentGUI\n\n")
+                        gf.write("gui = AgentGUI(\n")
+                        gf.write("    model=gui_model,\n")
+                        gf.write(f"    gui_id={json.dumps(gui_action.gui_id)},\n")
+                        gf.write(f"    persist={gui_action.persist},\n")
+                        if gui_action.width:
+                            gf.write(f"    width={json.dumps(gui_action.width)},\n")
+                        gf.write(")\n")
+                logger.info("GUIs directory generated at %s", guis_dir)

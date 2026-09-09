@@ -466,3 +466,54 @@ def test_table_component_is_model_independent(assoc_class_models, plain_nm_model
         if page_file.endswith(".tsx"):
             with open(os.path.join(plain_pages_dir, page_file), "r", encoding="utf-8") as f:
                 assert "association_class" not in f.read()
+
+
+# ---------------------------------------------------------------------------
+# Row keys: how the generated table addresses one row in the REST API
+# ---------------------------------------------------------------------------
+
+def _row_key_fields_by_entity(generator):
+    """Map each table binding's entity to its serialized row_key_fields."""
+    payload = json.loads(generator._build_generation_context()["components_json"])
+    found = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "row_key_fields" in node and "entity" in node:
+                found[node["entity"]] = node["row_key_fields"]
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return found
+
+
+def test_data_binding_row_key_fields(assoc_class_models):
+    """A table addresses rows by the declared primary key, and an association
+    class by both foreign keys in the backend's route order - never by
+    guessing the first column of the row."""
+    domain_model, _ = assoc_class_models
+    classes = {cls.name: cls for cls in domain_model.get_classes()}
+    tables = {
+        Table(name="BookingTable", title="Bookings", action_buttons=True,
+              data_binding=DataBinding(name="booking_binding", domain_concept=classes["Booking"])),
+        Table(name="RoomTable", title="Rooms", action_buttons=True,
+              data_binding=DataBinding(name="room_binding", domain_concept=classes["Room"])),
+        Table(name="ReservedRoomTable", title="Links", action_buttons=True,
+              data_binding=DataBinding(name="link_binding", domain_concept=classes["ReservedRoom"])),
+    }
+    screen = Screen(name="Admin", description="Admin screen", view_elements=tables, is_main_page=True)
+    gui_model = GUIModel(
+        name="BookingApp", package="com.test.booking", versionCode="1", versionName="1.0",
+        modules={Module(name="AdminModule", screens={screen})}, description="Booking GUI",
+    )
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+
+    assert _row_key_fields_by_entity(generator) == {
+        "Booking": ["id"],                          # surrogate key
+        "Room": ["number"],                         # declared is_id attribute
+        "ReservedRoom": ["bookings_id", "rooms_id"],  # /reservedroom/{bookings_id}/{rooms_id}/
+    }

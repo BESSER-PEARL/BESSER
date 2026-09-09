@@ -209,7 +209,10 @@ class {{ asso_class.name }}(Base):
 #--- Relationships for association class {{ asso_class.name }}
     {%- for end in asso_class.association.ends %}
 {{ asso_class.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
-{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
+{#- The link rows are owned by the linked entities: deleting one must delete its
+    links (the FK is part of the link's composite primary key, so SQLAlchemy cannot
+    null it out - without the cascade a delete fails with an AssertionError). #}
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}", cascade="all, delete-orphan")
     {%- endfor %}
 {%- endfor %}
 

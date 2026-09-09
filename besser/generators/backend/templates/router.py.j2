@@ -973,18 +973,31 @@ async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.g
     ).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    # Snapshot the columns before deleting: the live object may carry loaded
+    # back-references, which would make the JSON encoder recurse endlessly.
+    deleted_{{ class.name | lower}} = {
+        attr.key: getattr(db_{{ class.name | lower}}, attr.key)
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+    }
     database.delete(db_{{ class.name | lower}})
     database.commit()
-    return db_{{ class.name | lower}}
+    return deleted_{{ class.name | lower}}
 {% else %}
 @router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    # Snapshot the columns before deleting: cascading the association-class
+    # links loads relationship collections whose back-references would make
+    # the JSON encoder recurse endlessly on the live object.
+    deleted_{{ class.name | lower}} = {
+        attr.key: getattr(db_{{ class.name | lower}}, attr.key)
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+    }
     database.delete(db_{{ class.name | lower}})
     database.commit()
-    return db_{{ class.name | lower}}
+    return deleted_{{ class.name | lower}}
 {% endif %}
 {% endif %}
 

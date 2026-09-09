@@ -302,3 +302,51 @@ def test_plain_many_to_many_still_works(app):
     listed = request(app, "GET", "/trip/8/tags/")
     assert listed.status_code == 200, listed.text
     assert listed.json()["tags_count"] == 2
+
+
+def test_delete_entity_cascades_its_association_class_links(app):
+    """Deleting an entity deletes the association-class rows that link it.
+
+    The link's FK is part of its composite primary key, so without the
+    delete-orphan cascade SQLAlchemy tried to null it out and the request
+    crashed; the other end of the link must survive untouched.
+    """
+    assert create_seat(app, 91, label="cascade").status_code == 200
+    assert create_trip(app, 19, seats=[{"target": 91, "price": 15.0}]).status_code == 200
+    assert request(app, "GET", "/reservation/91/19/").status_code == 200
+
+    response = request(app, "DELETE", "/trip/19/")
+    assert response.status_code == 200, response.text
+    # The response is the deleted row's columns (never the live ORM object,
+    # whose loaded back-references would recurse in the JSON encoder)
+    assert response.json()["id"] == 19
+    assert "seats" not in response.json()
+
+    assert request(app, "GET", "/trip/19/").status_code == 404
+    assert request(app, "GET", "/reservation/91/19/").status_code == 404
+    assert request(app, "GET", "/seat/91/").status_code == 200
+
+
+def test_delete_other_end_cascades_links_too(app):
+    """The cascade applies from both ends of the association class."""
+    assert create_seat(app, 92).status_code == 200
+    assert create_trip(app, 20, seats=[{"target": 92, "price": 1.0}]).status_code == 200
+
+    response = request(app, "DELETE", "/seat/92/")
+    assert response.status_code == 200, response.text
+    assert response.json()["code"] == 92
+    assert request(app, "GET", "/reservation/92/20/").status_code == 404
+    assert request(app, "GET", "/trip/20/").json()["seats_ids"] == []
+
+
+def test_delete_association_class_row_returns_its_columns(app):
+    assert create_seat(app, 93).status_code == 200
+    assert create_trip(app, 21, seats=[{"target": 93, "price": 7.5}]).status_code == 200
+
+    response = request(app, "DELETE", "/reservation/93/21/")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"seats_id": 93, "trips_id": 21, "price": 7.5}
+    assert request(app, "GET", "/reservation/93/21/").status_code == 404
+    # Both linked entities are untouched
+    assert request(app, "GET", "/seat/93/").status_code == 200
+    assert request(app, "GET", "/trip/21/").status_code == 200

@@ -107,6 +107,24 @@ every RAG query, useful for enforcing domain-specific constraints or tone:
         llm_prompt='Answer only from the provided documents.',
     )
 
+Retrieval can combine the vector store with a BM25 keyword index (hybrid
+retrieval). Set ``use_hybrid_rag=True`` and, optionally, ``bm25_weight`` — the
+weight of the BM25 results between 0 and 1, the vector results getting the
+remainder (default ``0.6``). The generated agent then uses BAF's ``HybridRAG``
+instead of ``RAG``; in the web editor these are the *Hybrid RAG (BM25)* and
+*BM25 weight* fields of the RAG element:
+
+.. code-block:: python
+
+    kb = agent.new_rag(
+        name='Knowledge Base',
+        vector_store=vector_store,
+        splitter=splitter,
+        llm_name='gpt-4o-mini',
+        use_hybrid_rag=True,
+        bm25_weight=0.6,
+    )
+
 Multiple LLMs
 ~~~~~~~~~~~~~
 

@@ -234,6 +234,18 @@ function findPortHostAt(
   return hits[0] ?? null;
 }
 
+/** First `${className}-${n}` (n = 1, 2, …) not already used as the
+ *  ``instance_name`` of an existing instance of that class. Used to name
+ *  instances created by drag-and-drop, which skip the naming modal. */
+function nextInstanceName(className: string, instances: BaseInstance[]): string {
+  const used = new Set(
+    instances.filter((i) => i.class_name === className).map((i) => i.instance_name),
+  );
+  let n = 1;
+  while (used.has(`${className}-${n}`)) n++;
+  return `${className}-${n}`;
+}
+
 interface InstanceCanvasProps {
   instances: BaseInstance[];
   availableClasses: ClassMetadata[];
@@ -393,7 +405,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           ?.instance?.class_name;
       }
 
-      setCreateInstanceModal({
+      quickCreateInstance({
         className,
         position,
         parentContainerId,
@@ -402,7 +414,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         parentHostClass,
       });
     },
-    [nodes, availableClasses, reactFlow]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes, availableClasses, reactFlow, instances]
   );
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -1562,6 +1575,135 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     setCreateStreamModal(null);
   };
 
+  /** Wiring shared by every path that creates an instance and then needs to
+   *  auto-link it to whatever context it was created in (modal-driven or
+   *  quick-created via drag-and-drop): modal-selected links, port-host
+   *  auto-linking, and container auto-linking. `ctx` mirrors the shape of
+   *  `createInstanceModal`. */
+  const finishInstanceCreation = async (
+    created: BaseInstance | undefined,
+    ctx: {
+      className: string;
+      position: { x: number; y: number };
+      parentContainerId?: string;
+      parentContainerClass?: string;
+      parentHostId?: string;
+      parentHostClass?: string;
+      parentHostAssociation?: string;
+    },
+    selectedLinks: Array<{ associationName: string; targetClass: string; targetId: string }> = [],
+  ) => {
+    // First, materialise any links the user picked in the create modal
+    // (target instances chosen via association fields). Each one becomes a
+    // POST /links call.
+    if (created?.id) {
+      for (const sel of selectedLinks) {
+        try {
+          await api.createLink({
+            source_class: ctx.className,
+            source_id: created.id,
+            target_class: sel.targetClass,
+            target_id: sel.targetId,
+            association_name: sel.associationName,
+          });
+        } catch (error) {
+          console.error('Failed to create link from modal selection:', error);
+        }
+      }
+    }
+
+    // If a port-class instance was dropped on a host equipment node, find
+    // the equipment→port association and auto-create the link. Without
+    // this, the freshly-created port would have no owner and stay as an
+    // orphan node on the canvas instead of becoming a handle on the
+    // equipment border.
+    const { parentHostId, parentHostClass, parentHostAssociation } = ctx;
+    if (parentHostId && parentHostClass && created?.id) {
+      if (parentHostAssociation) {
+        // The "+" affordance pre-binds the association — skip the heuristic.
+        try {
+          await api.createLink({
+            source_class: parentHostClass,
+            source_id: parentHostId,
+            target_class: ctx.className,
+            target_id: created.id,
+            association_name: parentHostAssociation,
+          });
+        } catch (error) {
+          console.error('Failed to create equipment→port link:', error);
+        }
+      } else {
+        const hostMeta = availableClasses.find((c) => c.name === parentHostClass);
+        // Polymorphic: pick any association whose target is this class or an ancestor.
+        const hostAssocs = hostMeta?.associations.filter(
+          (a) => isAssignableTo(ctx.className, a.targetClass),
+        ) ?? [];
+        if (hostAssocs.length === 1) {
+          try {
+            await api.createLink({
+              source_class: parentHostClass,
+              source_id: parentHostId,
+              target_class: ctx.className,
+              target_id: created.id,
+              association_name: hostAssocs[0].name,
+            });
+          } catch (error) {
+            console.error('Failed to auto-create equipment→port link:', error);
+          }
+        } else if (hostAssocs.length > 1) {
+          // Multiple associations match — surface the picker so the user
+          // chooses (e.g., "inputPorts" vs "outputPorts"). The pending link
+          // gets fulfilled by handleAssociationSelect.
+          setPendingConnection({
+            sourceId: parentHostId,
+            targetId: created.id,
+            sourceClass: parentHostClass,
+            targetClass: ctx.className,
+          });
+        }
+        // hostAssocs.length === 0: nothing to do — host has no association
+        // to this port class. The port will render as an orphan node and the
+        // user can wire it manually via the property panel.
+      }
+    }
+
+    // If dropped inside a container, auto-create the containment association.
+    // Only associations marked isContainerAssociation are considered — that's
+    // how the user opts in to the "drop = link" behavior per association.
+    const { parentContainerId, parentContainerClass, className } = ctx;
+    if (parentContainerId && parentContainerClass && created?.id) {
+      const parentMeta = availableClasses.find((c) => c.name === parentContainerClass);
+      const containerAssocs = parentMeta?.associations.filter(
+        (a) => isAssignableTo(className, a.targetClass) && a.isContainerAssociation,
+      ) ?? [];
+      if (containerAssocs.length === 1) {
+        try {
+          await api.createLink({
+            source_class: parentContainerClass,
+            source_id: parentContainerId,
+            target_class: className,
+            target_id: created.id,
+            association_name: containerAssocs[0].name,
+          });
+        } catch (error) {
+          console.error('Failed to auto-create containment link:', error);
+        }
+      } else if (containerAssocs.length > 1) {
+        setPendingConnection({
+          sourceId: parentContainerId,
+          targetId: created.id,
+          sourceClass: parentContainerClass,
+          targetClass: className,
+        });
+      }
+      // containerAssocs.length === 0: source class is a container but no
+      // association is flagged as container — the user must wire the link
+      // explicitly. Silent no-op.
+    }
+
+    onInstanceCreate(ctx.className, ctx.position);
+  };
+
   const handleCreateFromModal = async (
     instanceName: string,
     attributes: Record<string, any>,
@@ -1577,120 +1719,44 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         // them instead of the default grid layout.
         position: createInstanceModal.position,
       });
-
-      // First, materialise any links the user picked in the create modal
-      // (target instances chosen via association fields). Each one becomes a
-      // POST /links call.
-      if (created?.id) {
-        for (const sel of selectedLinks) {
-          try {
-            await api.createLink({
-              source_class: createInstanceModal.className,
-              source_id: created.id,
-              target_class: sel.targetClass,
-              target_id: sel.targetId,
-              association_name: sel.associationName,
-            });
-          } catch (error) {
-            console.error('Failed to create link from modal selection:', error);
-          }
-        }
-      }
-
-      // If a port-class instance was dropped on a host equipment node, find
-      // the equipment→port association and auto-create the link. Without
-      // this, the freshly-created port would have no owner and stay as an
-      // orphan node on the canvas instead of becoming a handle on the
-      // equipment border.
-      const { parentHostId, parentHostClass, parentHostAssociation } = createInstanceModal;
-      if (parentHostId && parentHostClass && created?.id) {
-        if (parentHostAssociation) {
-          // The "+" affordance pre-binds the association — skip the heuristic.
-          try {
-            await api.createLink({
-              source_class: parentHostClass,
-              source_id: parentHostId,
-              target_class: createInstanceModal.className,
-              target_id: created.id,
-              association_name: parentHostAssociation,
-            });
-          } catch (error) {
-            console.error('Failed to create equipment→port link:', error);
-          }
-        } else {
-          const hostMeta = availableClasses.find((c) => c.name === parentHostClass);
-          // Polymorphic: pick any association whose target is this class or an ancestor.
-          const hostAssocs = hostMeta?.associations.filter(
-            (a) => isAssignableTo(createInstanceModal.className, a.targetClass),
-          ) ?? [];
-          if (hostAssocs.length === 1) {
-            try {
-              await api.createLink({
-                source_class: parentHostClass,
-                source_id: parentHostId,
-                target_class: createInstanceModal.className,
-                target_id: created.id,
-                association_name: hostAssocs[0].name,
-              });
-            } catch (error) {
-              console.error('Failed to auto-create equipment→port link:', error);
-            }
-          } else if (hostAssocs.length > 1) {
-            // Multiple associations match — surface the picker so the user
-            // chooses (e.g., "inputPorts" vs "outputPorts"). The pending link
-            // gets fulfilled by handleAssociationSelect.
-            setPendingConnection({
-              sourceId: parentHostId,
-              targetId: created.id,
-              sourceClass: parentHostClass,
-              targetClass: createInstanceModal.className,
-            });
-          }
-          // hostAssocs.length === 0: nothing to do — host has no association
-          // to this port class. The port will render as an orphan node and the
-          // user can wire it manually via the property panel.
-        }
-      }
-
-      // If dropped inside a container, auto-create the containment association.
-      // Only associations marked isContainerAssociation are considered — that's
-      // how the user opts in to the "drop = link" behavior per association.
-      const { parentContainerId, parentContainerClass, className } = createInstanceModal;
-      if (parentContainerId && parentContainerClass && created?.id) {
-        const parentMeta = availableClasses.find((c) => c.name === parentContainerClass);
-        const containerAssocs = parentMeta?.associations.filter(
-          (a) => isAssignableTo(className, a.targetClass) && a.isContainerAssociation,
-        ) ?? [];
-        if (containerAssocs.length === 1) {
-          try {
-            await api.createLink({
-              source_class: parentContainerClass,
-              source_id: parentContainerId,
-              target_class: className,
-              target_id: created.id,
-              association_name: containerAssocs[0].name,
-            });
-          } catch (error) {
-            console.error('Failed to auto-create containment link:', error);
-          }
-        } else if (containerAssocs.length > 1) {
-          setPendingConnection({
-            sourceId: parentContainerId,
-            targetId: created.id,
-            sourceClass: parentContainerClass,
-            targetClass: className,
-          });
-        }
-        // containerAssocs.length === 0: source class is a container but no
-        // association is flagged as container — the user must wire the link
-        // explicitly. Silent no-op.
-      }
-
-      onInstanceCreate(createInstanceModal.className, createInstanceModal.position);
+      await finishInstanceCreation(created, createInstanceModal, selectedLinks);
     } catch (error) {
       console.error('Failed to create instance:', error);
     }
     setCreateInstanceModal(null);
+  };
+
+  /** Drag-and-drop from the palette skips the naming/attribute modal
+   *  entirely: the instance is created immediately under an auto-generated
+   *  name (`<ClassName>-<n>`) with every attribute defaulted to `''`, then
+   *  wired up exactly like a modal-driven creation (port-host / container
+   *  auto-linking). The user edits the name/attributes afterwards via the
+   *  inspector, same as any other instance. */
+  const quickCreateInstance = async (ctx: {
+    className: string;
+    position: { x: number; y: number };
+    parentContainerId?: string;
+    parentContainerClass?: string;
+    parentHostId?: string;
+    parentHostClass?: string;
+    parentHostAssociation?: string;
+  }) => {
+    const classMetadata = availableClasses.find((c) => c.name === ctx.className);
+    const attributes: Record<string, any> = {};
+    for (const attr of classMetadata?.attributes ?? []) {
+      attributes[attr.name] = '';
+    }
+    try {
+      const created = await api.createInstance({
+        class_name: ctx.className,
+        instance_name: nextInstanceName(ctx.className, instances),
+        attributes,
+        position: ctx.position,
+      });
+      await finishInstanceCreation(created, ctx);
+    } catch (error) {
+      console.error('Failed to quick-create instance:', error);
+    }
   };
 
   // Diagram-style values are the *initial* state; user toggles override at

@@ -1,3 +1,26 @@
+{#
+  java_fields.py.j2
+  ------------------
+  Jinja2 macro library imported by java_template.py.j2.
+
+  Macros:
+    get_field(attr_type)
+      Maps a B-UML primitive type name to its Java equivalent.
+      Returns "None" (string) for unknown or non-primitive types — callers must
+      check for "None" and fall back to the original type name for class references.
+
+      Mappings:
+        str      -> String
+        int      -> int
+        float    -> float
+        date     -> LocalDate
+        datetime -> LocalDateTime
+        time     -> LocalTime
+        bool     -> boolean
+        text     -> String
+        uuid     -> UUID
+        *        -> None
+#}
 {% macro get_field(attr_type) %}
     {%- if attr_type == "str" -%}
 String

@@ -1,0 +1,22 @@
+{#
+  java_enum_template.py.j2
+  -------------------------
+  Jinja2 template that generates a single Java enum file from a BESSER B-UML Enumeration object.
+
+  Context variables (passed by JavaGenerator):
+    enum_obj     : Enumeration  - The B-UML enumeration to generate.
+    package_name : str | None   - Java package declaration; None or empty means no package statement.
+
+  What is generated:
+    - Package declaration (if package_name is set)
+    - public enum declaration with all EnumerationLiteral names as constants
+#}
+{% if package_name %}
+package {{ package_name }};
+{% endif %}
+public enum {{ enum_obj.name }} {
+{% for literal in enum_obj.literals %}
+    {{ literal.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+}

@@ -1,3 +1,31 @@
+{#
+  java_template.py.j2
+  --------------------
+  Jinja2 template that generates a single Java class file from a BESSER B-UML class object.
+
+  Context variables (passed by JavaGenerator):
+    class_obj               : Class         - The B-UML class to generate.
+    processed_associations  : list[str]     - Names of associations already generated in a previous class to avoid duplicates.
+    package_name            : str | None    - Java package declaration; None or empty means no package statement.
+
+  What is generated per class:
+    - Package declaration (if package_name is set)
+    - Import statements (java.time.*, java.util.UUID, List, ArrayList) based on used types
+    - Class declaration with optional extends for single inheritance
+    - Private fields for all attributes and navigable association ends
+    - Default constructor (initialises List fields to new ArrayList<>())
+    - Overloaded constructor accepting List association fields as parameters (only when List fields exist)
+    - Getters and setters for all attribute fields
+    - Getters and add-methods for association fields (addTo<Name> for self-associations, add<Type> for others)
+    - Method stubs for all methods defined on the class (skips methods already generated as association adders)
+
+  Enhancements vs original BESSER generator:
+    - Respects is_navigable on association ends — only generates fields for navigable ends
+    - Supports bidirectional associations: generates back-references (e.g., many-to-one relationships)
+    - Each class generates fields for all its association ends (doesn't skip already-processed associations)
+    - Generates method stubs from class_obj.methods
+    - Fixes leading comma bug in overloaded constructor when attribs is empty
+#}
 // This is a template example to list the name of the classes
 {% if package_name %}
 package {{ package_name }};
@@ -51,17 +79,19 @@ public class {{ class_obj.name }} {{ extends }}{
         {% set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
         {% if is_self_assoc %}
             {% for end in ends_list %}
-                {% if end.multiplicity.max > 1 %}
+                {% if end.is_navigable %}
+                    {% if end.multiplicity.max > 1 %}
     private List<{{ end.type.name }}> {{ end.name }};
-                    {% do assocs.append('List<'+end.type.name+'>') %}
-                    {% do assocs.append(end.name) %}
-                    {% do assocs_card_over_1.append(end.type.name) %}
-                    {% do assocs_card_over_1.append(end.name) %}
-                    {% do self_assoc_names.append(end.name) %}
-                {% else %}
+                        {% do assocs.append('List<'+end.type.name+'>') %}
+                        {% do assocs.append(end.name) %}
+                        {% do assocs_card_over_1.append(end.type.name) %}
+                        {% do assocs_card_over_1.append(end.name) %}
+                        {% do self_assoc_names.append(end.name) %}
+                    {% else %}
     private {{ end.type.name }} {{ end.name }};
-                    {% do assocs.append(end.type.name) %}
-                    {% do assocs.append(end.name) %}
+                        {% do assocs.append(end.type.name) %}
+                        {% do assocs.append(end.name) %}
+                    {% endif %}
                 {% endif %}
             {% endfor %}
             {% do processed_associations.append(association.name) %}
@@ -73,30 +103,34 @@ public class {{ class_obj.name }} {{ extends }}{
             {% endfor %}
             {% set class1_name = ns.end1.type.name %}
             {% set class2_name = ns.end2.type.name %}
-            {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1%}
+            {# Generate field for end2 (the other class) if navigable - supports bidirectional associations #}
+            {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
                 {% if ns.end1.multiplicity.min != 1 and ns.end2.multiplicity.min == 1 or
                     ns.end1.multiplicity.min == 1 and ns.end2.multiplicity.min == 1 or
                     ns.end1.multiplicity.min != 1 and ns.end2.multiplicity.min != 1 %}
-    private List<{{ class2_name }}> {{ class2_name.lower() }}s;
+    private List<{{ class2_name }}> {{ ns.end2.name }};
                     {% do assocs.append('List<'+class2_name+'>') %}
-                    {% do assocs.append(class2_name.lower() + 's') %}
+                    {% do assocs.append(ns.end2.name) %}
                     {% do assocs_card_over_1.append(class2_name) %}
-                    {% do assocs_card_over_1.append(class2_name.lower() + 's') %}
-                    {% do processed_associations.append(association.name) %}
+                    {% do assocs_card_over_1.append(ns.end2.name) %}
                 {% endif %}
-            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
-    private List<{{ class2_name }}> {{ class2_name.lower() }}s;
+            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
+    private List<{{ class2_name }}> {{ ns.end2.name }};
                 {% do assocs.append('List<'+class2_name+'>') %}
-                {% do assocs.append(class2_name.lower() + 's') %}
+                {% do assocs.append(ns.end2.name) %}
                 {% do assocs_card_over_1.append(class2_name) %}
-                {% do assocs_card_over_1.append(class2_name.lower() + 's') %}
-                {% do processed_associations.append(association.name) %}
-            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-    private {{ class2_name }} {{ class2_name.lower() }};
+                {% do assocs_card_over_1.append(ns.end2.name) %}
+            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and ns.end2.is_navigable %}
+    private {{ class2_name }} {{ ns.end2.name }};
                 {% do assocs.append(class2_name) %}
-                {% do assocs.append(class2_name.lower()) %}
-                {% do processed_associations.append(association.name) %}
+                {% do assocs.append(ns.end2.name) %}
+            {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 and ns.end2.is_navigable %}
+                {# Bidirectional: many-to-one association, generate back-reference to the one side #}
+    private {{ class2_name }} {{ ns.end2.name }};
+                {% do assocs.append(class2_name) %}
+                {% do assocs.append(ns.end2.name) %}
             {% endif %}
+            {# Don't mark as processed to support bidirectional associations - each class handles its own end #}
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -168,7 +202,7 @@ public class {{ class_obj.name }} {{ extends }}{
     {%- endfor -%}
 {% endif %}
 {%- for i in range(0, assocs_card_over_1|length, 2) -%}
-    ,{{" "}}ArrayList<{{ assocs_card_over_1[i] }}> {{ assocs_card_over_1[i+1] }}
+    {{ ", " if i > 0 or attribs|length > 0 or inheritance|length > 1 else "" }}ArrayList<{{ assocs_card_over_1[i] }}> {{ assocs_card_over_1[i+1] }}
 {%- endfor -%}
 ) {
 {% if inheritance|length > 1 %}
@@ -229,6 +263,34 @@ public class {{ class_obj.name }} {{ extends }}{
 
     public void set{{ assocs[i+1].capitalize() }}({{ assocs[i] }} {{ assocs[i+1] }}) {
         this.{{ assocs[i+1] }} = {{ assocs[i+1] }};
+    }
+    {% endif %}
+{% endfor %}
+{% set generated_assoc_methods = [] %}
+{% for i in range(0, assocs|length, 2) %}
+    {% if assocs[i][:4] == "List" %}
+        {% set element_type = assocs[i][5:-1] %}
+        {% if assocs[i+1] in self_assoc_names %}
+            {% do generated_assoc_methods.append('addTo' + assocs[i+1].capitalize()) %}
+        {% else %}
+            {% do generated_assoc_methods.append('add' + element_type) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{% for method in class_obj.methods %}
+    {% if method.name not in generated_assoc_methods %}
+        {% set ns = namespace(return_type="void") %}
+        {% if method.type %}
+            {% set jf = java_fields.get_field(method.type.name) | trim %}
+            {% set ns.return_type = method.type.name if jf == "None" else jf %}
+        {% endif %}
+
+    {{ method.visibility }} {{ ns.return_type }} {{ method.name }}(
+        {%- for param in method.parameters -%}
+            {%- set jf_param = java_fields.get_field(param.type.name) | trim -%}
+            {{ param.type.name if jf_param == "None" else jf_param }} {{ param.name }}{% if not loop.last %}, {% endif %}
+        {%- endfor -%}
+    ) {
     }
     {% endif %}
 {% endfor %}

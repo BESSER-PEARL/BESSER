@@ -938,31 +938,33 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {% endif %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
-        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}))]
-
-    {% if x[5] > 0 %}
-    if not {{ class.name | lower }}_data.{{x[3]}} or len({{ class.name | lower }}_data.{{x[3]}}) < {{x[5]}}:
-        raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
-    {% endif %}
-    {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%})
-    for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
-        {% if x[7] > 0 %}
-        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
-        if db_{{x[1]|lower}} is not None and len(db_{{x[1]|lower}}.{{x[2]}}) - 1 < {{x[7]}}:
-            raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{x[1]|lower}}_id) + " requires at least {{x[7]}} {{x[2]}}")
+    {# An omitted list leaves the links untouched; a sent list is reconciled #}
+    if {{ class.name | lower }}_data.{{x[3]}} is not None:
+        {% if x[5] > 0 %}
+        if len({{ class.name | lower }}_data.{{x[3]}}) < {{x[5]}}:
+            raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
         {% endif %}
-        association = {{x[4]}}.delete().where(
-            ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
-        database.execute(association)
+        existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
+            {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}))]
 
-    new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%}) - set(existing_{{x[1]|lower}}_ids)
-    for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
-        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
-        if db_{{x[1]|lower}} is None:
-            raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %} not found")
-        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.{{ x[1] | pk }}, {{x[2]}}=db_{{ class.name | lower }}.{{ pk }})
-        database.execute(association)
+        {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}})
+        for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
+            {% if x[7] > 0 %}
+            db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
+            if db_{{x[1]|lower}} is not None and len(db_{{x[1]|lower}}.{{x[2]}}) - 1 < {{x[7]}}:
+                raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{x[1]|lower}}_id) + " requires at least {{x[7]}} {{x[2]}}")
+            {% endif %}
+            association = {{x[4]}}.delete().where(
+                ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
+            database.execute(association)
+
+        new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}) - set(existing_{{x[1]|lower}}_ids)
+        for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
+            db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
+            if db_{{x[1]|lower}} is None:
+                raise HTTPException(status_code=404, detail="{{x[1]}} with ID " + str({{x[1]|lower}}_id) + " not found")
+            association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.{{ x[1] | pk }}, {{x[2]}}=db_{{ class.name | lower }}.{{ pk }})
+            database.execute(association)
     {% endfor %}
     {% endif %}
     database.commit()

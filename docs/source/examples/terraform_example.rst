@@ -82,7 +82,8 @@ Use the Backend Generator to create the backend code for the ``library_model``.
     backend = BackendGenerator(model=dpp_model, http_methods=['GET', 'POST', 'PUT', 'DELETE'], nested_creations=True, docker_image = True)
     backend.generate()
 
-This will generate the backend code in the ``output_backend`` directory, including the ``main_api.py``, ``sql_alchemy.py``, ``pydantic_classes.py`` files and 
+This will generate the backend code in the ``output_backend`` directory, including the ``main_api.py`` entry point with its ``routers/`` package,
+``database.py``, ``bal_stdlib.py``, ``sql_alchemy.py`` and ``pydantic_classes.py`` files and
 the Dockerfile for building and uploading the Docker image.
 
 

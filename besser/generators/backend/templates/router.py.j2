@@ -236,36 +236,43 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     class: converter-produced attributes arrive as PrimitiveDataType
     instances, so the old __class__.__name__ check matched nothing and
     every search endpoint shipped with ZERO parameters (a facade that
-    returned query.all()). When a class has no searchable primitive
-    attribute the endpoint is not generated at all. #}
-{%- set ns_search = namespace(searchable=false) %}
-{%- for attribute in class.attributes %}
+    returned query.all()). Inherited attributes are searchable too
+    (joined-table inheritance exposes the parent's columns on the
+    subclass), so a subclass without own attributes keeps its /search/
+    route instead of the path falling through to /{id}/ as a 422. When
+    the whole hierarchy has no searchable primitive attribute the
+    endpoint is not generated at all. #}
+{%- set ns_search = namespace(attrs=[]) %}
+{%- for parent in all_parents %}
+{%- for attribute in parent.attributes | sort(attribute='name') %}
 {%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
-{%- set ns_search.searchable = true %}
+{%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}
-{% if ns_search.searchable %}
+{%- endfor %}
+{%- for attribute in class.attributes | sort(attribute='name') %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+{%- do ns_search.attrs.append(attribute) %}
+{%- endif %}
+{%- endfor %}
+{% if ns_search.attrs %}
 @router.get("/{{ class.name | lower}}/search/", response_model=None, tags=["{{ class.name }}"])
 def search_{{ class.name | lower}}(
-    {% for attribute in class.attributes %}
-    {% if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+    {% for attribute in ns_search.attrs %}
     {{attribute.name}}: {% if attribute.type.name in ['str', 'string'] %}str{% elif attribute.type.name in ['int', 'integer'] %}int{% elif attribute.type.name == 'float' %}float{% else %}bool{% endif %} = None,
-    {% endif %}
     {% endfor %}
     database: Session = Depends(get_db)
 ) -> list:
     """Search {{ class.name }} entities by attributes"""
     query = database.query({{ class.name }})
 
-    {% for attribute in class.attributes %}
-    {% if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+    {% for attribute in ns_search.attrs %}
     if {{attribute.name}} is not None:
         {% if attribute.type.name in ['str', 'string'] %}
         query = query.filter({{ class.name }}.{{attribute.name}}.ilike(f"%{% raw %}{{% endraw %}{{attribute.name}}{% raw %}}{% endraw %}%"))
         {% else %}
         query = query.filter({{ class.name }}.{{attribute.name}} == {{attribute.name}})
         {% endif %}
-    {% endif %}
     {% endfor %}
 
     results = query.all()
@@ -818,10 +825,12 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    {# Update attributes of the model. The primary key is immutable —
-       updating `id` from the payload would detach every FK row. -#}
+    {# Update attributes of the model. The primary key is immutable whatever
+       its name (rewriting Room.number would orphan every FK row pointing at
+       it), and a surrogate `id` (named `id` but not declared is_id) is
+       server-owned and absent from the Create schema. -#}
     {% for attribute in class.attributes %}
-    {% if attribute.name != 'id' %}
+    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
     {% endif %}
     {% endfor %}

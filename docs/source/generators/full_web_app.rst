@@ -126,7 +126,10 @@ Generated Output Structure
 
    my_app/
    ├── backend/
-   │   ├── main_api.py          # REST API endpoints
+   │   ├── main_api.py          # FastAPI app entry point (wires in the routers)
+   │   ├── routers/             # One router module per class (all endpoints)
+   │   ├── database.py          # Shared engine/session setup (DATABASE_URL)
+   │   ├── bal_stdlib.py        # B-UML Action Language helpers
    │   ├── pydantic_classes.py  # Data validation models
    │   ├── sql_alchemy.py       # Database ORM models
    │   ├── Dockerfile           # Backend container

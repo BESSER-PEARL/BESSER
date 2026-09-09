@@ -3,7 +3,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -71,27 +71,17 @@ class SQLAlchemyGenerator(GeneratorInterface):
         for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
 
-    # Model type name -> python type used for Mapped_[...] annotations of
-    # primary keys and the foreign keys that reference them. Anything not
-    # listed keeps the historical integer surrogate.
-    _PK_PY_TYPES = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float"}
-
     def get_pk_py_types(self):
         """Class name -> python type of its primary key (default 'int').
 
         A ForeignKey column must use the SAME python type as the primary
         key it references — a ``Mapped_[int]`` FK pointing at a
         ``String`` PK breaks joins at runtime even though it imports.
+        Delegates to the shared ``structural_utils.get_pk_py_types`` so
+        this generator and the backend's path parameters can never
+        disagree about a primary key's type.
         """
-        pk_types = {}
-        for cls in self.model.get_classes():
-            id_attr = next((a for a in cls.attributes if a.is_id), None)
-            if id_attr is None:
-                id_attr = next((a for a in cls.attributes if a.name == "id"), None)
-            if id_attr is not None:
-                type_name = getattr(id_attr.type, "name", "") or ""
-                pk_types[cls.name] = self._PK_PY_TYPES.get(type_name.lower(), "int")
-        return pk_types
+        return get_pk_py_types(self.model)
 
     def get_ids(self):
         """

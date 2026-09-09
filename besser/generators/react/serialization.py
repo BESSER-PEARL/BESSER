@@ -831,11 +831,32 @@ class GuiSerializationMixin:
             {
                 "entity": getattr(domain, "name", None),
                 "endpoint": endpoint,
+                "row_key_fields": self._row_key_fields(domain),
                 "label_field": label_field_value,
                 "data_field": data_field_value,
                 "filter": str(data_filter) if data_filter else None,
             }
         )
+
+    @staticmethod
+    def _row_key_fields(domain) -> Optional[List[str]]:
+        """The row fields that address one entity in the generated REST API.
+
+        An association class is keyed by the foreign keys of its two ends
+        (``/<class>/{<end>_id}/{<end>_id}/``, ends in name order — the same
+        order the backend generator uses); any other class by its declared
+        ``is_id`` attribute, falling back to the surrogate ``id``.
+        """
+        if domain is None:
+            return None
+        if isinstance(domain, AssociationClass):
+            ends = sorted(domain.association.ends, key=lambda end: end.name)
+            return [f"{end.name}_id" for end in ends]
+        attributes = list(domain.all_attributes()) if hasattr(domain, "all_attributes") else list(
+            getattr(domain, "attributes", None) or []
+        )
+        id_attr = next((attr.name for attr in sort_by_timestamp(attributes) if getattr(attr, "is_id", False)), None)
+        return [id_attr or "id"]
 
     def _serialize_chart_series(self, series_list) -> Optional[List[Dict[str, Any]]]:
         """Serialize chart series with their data bindings."""

@@ -54,6 +54,10 @@ interface Props {
   dataBinding?: Record<string, any>;
 }
 
+// Stable fallbacks: a fresh `[]` per render would invalidate the columns ->
+// formColumns memo chain on every render and re-trigger the modal effects.
+const EMPTY_COLUMNS: any[] = [];
+
 const humanize = (value: string): string => {
   if (!value) {
     return "";
@@ -119,14 +123,19 @@ export const TableComponent: React.FC<Props> = ({
       (col: any) => typeof col === 'object' && col.column_type === 'lookup'
     );
     
-    // Association class attributes (the `<end>_links` payload) are only part of the
-    // detailed response, and the edit form needs them to prefill the link attributes
-    const hasAssociationClassColumns = ((options as any)?.formColumns ?? (options as any)?.form_columns ?? []).some(
-      (col: any) => typeof col === 'object' && col && (col.association_class ?? col.associationClass)
+    // The edit form prefills relationship selections from the related objects and
+    // the `<end>_links` payload, which only the detailed response carries - so any
+    // form lookup column (not just a displayed one) needs the detailed fetch.
+    // Without it the form opens with empty selections and a save would silently
+    // detach every relationship.
+    const hasLookupFormColumns = ((options as any)?.formColumns ?? (options as any)?.form_columns ?? []).some(
+      (col: any) => typeof col === 'object' && col && (
+        col.column_type === 'lookup' || col.columnType === 'lookup' || (col.association_class ?? col.associationClass)
+      )
     );
 
     // Add detailed=true query param if there are lookup columns
-    const urlParams = (hasLookupColumns || hasAssociationClassColumns) ? '?detailed=true' : '';
+    const urlParams = (hasLookupColumns || hasLookupFormColumns) ? '?detailed=true' : '';
     const url = endpoint.startsWith("/") 
       ? backendBase + endpoint + urlParams
       : endpoint + urlParams;
@@ -163,8 +172,9 @@ export const TableComponent: React.FC<Props> = ({
     stripedRows: options?.stripedRows ?? false,
     showPagination: options?.showPagination ?? true,
     rowsPerPage: options?.rowsPerPage ?? 5,
-    columns: options?.columns ?? [],
-    formColumns: (options as any)?.formColumns ?? (options as any)?.form_columns ?? [],
+    columns: options?.columns ?? EMPTY_COLUMNS,
+    formColumns: (options as any)?.formColumns ?? (options as any)?.form_columns ?? EMPTY_COLUMNS,
+    form_columns: (options as any)?.formColumns ?? (options as any)?.form_columns ?? EMPTY_COLUMNS,
     actionButtons: (options as any)?.actionButtons ?? (options as any)?.["action-buttons"] ?? false,
   };
 
@@ -233,10 +243,16 @@ export const TableComponent: React.FC<Props> = ({
       return [];
     }
 
+    // Relationship payloads of the detailed response (related objects, `<end>_links`
+    // rows) are for the edit form, not for display as raw JSON columns
+    const isRelationshipPayload = (key: string, value: any) =>
+      key.endsWith("_links") ||
+      (Array.isArray(value) && (value.length === 0 || value.some((item) => item && typeof item === "object"))) ||
+      (value !== null && typeof value === "object" && !Array.isArray(value));
     const columnOrder: string[] = [];
     normalizedRows.forEach((row) => {
       Object.keys(row || {}).forEach((key) => {
-        if (!columnOrder.includes(key)) {
+        if (!columnOrder.includes(key) && !isRelationshipPayload(key, (row as any)[key])) {
           columnOrder.push(key);
         }
       });
@@ -457,6 +473,11 @@ export const TableComponent: React.FC<Props> = ({
   const [formValues, setFormValues] = useState<Record<string, any>>({});
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editRowData, setEditRowData] = useState<any>(null);
+  // Relationship fields the edited row did not carry: their selection is unknown,
+  // so an untouched one is left out of the save instead of being sent as empty.
+  const [unknownRelationshipFields, setUnknownRelationshipFields] = useState<string[]>([]);
+  // Message of the last failed row action (e.g. a delete the backend refused)
+  const [rowActionError, setRowActionError] = useState<string>("");
   const [lookupOptions, setLookupOptions] = useState<Record<string, any[]>>({});
   const [validationError, setValidationError] = useState<string>("");
   // Association class attributes of the selected targets, keyed by
@@ -543,6 +564,7 @@ export const TableComponent: React.FC<Props> = ({
       setValidationError("");
       setLookupFilters({});
       const initialValues: Record<string, any> = {};
+      const unknownRelationships: string[] = [];
       formColumns.forEach(col => {
         if (modalMode === 'edit' && editRowData) {
           // For lookup columns in edit mode, use the FK ID
@@ -553,7 +575,9 @@ export const TableComponent: React.FC<Props> = ({
               if (Array.isArray(relatedArray)) {
                 initialValues[col.field] = relatedArray.map((item: any) => getOptionValue(col, item));
               } else {
+                // Not carried by the row: unknown, not empty
                 initialValues[col.field] = [];
+                unknownRelationships.push(col.field);
               }
             } else {
               // For single lookups (N:1), use the path as the field name
@@ -579,6 +603,7 @@ export const TableComponent: React.FC<Props> = ({
         }
       });
       setFormValues(initialValues);
+      setUnknownRelationshipFields(unknownRelationships);
 
       // Prefill the association class attributes from the `<end>_links` payload
       // returned by the detailed GET (falls back to empty attributes).
@@ -692,8 +717,17 @@ export const TableComponent: React.FC<Props> = ({
     return endpoint;
   };
 
-  // Helper to get row id
+  // The path segment(s) that address a row in the REST API. The binding names
+  // the key fields: the declared primary key (e.g. Room.number) or, for an
+  // association class, both foreign keys in the backend's route order.
   const getRowId = (row: any) => {
+    const keyFields: string[] | undefined = dataBinding?.row_key_fields ?? dataBinding?.rowKeyFields;
+    if (row && Array.isArray(keyFields) && keyFields.length > 0) {
+      const parts = keyFields.map((field) => row[field]);
+      if (parts.every((part) => part !== undefined && part !== null)) {
+        return parts.join("/");
+      }
+    }
     return row?.id ?? row?.ID ?? row?.Id ?? Object.values(row)[0];
   };
 
@@ -701,6 +735,34 @@ export const TableComponent: React.FC<Props> = ({
     <div id={id} style={containerStyle} className="table-wrapper">
       {title && (
         <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
+      )}
+      {rowActionError && (
+        <div
+          role="alert"
+          style={{
+            margin: "8px 0",
+            padding: "8px 12px",
+            background: "#fee2e2",
+            color: "#991b1b",
+            border: "1px solid #fecaca",
+            borderRadius: "4px",
+            fontSize: "13px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <span>{rowActionError}</span>
+          <button
+            type="button"
+            onClick={() => setRowActionError("")}
+            style={{ background: "none", border: "none", color: "#991b1b", cursor: "pointer", fontSize: "16px" }}
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {/* Action Buttons above table */}
@@ -857,6 +919,13 @@ export const TableComponent: React.FC<Props> = ({
                   formColumns.forEach(col => {
                     // For lookup columns, use the path as the API field name
                     if (col.columnType === 'lookup' && col.path) {
+                      const selection = formValues[col.field];
+                      if (col.type === 'list' && unknownRelationshipFields.includes(col.field)
+                          && !(Array.isArray(selection) && selection.length > 0)) {
+                        // Never loaded and left untouched: omit it so the backend
+                        // keeps the current relationships instead of clearing them
+                        return;
+                      }
                       if (col.type === 'list' && col.associationClass) {
                         // For N:M lookups through an association class, send
                         // [{ target: <id>, <association class attributes> }]
@@ -1607,9 +1676,18 @@ export const TableComponent: React.FC<Props> = ({
                             const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
                             try {
                               await axios.delete(fullUrl);
+                              setRowActionError("");
                               await fetchTableData();
                             } catch (err) {
                               console.error("Error deleting data:", err);
+                              // Surface the backend's reason (e.g. a refused delete because a
+                              // related entity still requires this one) instead of failing silently
+                              const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+                              setRowActionError(
+                                typeof detail === "string" ? detail
+                                  : detail ? JSON.stringify(detail)
+                                  : "Could not delete this row."
+                              );
                             }
                           }}
                         >

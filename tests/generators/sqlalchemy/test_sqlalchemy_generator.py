@@ -363,3 +363,41 @@ def test_reserved_underscore_aliases():
     error_message = str(exc_info.value)
     assert "Boolean_" in error_message
     assert "reserved" in error_message.lower()
+
+
+def test_association_class_links_are_deleted_with_their_entities(tmpdir):
+    """Deleting an entity must cascade to its association-class rows: their FK
+    is part of the composite primary key, so without delete-orphan SQLAlchemy
+    tries to null it out and the delete fails with an AssertionError."""
+    from besser.BUML.metamodel.structural import (
+        AssociationClass, BinaryAssociation, Class, DomainModel, FloatType,
+        IntegerType, Multiplicity, Property, StringType,
+    )
+
+    trip = Class(name="Trip", attributes={
+        Property(name="id", type=IntegerType, is_id=True),
+        Property(name="reference", type=StringType),
+    })
+    seat = Class(name="Seat", attributes={Property(name="code", type=IntegerType, is_id=True)})
+    trip_seat = BinaryAssociation(name="trip_seat", ends={
+        Property(name="trips", type=trip, multiplicity=Multiplicity(0, "*")),
+        Property(name="seats", type=seat, multiplicity=Multiplicity(0, "*")),
+    })
+    reservation = AssociationClass(
+        name="Reservation", attributes={Property(name="price", type=FloatType)}, association=trip_seat,
+    )
+    model = DomainModel(name="TripModel", types={trip, seat, reservation}, associations={trip_seat})
+
+    output_dir = tmpdir.mkdir("assoc_cascade")
+    SQLAlchemyGenerator(model=model, output_dir=str(output_dir)).generate(dbms="sqlite")
+    with open(os.path.join(str(output_dir), "sql_alchemy.py"), encoding="utf-8") as f:
+        code = f.read()
+
+    # Entity -> links: owned, deleted with the entity (from both ends)
+    assert ('Trip.reservations: Mapped_[List_["Reservation"]] = relationship("Reservation", '
+            'back_populates="trips", cascade="all, delete-orphan")') in code
+    assert ('Seat.reservations: Mapped_[List_["Reservation"]] = relationship("Reservation", '
+            'back_populates="seats", cascade="all, delete-orphan")') in code
+    # Link -> entity: no cascade, deleting a link never deletes the entity
+    assert 'Reservation.trips: Mapped_["Trip"] = relationship("Trip", back_populates="reservations")' in code
+    assert 'Reservation.seats: Mapped_["Seat"] = relationship("Seat", back_populates="reservations")' in code

@@ -839,6 +839,15 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
        its name (rewriting Room.number would orphan every FK row pointing at
        it), and a surrogate `id` (named `id` but not declared is_id) is
        server-owned and absent from the Create schema. -#}
+    {# Inherited attributes are part of the entity too (joined-table inheritance):
+       an Employee's last_name lives on Person and must be updatable here #}
+    {% for parent in all_parents %}
+    {% for attribute in parent.attributes %}
+    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
     {% for attribute in class.attributes %}
     {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})

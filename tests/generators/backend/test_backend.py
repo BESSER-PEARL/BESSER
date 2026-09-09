@@ -507,6 +507,12 @@ def test_rest_api_inherited_constructor_args(tmpdir):
     # Inherited FK from A should be included in constructor args
     assert "ref_id=c_data.ref" in c_router_code
 
+    # Update must set inherited attributes too (joined-table inheritance): an
+    # edit of an ancestor's attribute used to be silently ignored
+    assert "setattr(db_c, 'a_attr', c_data.a_attr)" in c_router_code
+    assert "setattr(db_c, 'b_attr', c_data.b_attr)" in c_router_code
+    assert "setattr(db_c, 'c_attr', c_data.c_attr)" in c_router_code
+
     # Bulk create should include all ancestor attributes too
     assert "a_attr=item_data.a_attr" in c_router_code
     assert "b_attr=item_data.b_attr" in c_router_code

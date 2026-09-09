@@ -197,7 +197,13 @@ function AppContent() {
     }
   };
 
-  const handleLinkCreate = async (sourceId: string, targetId: string, label: string) => {
+  const handleLinkCreate = async (
+    sourceId: string,
+    targetId: string,
+    label: string,
+    sourceHandle?: string,
+    targetHandle?: string,
+  ) => {
     const source = instances.find((i) => i.id === sourceId);
     const target = instances.find((i) => i.id === targetId);
     if (!source || !target) {
@@ -211,6 +217,8 @@ function AppContent() {
         target_class: target.class_name,
         target_id: targetId,
         association_name: label,
+        source_handle: sourceHandle,
+        target_handle: targetHandle,
       });
       await loadInstances();
     } catch (error) {

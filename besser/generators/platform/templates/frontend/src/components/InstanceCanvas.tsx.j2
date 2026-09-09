@@ -251,7 +251,13 @@ interface InstanceCanvasProps {
   availableClasses: ClassMetadata[];
   onInstanceUpdate: (instance: BaseInstance) => void;
   onInstanceDelete: (className: string, instanceId: string) => void;
-  onLinkCreate: (sourceId: string, targetId: string, label: string) => void;
+  onLinkCreate: (
+    sourceId: string,
+    targetId: string,
+    label: string,
+    sourceHandle?: string,
+    targetHandle?: string,
+  ) => void;
   onInstanceCreate: (className: string, position: { x: number; y: number }) => void;
   /** Called once a drag-end position PATCH resolves, so the caller can fold
    *  the new position into `instances`. Without this, `instance.position`
@@ -287,6 +293,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     targetId: string;
     sourceClass: string;
     targetClass: string;
+    sourceHandle?: string;
+    targetHandle?: string;
   } | null>(null);
 
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -302,8 +310,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   // Remember which handle (top/right/bottom/left) the user actually clicked when
   // they drew each edge, so re-renders don't fall back to the default 'top' handle.
   // Keyed by `${sourceId}::${targetId}::${associationName}` (same shape as the edge id).
-  // Session-scoped only: the backend Link model doesn't carry handle info, so after
-  // a page reload xyflow picks defaults again.
+  // This is an optimistic same-session cache only -- the persisted source of
+  // truth is the link's own source_handle/target_handle field, which the
+  // synthesis effect prefers whenever it's present (so handles also survive
+  // a reload).
   const edgeHandlesRef = React.useRef<
     Map<string, { sourceHandle?: string; targetHandle?: string }>
   >(new Map());
@@ -581,6 +591,11 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       // has no flagged source/target endpoint associations.
       sourceNodeId: string | null;
       targetNodeId: string | null;
+      // Persisted handle sides for the portless (node-to-node) case, taken
+      // from the role-tagged links' own target_handle field, so a reload
+      // restores the same connection point instead of xyflow's default.
+      sourceHandle?: string | null;
+      targetHandle?: string | null;
     };
     const connectionInfos: ConnectionInfo[] = [];
     const renderedConnectionIds = new Set<string>();
@@ -592,6 +607,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       let targetPortId: string | null = null;
       let sourceNodeId: string | null = null;
       let targetNodeId: string | null = null;
+      let roleSourceHandle: string | null | undefined;
+      let roleTargetHandle: string | null | undefined;
 
       if (meta.sourceAssociation && meta.targetAssociation) {
         for (const link of conn.links) {
@@ -617,6 +634,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         if (bySourceRole && byTargetRole && bySourceRole.target_id !== byTargetRole.target_id) {
           sourceNodeId = bySourceRole.target_id;
           targetNodeId = byTargetRole.target_id;
+          roleSourceHandle = bySourceRole.target_handle;
+          roleTargetHandle = byTargetRole.target_handle;
         } else {
           const distinctIds = Array.from(new Set(nodeLinks.map((l) => l.target_id)));
           if (distinctIds.length >= 2) {
@@ -629,7 +648,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         }
       }
 
-      connectionInfos.push({ conn, sourcePortId, targetPortId, sourceNodeId, targetNodeId });
+      connectionInfos.push({
+        conn, sourcePortId, targetPortId, sourceNodeId, targetNodeId,
+        sourceHandle: roleSourceHandle, targetHandle: roleTargetHandle,
+      });
       if (
         sourcePortId && targetPortId &&
         portToOwner.has(sourcePortId) && portToOwner.has(targetPortId)
@@ -768,7 +790,13 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
               pickSpreadHandle(instance.id, 'source'),
               pickSpreadHandle(target.id, 'target'),
             );
-            onLinkCreate(instance.id, target.id, assoc.name);
+            onLinkCreate(
+              instance.id,
+              target.id,
+              assoc.name,
+              pickSpreadHandle(instance.id, 'source'),
+              pickSpreadHandle(target.id, 'target'),
+            );
           },
           onCreateAssociationTarget: (assoc: AssociationMetadata) => {
             const sourcePos = nodePositionsRef.current.get(instance.id) ?? { x: 100, y: 100 };
@@ -871,8 +899,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           id: edgeId,
           source: instance.id,
           target: link.target_id,
-          sourceHandle: savedHandles?.sourceHandle,
-          targetHandle: savedHandles?.targetHandle,
+          sourceHandle: link.source_handle ?? savedHandles?.sourceHandle,
+          targetHandle: link.target_handle ?? savedHandles?.targetHandle,
           label: labelVisible ? link.association_name : undefined,
           type: edgeTypeFor(edgeStyle?.lineRouting ?? DEFAULT_EDGE_ROUTING),
           animated: false,
@@ -926,8 +954,8 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         sourceOwner = sourceNodeId;
         targetOwner = targetNodeId;
         const saved = edgeHandlesRef.current.get(`connection::${conn.id}`);
-        sourceHandle = saved?.sourceHandle;
-        targetHandle = saved?.targetHandle;
+        sourceHandle = info.sourceHandle ?? saved?.sourceHandle ?? undefined;
+        targetHandle = info.targetHandle ?? saved?.targetHandle ?? undefined;
       } else {
         continue;
       }
@@ -1228,13 +1256,15 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           assocSrcHandle,
           assocTgtHandle,
         );
-        onLinkCreate(connection.source, connection.target, assocName);
+        onLinkCreate(connection.source, connection.target, assocName, assocSrcHandle, assocTgtHandle);
       } else if (validAssociations.length > 1) {
         setPendingConnection({
           sourceId: connection.source,
           targetId: connection.target,
           sourceClass: sourceInstance.class_name,
           targetClass: targetInstance.class_name,
+          sourceHandle: assocSrcHandle,
+          targetHandle: assocTgtHandle,
         });
         // Stash handles under every valid association; handleAssociationSelect
         // below picks the right one and the rest are harmless dead entries.
@@ -1318,7 +1348,13 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
   const handleAssociationSelect = (associationName: string) => {
     if (pendingConnection) {
-      onLinkCreate(pendingConnection.sourceId, pendingConnection.targetId, associationName);
+      onLinkCreate(
+        pendingConnection.sourceId,
+        pendingConnection.targetId,
+        associationName,
+        pendingConnection.sourceHandle,
+        pendingConnection.targetHandle,
+      );
     }
     setPendingConnection(null);
   };
@@ -1594,13 +1630,20 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         attributes,
       });
       if (created?.id) {
+        // No port handle to bind the synthetic edge to -- use the side the
+        // user actually dragged from/to (captured back in `onConnect`),
+        // falling back to a spread pick only if it's missing (e.g. the drag
+        // started from the node body rather than a side handle). Persisted
+        // on each role link's own target_handle so it survives a reload.
+        const resolvedSourceHandle = draggedSourceHandle ?? pickSpreadHandle(sourcePortInstance.id, 'source');
+        const resolvedTargetHandle = draggedTargetHandle ?? pickSpreadHandle(targetPortInstance.id, 'target');
         await api.createLink({
           source_class: className,
           source_id: created.id,
           target_class: sourcePortInstance.class_name,
           target_id: sourcePortInstance.id,
           association_name: srcAssoc,
-          ...(isPortless ? { role: 'source' as const } : {}),
+          ...(isPortless ? { role: 'source' as const, target_handle: resolvedSourceHandle } : {}),
         });
         await api.createLink({
           source_class: className,
@@ -1608,18 +1651,15 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           target_class: targetPortInstance.class_name,
           target_id: targetPortInstance.id,
           association_name: tgtAssoc,
-          ...(isPortless ? { role: 'target' as const } : {}),
+          ...(isPortless ? { role: 'target' as const, target_handle: resolvedTargetHandle } : {}),
         });
         if (isPortless) {
-          // No port handle to bind the synthetic edge to -- use the side the
-          // user actually dragged from/to (captured back in `onConnect`),
-          // falling back to a spread pick only if it's missing (e.g. the
-          // drag started from the node body rather than a side handle),
-          // keyed the same way the edge-synthesis effect looks it up
-          // (`connection::${created.id}`).
+          // Keyed the same way the edge-synthesis effect looks it up
+          // (`connection::${created.id}`) -- optimistic same-session cache,
+          // the persisted target_handle above is now the source of truth.
           edgeHandlesRef.current.set(`connection::${created.id}`, {
-            sourceHandle: draggedSourceHandle ?? pickSpreadHandle(sourcePortInstance.id, 'source'),
-            targetHandle: draggedTargetHandle ?? pickSpreadHandle(targetPortInstance.id, 'target'),
+            sourceHandle: resolvedSourceHandle,
+            targetHandle: resolvedTargetHandle,
           });
         }
         // Any non-endpoint associations the user picked in the modal — create

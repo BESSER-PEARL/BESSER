@@ -130,14 +130,18 @@ class InstanceManager:
         
         return False
     
-    def create_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str, role: str = None):
+    def create_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str, role: str = None, source_handle: str = None, target_handle: str = None):
         """Create a link (association) between two instances.
 
         ``role`` (optional, 'source' or 'target') records which endpoint of
         the association this link represents, for connection classes wired
-        without ports. Identity for dedupe/removal purposes is always the
-        triple (association_name, target_class, target_id) -- ``role`` is
-        metadata carried alongside it, not part of the link's identity.
+        without ports. ``source_handle``/``target_handle`` (optional) record
+        which side of each instance the edge was drawn from/to, so the
+        canvas can restore the same connection point after a reload.
+        Identity for dedupe/removal purposes is always the triple
+        (association_name, target_class, target_id) -- ``role`` and the
+        handles are metadata carried alongside it, not part of the link's
+        identity.
         """
         source_instance = self.get_instance(source_class, source_id)
         target_instance = self.get_instance(target_class, target_id)
@@ -164,14 +168,24 @@ class InstanceManager:
             }
             if role is not None:
                 link_data["role"] = role
+            if source_handle is not None:
+                link_data["source_handle"] = source_handle
+            if target_handle is not None:
+                link_data["target_handle"] = target_handle
             source_instance["links"].append(link_data)
-        elif role is not None and existing.get("role") != role:
+        else:
             # Same identity triple already linked (e.g. re-created via a
             # port-based call, or via reconcileLinks re-adding it) but this
-            # call carries a role the existing record lacks or disagrees
-            # with -- upgrade in place instead of silently no-op'ing, so a
-            # portless connection's endpoint role is never lost.
-            existing["role"] = role
+            # call carries a role/handle the existing record lacks or
+            # disagrees with -- upgrade in place instead of silently
+            # no-op'ing, so a portless connection's endpoint role or a
+            # dragged handle is never lost.
+            if role is not None and existing.get("role") != role:
+                existing["role"] = role
+            if source_handle is not None and existing.get("source_handle") != source_handle:
+                existing["source_handle"] = source_handle
+            if target_handle is not None and existing.get("target_handle") != target_handle:
+                existing["target_handle"] = target_handle
 
     def delete_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str):
         """Delete a link between two instances.

@@ -31,6 +31,12 @@ export interface LinkData {
   // links persisted before this field existed -- callers fall back to link
   // order in that case.
   role?: 'source' | 'target';
+  // Side of the link's own source/target instance the edge was drawn
+  // from/to ('top'/'right'/'bottom'/'left'), so the canvas can restore the
+  // same connection point after a reload. Absent on links that predate
+  // this field or were created via a path that doesn't record a handle.
+  source_handle?: string | null;
+  target_handle?: string | null;
 }
 
 // Instance creation request
@@ -54,6 +60,8 @@ export interface LinkCreateRequest {
   target_id: string;
   association_name: string;
   role?: 'source' | 'target';
+  source_handle?: string | null;
+  target_handle?: string | null;
 }
 
 // Export response types

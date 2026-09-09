@@ -39,9 +39,6 @@ class SetupLayerSyntax:
         self.permute_out: bool | None = None
         self.permute_in: bool | None = None
         self.dim: str | None = None
-        # Track shared activation layers
-        if not hasattr(SetupLayerSyntax, '_shared_activations'):
-            SetupLayerSyntax._shared_activations = {}
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""

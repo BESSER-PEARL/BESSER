@@ -562,9 +562,9 @@ def _write_embedding(f, layer: EmbeddingLayer, var_name: str):
         params.append(f"input_reused={layer.input_reused}")
     if _is_attr_set(layer, 'is_layer_call'):
         params.append(f"is_layer_call={layer.is_layer_call}")
-    if _is_attr_set(layer, 'input_var'):
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
         params.append(f"input_var='{_esc(layer.input_var)}'")
-    if _is_attr_set(layer, 'output_var'):
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
         params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = EmbeddingLayer({', '.join(params)})\n")
@@ -576,7 +576,7 @@ def _write_dropout(f, layer: DropoutLayer, var_name: str):
         f"name='{_esc(layer.name)}'",
         f"rate={layer.rate}",
     ]
-    if _is_attr_set(layer, 'dimension'):
+    if _is_attr_set(layer, 'dimension') and layer.dimension:
         params.append(f"dimension='{_esc(layer.dimension)}'")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
@@ -584,9 +584,9 @@ def _write_dropout(f, layer: DropoutLayer, var_name: str):
         params.append(f"input_reused={layer.input_reused}")
     if _is_attr_set(layer, 'is_layer_call'):
         params.append(f"is_layer_call={layer.is_layer_call}")
-    if _is_attr_set(layer, 'input_var'):
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
         params.append(f"input_var='{_esc(layer.input_var)}'")
-    if _is_attr_set(layer, 'output_var'):
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
         params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = DropoutLayer({', '.join(params)})\n")
@@ -610,9 +610,9 @@ def _write_layer_norm(f, layer: LayerNormLayer, var_name: str):
         params.append(f"input_reused={layer.input_reused}")
     if _is_attr_set(layer, 'is_layer_call'):
         params.append(f"is_layer_call={layer.is_layer_call}")
-    if _is_attr_set(layer, 'input_var'):
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
         params.append(f"input_var='{_esc(layer.input_var)}'")
-    if _is_attr_set(layer, 'output_var'):
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
         params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = LayerNormLayer({', '.join(params)})\n")
@@ -641,9 +641,9 @@ def _write_batch_norm(f, layer: BatchNormLayer, var_name: str):
         params.append(f"input_reused={layer.input_reused}")
     if _is_attr_set(layer, 'is_layer_call'):
         params.append(f"is_layer_call={layer.is_layer_call}")
-    if _is_attr_set(layer, 'input_var'):
+    if _is_attr_set(layer, 'input_var') and layer.input_var:
         params.append(f"input_var='{_esc(layer.input_var)}'")
-    if _is_attr_set(layer, 'output_var'):
+    if _is_attr_set(layer, 'output_var') and layer.output_var:
         params.append(f"output_var='{_esc(layer.output_var)}'")
 
     f.write(f"{var_name} = BatchNormLayer({', '.join(params)})\n")
@@ -736,10 +736,10 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
         params.append(f"permute_in={tensor_op.permute_in}")
     if _is_attr_set(tensor_op, 'permute_out'):
         params.append(f"permute_out={tensor_op.permute_out}")
-    if _is_attr_set(tensor_op, 'input_var'):
+    if _is_attr_set(tensor_op, 'input_var') and tensor_op.input_var:
         params.append(f"input_var='{_esc(tensor_op.input_var)}'")
     # output_var is NOT for split type (split uses output_vars instead)
-    if tns_type != 'split' and _is_attr_set(tensor_op, 'output_var'):
+    if tns_type != 'split' and _is_attr_set(tensor_op, 'output_var') and tensor_op.output_var:
         params.append(f"output_var='{_esc(tensor_op.output_var)}'")
     if _is_attr_set(tensor_op, 'input_reused'):
         params.append(f"input_reused={tensor_op.input_reused}")

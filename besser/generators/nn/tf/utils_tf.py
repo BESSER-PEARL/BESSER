@@ -37,21 +37,6 @@ class SetupLayerSyntax:
         self.is_subnn: bool = is_subnn
         self.permute_out: bool | None = None
         self.permute_in: bool | None = None
-        # Track shared activation layers
-        if not hasattr(self, '_shared_activations'):
-            SetupLayerSyntax._shared_activations = {}
-
-    @staticmethod
-    def _strip_counter_suffix(layer_name):
-        """
-        Strip the counter suffix (_N) added by the parser to ensure
-        unique keys.
-        Example: 'dropout_1' -> 'dropout',
-        'lstm_layer_2' -> 'lstm_layer'
-        """
-        import re
-        # Remove trailing _N where N is one or more digits
-        return re.sub(r'_\d+$', '', layer_name)
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -232,20 +217,22 @@ class SetupLayerSyntax:
         if unsupported and self.layer.actv_func:
             actv_func = self.layer.actv_func
 
-            # Use shared activation layer
-            if actv_func not in SetupLayerSyntax._shared_activations:
-                shared_name = f"activation_{actv_func}"
-                SetupLayerSyntax._shared_activations[actv_func] = shared_name
+            # Use a shared activation layer, deduplicated per generation
+            # run: modules_details is the per-run state, so keying the
+            # DEF entry off it (instead of any class-level registry that
+            # would leak between runs in a long-lived process) guarantees
+            # each generation emits its own definition exactly once.
+            shared_name = f"activation_{actv_func}"
+            name_ac = shared_name + "_activ"
+            if name_ac not in self.modules_details:
                 # Add shared activation definition (DEF: to skip
                 # forward generation)
                 syntax = (
                     f"self.{shared_name} = layers.Activation('{actv_func}')"
                 )
-                name_ac = shared_name + "_activ"
                 self.modules_details[name_ac] = [f"DEF:{syntax}", None, None]
 
             # Add call reference for this layer
-            shared_name = SetupLayerSyntax._shared_activations[actv_func]
             lyr_name = self.layer.name
             actv_call_key = f"{lyr_name}_activ"
             # Use CALL: prefix to indicate this is a call
@@ -466,8 +453,14 @@ def _handle_interpolate(tensorop, modules_details, in_var):
             f"method='{mode}')"
         )
     elif scale is not None:
-        size_expr = (f"[tf.shape({prev_out_var})[1] * {scale}, "
-                     f"tf.shape({prev_out_var})[2] * {scale}]")
+        # tf.shape() yields int32 and interpolate_scale is a float, so the
+        # multiplication must round-trip through tf.cast to stay valid TF.
+        size_expr = (
+            f"[tf.cast(tf.cast(tf.shape({prev_out_var})[1], tf.float32)"
+            f" * {scale}, tf.int32), "
+            f"tf.cast(tf.cast(tf.shape({prev_out_var})[2], tf.float32)"
+            f" * {scale}, tf.int32)]"
+        )
         return (
             f"tf.image.resize({prev_out_var}, size={size_expr}, "
             f"method='{mode}')"
@@ -495,19 +488,21 @@ def _handle_pad(tensorop, modules_details, in_var):
     # (left, right, top, bottom) -> last dims first
     # TensorFlow expects NHWC: [[N], [H], [W], [C]]
     # Need to map PyTorch reversed order back to spatial dimensions
-    if pad_amount and isinstance(pad_amount, list) and len(pad_amount) >= 2:
+    if pad_amount and isinstance(pad_amount, list) and len(pad_amount) == 2:
         # pad_amount from PyTorch migrator: [[left, right], [top, bottom]]
         # Reconstruct as NHWC format: [[N], [H], [W], [C]]
-        if len(pad_amount) == 2:
-            # 2D padding: [[left, right], [top, bottom]]
-            left_right = pad_amount[0]
-            top_bottom = pad_amount[1]
-            paddings = f"[[0, 0], {top_bottom}, {left_right}, [0, 0]]"
-        else:
-            # More dimensions - use as-is
-            paddings = str(pad_amount)
+        left_right = pad_amount[0]
+        top_bottom = pad_amount[1]
+        paddings = f"[[0, 0], {top_bottom}, {left_right}, [0, 0]]"
     else:
-        paddings = "[[0, 0], [0, 0], [0, 0], [0, 0]]"
+        # A 1-D or >2-D pad_amount cannot be reconstructed without knowing
+        # the tensor rank/layout; emitting an all-zero or wrong-rank
+        # paddings tensor would silently change the model, so fail loudly.
+        raise ValueError(
+            "pad tensorop: cannot translate pad_amount "
+            f"{pad_amount!r} to TensorFlow NHWC paddings - only 2-D "
+            "[[left, right], [top, bottom]] padding is supported"
+        )
 
     mode_map = {
         'constant': 'CONSTANT',
@@ -797,6 +792,10 @@ def _handle_max_syntax(tensorop, modules_details, in_var, prev_out_var,
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     axis = tensorop.reduce_dim
+    if getattr(tensorop, 'reduce_keepdims', None):
+        return (
+            f"tf.reduce_max({prev_out_var}, axis={axis}, keepdims=True)"
+        )
     return f"tf.reduce_max({prev_out_var}, axis={axis})"
 
 

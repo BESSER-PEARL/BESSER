@@ -45,6 +45,13 @@ class TFGenerator(NNCodeGenerator):
                          output_dir=output_dir,
                          strip_layer_counter_suffix=strip_layer_counter_suffix)
 
+    def _wrap_in_lambda(self, syntax):
+        """Keras ``Sequential`` only accepts ``keras.Layer`` instances, so a
+        tensor-op expression must be wrapped in ``layers.Lambda`` — a bare
+        Python lambda raises at model construction. Mirrors the PyTorch
+        override, which wraps in its generated ``Lambda(nn.Module)``."""
+        return f"layers.Lambda(lambda x: {syntax})"
+
     def _cleanup_lambda_syntax(self, module, syntax, prev_out_var):
         """TensorFlow-specific variable extraction, mapping, and cleanup."""
         import re

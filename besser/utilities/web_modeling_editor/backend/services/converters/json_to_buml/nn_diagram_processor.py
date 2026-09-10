@@ -705,7 +705,9 @@ def process_nn_diagram(json_data):
 
     for container_id in [cid for cid, _ in container_order]:
         container_name, input_var, return_vars = containers[container_id]
-        nn = NN(name=container_name, input_var=input_var, return_vars=return_vars)
+        # Convert return_vars list to comma-separated string (metamodel expects string)
+        return_vars_str = ", ".join(return_vars) if return_vars else None
+        nn = NN(name=container_name, input_var=input_var, return_vars=return_vars_str)
         nn_by_name[container_name] = nn
 
         # Get all modules (layers + tensor_ops + refs) for this container
@@ -1007,10 +1009,11 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
     if dilation is not None:
         dilation_parsed = parse_list_of_ints(dilation)
         if dilation_parsed is not None:
-            if expected_dim is not None and len(dilation_parsed) != expected_dim:
+            # Accept single-element list as valid for any Conv dimension (PyTorch/TF handle expansion)
+            if expected_dim is not None and len(dilation_parsed) != expected_dim and len(dilation_parsed) != 1:
                 raise ValueError(
                     f"{class_name} layer '{name}' dilation has "
-                    f"{len(dilation_parsed)} element(s), expected {expected_dim}."
+                    f"{len(dilation_parsed)} element(s), expected {expected_dim} or 1."
                 )
             layer.dilation = dilation_parsed
             mark_explicit(layer, 'dilation')
@@ -1452,6 +1455,16 @@ def create_embedding_layer(element, elements):
         layer.padding_idx = parse_tuple_or_int(padding_idx)
         mark_explicit(layer, 'padding_idx')
 
+    permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
+    if permute_in is not None:
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
+
+    permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
+    if permute_out is not None:
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
+
     is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
     if is_layer_call is not None:
         layer.is_layer_call = parse_bool(is_layer_call)
@@ -1500,6 +1513,16 @@ def create_dropout_layer(element, elements):
     if dimension is not None and str(dimension).strip() != '':
         layer.dimension = dimension
         mark_explicit(layer, 'dimension')
+
+    permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
+    if permute_in is not None:
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
+
+    permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
+    if permute_out is not None:
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
 
     is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
     if is_layer_call is not None:

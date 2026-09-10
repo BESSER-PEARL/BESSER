@@ -98,13 +98,17 @@ def _fmt_value(value: Any) -> str:
         # syntax into something the processor can't re-parse cleanly.
         parts = []
         for v in value:
-            formatted = _fmt_value(v)
-            if isinstance(v, str) and (',' in v or ']' in v or '[' in v):
-                raise ValueError(
-                    f"List item {v!r} contains unsupported characters (,[]) "
-                    f"that would break round-trip through the editor format"
-                )
-            parts.append(formatted)
+            if isinstance(v, str):
+                # Quote string items for proper semantics (parser strips quotes during parse)
+                if (',' in v or ']' in v or '[' in v or "'" in v):
+                    raise ValueError(
+                        f"List item {v!r} contains unsupported characters (,[]') "
+                        f"that would break round-trip through the editor format"
+                    )
+                parts.append(f"'{v}'")
+            else:
+                formatted = _fmt_value(v)
+                parts.append(formatted)
         return '[' + ', '.join(parts) + ']'
     return str(value)
 
@@ -169,6 +173,20 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('permute_in', module.permute_in, 'bool', False))
         if _is_attr_set(module, 'permute_out'):
             fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Conv-specific optional fields
+        if _is_attr_set(module, 'dilation') or module.dilation:
+            fields.append(('dilation', module.dilation, 'List', False))
+        if _is_attr_set(module, 'groups') or (module.groups is not None and module.groups != 1):
+            fields.append(('groups', module.groups, 'int', False))
+        if _is_attr_set(module, 'bias'):
+            fields.append(('bias', module.bias, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'PoolingLayer':
         fields.append(('name', module.name, 'str', True))
@@ -197,6 +215,13 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('permute_in', module.permute_in, 'bool', False))
         if _is_attr_set(module, 'permute_out'):
             fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls in ('SimpleRNNLayer', 'LSTMLayer', 'GRULayer'):
         fields.append(('name', module.name, 'str', True))
@@ -217,6 +242,32 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        if _is_attr_set(module, 'bias'):
+            fields.append(('bias', module.bias, 'bool', False))
+        # RNN-specific optional fields
+        if module.hx_source:
+            fields.append(('hx_source', module.hx_source, 'str', False))
+        if module.hidden_state_var:
+            fields.append(('hidden_state_var', module.hidden_state_var, 'str', False))
+        if _is_attr_set(module, 'hidden_unused'):
+            fields.append(('hidden_unused', module.hidden_unused, 'bool', False))
+        if module.hidden_subscript_source:
+            fields.append(('hidden_subscript_source', module.hidden_subscript_source, 'str', False))
+        if module.hidden_subscript_target:
+            fields.append(('hidden_subscript_target', module.hidden_subscript_target, 'str', False))
+        # LSTM-specific fields
+        if cls == 'LSTMLayer':
+            if module.cell_state_var:
+                fields.append(('cell_state_var', module.cell_state_var, 'str', False))
+            if _is_attr_set(module, 'cell_unused'):
+                fields.append(('cell_unused', module.cell_unused, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'LinearLayer':
         fields.append(('name', module.name, 'str', True))
@@ -229,6 +280,16 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Linear-specific optional fields
+        if _is_attr_set(module, 'bias'):
+            fields.append(('bias', module.bias, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'FlattenLayer':
         fields.append(('name', module.name, 'str', True))
@@ -246,6 +307,13 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'EmbeddingLayer':
         fields.append(('name', module.name, 'str', True))
@@ -257,6 +325,20 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Embedding-specific optional fields
+        if _is_attr_set(module, 'padding_idx') or module.padding_idx is not None:
+            fields.append(('padding_idx', module.padding_idx, 'int', False))
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'DropoutLayer':
         fields.append(('name', module.name, 'str', True))
@@ -265,6 +347,20 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Dropout-specific optional fields
+        if module.dimension:
+            fields.append(('dimension', module.dimension, 'str', False))
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'LayerNormLayer':
         fields.append(('name', module.name, 'str', True))
@@ -275,6 +371,18 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # LayerNorm-specific optional fields
+        if _is_attr_set(module, 'eps') or (module.eps is not None and module.eps != 1e-5):
+            fields.append(('eps', module.eps, 'float', False))
+        if _is_attr_set(module, 'affine'):
+            fields.append(('affine', module.affine, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'BatchNormLayer':
         fields.append(('name', module.name, 'str', True))
@@ -286,16 +394,44 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # BatchNorm-specific optional fields
+        if _is_attr_set(module, 'eps') or (module.eps is not None and module.eps != 1e-5):
+            fields.append(('eps', module.eps, 'float', False))
+        if _is_attr_set(module, 'momentum') or (module.momentum is not None and module.momentum != 0.1):
+            fields.append(('momentum', module.momentum, 'float', False))
+        if _is_attr_set(module, 'affine'):
+            fields.append(('affine', module.affine, 'bool', False))
+        if _is_attr_set(module, 'track_running_stats'):
+            fields.append(('track_running_stats', module.track_running_stats, 'bool', False))
+        # Base-layer fields (inherited from Layer)
+        if _is_attr_set(module, 'is_layer_call'):
+            fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
 
     elif cls == 'TensorOp':
         fields.append(('name', module.name, 'str', True))
         fields.append(('tns_type', module.tns_type, 'str', True))
         tns_type = module.tns_type
+        # Common TensorOp fields (all types)
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Type-specific parameters
         if tns_type == 'concatenate':
             if module.concatenate_dim is not None:
                 fields.append(('concatenate_dim', module.concatenate_dim, 'int', False))
             if module.layers_of_tensors is not None:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+            if module.actual_vars is not None:
+                fields.append(('actual_vars', module.actual_vars, 'List', False))
         elif tns_type in ('multiply', 'matmultiply') and module.layers_of_tensors is not None:
             fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type == 'reshape':
@@ -310,6 +446,63 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
         elif tns_type == 'repeat':
             if module.repeat_dim is not None:
                 fields.append(('repeat_dim', module.repeat_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        # Binary operations
+        elif tns_type in ('binop_add', 'binop_subtract', 'binop_multiply',
+                           'binop_divide', 'binop_floor_divide'):
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+            if module.actual_vars is not None:
+                fields.append(('actual_vars', module.actual_vars, 'List', False))
+        # Reduce operations
+        elif tns_type in ('shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize'):
+            if module.reduce_dim is not None:
+                fields.append(('reduce_dim', module.reduce_dim, 'int', False))
+            if tns_type == 'max' and module.reduce_keepdims is not None:
+                fields.append(('reduce_keepdims', module.reduce_keepdims, 'bool', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        # Subscript
+        elif tns_type == 'subscript':
+            if module.subscript_indices is not None:
+                fields.append(('subscript_indices', module.subscript_indices, 'List', False))
+        # Shape_dim (deprecated field)
+        elif tns_type == 'shape_dim':
+            if module.shape_dim is not None:
+                fields.append(('shape_dim', module.shape_dim, 'int', False))
+        # Interpolate
+        elif tns_type == 'interpolate':
+            if module.interpolate_size is not None:
+                fields.append(('interpolate_size', module.interpolate_size, 'List', False))
+            if module.interpolate_scale is not None:
+                fields.append(('interpolate_scale', module.interpolate_scale, 'float', False))
+            if module.interpolate_mode:
+                fields.append(('interpolate_mode', module.interpolate_mode, 'str', False))
+        # Pad
+        elif tns_type == 'pad':
+            if module.pad_amount is not None:
+                fields.append(('pad_amount', module.pad_amount, 'List', False))
+            if module.pad_mode:
+                fields.append(('pad_mode', module.pad_mode, 'str', False))
+            if module.pad_value is not None:
+                fields.append(('pad_value', module.pad_value, 'float', False))
+        # Dropout (TensorOp variant)
+        elif tns_type == 'dropout':
+            if module.dropout_rate is not None:
+                fields.append(('dropout_rate', module.dropout_rate, 'float', False))
+            if module.dropout_training_aware is not None:
+                fields.append(('dropout_training_aware', module.dropout_training_aware, 'bool', False))
+        # Split
+        elif tns_type == 'split':
+            if module.split_dim is not None:
+                fields.append(('split_dim', module.split_dim, 'int', False))
+            if module.split_sizes is not None:
+                fields.append(('split_sizes', module.split_sizes, 'int', False))
+            if module.output_vars is not None:
+                fields.append(('output_vars', module.output_vars, 'List', False))
+        # Identity and zeros_like
+        elif tns_type in ('identity', 'zeros_like'):
             if module.layers_of_tensors is not None:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         if _is_attr_set(module, 'input_reused'):
@@ -389,15 +582,22 @@ def _emit_module(module, owner_id: str, x: int, y: int,
 
 
 def _emit_container(name: str, x: int, y: int, width: int, height: int,
-                    elements: dict[str, dict[str, Any]]) -> str:
+                    elements: dict[str, dict[str, Any]],
+                    input_var: str | None = None,
+                    return_vars: list[str] | None = None) -> str:
     container_id = _new_id()
-    elements[container_id] = {
+    container_dict = {
         'id': container_id,
         'name': name,
         'type': 'NNContainer',
         'owner': None,
         'bounds': {'x': x, 'y': y, 'width': width, 'height': height},
     }
+    if input_var:
+        container_dict['input_var'] = input_var
+    if return_vars:
+        container_dict['return_vars'] = return_vars
+    elements[container_id] = container_dict
     return container_id
 
 
@@ -509,8 +709,12 @@ def _emit_nn_container(nn: NN, y_base: int,
     module_count = max(len(nn.modules), 1)
     width = 30 + module_count * step
     container_x = -width // 2
+    # Convert return_vars from comma-separated string to list
+    return_vars_list = [v.strip() for v in nn.return_vars.split(",")] if nn.return_vars else None
     container_id = _emit_container(nn.name, container_x, y_base,
-                                    width=width, height=250, elements=elements)
+                                    width=width, height=250, elements=elements,
+                                    input_var=nn.input_var if nn.input_var else None,
+                                    return_vars=return_vars_list)
 
     prev_id: str | None = None
     for i, module in enumerate(nn.modules):

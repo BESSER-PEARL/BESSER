@@ -44,6 +44,15 @@ COPY requirements.txt ./requirements.txt
 COPY besser/utilities/web_modeling_editor/backend/requirements.txt ./backend-requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 
+# Phase 3 Python verification. The Spec-Driven fix loop promotes ruff's
+# undefined-name findings (F821/F822/F823) to BLOCKERS ("ships green, boots
+# dead") — but ruff was only ever installed in CI, never in this image, so on
+# the hosted backend _collect_ruff_issues() silently returned [] and two pilot
+# runs shipped a backend that NameError'd on import as "success / 0 blockers".
+# Pinned so the check is reproducible across deploys; kept current with the
+# unpinned `pip install ruff` CI runs so both see the same rule semantics.
+RUN pip install --no-cache-dir "ruff==0.16.6"
+
 # Copy only necessary files
 COPY pyproject.toml README.md ./
 COPY besser/ ./besser/

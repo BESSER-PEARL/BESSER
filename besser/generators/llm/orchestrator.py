@@ -3780,16 +3780,36 @@ class LLMOrchestrator:
     def _collect_ruff_issues(self) -> list[str]:
         """Run ``ruff check`` across the workspace when available.
 
-        Returns a list of concise issue strings. Skips silently if ruff is
-        not installed, hits a timeout, or produces no parseable output —
-        these are "nice to have" checks, not run-blockers.
+        Returns a list of concise issue strings. Times out / unparseable
+        output are skipped silently (nice-to-have checks). A MISSING ruff
+        binary, however, is reported loudly: ``_classify_issue`` promotes
+        ruff's undefined-name findings to blockers ("ships green, boots
+        dead"), so when ruff is absent that whole class of defect is
+        invisible and a "0 blockers" result is not the verification it
+        looks like. Found live 2026-09-10: ruff was never in the hosted
+        image (only in CI), so this path returned [] for every pilot run —
+        including the two that shipped a backend NameError-ing on import.
         """
         import shutil as _shutil
         import subprocess
 
         ruff_bin = _shutil.which("ruff")
         if not ruff_bin:
-            return []
+            if not getattr(self, "_warned_ruff_missing", False):
+                self._warned_ruff_missing = True
+                logger.warning(
+                    "Phase 3: ruff is not installed on this host — Python "
+                    "undefined-name/import checks are SKIPPED, so '0 blockers' "
+                    "does not cover import-time NameErrors. Install ruff in the "
+                    "image to enable them."
+                )
+            # A visible (non-blocking) validation note, deliberately phrased
+            # without a ruff rule code so _classify_issue keeps it a warning.
+            return [
+                "validation: ruff is not installed on this host - Python "
+                "undefined-name/import checks were skipped (install ruff to "
+                "enable them)"
+            ]
 
         try:
             result = subprocess.run(

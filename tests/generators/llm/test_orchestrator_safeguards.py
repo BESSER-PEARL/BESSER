@@ -399,9 +399,18 @@ class TestRuffAndTscValidation:
     def test_ruff_returns_empty_when_binary_missing(
         self, simple_model, tmp_path, monkeypatch
     ):
-        """If ``ruff`` is not on PATH, the validator returns an empty list
-        rather than raising or polluting issues."""
+        """If ``ruff`` is not on PATH, the validator must say so LOUDLY.
+
+        Regression for the live 2026-09-10 finding: ruff was only ever
+        installed in CI, never in the hosted image, so this path silently
+        returned [] for every pilot run — and the F821 "ships green, boots
+        dead" blocker class was invisible. A missing binary now yields one
+        visible validation note (a WARNING, never a blocker, so it can't
+        trip the fix loop) and logs a warning exactly once per orchestrator.
+        """
         import shutil as _shutil
+
+        from besser.generators.llm.orchestrator import _classify_issue
 
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
@@ -411,7 +420,17 @@ class TestRuffAndTscValidation:
 
         # Force ``shutil.which`` to act as if ruff is unavailable.
         monkeypatch.setattr(_shutil, "which", lambda name: None)
-        assert orchestrator._collect_ruff_issues() == []
+        issues = orchestrator._collect_ruff_issues()
+        assert len(issues) == 1
+        note = issues[0]
+        assert "ruff is not installed" in note
+        # Deliberately NOT a "ruff:" line, so _classify_issue can't read a
+        # rule code out of it and promote it: it must stay a warning.
+        assert not note.startswith("ruff:")
+        assert _classify_issue(note).severity == "warning"
+        # Second call: same note, but the log warning fires only once.
+        assert orchestrator._collect_ruff_issues() == issues
+        assert orchestrator._warned_ruff_missing is True
 
     def test_ruff_captures_output_when_binary_present(
         self, simple_model, tmp_path, monkeypatch

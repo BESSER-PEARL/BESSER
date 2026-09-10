@@ -1177,6 +1177,12 @@ export const TableComponent: React.FC<Props> = ({
                                       type="checkbox"
                                       checked={isChecked}
                                       onChange={() => {}} // Handled by parent div onClick
+                                      // The record this option stands for. Its label is a
+                                      // display attribute that need not be unique, so the
+                                      // key is what identifies the option to anything
+                                      // driving the form.
+                                      value={String(optionValue)}
+                                      data-option-id={String(optionValue)}
                                       style={{
                                         width: "16px",
                                         height: "16px",

@@ -556,3 +556,28 @@ def test_form_columns_carry_attribute_defaults_and_the_form_preselects_them(tmp_
     assert "Preselect the model's default" in component
     # An enum left unselected is omitted from the payload instead of sent as ""
     assert "col.type === 'enum' && (value === undefined || value === null || value === '')" in component
+
+
+def test_lookup_options_identify_a_record_rather_than_describe_it():
+    """A dropdown label has to tell two records apart. A business identifier wins,
+    and an email beats a name: two guests called Jane look identical in a select."""
+    from besser.generators.react.serialization import GuiSerializationMixin
+
+    def prop(name, type_=StringType, **kwargs):
+        return Property(name=name, type=type_, **kwargs)
+
+    person = [prop("id", IntegerType, is_id=True), prop("name"), prop("email"), prop("phone_number")]
+    assert GuiSerializationMixin._select_display_field(person) == "email"
+
+    # An attribute the model marks as the business key outranks both.
+    tagged = [prop("id", IntegerType, is_id=True), prop("name"), prop("email"),
+              prop("passport", is_external_id=True)]
+    assert GuiSerializationMixin._select_display_field(tagged) == "passport"
+
+    # Without an email, a name is still the friendliest label available.
+    room = [prop("number", IntegerType, is_id=True), prop("name"), prop("description")]
+    assert GuiSerializationMixin._select_display_field(room) == "name"
+
+    # With neither, fall back to the first non-id string attribute.
+    plain = [prop("number", IntegerType, is_id=True), prop("description")]
+    assert GuiSerializationMixin._select_display_field(plain) == "description"

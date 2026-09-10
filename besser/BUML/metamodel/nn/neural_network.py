@@ -28,8 +28,12 @@ class TensorOp(NamedElement):
             names or scalar values.
         reshape_dim (list[int]): New shape for reshape operation.
         transpose_dim (list[int]): Transpose dimension specification.
+            The transpose tensorop type swaps exactly 2 dimensions.
+            Restricted to 3D tensors. For higher-dimensional
+            permutations use 'permute' instead.
         permute_dim (list[int]): Desired ordering of dimensions for
-            permute.
+            permute that performs a full arbitrary permutation 
+            over any number of dimensions.
         reduce_dim (int): Dimension for reduction operations like max 
             or mean.
         reduce_keepdims (bool): Whether to keep dimensions after
@@ -92,8 +96,13 @@ class TensorOp(NamedElement):
         layers_of_tensors (list[str | float | int]): Input layers or
             scalars.
         reshape_dim (list[int]): Reshape target shape.
-        transpose_dim (list[int]): Transpose dimensions.
-        permute_dim (list[int]): Permute dimension ordering.
+        transpose_dim (list[int]): Transpose dimension specification.
+            The transpose tensorop type swaps exactly 2 dimensions.
+            Restricted to 3D tensors. For higher-dimensional
+            permutations use 'permute' instead.
+        permute_dim (list[int]): Desired ordering of dimensions for
+            permute that performs a full arbitrary permutation 
+            over any number of dimensions.
         reduce_dim (int): Reduction dimension.
         reduce_keepdims (bool): Keep dimensions after reduction.
         shape_dim (int): Shape dimension to extract.
@@ -4671,8 +4680,10 @@ class NN(BehaviorImplementation):
                     )
                 if len(tns.transpose_dim) != 2:
                     errors.append(
-                        f"{label} transpose_dim must have exactly 2 elements,"
-                        f" got {len(tns.transpose_dim)}"
+                        f"{label} transpose_dim must contain exactly 2 "
+                        "dimension indices (e.g. [1, 2]). transpose swaps"
+                        " exactly 2 dims. For arbitrary N-dimensional "
+                        "permutations use tns_type='permute' instead."
                     )
                 if not all(isinstance(d, int) for d in tns.transpose_dim):
                     errors.append(

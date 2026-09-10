@@ -209,7 +209,12 @@ class UsageTracker:
         if self.served_model is None:
             self.served_model = name
             logger.info("UsageTracker: served model = %s (requested %s)", name, self.model)
-        elif self.served_model != name:
+        elif _normalize_model_id(self.served_model) != _normalize_model_id(name):
+            # Only a REAL switch (e.g. LongCat -> qwen fallback) is a warning.
+            # Aggregators alias one model under several spellings
+            # ("meituan/LongCat-2.0:free" vs "LongCat-2.0") and flip between
+            # them call-to-call; that churn logged a warning per flip and read
+            # as a model switch (2026-09-10 campaign: 14+ spurious flips/run).
             logger.warning(
                 "UsageTracker: served model changed mid-run: %s → %s",
                 self.served_model, name,
@@ -482,6 +487,43 @@ def _is_rate_limit(error: Exception) -> bool:
         or "rate-limited" in s
         or "ratelimited" in s
     )
+
+
+def _is_quota_exhausted(error: Exception) -> bool:
+    """True when a 429 is a DAILY/period quota exhaustion, not a transient throttle.
+
+    Measured on the free tier (2026-09-10 campaign): Command Code's free LongCat
+    returns ``429 "You've used all 100 free LongCat 2.0 requests for today. Your
+    quota resets at …"``. That will not recover inside a retry window, so the
+    5-attempt backoff (0.5s → 30s cap) just burns ~15-40s per call before the
+    fallback finally engages. Classify it so callers skip retries and fall back
+    (or fail) immediately — and can tell the user *why*.
+    """
+    s = str(error).lower()
+    if "429" not in s and "quota" not in s and "limit" not in s:
+        return False
+    return any(marker in s for marker in (
+        "used all", "requests for today", "quota resets", "daily limit",
+        "daily quota", "per day", "insufficient_quota", "quota exceeded",
+        "exceeded your current quota",
+    ))
+
+
+def _normalize_model_id(name: str | None) -> str:
+    """Canonical form of a served-model id for equality checks.
+
+    Aggregators alias the same model under several spellings and flip between
+    them call-to-call (seen live: ``meituan/LongCat-2.0:free`` vs ``LongCat-2.0``).
+    Strip the vendor prefix and tier suffix and casefold so only a REAL switch
+    (e.g. LongCat → qwen) compares unequal.
+    """
+    s = (name or "").strip().lower()
+    if "/" in s:
+        s = s.rsplit("/", 1)[-1]
+    for suffix in (":free", ":latest", ":paid"):
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+    return s
 
 
 def _retry_after_seconds(error: Exception) -> float | None:
@@ -1101,6 +1143,7 @@ class OpenAIProvider(LLMProvider):
         # calls don't re-pay the retry tax against a dead primary.
         self._fallback = fallback
         self._on_fallback = False
+        self.fallback_reason: str | None = None
 
     def _activate_fallback(self, error: Exception) -> bool:
         """Switch to the configured fallback endpoint, if any.
@@ -1129,6 +1172,10 @@ class OpenAIProvider(LLMProvider):
         self._client = OpenAI(**client_kwargs)
         self._model = fb_model
         self._on_fallback = True
+        # Why we fell back — lets the runner/UI say "free daily quota exhausted"
+        # instead of a generic "primary unavailable" (measured: the free tier's
+        # 100-requests/day cap caused 39/39 fallbacks in the 2026-09-10 campaign).
+        self.fallback_reason = "quota_exhausted" if _is_quota_exhausted(error) else "unavailable"
         return True
 
     @property
@@ -1214,7 +1261,16 @@ class OpenAIProvider(LLMProvider):
 
             except Exception as e:
                 last_error = e
-                if attempt < _MAX_RETRIES and _is_retryable(e):
+                # A daily-quota exhaustion (Command Code: "used all 100 free
+                # requests for today") cannot recover inside the retry window;
+                # 5 retries just burn ~15-40s of backoff per call. Skip straight
+                # to the fallback check below instead.
+                if _is_quota_exhausted(e):
+                    logger.warning(
+                        "OpenAI API call hit a daily quota limit — not retrying: %s",
+                        str(e)[:200],
+                    )
+                elif attempt < _MAX_RETRIES and _is_retryable(e):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
@@ -1360,7 +1416,14 @@ class OpenAIProvider(LLMProvider):
 
             except Exception as e:
                 last_error = e
-                if attempt < _MAX_RETRIES and _is_retryable(e):
+                # Daily-quota exhaustion won't recover within the retry window —
+                # skip the backoff and go straight to the fallback check below.
+                if _is_quota_exhausted(e):
+                    logger.warning(
+                        "OpenAI stream hit a daily quota limit — not retrying: %s",
+                        str(e)[:200],
+                    )
+                elif attempt < _MAX_RETRIES and _is_retryable(e):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)

@@ -18,9 +18,14 @@ The endpoint never includes user API keys in any event — there is no
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    redact_data,
+)
 
 
 class BaseSseEvent(BaseModel):
@@ -206,6 +211,8 @@ class ErrorEvent(BaseSseEvent):
     event: Literal["error"] = "error"
     code: ErrorCode
     message: str
+    reason: Optional[Literal["user", "abandoned"]] = None
+    resumeAvailable: Optional[bool] = None
 
 
 def format_sse(event: BaseSseEvent) -> bytes:
@@ -216,6 +223,10 @@ def format_sse(event: BaseSseEvent) -> bytes:
     ``event`` field) supports plain ``onmessage`` / fetch-reader style
     consumers. Frame is always terminated with the mandatory blank line.
     """
-    body = event.model_dump_json()
+    # This is the last serialization boundary before data reaches the browser.
+    # Redact recursively so exception text, model prose, phase details, and the
+    # embedded recipe cannot echo credential-shaped values.
+    safe_body, _findings = redact_data(event.model_dump(mode="json"))
+    body = json.dumps(safe_body, ensure_ascii=False, separators=(",", ":"))
     frame = f"event: {event.event}\ndata: {body}\n\n"
     return frame.encode("utf-8")

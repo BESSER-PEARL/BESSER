@@ -13,6 +13,10 @@ import shutil
 import tempfile
 import time
 
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_RUN_WORKSPACE_ROOT,
+)
+
 logger = logging.getLogger(__name__)
 
 # All known prefixes used by BESSER when creating temp directories.
@@ -39,31 +43,41 @@ def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
     Errors on individual directories are logged and silently skipped so
     that one problematic entry does not prevent the rest from being cleaned.
     """
-    tmp_root = tempfile.gettempdir()
     cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
 
-    try:
-        entries = os.listdir(tmp_root)
-    except OSError:
-        logger.warning("Unable to list temp directory %s", tmp_root)
-        return
+    scan_roots: list[tuple[str, tuple[str, ...]]] = [
+        (tempfile.gettempdir(), _BESSER_TEMP_PREFIXES)
+    ]
+    if LLM_RUN_WORKSPACE_ROOT:
+        configured = os.path.abspath(os.path.expanduser(LLM_RUN_WORKSPACE_ROOT))
+        if os.path.normcase(configured) != os.path.normcase(tempfile.gettempdir()):
+            # The persistent volume is dedicated to smart-generation runs;
+            # never apply the broader temp prefix set to that location.
+            scan_roots.append((configured, ("besser_llm_",)))
 
-    for entry in entries:
-        if not any(entry.startswith(prefix) for prefix in _BESSER_TEMP_PREFIXES):
-            continue
-
-        full_path = os.path.join(tmp_root, entry)
-        if not os.path.isdir(full_path):
-            continue
-
+    for tmp_root, prefixes in scan_roots:
         try:
-            mtime = os.path.getmtime(full_path)
-            if mtime < cutoff:
-                shutil.rmtree(full_path, ignore_errors=True)
-                removed += 1
-        except OSError as exc:
-            logger.debug("Skipping temp entry %s: %s", full_path, exc)
+            entries = os.listdir(tmp_root)
+        except OSError:
+            logger.warning("Unable to list temp directory %s", tmp_root)
+            continue
+
+        for entry in entries:
+            if not any(entry.startswith(prefix) for prefix in prefixes):
+                continue
+
+            full_path = os.path.join(tmp_root, entry)
+            if not os.path.isdir(full_path):
+                continue
+
+            try:
+                mtime = os.path.getmtime(full_path)
+                if mtime < cutoff:
+                    shutil.rmtree(full_path, ignore_errors=True)
+                    removed += 1
+            except OSError as exc:
+                logger.debug("Skipping temp entry %s: %s", full_path, exc)
 
     if removed:
         logger.info("Cleaned up %d stale BESSER temp directories", removed)

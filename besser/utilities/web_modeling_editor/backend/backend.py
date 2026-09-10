@@ -73,7 +73,11 @@ from besser.utilities.web_modeling_editor.backend.routers import (
 
 # Smart-generation download registry — started/cancelled in the lifespan below
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    DURABLE_RUN_MANAGER,
     SMART_RUN_REGISTRY,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_DOWNLOAD_TTL_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,10 +172,18 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
+    # Download metadata lives beside artifacts on the persistent run volume,
+    # so a backend/container restart does not invalidate a completed result.
+    await SMART_RUN_REGISTRY.restore_persisted()
+
     # Sweep expired spec-driven generation download entries every minute.
     smart_gen_sweeper = asyncio.create_task(
         SMART_RUN_REGISTRY.periodic_sweep(),
         name="spec-driven-registry-sweeper",
+    )
+    durable_run_sweeper = asyncio.create_task(
+        DURABLE_RUN_MANAGER.periodic_sweep(LLM_DOWNLOAD_TTL_SECONDS),
+        name="spec-driven-durable-run-sweeper",
     )
 
     yield
@@ -179,12 +191,17 @@ async def lifespan(_: FastAPI):
     # Cancel background tasks on shutdown.
     cleanup_task.cancel()
     smart_gen_sweeper.cancel()
+    durable_run_sweeper.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
     try:
         await smart_gen_sweeper
+    except asyncio.CancelledError:
+        pass
+    try:
+        await durable_run_sweeper
     except asyncio.CancelledError:
         pass
 
@@ -210,7 +227,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-BESSER-Run-Id"],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)

@@ -84,7 +84,7 @@ class _FakeOrchestrator:
         output_dir,
         on_progress: Optional[Callable] = None,
         on_text: Optional[Callable] = None,
-        **_kwargs,
+        **kwargs,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -92,6 +92,7 @@ class _FakeOrchestrator:
         self.on_progress = on_progress
         self.on_text = on_text
         self.total_turns = 0
+        self.max_turns = kwargs.get("max_turns")
         # The runner constructs the orchestrator directly, so expose
         # a run(instructions) method like the real class.
         _LAST_ORCHESTRATORS.append(self)
@@ -378,6 +379,11 @@ class TestErrorPaths:
 
 
 class TestCleanup:
+    def test_request_turn_cap_is_forwarded_to_orchestrator(self, stub_orchestrator):
+        request = _build_request(max_turns=7)
+        asyncio.run(_collect_frames(SmartGenerationRunner(request)))
+        assert _LAST_ORCHESTRATORS[-1].max_turns == 7
+
     def test_temp_dir_cleaned_on_upstream_error(self, failing_orchestrator):
         request = _build_request()
         runner = SmartGenerationRunner(request)
@@ -425,6 +431,37 @@ class TestMultiFileZip:
         assert any("main.py" in n for n in names)
         assert any("auth.py" in n for n in names)
         assert any("Dockerfile" in n for n in names)
+
+    def test_download_zip_removes_secret_env_and_redacts_text(self, tmp_path):
+        token = "sk-ant-REALSECRET0123456789abcdef"
+        result_path = tmp_path / "result"
+        result_path.mkdir()
+        (result_path / ".env").write_text(
+            f"ANTHROPIC_API_KEY={token}\n", encoding="utf-8"
+        )
+        (result_path / ".env.example").write_text(
+            f"ANTHROPIC_API_KEY={token}\n", encoding="utf-8"
+        )
+        (result_path / "main.py").write_text(
+            f'BROKEN_EXAMPLE = "{token}"\n', encoding="utf-8"
+        )
+        (result_path / ".besser_recipe.json").write_text(
+            json.dumps({"debug": f"provider rejected {token}"}), encoding="utf-8"
+        )
+
+        runner = SmartGenerationRunner(_build_request())
+        runner.temp_dir = str(tmp_path)
+        done, entry = runner._package_result(str(result_path))
+
+        import zipfile
+        with zipfile.ZipFile(entry.file_path, "r") as archive:
+            names = set(archive.namelist())
+            assert ".env" not in names
+            assert ".env.example" in names
+            assert token not in archive.read(".env.example").decode("utf-8")
+            assert token not in archive.read("main.py").decode("utf-8")
+        assert done.recipe["secret_findings"] == 4
+        assert token not in json.dumps(done.recipe)
 
 
 class TestEmptyOutput:

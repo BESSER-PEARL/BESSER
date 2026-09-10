@@ -123,6 +123,64 @@ class TestSmartGenerateEndpoint:
         assert event_names[-1] == "done"
         assert "phase" in event_names
         assert "text" in event_names
+        assert [e["sequence"] for e in events] == list(range(1, len(events) + 1))
+
+    def test_completed_run_can_be_replayed_after_a_sequence(self, stub_backend):
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        run_id = events[0]["runId"]
+        cursor = events[0]["sequence"]
+
+        async def _get_replay() -> tuple[dict, list[dict]]:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url=BASE_URL,
+            ) as client:
+                status_response = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}"
+                )
+                replay_response = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}/events",
+                    params={"after": cursor},
+                )
+                return status_response.json(), _parse_sse_stream(replay_response.content)
+
+        record, replayed = asyncio.run(_get_replay())
+        assert record["status"] == "succeeded"
+        assert record["lastSequence"] == events[-1]["sequence"]
+        assert [event["sequence"] for event in replayed] == [
+            event["sequence"] for event in events[1:]
+        ]
+        assert replayed[-1]["event"] == "done"
+
+    def test_replay_uses_last_event_id_and_rejects_unsafe_cursors(self, stub_backend):
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        run_id = events[0]["runId"]
+        cursor = events[0]["sequence"]
+
+        async def _get_replays() -> tuple[httpx.Response, httpx.Response]:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url=BASE_URL,
+            ) as client:
+                replay = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}/events",
+                    headers={"Last-Event-ID": str(cursor)},
+                )
+                invalid = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}/events",
+                    params={"after": str(1 << 63)},
+                )
+                return replay, invalid
+
+        replay, invalid = asyncio.run(_get_replays())
+        assert replay.status_code == 200
+        replayed = _parse_sse_stream(replay.content)
+        assert [event["sequence"] for event in replayed] == [
+            event["sequence"] for event in events[1:]
+        ]
+        assert invalid.status_code == 422
 
     def test_api_key_never_in_response_bytes(self, stub_backend):
         body = _build_project_body(api_key="sk-ant-happy-path-NEVER-LEAK-abcdef123")

@@ -23,8 +23,10 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_DEFAULT_MAX_COST_USD,
     LLM_DEFAULT_MAX_RUNTIME_SECONDS,
+    LLM_DEFAULT_MAX_TURNS,
     LLM_MAX_COST_USD_HARD_CAP,
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+    LLM_MAX_TURNS_HARD_CAP,
 )
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 
@@ -77,6 +79,7 @@ class SmartGenerateRequest(BaseModel):
     base_url: Optional[str] = Field(default=None, max_length=500)
     max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
     max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    max_turns: int = Field(default=LLM_DEFAULT_MAX_TURNS, gt=0)
     # Optional plan override from the preview screen. When the user
     # clicks "Adjust" and picks a different primary model or target
     # generator, those overrides travel here. Unset values fall back to
@@ -230,6 +233,11 @@ class SmartGenerateRequest(BaseModel):
     def _validate_and_clamp_runtime(cls, value: int) -> int:
         # Pydantic already rejects non-int values, so `gt=0` is enough.
         return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
+
+    @field_validator("max_turns")
+    @classmethod
+    def _validate_and_clamp_turns(cls, value: int) -> int:
+        return min(value, LLM_MAX_TURNS_HARD_CAP)
 
     def resolved_api_key(self) -> str:
         """Return the plaintext API key, or ``""`` for the keyless free tier.

@@ -57,6 +57,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_ENABLE_CHECKPOINTING,
     LLM_ENABLE_TOOLCHAIN_VALIDATION,
     LLM_ENABLE_TRACING,
+    LLM_PER_WRITE_DIAGNOSTICS,
+    LLM_RUN_WORKSPACE_ROOT,
     LLM_TEMP_DIR_PREFIX,
     LLM_WATCHDOG_GRACE_SECONDS,
 )
@@ -86,6 +88,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     ToolCallEvent,
     format_sse,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    scrub_secret_files,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +100,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
+_DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+_MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
 # memory. 2048 is comfortably above the steady-state queue depth (one
@@ -189,8 +196,111 @@ class SmartRunRegistry:
         self._lock = asyncio.Lock()
 
     async def put(self, run_id: str, entry: SmartRunEntry) -> None:
+        self._persist_download_manifest(run_id, entry)
         async with self._lock:
             self._entries[run_id] = entry
+
+    @staticmethod
+    def _persist_download_manifest(run_id: str, entry: SmartRunEntry) -> None:
+        """Best-effort persistence of non-secret download metadata."""
+        if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+            return
+        temp_dir = os.path.realpath(entry.temp_dir)
+        file_path = os.path.realpath(entry.file_path)
+        if not os.path.isdir(temp_dir) or not os.path.isfile(file_path):
+            return
+        try:
+            if os.path.commonpath([temp_dir, file_path]) != temp_dir:
+                return
+            relative_path = os.path.relpath(file_path, temp_dir)
+            manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
+            pending_path = manifest_path + ".tmp"
+            with open(pending_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "version": 1,
+                        "runId": run_id,
+                        "relativePath": relative_path,
+                        "fileName": entry.file_name,
+                        "isZip": entry.is_zip,
+                        "createdAt": entry.created_at,
+                    },
+                    handle,
+                    separators=(",", ":"),
+                )
+            os.replace(pending_path, manifest_path)
+        except (OSError, TypeError, ValueError):
+            logger.warning(
+                "Could not persist download metadata for run %s",
+                run_id,
+                exc_info=True,
+            )
+
+    async def restore_persisted(
+        self,
+        ttl_seconds: int = LLM_DOWNLOAD_TTL_SECONDS,
+    ) -> int:
+        """Rehydrate downloadable artifacts from persistent run workspaces."""
+        root = _run_workspace_root()
+        now = time.time()
+        restored: dict[str, SmartRunEntry] = {}
+        try:
+            names = os.listdir(root)
+        except OSError:
+            logger.warning("Could not scan run workspace root %s", root)
+            return 0
+
+        for name in names:
+            if not name.startswith(LLM_TEMP_DIR_PREFIX):
+                continue
+            temp_dir = os.path.realpath(os.path.join(root, name))
+            manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
+            try:
+                if (
+                    not os.path.isfile(manifest_path)
+                    or os.path.getsize(manifest_path) > _MAX_DOWNLOAD_MANIFEST_BYTES
+                ):
+                    continue
+                with open(manifest_path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                run_id = str(data.get("runId") or "")
+                if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+                    continue
+                if not name.startswith(f"{LLM_TEMP_DIR_PREFIX}{run_id}_"):
+                    continue
+                created_at = float(data["createdAt"])
+                if max(0.0, now - created_at) > max(1, ttl_seconds):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    continue
+                relative_path = str(data["relativePath"])
+                file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
+                if (
+                    os.path.commonpath([temp_dir, file_path]) != temp_dir
+                    or not os.path.isfile(file_path)
+                ):
+                    continue
+                restored[run_id] = SmartRunEntry(
+                    file_path=file_path,
+                    file_name=str(data["fileName"]),
+                    is_zip=bool(data["isZip"]),
+                    temp_dir=temp_dir,
+                    created_at=created_at,
+                )
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                logger.warning(
+                    "Ignoring invalid download metadata at %s",
+                    manifest_path,
+                    exc_info=True,
+                )
+
+        async with self._lock:
+            self._entries.update(restored)
+        if restored:
+            logger.info(
+                "SmartRunRegistry: restored %d persisted artifact(s)",
+                len(restored),
+            )
+        return len(restored)
 
     async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
         async with self._lock:
@@ -360,6 +470,12 @@ def release_run_slot() -> None:
 # ---------------------------------------------------------------------
 
 
+def _run_workspace_root() -> str:
+    root = LLM_RUN_WORKSPACE_ROOT or tempfile.gettempdir()
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
 def _locate_run_temp_dir(run_id: str) -> str | None:
     """Locate a spec-driven temp directory by ``run_id``.
 
@@ -376,7 +492,7 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
         return None
     from besser.generators.llm.checkpoint import CHECKPOINT_FILENAME
 
-    tempdir = tempfile.gettempdir()
+    tempdir = _run_workspace_root()
     prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
     try:
         candidates = [
@@ -500,6 +616,7 @@ class SmartGenerationRunner:
         self,
         request: SmartGenerateRequest,
         *,
+        run_id: Optional[str] = None,
         resume_run_id: Optional[str] = None,
         reserved_cancel_event: Optional[asyncio.Event] = None,
         base_run_id: Optional[str] = None,
@@ -511,7 +628,9 @@ class SmartGenerationRunner:
         # vibe-modify run seeded from a previous run) get a new UUID.
         # Either way the id is hex[32] so the path regex in the cancel /
         # download / resume routes accepts it.
-        self.run_id = resume_run_id or uuid.uuid4().hex
+        if run_id and resume_run_id and run_id != resume_run_id:
+            raise ValueError("run_id and resume_run_id must identify the same run")
+        self.run_id = resume_run_id or run_id or uuid.uuid4().hex
         self._resume_run_id = resume_run_id
         self._reserved_cancel_event = reserved_cancel_event
         # Incremental vibe-modify. When ``mode == "modify"`` and
@@ -667,7 +786,8 @@ class SmartGenerationRunner:
             # stays downloadable.
             try:
                 self.temp_dir = tempfile.mkdtemp(
-                    prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_"
+                    prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_",
+                    dir=_run_workspace_root(),
                 )
             except OSError as exc:
                 yield format_sse(ErrorEvent(
@@ -904,7 +1024,11 @@ class SmartGenerationRunner:
                 _put(ModelUpdateEvent(
                     model=status,
                     previousModel=previous or None,
-                    reason="primary_unavailable",
+                    reason=(
+                        "quota_exhausted"
+                        if getattr(client, "fallback_reason", None) == "quota_exhausted"
+                        else "primary_unavailable"
+                    ),
                 ))
                 return
             if tool == "validation":
@@ -1025,6 +1149,7 @@ class SmartGenerationRunner:
             output_dir=self.temp_dir,
             max_cost_usd=self.request.max_cost_usd,
             max_runtime_seconds=self.request.max_runtime_seconds,
+            max_turns=self.request.max_turns,
             on_progress=on_progress,
             on_text=on_text,
             on_phase_details=on_phase_details,
@@ -1057,6 +1182,7 @@ class SmartGenerationRunner:
             # static tool; only arbitrary `run_command`/`install_dependencies`
             # are withheld.
             allow_shell_tools=LLM_ENABLE_SHELL_TOOLS,
+            per_write_diagnostics=LLM_PER_WRITE_DIAGNOSTICS,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,
@@ -1316,9 +1442,12 @@ class SmartGenerationRunner:
                     continue
                 yield format_sse(leftover)
 
-            # Always deregister so a future cancel call returns False
-            # cleanly and the dict doesn't leak entries.
-            await release_active_run(self.run_id, cancel_event)
+            # A caller-supplied reservation is owned by the durable stream
+            # adapter, which releases it only after packaging and the terminal
+            # event have finished.  A directly-consumed runner still owns and
+            # releases the reservation it created itself.
+            if self._reserved_cancel_event is None:
+                await release_active_run(self.run_id, cancel_event)
 
             # Terminal events are mutually exclusive: CANCELLED (or
             # TIMEOUT when the watchdog fired) is emitted ONLY when the
@@ -1593,7 +1722,31 @@ class SmartGenerationRunner:
         if self.temp_dir is None:
             raise RuntimeError("Runner has no temp_dir")
 
+        # The download is the primary deliverable and therefore a security
+        # boundary of its own. Scrub before collecting files so a populated
+        # .env is never registered as a single-file download or added to a zip.
+        scrub = scrub_secret_files(
+            result_path,
+            excluded_names=_EXCLUDED_OUTPUT_DIRS,
+        )
+        if scrub.findings:
+            logger.warning(
+                "spec-driven run %s scrubbed %d secret finding(s); removed=%s redacted=%s",
+                self.run_id,
+                scrub.findings,
+                list(scrub.removed_files),
+                list(scrub.redacted_files),
+            )
+
         recipe = self._read_recipe(result_path)
+        recipe["secret_findings"] = scrub.findings
+        recipe_path = os.path.join(result_path, ".besser_recipe.json")
+        if os.path.isfile(recipe_path):
+            try:
+                with open(recipe_path, "w", encoding="utf-8") as handle:
+                    json.dump(recipe, handle, indent=2)
+            except OSError:
+                logger.debug("Could not persist secret finding count", exc_info=True)
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —
@@ -1700,7 +1853,8 @@ class SmartGenerationRunner:
             shutil.rmtree(old, ignore_errors=True)
         try:
             self.temp_dir = tempfile.mkdtemp(
-                prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_"
+                prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_",
+                dir=_run_workspace_root(),
             )
         except OSError:
             logger.exception(

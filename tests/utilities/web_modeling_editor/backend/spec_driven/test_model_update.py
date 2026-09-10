@@ -93,6 +93,19 @@ def test_model_switch_sentinel_becomes_model_update_event(monkeypatch):
         _cleanup()
 
 
+def test_quota_fallback_reason_is_preserved(monkeypatch):
+    client = _FakeClient()
+    client.fallback_reason = "quota_exhausted"
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _SwitchingOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: client)
+    try:
+        events = _events(SmartGenerationRunner(_build_request()))
+        update = next(e for e in events if e.get("event") == "model_update")
+        assert update["reason"] == "quota_exhausted"
+    finally:
+        _cleanup()
+
+
 def test_no_switch_means_no_model_update_event(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _StubOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())

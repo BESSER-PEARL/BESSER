@@ -57,6 +57,23 @@ class TestFormatSse:
         payload = json.loads(data_line[len("data: "):])
         assert payload["delta"] == "line one\nline two\r\nline three"
 
+    def test_redacts_secrets_from_error_and_nested_recipe_frames(self):
+        token = "sk-ant-REALSECRET0123456789abcdef"
+        error_frame = format_sse(
+            ErrorEvent(code="UPSTREAM_LLM", message=f"provider rejected {token}")
+        ).decode("utf-8")
+        done_frame = format_sse(DoneEvent(
+            downloadUrl="/d/abc",
+            fileName="a.zip",
+            isZip=True,
+            recipe={"debug": {"message": f"API_TOKEN={token}"}},
+        )).decode("utf-8")
+
+        assert token not in error_frame
+        assert token not in done_frame
+        assert "[REDACTED]" in error_frame
+        assert "[REDACTED]" in done_frame
+
     @pytest.mark.parametrize(
         "event",
         [

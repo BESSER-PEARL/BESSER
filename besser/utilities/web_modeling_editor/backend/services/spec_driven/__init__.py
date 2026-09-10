@@ -24,6 +24,12 @@ from .sse_events import (
 )
 from .model_assembly import AssembledModels, assemble_models_from_project
 from .runner import SMART_RUN_REGISTRY, SmartGenerationRunner, SmartRunEntry, SmartRunRegistry
+from .run_manager import (
+    DURABLE_RUN_MANAGER,
+    DurableRunManager,
+    RunRecord,
+    SqliteRunEventStore,
+)
 
 __all__ = [
     # Events
@@ -44,4 +50,9 @@ __all__ = [
     "SmartRunRegistry",
     "SmartRunEntry",
     "SMART_RUN_REGISTRY",
+    # Durable lifecycle / replay
+    "DURABLE_RUN_MANAGER",
+    "DurableRunManager",
+    "RunRecord",
+    "SqliteRunEventStore",
 ]

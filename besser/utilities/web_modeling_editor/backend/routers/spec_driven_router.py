@@ -34,9 +34,13 @@ import uuid
 from typing import AsyncIterator, Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Path, Request
+from fastapi import APIRouter, Header, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_CANCEL_ABANDONED_RUNS,
+    LLM_DISCONNECTED_GRACE_SECONDS,
+)
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
@@ -50,6 +54,7 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    DURABLE_RUN_MANAGER,
     SMART_RUN_REGISTRY,
     SmartGenerationRunner,
     SmartRunEntry,
@@ -59,6 +64,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview import (
     build_preview,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    scrub_secret_files,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _EXCLUDED_OUTPUT_DIRS,
@@ -95,6 +103,7 @@ from besser.generators.llm.llm_client import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/besser_api", tags=["spec-driven"])
+_MAX_SQLITE_SEQUENCE = (1 << 63) - 1
 
 _DOWNLOAD_CHUNK_SIZE = 65536
 
@@ -211,7 +220,7 @@ async def _stream_with_slot_release(
 
 
 @router.post("/spec-driven/generate", response_class=StreamingResponse)
-async def smart_generate(request: SmartGenerateRequest, http_request: Request):
+async def smart_generate(request: SmartGenerateRequest):
     """Stream an LLM-orchestrated code generation run as SSE events.
 
     Emits events in order: ``start`` → zero or more of
@@ -243,15 +252,39 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
     # base_run_id, the runner seeds this run's workspace from that previous
     # run's files and edits them in place (falling back to from-scratch if
     # the base has expired). Both fields default to the from-scratch path.
+    run_id = uuid.uuid4().hex
+    cancel_event = await reserve_active_run(run_id)
+    if cancel_event is None:  # UUID collision is fantastically unlikely.
+        release_run_slot()
+        raise HTTPException(status_code=409, detail="Generated run ID is already active")
+
     runner = SmartGenerationRunner(
         request,
+        run_id=run_id,
+        reserved_cancel_event=cancel_event,
         base_run_id=request.base_run_id,
         mode=request.mode,
     )
+    source = _stream_with_slot_release(
+        runner.generate_and_stream(),
+        run_reservation=(run_id, cancel_event),
+    )
+    try:
+        await DURABLE_RUN_MANAGER.start(
+            run_id,
+            source,
+            on_abandoned=(
+                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+            ),
+            resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
+            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+        )
+    except Exception:
+        await release_active_run(run_id, cancel_event)
+        release_run_slot()
+        raise
     return StreamingResponse(
-        _stream_with_slot_release(
-            runner.generate_and_stream(http_request=http_request),
-        ),
+        DURABLE_RUN_MANAGER.subscribe(run_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -259,6 +292,61 @@ async def smart_generate(request: SmartGenerateRequest, http_request: Request):
             # Disable response buffering in proxies (nginx, Render, etc.)
             # so events reach the browser in near-real-time.
             "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
+        },
+    )
+
+
+# ---------------------------------------------------------------------
+# Durable run status + event replay
+# ---------------------------------------------------------------------
+
+
+@router.get("/spec-driven/runs/{run_id}")
+async def get_smart_run_status(
+    run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
+):
+    """Return durable lifecycle metadata without exposing request secrets."""
+    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    return record.to_api_dict()
+
+
+@router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse)
+async def stream_smart_run_events(
+    run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
+    after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
+    last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+):
+    """Replay events after a sequence, then follow the live producer.
+
+    ``after`` supports the fetch-based frontend. ``Last-Event-ID`` keeps the
+    endpoint compatible with native EventSource clients. The larger valid
+    cursor wins, preventing a stale query value from replaying duplicates.
+    """
+    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+
+    cursor = after
+    if last_event_id:
+        try:
+            parsed_event_id = int(last_event_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid Last-Event-ID")
+        if not 0 <= parsed_event_id <= _MAX_SQLITE_SEQUENCE:
+            raise HTTPException(status_code=422, detail="Invalid Last-Event-ID")
+        cursor = max(cursor, parsed_event_id)
+
+    return StreamingResponse(
+        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=cursor),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
         },
     )
 
@@ -306,8 +394,10 @@ async def smart_gen_config():
         "caps": {
             "max_cost_usd_hard_cap": C.LLM_MAX_COST_USD_HARD_CAP,
             "max_runtime_seconds_hard_cap": C.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+            "max_turns_hard_cap": C.LLM_MAX_TURNS_HARD_CAP,
             "default_max_cost_usd": C.LLM_DEFAULT_MAX_COST_USD,
             "default_max_runtime_seconds": C.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
+            "default_max_turns": C.LLM_DEFAULT_MAX_TURNS,
         },
         "download_ttl_seconds": C.LLM_DOWNLOAD_TTL_SECONDS,
         "cost_emitter_interval_seconds": C.LLM_COST_EMITTER_INTERVAL_SECONDS,
@@ -319,6 +409,11 @@ async def smart_gen_config():
             "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            "per_write_diagnostics_enabled": C.LLM_PER_WRITE_DIAGNOSTICS,
+            "durable_runs_enabled": True,
+            "event_replay_enabled": True,
+            "cancel_abandoned_runs": C.LLM_CANCEL_ABANDONED_RUNS,
+            "disconnected_grace_seconds": C.LLM_DISCONNECTED_GRACE_SECONDS,
         },
         "supported_providers": ["anthropic", "openai", "mistral"],
         # Per-provider default model names, sourced from the LLM client
@@ -407,7 +502,6 @@ async def smart_preview(request: SmartPreviewRequest):
 async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
-    http_request: Request,
 ):
     """Resume a spec-driven generate run that crashed before completion.
 
@@ -467,16 +561,33 @@ async def resume_smart_gen(
         resume_run_id=run_id,
         reserved_cancel_event=cancel_event,
     )
+    source = _stream_with_slot_release(
+        runner.generate_and_stream(),
+        run_reservation=(run_id, cancel_event),
+    )
+    try:
+        await DURABLE_RUN_MANAGER.start(
+            run_id,
+            source,
+            resume=True,
+            on_abandoned=(
+                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+            ),
+            resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
+            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+        )
+    except Exception:
+        await release_active_run(run_id, cancel_event)
+        release_run_slot()
+        raise
     return StreamingResponse(
-        _stream_with_slot_release(
-            runner.generate_and_stream(http_request=http_request),
-            run_reservation=(run_id, cancel_event),
-        ),
+        DURABLE_RUN_MANAGER.subscribe(run_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
         },
     )
 
@@ -587,87 +698,9 @@ async def download_smart(
 # POST /besser_api/spec-driven/push-to-github
 # ---------------------------------------------------------------------
 
-# .env-family files whose content is safe to publish (templates, not
-# real credentials). Anything else named `.env*` is scanned for secrets.
-_ENV_SAFE_SUFFIXES = (".example", ".sample", ".template", ".dist")
-
-# Env assignments whose *key* looks like a credential.
-_SECRET_ENV_KEY_RE = re.compile(
-    r"(?im)^\s*[A-Za-z0-9_]*"
-    r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)"
-    r"[A-Za-z0-9_]*\s*=\s*(.+)$"
-)
-
-# Value shapes that are unmistakably real provider credentials, wherever
-# they appear (OpenAI / Anthropic / GitHub / AWS / Slack).
-_SECRET_VALUE_TOKEN_RE = re.compile(
-    r"(sk-ant-[A-Za-z0-9_\-]{12,}"
-    r"|sk-[A-Za-z0-9_\-]{16,}"
-    r"|gh[posru]_[A-Za-z0-9]{20,}"
-    r"|AKIA[0-9A-Z]{16}"
-    r"|xox[baprs]-[A-Za-z0-9-]{10,})"
-)
-
-_ENV_PLACEHOLDER_VALUES = {
-    "", "changeme", "change-me", "your-key-here", "your_api_key",
-    "xxx", "xxxx", "todo", "...", "none", "null",
-}
-
-
-def _looks_like_secret_env(content: str) -> bool:
-    """Heuristic: does this ``.env`` body carry a real credential?
-
-    Preserves template/config values (``VITE_API_URL=...``, placeholders)
-    while catching an ``.env`` that an LLM populated with a live key.
-    """
-    if _SECRET_VALUE_TOKEN_RE.search(content):
-        return True
-    for match in _SECRET_ENV_KEY_RE.finditer(content):
-        value = match.group(1).strip().strip('"').strip("'").strip()
-        low = value.lower()
-        if low in _ENV_PLACEHOLDER_VALUES:
-            continue
-        if (
-            value.startswith("${")
-            or value.startswith("<")
-            or "your" in low
-            or "placeholder" in low
-            or "example" in low
-        ):
-            continue
-        return True
-    return False
-
-
 def _scrub_secret_env_files(workdir: str) -> list[str]:
-    """Delete any ``.env`` file carrying real secrets; keep ``.env.example``.
-
-    Returns the repo-relative paths removed (for logging).
-    """
-    removed: list[str] = []
-    for root, _dirs, files in os.walk(workdir):
-        for name in files:
-            base = name.lower()
-            if not base.startswith(".env"):
-                continue
-            if any(base.endswith(sfx) for sfx in _ENV_SAFE_SUFFIXES):
-                continue
-            full = os.path.join(root, name)
-            try:
-                with open(full, "r", encoding="utf-8", errors="ignore") as fh:
-                    content = fh.read()
-            except OSError:
-                continue
-            if _looks_like_secret_env(content):
-                try:
-                    os.remove(full)
-                    removed.append(os.path.relpath(full, workdir).replace("\\", "/"))
-                except OSError:
-                    logger.warning(
-                        "spec-driven push-to-github: failed to remove secret env file %s",
-                        full, exc_info=True,
-                    )
-    return removed
+    """Compatibility wrapper for the GitHub-push security boundary."""
+    return list(scrub_secret_files(workdir).removed_files)
 
 
 def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> None:

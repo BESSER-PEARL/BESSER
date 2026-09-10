@@ -49,6 +49,14 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_path(name: str) -> str | None:
+    import os as _os
+    value = _os.environ.get(name, "").strip()
+    if not value:
+        return None
+    return _os.path.abspath(_os.path.expanduser(value))
+
+
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.
@@ -59,6 +67,7 @@ def _env_bool(name: str, default: bool) -> bool:
 # can opt into, not what a normal run spends.)
 LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
 LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 900)
+LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 120)
 LLM_DEFAULT_MAX_COST_USD = min(
     _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 1.0),
     LLM_MAX_COST_USD_HARD_CAP,
@@ -67,12 +76,27 @@ LLM_DEFAULT_MAX_RUNTIME_SECONDS = min(
     _env_int("BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS", 600),
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
 )
+LLM_DEFAULT_MAX_TURNS = min(
+    _env_int("BESSER_LLM_DEFAULT_MAX_TURNS", 80),
+    LLM_MAX_TURNS_HARD_CAP,
+)
 
 # Generated-output TTL + SSE cadence.
 LLM_DOWNLOAD_TTL_SECONDS = _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 1800)
 LLM_COST_EMITTER_INTERVAL_SECONDS = _env_float(
     "BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS", 2.0,
 )
+# Temporary disconnects and refreshes can reattach to durable runs. A run with
+# no subscribers beyond this grace period is stopped through the ordinary
+# checkpoint-aware cancellation path instead of consuming its full budget.
+LLM_CANCEL_ABANDONED_RUNS = _env_bool("BESSER_LLM_CANCEL_ABANDONED_RUNS", True)
+LLM_DISCONNECTED_GRACE_SECONDS = max(
+    0,
+    _env_int("BESSER_LLM_DISCONNECTED_GRACE_SECONDS", 300),
+)
+# Optional persistent parent for generated workspaces/checkpoints. The normal
+# local-development default remains the operating-system temp directory.
+LLM_RUN_WORKSPACE_ROOT = _env_path("BESSER_LLM_RUN_WORKSPACE_ROOT")
 
 # Concurrency cap. Each in-flight spec-driven generation run holds a worker
 # thread, a temp dir, and an SSE connection. 10 is a sensible default
@@ -85,6 +109,7 @@ LLM_MAX_CONCURRENT_RUNS = _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10)
 # toggle lets deployments opt out if disk volume is tight.
 LLM_ENABLE_TRACING = _env_bool("BESSER_LLM_ENABLE_TRACING", True)
 LLM_ENABLE_CHECKPOINTING = _env_bool("BESSER_LLM_ENABLE_CHECKPOINTING", True)
+LLM_PER_WRITE_DIAGNOSTICS = _env_bool("BESSER_LLM_PER_WRITE_DIAGNOSTICS", True)
 
 # Phase 3 toolchain validation (tsc / cargo / kotlinc) compiles real
 # projects server-side and can add minutes of wall-clock + real billing
@@ -193,4 +218,3 @@ RELATIONSHIP_TYPES = {
 # ---------------------------------------------------------------------------
 BPMN_DIAGRAM_TYPE = "BPMNDiagram"
 BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
-

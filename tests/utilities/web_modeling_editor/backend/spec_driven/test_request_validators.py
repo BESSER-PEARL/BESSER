@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_MAX_COST_USD_HARD_CAP,
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+    LLM_MAX_TURNS_HARD_CAP,
 )
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
@@ -54,6 +55,10 @@ class TestRequestValidators:
     def test_max_runtime_clamped_to_hard_cap(self):
         req = _build_request(max_runtime_seconds=999_999)
         assert req.max_runtime_seconds == LLM_MAX_RUNTIME_SECONDS_HARD_CAP
+
+    def test_max_turns_clamped_to_hard_cap(self):
+        req = _build_request(max_turns=999_999)
+        assert req.max_turns == LLM_MAX_TURNS_HARD_CAP
 
     def test_valid_llm_model_format_accepted(self):
         req = _build_request(llm_model="claude-sonnet-4-6")

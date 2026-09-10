@@ -39,22 +39,73 @@ def simple_model():
     return DomainModel(name="Test", types={cls})
 
 
+def _bulk(target_tokens: int) -> str:
+    """Code-like text whose ESTIMATED size exceeds ``target_tokens``.
+
+    Deliberately varied: a run of one repeated character (the old ``"x" * N``)
+    is only "big" under the chars/4 heuristic - a real BPE tokenizer merges it
+    into almost nothing, so such a payload silently stops exercising any
+    threshold once an accurate counter is installed. Measuring with
+    ``_estimate_tokens`` itself keeps these tests correct under either
+    estimator.
+    """
+    lines: list[str] = []
+    while True:
+        i = len(lines)
+        lines.append(
+            f"    value_{i} = compute_total(items_{i}, offset={i})  "
+            f"# step {i} of the pipeline, validated against schema_{i}"
+        )
+        if i % 64 == 0 and _estimate_tokens(
+            [{"role": "user", "content": "\n".join(lines)}]
+        ) > target_tokens:
+            return "\n".join(lines)
+
+
 class TestTokenEstimation:
 
     def test_empty_messages(self):
         assert _estimate_tokens([]) == 0
 
     def test_string_content(self):
-        msgs = [{"role": "user", "content": "a" * 400}]
-        est = _estimate_tokens(msgs)
-        assert 90 <= est <= 110  # ~400/4 = 100
+        """Estimate tracks content size. The exact number is tokenizer-
+        dependent (tiktoken when installed, chars/4 otherwise), so assert the
+        PROPERTY - monotonic and in a sane band - not a heuristic constant."""
+        text = "def compute(total, items):\n    return total + sum(items)\n" * 8
+        est = _estimate_tokens([{"role": "user", "content": text}])
+        assert 0 < est <= len(text)          # never more than one token/char
+        assert est >= len(text) // 12        # never absurdly small for code
+        longer = _estimate_tokens([{"role": "user", "content": text * 3}])
+        assert longer > est * 2
+
+    def test_chars_per_four_fallback_when_tiktoken_is_absent(self, monkeypatch):
+        """The fallback must still work on a host without tiktoken - it is a
+        declared dependency now, but compaction must never hard-fail on it."""
+        import besser.generators.llm.compaction as c
+        monkeypatch.setattr(c, "_TOKENIZER", None)
+        monkeypatch.setattr(c, "_TOKENIZER_LOADED", True)
+        est = _estimate_tokens([{"role": "user", "content": "a" * 400}])
+        assert est > 0
 
     def test_list_content(self):
+        """tool_result bodies are counted. Property-based for the same reason
+        as test_string_content - the exact count is tokenizer-dependent."""
+        body = "SELECT id, name FROM patients WHERE dept_id = :dept;\n" * 12
         msgs = [{"role": "user", "content": [
-            {"type": "tool_result", "content": "x" * 800}
+            {"type": "tool_result", "content": body}
         ]}]
         est = _estimate_tokens(msgs)
-        assert 180 <= est <= 220  # ~800/4 = 200
+        assert 0 < est <= len(body)
+        assert est >= len(body) // 12
+
+    def test_tool_use_input_is_counted(self):
+        """A dict-shaped tool_use block must not count as ZERO tokens -
+        write_file arguments are the largest thing the model emits."""
+        msgs = [{"role": "assistant", "content": [
+            {"type": "tool_use", "name": "write_file",
+             "input": {"path": "app.py", "content": "x = 1\n" * 200}},
+        ]}]
+        assert _estimate_tokens(msgs) > 100
 
     def test_scales_with_messages(self):
         small = [{"role": "user", "content": "hello"}]
@@ -219,10 +270,32 @@ class TestStandaloneCompaction:
 class TestHarnessUpgrades:
     """Headroom threshold, safe cut boundaries, file-op memory."""
 
-    def test_effective_threshold_clamps_small_models(self):
+    def test_effective_threshold_clamps_genuinely_small_models(self):
         from besser.generators.llm.compaction import effective_threshold
-        assert effective_threshold("qwen3-coder:30b") == 16_000
-        assert effective_threshold("deepseek-coder") == 48_000
+        # Self-hosted on the LIST ollama box at a server-configured 32k.
+        assert effective_threshold("devstral:24b") == 16_000
+        assert effective_threshold("mistral-small-latest") == 16_000
+
+    def test_effective_threshold_does_not_clamp_misattributed_models(self):
+        """Regression for the read/compact/re-read spiral of 2026-09-10.
+
+        A window stated too LOW is far worse than one left unknown: it made
+        every few file reads trigger a lossy compaction, the model re-read what
+        it lost, and a run burned 40 turns of read_file until the runtime cap.
+
+        - qwen3.8:27b is served by Command Code, not by the ollama box the 32k
+          figure was measured on; its native window is 262k.
+        - "mistral" as a bare marker also matched mistral-large (256k).
+        """
+        from besser.generators.llm.compaction import effective_threshold
+        assert effective_threshold("qwen3.8:27b") == STANDALONE_THRESHOLD
+        assert effective_threshold("mistral-large-latest") == STANDALONE_THRESHOLD
+
+    def test_clamped_threshold_never_goes_below_a_workable_size(self):
+        """Whatever the reserve, we never hand back a threshold that cannot
+        hold a couple of tool results - that is the spiral condition."""
+        from besser.generators.llm.compaction import effective_threshold
+        assert effective_threshold("devstral:24b", reserve=32_768) >= 8_000
 
     def test_effective_threshold_keeps_default_for_frontier_and_unknown(self):
         from besser.generators.llm.compaction import effective_threshold
@@ -232,10 +305,12 @@ class TestHarnessUpgrades:
 
     def test_small_model_compacts_earlier(self, tmp_path):
         """~20k tokens: under the 80k default, over qwen's clamped 16k."""
-        big = "x" * 80_000  # ~20k tokens by chars/4
+        # ~5k tokens each x 4 messages = ~20k total: comfortably under the
+        # 80k default, comfortably over a genuinely-clamped 16k model.
+        big = _bulk(5_000)
         messages = [{"role": "user", "content": "build"}]
         for _ in range(4):
-            messages.append({"role": "assistant", "content": [{"type": "text", "text": big[:20000]}]})
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": big}]})
             messages.append({"role": "user", "content": "go on"})
         messages.append({"role": "assistant", "content": [{"type": "text", "text": "ok"}]})
 
@@ -245,7 +320,7 @@ class TestHarnessUpgrades:
         assert unclamped is False
         _, clamped = standalone_maybe_compact(
             messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
-            model="qwen3-coder:30b",
+            model="devstral:24b",   # still genuinely 32k-windowed
         )
         assert clamped is True
 
@@ -254,7 +329,7 @@ class TestHarnessUpgrades:
         tool_result message, the boundary walks back to include the
         paired assistant tool_use — and skips the synthetic assistant
         turn so roles still alternate."""
-        big = "x" * (STANDALONE_THRESHOLD * 5)
+        big = _bulk(STANDALONE_THRESHOLD + 5_000)
         tool_use = {"role": "assistant", "content": [
             {"type": "tool_use", "id": "t1", "name": "read_file", "input": {"path": "a.py"}},
         ]}

@@ -35,6 +35,7 @@ from typing import Any, Callable, Literal
 from besser.generators.llm.compaction import (
     COMPACT_TOKEN_THRESHOLD,
     COMPACT_PRESERVE_RECENT,
+    COMPACT_RESERVE_TOKENS,
     _estimate_tokens,
     effective_threshold,
     maybe_compact,
@@ -4481,7 +4482,17 @@ class LLMOrchestrator:
         history_eviction.py.
         """
         model = getattr(self.client, "model", None)
-        if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(model):
+        # The reserve must match the output the model is actually ALLOWED to
+        # produce this run. The from-scratch and modify paths raise
+        # client.max_tokens to FROM_SCRATCH_MAX_TOKENS (32_768), which is
+        # double the COMPACT_RESERVE_TOKENS default - so a constant reserve
+        # leaves only half the headroom the response may need.
+        reserve = max(
+            COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0)
+        )
+        if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(
+            model, reserve=reserve
+        ):
             messages, evicted = evict_stale_file_bodies(messages)
             if evicted:
                 self._eviction_count = getattr(self, "_eviction_count", 0) + 1
@@ -4503,9 +4514,11 @@ class LLMOrchestrator:
             nn_model=self.nn_model,
             primary_kind=self.primary_kind,
             # Clamps the threshold to the model's context window — the
-            # fixed default overflows small local models (free qwen tier)
-            # long before it trips.
+            # fixed default overflows genuinely small local models long
+            # before it trips. See HARNESS_LIMITS_AUDIT.md for why the
+            # window table must never guess LOW.
             model=model,
+            reserve=reserve,
         )
         if did_compact:
             self._compaction_count += 1

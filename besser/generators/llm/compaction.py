@@ -12,44 +12,103 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Context compaction config
-COMPACT_TOKEN_THRESHOLD = 80_000
+# Context compaction config.
+#
+# This is the LAST-RESORT context guard, not a routine budget: every
+# compaction is a lossy summarisation, and anything it drops that the model
+# still needs gets RE-READ, which costs more than it saved. A threshold set
+# too low therefore does not "save context" - it produces a read/compact/
+# re-read spiral (observed live 2026-09-10: 40 turns of read_file until the
+# runtime cap, see pilot-experiment/HARNESS_LIMITS_AUDIT.md).
+COMPACT_TOKEN_THRESHOLD = max(
+    8_000, int(os.environ.get("BESSER_LLM_COMPACT_THRESHOLD", "80000") or 80_000)
+)
 COMPACT_PRESERVE_RECENT = 6
 
 # Headroom the model needs for its next response. The threshold is
-# really "context window minus reserve" — the fixed 80k default silently
-# overflows small-window models (the free local qwen tier most of all),
-# which then truncate or hallucinate instead of compacting.
+# really "context window minus reserve" - the fixed 80k default silently
+# overflows small-window models, which then truncate or hallucinate
+# instead of compacting.
+#
+# NOTE this is a FLOOR, not the whole story: the from-scratch and modify
+# paths raise ``client.max_tokens`` to FROM_SCRATCH_MAX_TOKENS (32_768),
+# which is larger than this reserve. Callers that raise max_tokens should
+# pass ``reserve=`` explicitly - see ``effective_threshold``.
 COMPACT_RESERVE_TOKENS = 16_000
 
-# Known small context windows by model-name substring. Cloud frontier
-# models (gpt-5.x, claude, gemini) all exceed the 80k default and need
-# no entry — the default threshold already fits with room to spare.
+# Known small context windows by model-name substring.
+#
+# Add a row ONLY with evidence that the SERVED window is small - not the
+# model's reputation, and not another deployment of the same family. A
+# wrong row here is far more damaging than a missing one: an unknown model
+# gets the frontier-sized default (fine, because a real overflow surfaces
+# as a provider error), whereas an under-stated window compacts constantly
+# and silently destroys the model's working context.
+#
+# Removed 2026-09-10 after audit (HARNESS_LIMITS_AUDIT.md):
+#   ("qwen",     32_000)  qwen3.8:27b is served by Command Code, NOT by the
+#                         LIST ollama box the 32k figure was measured on.
+#                         The row was self-contradictory: it produced a
+#                         16k threshold while the same run requested 32_768
+#                         output tokens - more than the window it claimed.
+#                         Native window is 262_144. It caused the live
+#                         read/compact/re-read spiral described above.
+#   ("mistral",  32_000)  matched ``mistral-large-latest`` (256k), clamping
+#                         a paid frontier model to a 16k threshold.
+#   ("llama",    32_000)  no llama model is configured on any tier.
+#   ("deepseek", 64_000)  likewise.
 _SMALL_CONTEXT_WINDOWS: tuple = (
-    ("qwen", 32_000),
-    ("llama", 32_000),
-    ("mistral", 32_000),
-    # Served on the LIST ollama box, which loads models with a 32k
-    # window (OLLAMA server config), regardless of the model's native
-    # maximum — verified via /api/ps on 2026-09-02.
+    # Self-hosted on the LIST ollama box, which loads models with a 32k
+    # window (OLLAMA server config) regardless of the model's native
+    # maximum - verified via /api/ps on 2026-09-02. Re-verify before
+    # trusting: a restart of ``ollama serve`` without the env var falls
+    # back to a much smaller default, silently.
     ("devstral", 32_000),
-    ("deepseek", 64_000),
+    # Small self-hosted Mistral variants only. Deliberately NOT a bare
+    # "mistral" marker, which would also match mistral-large (256k).
+    ("mistral-small", 32_000),
+    ("mistral-7b", 32_000),
 )
 
+# A threshold this close to the cost of a single tool result cannot hold a
+# working set, so compaction fires between reads and the model re-reads
+# what it just lost. Sized against tool_executor.MAX_FILE_READ (20_000
+# chars, ~4_100 tokens at the measured 4.83 chars/token for code): fewer
+# than ~4 whole-file reads of headroom is pathological, not tight.
+_MIN_WORKABLE_THRESHOLD = 16_500
 
-def effective_threshold(model: str | None, threshold: int = COMPACT_TOKEN_THRESHOLD) -> int:
+
+def effective_threshold(
+    model: str | None,
+    threshold: int = COMPACT_TOKEN_THRESHOLD,
+    reserve: int = COMPACT_RESERVE_TOKENS,
+) -> int:
     """Clamp the compaction threshold to the model's context window.
 
     ``window - reserve`` for known small-window models; the unchanged
     default for everything else (unknown names are assumed frontier-
-    sized — wrongly clamping a big model would compact constantly).
+    sized - wrongly clamping a big model would compact constantly).
+
+    ``reserve`` should be the live ``client.max_tokens`` when the caller
+    has raised it above the default, so the headroom actually matches the
+    response the model is allowed to produce.
     """
     if not model:
         return threshold
     low = model.lower()
     for marker, window in _SMALL_CONTEXT_WINDOWS:
         if marker in low:
-            return max(8_000, min(threshold, window - COMPACT_RESERVE_TOKENS))
+            effective = max(8_000, min(threshold, window - reserve))
+            if effective < _MIN_WORKABLE_THRESHOLD:
+                logger.warning(
+                    "Compaction threshold for %s is %d tokens (window=%d, "
+                    "reserve=%d). That is under ~4 whole-file reads, so "
+                    "compaction will fire between tool calls and the model "
+                    "will re-read what it loses. Verify the SERVED context "
+                    "window for this model.",
+                    model, effective, window, reserve,
+                )
+            return effective
     return threshold
 
 
@@ -69,9 +128,17 @@ def _is_tool_result_message(msg: dict) -> bool:
 
 # Real-tokenizer singleton. We prefer ``tiktoken`` because it's widely
 # available and its BPE is close enough to Anthropic's tokenizer for the
-# ``is the context over threshold?`` decision. If it's not installed, we
-# fall back to the chars/4 heuristic (known to under-count code by
-# ~30%, so the threshold trips slightly late — acceptable).
+# ``is the context over threshold?`` decision. ``tiktoken`` is a DECLARED
+# dependency (requirements.txt) - it was previously imported but declared
+# nowhere, so the fallback below was the only path that ever ran in
+# production.
+#
+# If it is missing we fall back to chars/4. MEASURED 2026-09-10 on 387,836
+# chars of BESSER Python: the true ratio is 4.83 chars/token, so chars/4
+# reports ~121% of the real count and the threshold trips EARLY. (An older
+# comment here claimed it under-counts code by ~30% and trips late. That was
+# backwards, and believing it is what let an over-aggressive threshold go
+# unnoticed - see pilot-experiment/HARNESS_LIMITS_AUDIT.md.)
 _TOKENIZER: Any = None
 _TOKENIZER_LOADED = False
 
@@ -113,7 +180,15 @@ def _estimate_tokens(messages: list[dict]) -> int:
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict):
-                    text = block.get("content", "") or block.get("text", "")
+                    # ``input`` included so a dict-shaped tool_use block does
+                    # not count as ZERO tokens: write_file arguments are the
+                    # single largest thing the model emits, and any path that
+                    # normalises blocks to dicts would otherwise hide them.
+                    text = (
+                        block.get("content", "")
+                        or block.get("text", "")
+                        or block.get("input", "")
+                    )
                     total += _count_tokens(str(text))
                 elif hasattr(block, "text"):
                     total += _count_tokens(block.text)
@@ -138,6 +213,7 @@ def maybe_compact(
     nn_model: Any | None = None,
     primary_kind: str | None = None,
     model: str | None = None,
+    reserve: int = COMPACT_RESERVE_TOKENS,
 ) -> tuple[list[dict], bool]:
     """
     Compact conversation history if it exceeds the token threshold.
@@ -159,7 +235,7 @@ def maybe_compact(
     Returns:
         A tuple of (compacted_messages, did_compact).
     """
-    threshold = effective_threshold(model, threshold)
+    threshold = effective_threshold(model, threshold, reserve)
     est_tokens = _estimate_tokens(messages)
     if est_tokens < threshold or len(messages) <= preserve_recent:
         return messages, False

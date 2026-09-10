@@ -25,7 +25,9 @@ class TensorOp(NamedElement):
             operation.
         layers_of_tensors (list[str | float | int]): The list that
             defines the inputs of the tensor op. Elements can be layer
-            names or scalar values.
+            name strings or scalar values (float or int) for
+            binary operations with constants. Passing Layer objects
+            directly is not supported; use the layer name string instead.
         reshape_dim (list[int]): New shape for reshape operation.
         transpose_dim (list[int]): Transpose dimension specification.
             The transpose tensorop type swaps exactly 2 dimensions.
@@ -93,8 +95,11 @@ class TensorOp(NamedElement):
         name (str): The name of the tensor operation.
         tns_type (str): The type of the tensor operation.
         concatenate_dim (int): Concatenation dimension.
-        layers_of_tensors (list[str | float | int]): Input layers or
-            scalars.
+        layers_of_tensors (list[str | float | int]): The list that
+            defines the inputs of the tensor op. Elements can be layer
+            name strings or scalar values (float or int) for
+            binary operations with constants. Passing Layer objects
+            directly is not supported; use the layer name string instead.
         reshape_dim (list[int]): Reshape target shape.
         transpose_dim (list[int]): Transpose dimension specification.
             The transpose tensorop type swaps exactly 2 dimensions.
@@ -257,19 +262,21 @@ class TensorOp(NamedElement):
     def layers_of_tensors(self) -> list[str | float | int]:
         """
         list[str | float]: Get the list that defines the inputs
-        of the tensor op. Elements of the list can be either names
-        of layers from which the tensors originate (str) or scalar
-        values (float) for binary operations with constants.
+        of the tensor op. Elements must be layer name strings or
+        scalar values (float or int) for binary operations with
+        constants. Passing Layer objects directly is not supported;
+        use the layer name string instead.
         """
         return self.__layers_of_tensors
 
     @layers_of_tensors.setter
     def layers_of_tensors(self, layers_of_tensors: list[str | float | int]):
         """
-        list[str | float | int]: Set the list of layers names from
-        which the tensors, on which tensor ops are performed,
-        originate. Can include float or int values for binary
-        operations with constants.
+        list[str | float | int]: Set the list that defines the inputs
+        of the tensor op. Elements must be layer name strings or
+        scalar values (float or int) for binary operations with
+        constants. Passing Layer objects directly is not supported;
+        use the layer name string instead.
         """
         self.__layers_of_tensors = layers_of_tensors
 

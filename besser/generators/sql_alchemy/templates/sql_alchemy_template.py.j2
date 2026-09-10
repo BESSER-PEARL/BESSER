@@ -214,6 +214,18 @@ class {{ asso_class.name }}(Base):
     null it out - without the cascade a delete fails with an AssertionError). #}
 {{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}", cascade="all, delete-orphan")
     {%- endfor %}
+{#- The association ends are also reachable directly, under the names the model gives
+    them, so that method bodies and OCL constraints written against the diagram (for
+    example self.rooms) resolve. Writes go through the link rows above, so these are
+    read-only views over the same table. #}
+    {%- for end in asso_class.association.ends %}
+        {%- set other_end = (asso_class.association.ends | reject('equalto', end) | list)[0] %}
+        {%- if end.multiplicity.max > 1 %}
+{{ other_end.type.name }}.{{ end.name }}: Mapped_[List_["{{ end.type.name }}"]] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True)
+        {%- else %}
+{{ other_end.type.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True, uselist=False)
+        {%- endif %}
+    {%- endfor %}
 {%- endfor %}
 
 # Database connection (override the default with the DATABASE_URL environment variable)

@@ -62,7 +62,10 @@ def _make_checkpoint(**overrides) -> Checkpoint:
 
 
 def test_save_load_round_trip(tmp_path):
-    original = _make_checkpoint()
+    original = _make_checkpoint(tasks=[
+        {"id": 1, "text": "Build the frontend", "done": False},
+        {"id": 2, "text": "Write the README", "done": True},
+    ])
     path = save_checkpoint(str(tmp_path), original)
     assert path is not None
     assert os.path.isfile(path)
@@ -74,6 +77,20 @@ def test_save_load_round_trip(tmp_path):
     assert loaded.turn == original.turn
     assert loaded.messages == original.messages
     assert loaded.project_fingerprint == original.project_fingerprint
+    assert loaded.tasks == original.tasks
+
+
+def test_load_older_checkpoint_without_tasks_is_backward_compatible(tmp_path):
+    original = _make_checkpoint().to_dict()
+    original.pop("tasks", None)
+    (tmp_path / CHECKPOINT_FILENAME).write_text(
+        json.dumps(original), encoding="utf-8"
+    )
+
+    loaded = load_checkpoint(str(tmp_path))
+
+    assert loaded is not None
+    assert loaded.tasks == []
 
 
 def test_load_missing_returns_none(tmp_path):

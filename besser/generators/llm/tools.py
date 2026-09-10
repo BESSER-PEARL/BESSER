@@ -330,9 +330,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "Use for small, localised changes (1-2 edits per file). "
             "If a file needs three or more changes, use write_file with "
             "the complete new contents instead — fewer round-trips. "
-            "You can issue multiple modify_file calls (across different "
-            "files or different sections) in the SAME turn; the runner "
-            "executes them in parallel. "
+            "You can issue multiple modify_file calls in the SAME turn. "
+            "Calls on DIFFERENT files run in parallel; several calls on the "
+            "SAME file are applied in the order you list them, so each one "
+            "must match the file as the previous one left it. "
+            "Prefer one modify_file per distinct edit site, and include "
+            "enough surrounding lines that old_text matches exactly one place. "
             "old_text must match exactly (including whitespace)."
         ),
         "input_schema": {
@@ -341,6 +344,14 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "path": {"type": "string"},
                 "old_text": {"type": "string", "description": "Exact text to find"},
                 "new_text": {"type": "string", "description": "Replacement text"},
+                "replace_all": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Replace every exact occurrence. Leave false for normal edits; "
+                        "use true only when all matches intentionally need the same change."
+                    ),
+                },
             },
             "required": ["path", "old_text", "new_text"],
         },

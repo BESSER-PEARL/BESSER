@@ -69,6 +69,9 @@ class Checkpoint:
     compaction_count: int
     project_fingerprint: str           # see ``compute_fingerprint``
     saved_at: float                    # unix ts
+    # Serialized executor checklist. Added compatibly to schema v1 so older
+    # checkpoints load with an empty list and newer resumes retain their gate.
+    tasks: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +90,7 @@ class Checkpoint:
             "compaction_count": self.compaction_count,
             "project_fingerprint": self.project_fingerprint,
             "saved_at": self.saved_at,
+            "tasks": self.tasks,
         }
 
 
@@ -221,6 +225,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             compaction_count=int(data.get("compaction_count", 0)),
             project_fingerprint=data.get("project_fingerprint", ""),
             saved_at=float(data.get("saved_at", 0.0)),
+            tasks=data.get("tasks") or [],
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

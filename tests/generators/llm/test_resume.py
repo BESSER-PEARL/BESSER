@@ -241,6 +241,44 @@ def test_resume_picks_up_from_saved_turn(simple_model, tmp_path):
     assert not os.path.isfile(tmp_path / CHECKPOINT_FILENAME)
 
 
+def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_path):
+    """A resume can itself hit a cap; that must not destroy recovery state."""
+    first = _ScriptedClient([_tool_use("c1")])
+    LLMOrchestrator(
+        llm_client=first,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=1,
+        use_streaming=False,
+    ).run("Build a blog")
+    assert load_checkpoint(str(tmp_path)) is not None
+
+    second = _ScriptedClient([_tool_use("c2")])
+    second_orchestrator = LLMOrchestrator(
+        llm_client=second,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=2,
+        use_streaming=False,
+    )
+    second_orchestrator.resume("Build a blog")
+
+    after_second = load_checkpoint(str(tmp_path))
+    assert second_orchestrator._phase2_exited_cleanly is False
+    assert after_second is not None
+    assert after_second.turn >= 2
+
+    third = _ScriptedClient([_end_turn()])
+    LLMOrchestrator(
+        llm_client=third,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=3,
+        use_streaming=False,
+    ).resume("Build a blog")
+    assert load_checkpoint(str(tmp_path)) is None
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

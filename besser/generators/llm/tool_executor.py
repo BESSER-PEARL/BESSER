@@ -20,11 +20,42 @@ import os
 import re
 import subprocess
 import sys
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from besser.BUML.metamodel.structural import DomainModel
+from besser.generators.llm.edit_apply import (
+    find_similar_lines,
+    replace_most_similar_chunk,
+)
 
 logger = logging.getLogger(__name__)
+
+
+ToolExecutionStatus = Literal["ok", "error", "skipped"]
+
+
+@dataclass(frozen=True)
+class ToolExecutionResult:
+    """Typed result used by the harness around the model-facing JSON payload.
+
+    Tool payloads intentionally retain their historical shapes (``status`` may
+    be ``written``, ``modified``, and so on), but orchestration must never infer
+    success by searching the first bytes of a JSON string. This envelope gives
+    loop guards, tracing, and future telemetry one canonical outcome while
+    :meth:`ToolExecutor.execute` remains backward compatible for callers that
+    expect a JSON string.
+    """
+
+    status: ToolExecutionStatus
+    payload: dict[str, Any]
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == "ok"
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, default=str)
 
 # Maximum time a shell command can run (seconds)
 COMMAND_TIMEOUT = 120
@@ -212,6 +243,7 @@ class ToolExecutor:
         bpmn_model: Any = None,
         nn_model: Any = None,
         protect_scaffold: bool = False,
+        per_write_diagnostics: bool = True,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.domain_model = domain_model
@@ -231,12 +263,17 @@ class ToolExecutor:
         # the write_file rejection ("use modify_file") contradict each
         # other and ping-pong the model.
         self._modify_counts: dict[str, int] = {}
+        # Consecutive failed modify_file attempts per path. Escalates the
+        # error message from "not found" to "stop retyping old_text, read the
+        # file" — the pilot's 77-action flail was the same miss repeated.
+        self._failed_modifies: dict[str, int] = {}
         # When True (weak / free-tier models only), the deterministic Phase-1
         # scaffold is IMMUTABLE to delete_file: the model may edit those files
         # in place but cannot tear them down and rebuild in another framework.
         # Observed with the free qwen tier deleting a whole FastAPI backend to
         # rewrite it in Flask; capable cloud models keep full delete_file.
         self._protect_scaffold = protect_scaffold
+        self._per_write_diagnostics = per_write_diagnostics
         # Data contract from the domain model (id types, server-owned
         # fields). Every write_file/modify_file result carries the lint
         # findings for the new content, so the model sees a violation in
@@ -315,6 +352,50 @@ class ToolExecutor:
                      "done": False, "verify": verify}
                 )
 
+    def task_snapshot(self) -> list[dict]:
+        """Return the serializable checklist state for crash recovery.
+
+        Verifier callables are process-local and intentionally excluded. The
+        orchestrator supplies freshly reconstructed deterministic verifiers to
+        :meth:`restore_tasks` when resuming.
+        """
+        return [
+            {"id": t["id"], "text": t["text"], "done": bool(t["done"])}
+            for t in self._tasks
+        ]
+
+    def restore_tasks(
+        self,
+        snapshot: list[dict],
+        verification_tasks: list[dict] | None = None,
+    ) -> None:
+        """Restore a checkpointed checklist without reopening completed work."""
+        verifiers = {
+            str(item.get("text", "")).strip(): item.get("verify")
+            for item in (verification_tasks or [])
+            if isinstance(item, dict) and str(item.get("text", "")).strip()
+        }
+        restored: list[dict] = []
+        for item in snapshot or []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            raw_id = item.get("id")
+            task_id = (
+                raw_id
+                if isinstance(raw_id, int) and raw_id > 0
+                else len(restored) + 1
+            )
+            restored.append({
+                "id": task_id,
+                "text": text,
+                "done": item.get("done") is True,
+                "verify": verifiers.get(text),
+            })
+        self._tasks = restored
+
     def open_tasks(self) -> list[dict]:
         """Checklist items not yet marked done."""
         return [t for t in self._tasks if not t["done"]]
@@ -385,6 +466,31 @@ class ToolExecutor:
         )
         return f"{switch}\n{note}" if switch else note
 
+    def _append_write_feedback(
+        self,
+        result: dict,
+        rel_path: str,
+        content: str,
+    ) -> None:
+        """Attach bounded contract and parser feedback to a successful write."""
+        warnings = self._contract_warnings(rel_path, content)
+        if warnings:
+            result["contract_warnings"] = warnings
+        if not self._per_write_diagnostics:
+            return
+        try:
+            from besser.generators.llm.write_diagnostics import diagnose_written_content
+
+            diagnostics = diagnose_written_content(rel_path, content)
+        except Exception:
+            diagnostics = []
+        if diagnostics:
+            result["diagnostics"] = diagnostics
+            result["diagnostic_message"] = (
+                "The content was written, but diagnostics found errors. Fix them "
+                "now while this file is still in context."
+            )
+
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.
 
@@ -402,21 +508,49 @@ class ToolExecutor:
             }
         return None
 
+    @staticmethod
+    def _result_status(payload: dict[str, Any]) -> ToolExecutionStatus:
+        """Classify a handler payload without relying on its presentation."""
+        if (
+            payload.get("error") is not None
+            or payload.get("status") == "error"
+            or payload.get("success") is False
+        ):
+            return "error"
+        if payload.get("skipped") is True or payload.get("status") == "skipped":
+            return "skipped"
+        return "ok"
+
+    def execute_typed(
+        self, tool_name: str, arguments: dict
+    ) -> ToolExecutionResult:
+        """Execute a tool and return a machine-readable harness outcome.
+
+        Handler failures stay data, never exceptions. The model-facing payload
+        is deliberately unchanged; only the harness gains an explicit
+        ``ok | error | skipped`` status.
+        """
+        handler = self._handlers.get(tool_name)
+        if not handler:
+            payload = {"error": f"Unknown tool: {tool_name}"}
+            return ToolExecutionResult("error", payload)
+        try:
+            raw_result = handler(self, arguments)
+            payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
+            return ToolExecutionResult(self._result_status(payload), payload)
+        except Exception as e:
+            logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)
+            return ToolExecutionResult(
+                "error", {"error": f"{tool_name} failed: {e}"}
+            )
+
     def execute(self, tool_name: str, arguments: dict) -> str:
         """
         Execute a tool call.  Returns a JSON string.
 
         Errors are returned as ``{"error": "..."}`` — never raised.
         """
-        handler = self._handlers.get(tool_name)
-        if not handler:
-            return json.dumps({"error": f"Unknown tool: {tool_name}"})
-        try:
-            result = handler(self, arguments)
-            return json.dumps(result, default=str)
-        except Exception as e:
-            logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)
-            return json.dumps({"error": f"{tool_name} failed: {e}"})
+        return self.execute_typed(tool_name, arguments).to_json()
 
     # ------------------------------------------------------------------
     # Path safety
@@ -963,12 +1097,18 @@ class ToolExecutor:
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
-        warnings = self._contract_warnings(rel_path, args["content"])
-        if warnings:
-            result["contract_warnings"] = warnings
+        self._append_write_feedback(result, rel_path, args["content"])
         return result
 
     def _modify_file(self, args: dict) -> dict:
+        """Targeted search-and-replace, with a flexible apply ladder.
+
+        Match tiers, most literal first (never similarity-scored):
+        exact -> typographic normalization -> ``edit_apply`` (uniform-indent
+        correction, spurious leading blank line). On a miss the error carries a
+        "did you mean" window of the closest real lines so the retry can copy
+        them verbatim instead of retyping from memory.
+        """
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
             return {"error": f"File not found: {args['path']}"}
@@ -977,6 +1117,20 @@ class ToolExecutor:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         old_text = args["old_text"]
+        new_text = args["new_text"]
+        replace_all = args.get("replace_all") is True
+        if not old_text.strip():
+            return {
+                "error": "old_text is empty or whitespace only. To create a file "
+                         "or append to it, use write_file instead.",
+            }
+        if old_text == new_text:
+            return {
+                "error": "old_text and new_text are identical; no edit was applied. "
+                         "Read the file before retrying if this change may already exist.",
+            }
+
+        matched_by = "exact"
         if old_text not in content:
             # Typographic fallback: match with smart quotes/dashes/nbsp
             # normalized on both sides, then substitute the original span
@@ -986,19 +1140,69 @@ class ToolExecutor:
             idx = norm_content.find(norm_old)
             if idx >= 0:
                 old_text = content[idx:idx + len(old_text)]
-            else:
+                matched_by = "typographic"
+
+        occurrences = content.count(old_text) if old_text in content else 0
+        if occurrences:
+            # A short anchor appearing more than once is genuinely ambiguous:
+            # silently editing "the first one" can edit the wrong place. Refuse
+            # and ask for context instead.
+            if occurrences > 1 and not replace_all:
                 return {
-                    "error": f"old_text not found in {args['path']}. "
-                             f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
-                             f"Make sure old_text matches exactly including whitespace/indentation.",
+                    "error": (
+                        f"old_text occurs {occurrences} times in {args['path']} and is "
+                        "ambiguous. Include surrounding lines so it matches exactly "
+                        "one place, or set replace_all=true only when every occurrence "
+                        "must change."
+                    ),
                 }
-        new_content = content.replace(old_text, args["new_text"], 1)
+            new_content = content.replace(
+                old_text, new_text, occurrences if replace_all else 1
+            )
+        else:
+            new_content = replace_most_similar_chunk(content, old_text, new_text)
+            matched_by = "flexible"
+
+        if new_content is None:
+            misses = self._failed_modifies.get(rel_path, 0) + 1
+            self._failed_modifies[rel_path] = misses
+            err: dict = {
+                "error": f"old_text not found in {args['path']}. "
+                         f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
+                         f"Make sure old_text matches exactly including whitespace/indentation.",
+            }
+            hint = find_similar_lines(old_text, content)
+            if hint:
+                err["did_you_mean"] = (
+                    "Closest lines actually in the file - copy old_text verbatim "
+                    "from here:" + chr(10) + hint
+                )
+            if new_text.strip() and new_text in content:
+                err["note"] = (
+                    "new_text is ALREADY present in the file - this edit may have "
+                    "been applied already. Read the file before retrying."
+                )
+            if misses >= 2:
+                err["advice"] = (
+                    f"This is failed attempt #{misses} on {args['path']}. Call "
+                    "read_file on that region and copy old_text out of the output "
+                    "instead of retyping it."
+                )
+            return err
+
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        result = {"status": "modified", "path": args["path"]}
-        warnings = self._contract_warnings(rel_path, new_content)
-        if warnings:
-            result["contract_warnings"] = warnings
+        self._failed_modifies.pop(rel_path, None)
+        result = {
+            "status": "modified",
+            "path": args["path"],
+            "replacements": occurrences if replace_all and occurrences else 1,
+        }
+        if matched_by != "exact":
+            # Surfaced for telemetry and as a nudge: old_text did not match
+            # byte-for-byte, so the model's copy of the file is drifting.
+            result["matched_by"] = matched_by
+        self._append_write_feedback(result, rel_path, new_content)
         return result
 
     def _delete_file(self, args: dict) -> dict:

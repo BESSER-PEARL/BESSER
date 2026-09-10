@@ -411,6 +411,7 @@ class LLMOrchestrator:
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
+        per_write_diagnostics: bool = True,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -462,6 +463,7 @@ class LLMOrchestrator:
             bpmn_model=bpmn_model,
             nn_model=nn_model,
             protect_scaffold=_is_free_local_model(_model_name),
+            per_write_diagnostics=per_write_diagnostics,
         )
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
@@ -878,6 +880,13 @@ class LLMOrchestrator:
             for i in checkpoint.validation_issues
         ]
         self._project_fingerprint = checkpoint.project_fingerprint
+        # A resumed loop must retain the same definition of done. Rebuild the
+        # harness-owned verifier callables from the current workspace/model and
+        # reattach them by task text; ordinary LLM-planned tasks need no callable.
+        self.executor.restore_tasks(
+            checkpoint.tasks,
+            verification_tasks=self._deterministic_gap_tasks(),
+        )
         self._trace.write(
             EVENT_RUN_START,
             resumed=True,
@@ -905,7 +914,8 @@ class LLMOrchestrator:
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
         self._remove_snapshot()
-        delete_checkpoint(self.output_dir)
+        if self._phase2_exited_cleanly:
+            delete_checkpoint(self.output_dir)
         self._trace.write(EVENT_RUN_END, resumed=True, elapsed_seconds=round(elapsed, 2))
         return self.output_dir
 
@@ -2710,55 +2720,104 @@ class LLMOrchestrator:
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
 
+    # Tools whose effect is a WRITE to a specific path. Two of these on the
+    # same path inside one turn must not run concurrently: each does
+    # read -> transform -> write, so racing them silently drops the earlier
+    # edit (last writer wins). The tool description used to invite exactly
+    # that ("different sections ... in the SAME turn ... in parallel").
+    _WRITE_TOOLS = frozenset({"modify_file", "write_file", "delete_file"})
+
+    def _serial_key(self, block) -> str:
+        """Group key for execution: writes to one path share a key (so they run
+        in order), everything else gets a unique key (so it stays parallel)."""
+        name = getattr(block, "name", "")
+        args = getattr(block, "input", None)
+        if name in self._WRITE_TOOLS and isinstance(args, dict):
+            path = args.get("path")
+            if isinstance(path, str) and path.strip():
+                normalized = os.path.normcase(
+                    os.path.normpath(path.replace("\\", "/").strip())
+                ).replace("\\", "/")
+                return "path:" + normalized
+        return "id:" + str(getattr(block, "id", id(block)))
+
     def _execute_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
         """
-        Execute tool call blocks, using parallel execution when possible.
+        Execute tool call blocks, in parallel where that is SAFE.
 
-        If multiple independent tool calls are made in the same turn,
-        they are executed concurrently using a thread pool.
+        Blocks are grouped by write target: calls that write the same path run
+        sequentially in the order the model emitted them, while independent
+        groups still run concurrently. Without this, two ``modify_file`` calls
+        on one file in a single turn each read the pre-turn content and the
+        second write overwrites the first edit.
 
         Args:
             tool_blocks: List of tool_use content blocks from the LLM response.
             turn: Current turn number.
 
         Returns:
-            List of tool_result dicts for the API response.
+            List of tool_result dicts, ordered to match ``tool_blocks``.
         """
         if not tool_blocks:
             return []
 
-        tool_results = []
+        if len(tool_blocks) == 1:
+            return [self._execute_single_tool(tool_blocks[0], turn)]
 
-        if len(tool_blocks) > 1:
-            # Parallel execution for multiple independent tool calls
+        groups: dict[str, list] = {}
+        for block in tool_blocks:
+            groups.setdefault(self._serial_key(block), []).append(block)
+
+        serialized = sum(1 for blocks in groups.values() if len(blocks) > 1)
+        if serialized:
+            logger.info(
+                "Executing %d tool calls in %d group(s); %d group(s) serialized "
+                "(same write target)", len(tool_blocks), len(groups), serialized,
+            )
+        else:
             logger.info("Executing %d tool calls in parallel", len(tool_blocks))
-            with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
-                futures = {
-                    pool.submit(self._execute_single_tool, block, turn): block
-                    for block in tool_blocks
-                }
-                for future in as_completed(futures):
-                    block = futures[future]
-                    try:
-                        result_dict = future.result()
-                        tool_results.append(result_dict)
-                    except Exception as e:
-                        logger.error("Parallel tool execution failed for %s: %s",
-                                     getattr(block, "name", "?"), e)
+
+        def _run_group(blocks: list) -> list[dict]:
+            # Sequential within a group so same-path edits compose. Keep one
+            # result per call even if tracing/progress code around a tool raises
+            # unexpectedly; a sibling result must never disappear.
+            results: list[dict] = []
+            for block in blocks:
+                try:
+                    results.append(self._execute_single_tool(block, turn))
+                except Exception as exc:
+                    logger.exception(
+                        "Tool orchestration failed for %s",
+                        getattr(block, "name", "?"),
+                    )
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps({"error": f"Execution failed: {exc}"}),
+                    })
+            return results
+
+        tool_results: list[dict] = []
+        with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
+            futures = {pool.submit(_run_group, blocks): blocks
+                       for blocks in groups.values()}
+            for future in as_completed(futures):
+                blocks = futures[future]
+                try:
+                    tool_results.extend(future.result())
+                except Exception as e:
+                    logger.error("Parallel tool execution failed for %s: %s",
+                                 getattr(blocks[0], "name", "?"), e)
+                    for block in blocks:
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
                             "content": json.dumps({"error": f"Execution failed: {e}"}),
                         })
 
-            # Sort results by block order to maintain deterministic output
-            block_id_order = {block.id: i for i, block in enumerate(tool_blocks)}
-            tool_results.sort(key=lambda r: block_id_order.get(r["tool_use_id"], 0))
-        else:
-            # Single tool call -- execute directly
-            block = tool_blocks[0]
-            tool_results.append(self._execute_single_tool(block, turn))
-
+        # Restore the model's block order so tool_result pairing is stable.
+        block_id_order = {block.id: i for i, block in enumerate(tool_blocks)}
+        tool_results.sort(key=lambda r: block_id_order.get(r["tool_use_id"], 0))
         return tool_results
 
     def _execute_single_tool(self, block, turn: int) -> dict:
@@ -2807,7 +2866,8 @@ class LLMOrchestrator:
         if self.on_progress:
             self.on_progress(turn + 1, tool_name, "executing")
 
-        result = self.executor.execute(tool_name, block.input)
+        execution = self.executor.execute_typed(tool_name, block.input)
+        result = execution.to_json()
 
         if self._is_stuck():
             logger.warning("Possible loop: %s", tool_name)
@@ -2820,17 +2880,19 @@ class LLMOrchestrator:
                 "result": result_obj,
             })
 
-        success = '"error"' not in result[:100]
+        success = execution.succeeded
         self.tool_calls_log.append({
             "turn": turn + 1, "tool": tool_name,
             "input": _sanitize_for_log(block.input),
             "success": success,
+            "status": execution.status,
         })
         self._trace.write(
             EVENT_TOOL_CALL,
             turn=turn + 1,
             tool=tool_name,
             success=success,
+            status=execution.status,
             input=_sanitize_for_log(block.input),
         )
 
@@ -2878,6 +2940,7 @@ class LLMOrchestrator:
                 compaction_count=self._compaction_count,
                 project_fingerprint=self._project_fingerprint,
                 saved_at=time.time(),
+                tasks=self.executor.task_snapshot(),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:
@@ -3449,6 +3512,17 @@ class LLMOrchestrator:
         # ``enable_toolchain_validation`` so the web deployment can
         # opt out per deploy.
         raw_issues.extend(self._collect_frontend_contract_issues())
+        try:
+            from besser.generators.llm.endpoint_coherence import (
+                collect_endpoint_coherence_issues,
+            )
+
+            # Warning mode for the first campaign: _classify_issue deliberately
+            # leaves this prefix at the conservative warning default. Promote to
+            # blocker only after measured false-positive review.
+            raw_issues.extend(collect_endpoint_coherence_issues(self.output_dir))
+        except Exception:
+            logger.debug("Endpoint coherence validation failed", exc_info=True)
         raw_issues.extend(self._collect_framework_switch_issues())
         raw_issues.extend(self._collect_missing_frontend_issue())
         raw_issues.extend(self._collect_data_contract_issues())

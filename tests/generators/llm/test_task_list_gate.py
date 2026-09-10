@@ -100,9 +100,28 @@ def test_task_list_tool_crud(tmp_path):
 
     bad = json.loads(executor.execute("task_list", {"action": "done", "id": 99}))
     assert "No task with id 99" in bad["error"]
-
     assert [t["id"] for t in executor.open_tasks()] == [2, 3]
 
+
+def test_task_snapshot_restore_preserves_done_state_and_verifier(tmp_path):
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.set_tasks([
+        {"text": "Build frontend", "verify": lambda: True},
+        "Write README",
+    ])
+    json.loads(executor.execute("task_list", {"action": "done", "id": 2}))
+    snapshot = executor.task_snapshot()
+
+    restored = ToolExecutor(workspace=str(tmp_path))
+    verifier = lambda: False
+    restored.restore_tasks(
+        snapshot,
+        verification_tasks=[{"text": "Build frontend", "verify": verifier}],
+    )
+
+    assert restored.task_snapshot() == snapshot
+    assert restored._tasks[0]["verify"] is verifier
+    assert [t["text"] for t in restored.open_tasks()] == ["Build frontend"]
 
 # ----------------------------------------------------------------------
 # end_turn gate
@@ -215,11 +234,17 @@ def test_modify_guard_unlocks_after_two_targeted_edits(tmp_path):
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
     executor.enable_modify_guard()
-    for old in ("line1", "line2"):
+    # NB: the fixture writes line0..line29, so a bare "line1" also matches
+    # line10-line19 (11 occurrences). _modify_file now refuses a short
+    # ambiguous anchor rather than silently editing whichever came first, so
+    # these anchors carry their line ending to be unique - which is exactly
+    # the guidance the tool description gives the model.
+    for old, new_text in (("line1\n", "line1_edited\n"),
+                          ("line2\n", "line2_edited\n")):
         r = json.loads(executor.execute("modify_file", {
-            "path": "app.py", "old_text": old, "new_text": old + "_edited",
+            "path": "app.py", "old_text": old, "new_text": new_text,
         }))
-        assert r["status"] == "modified"
+        assert r["status"] == "modified", r
     result = json.loads(executor.execute("write_file", {
         "path": "app.py", "content": "rewritten as last resort",
     }))

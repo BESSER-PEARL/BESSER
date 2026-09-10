@@ -131,29 +131,39 @@ class TensorOp(NamedElement):
         output_vars (list[str]): Output variable names for multi-output 
             operations (split/chunk).
     """
-    def __init__(self, name: str, tns_type: str,
-                 concatenate_dim: int | None = None,
-                 layers_of_tensors: list[str | float | int] | None = None,
-                 reshape_dim: list[int] | None = None,
-                 transpose_dim: list[int] | None = None,
-                 permute_dim: list[int] | None = None,
-                 reduce_dim: int | None = None,
-                 reduce_keepdims: bool = False, shape_dim: int | None = None,
-                 input_reused: bool = False,
-                 actual_vars: list[str] | None = None,
-                 subscript_indices: list[dict] | None = None,
-                 repeat_dim: list[int | str] | None = None,
-                 interpolate_size: tuple | None = None,
-                 interpolate_scale: float | None = None,
-                 interpolate_mode: str = 'bilinear',
-                 pad_amount : list[list[int]] | None = None,
-                 pad_mode: str = 'constant', pad_value: float = 0.0,
-                 dropout_rate: float | None = None,
-                 dropout_training_aware: bool = True, split_dim: int = 0,
-                 split_sizes: int | list[int] | None = None,
-                 permute_in: bool = False, permute_out: bool = False,
-                 input_var: str | None = None, output_var: str | None = None,
-                 output_vars: list[str] | None = None):
+    def __init__(
+            self, 
+            name: str,
+            tns_type: str,
+            *,
+            concatenate_dim: int | None = None,
+            layers_of_tensors: list[str | float | int] | None = None,
+            reshape_dim: list[int] | None = None,
+            transpose_dim: list[int] | None = None,
+            permute_dim: list[int] | None = None,
+            reduce_dim: int | None = None,
+            reduce_keepdims: bool = False,
+            shape_dim: int | None = None,
+            input_reused: bool = False,
+            actual_vars: list[str] | None = None,
+            subscript_indices: list[dict] | None = None,
+            repeat_dim: list[int | str] | None = None,
+            interpolate_size: tuple | None = None,
+            interpolate_scale: float | None = None,
+            interpolate_mode: str = 'bilinear',
+            pad_amount : list[list[int]] | None = None,
+            pad_mode: str = 'constant',
+            pad_value: float = 0.0,
+            dropout_rate: float | None = None,
+            dropout_training_aware: bool = True,
+            split_dim: int = 0,
+            split_sizes: int | list[int] | None = None,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None,
+            output_vars: list[str] | None = None
+        ):
         super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: list[str | float | int] = layers_of_tensors
@@ -1033,11 +1043,19 @@ class Layer(NamedElement):
         input_var (str): Input variable name for this layer.
         output_var (str): Output variable name for this layer.
     """
-    def __init__(self, name: str, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 is_layer_call: bool = False, permute_in: bool = False,
-                 permute_out: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
+    def __init__(
+            self,
+            name: str,
+            *,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
         super().__init__(name)
         self.actv_func: str = actv_func
         self.name_module_input: str = name_module_input
@@ -1212,16 +1230,34 @@ class CNN(Layer):
             for this layer.
     """
 
-    def __init__(self, name: str, kernel_dim: list[int],
-                 stride_dim: list[int], padding_amount: int = 0,
-                 padding_type: str = "valid", actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, actv_func, name_module_input, input_reused,
-                         is_layer_call, permute_in, permute_out, input_var,
-                         output_var)
+    def __init__(
+            self,
+            name: str,
+            *,
+            kernel_dim: list[int],
+            stride_dim: list[int],
+            padding_amount: int = 0,
+            padding_type: str = "valid",
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.kernel_dim: list[int] = kernel_dim
         self.stride_dim: list[int] = stride_dim
         self.padding_amount: int = padding_amount
@@ -1388,19 +1424,43 @@ class ConvolutionalLayer(CNN):
             for this layer.
     """
 
-    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
-                 stride_dim: list[int], in_channels: int | None = None,
-                 padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: list[int] | None = None, groups: int = 1,
-                 bias: bool = True, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, kernel_dim, stride_dim, padding_amount,
-                         padding_type, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out, is_layer_call,
-                         input_var, output_var)
+    def __init__(
+            self,
+            name: str,
+            kernel_dim: list[int],
+            out_channels: int,
+            stride_dim: list[int],
+            *,
+            in_channels: int | None = None,
+            padding_amount: int = 0,
+            padding_type: str = "valid",
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            kernel_dim=kernel_dim,
+            stride_dim=stride_dim,
+            padding_amount=padding_amount,
+            padding_type=padding_type,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
         self.dilation: list[int] = dilation if dilation is not None else [1]
@@ -1556,22 +1616,50 @@ class Conv1D(ConvolutionalLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
-                 stride_dim: list[int] | None = None, in_channels: int | None = None,
-                 padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: list[int] | None = None, groups: int = 1,
-                 bias: bool = True, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
+    def __init__(
+            self,
+            name: str,
+            kernel_dim: list[int],
+            out_channels: int,
+            stride_dim: list[int] | None = None,
+            *,
+            in_channels: int | None = None,
+            padding_amount: int = 0,
+            padding_type: str = "valid",
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
         if stride_dim is None:
             stride_dim = [1]
-        super().__init__(name, kernel_dim, out_channels, stride_dim,
-                         in_channels, padding_amount, padding_type, dilation,
-                         groups, bias, actv_func, name_module_input, 
-                         input_reused, permute_in, permute_out, is_layer_call,
-                         input_var, output_var)
+        super().__init__(
+            name,
+            kernel_dim,
+            out_channels,
+            stride_dim,
+            in_channels=in_channels,
+            padding_amount=padding_amount,
+            padding_type=padding_type,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
 
     @property
     def kernel_dim(self) -> list[int]:
@@ -1700,22 +1788,50 @@ class Conv2D(ConvolutionalLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
-                 stride_dim: list[int] | None = None, in_channels: int | None = None,
-                 padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: list[int] | None = None, groups: int = 1,
-                 bias: bool = True, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
+    def __init__(
+            self,
+            name: str,
+            kernel_dim: list[int],
+            out_channels: int,
+            stride_dim: list[int] | None = None,
+            *,
+            in_channels: int | None = None,
+            padding_amount: int = 0,
+            padding_type: str = "valid",
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
         if stride_dim is None:
             stride_dim = [1, 1]
-        super().__init__(name, kernel_dim, out_channels, stride_dim,
-                         in_channels, padding_amount, padding_type, dilation,
-                         groups, bias, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out, is_layer_call,
-                         input_var, output_var)
+        super().__init__(
+            name,
+            kernel_dim,
+            out_channels,
+            stride_dim,
+            in_channels=in_channels,
+            padding_amount=padding_amount,
+            padding_type=padding_type,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
 
     @property
     def kernel_dim(self) -> list[int]:
@@ -1843,22 +1959,50 @@ class Conv3D(ConvolutionalLayer):
         output_var (str): Inherited from Layer. Output variable name
             for this layer.
     """
-    def __init__(self, name: str, kernel_dim: list[int], out_channels: int,
-                 stride_dim: list[int] | None = None, in_channels: int | None = None,
-                 padding_amount: int = 0, padding_type: str = "valid",
-                 dilation: list[int] | None = None, groups: int = 1,
-                 bias: bool = True, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
+    def __init__(
+            self,
+            name: str,
+            kernel_dim: list[int],
+            out_channels: int,
+            stride_dim: list[int] | None = None,
+            *,
+            in_channels: int | None = None,
+            padding_amount: int = 0,
+            padding_type: str = "valid",
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
         if stride_dim is None:
             stride_dim = [1, 1, 1]
-        super().__init__(name, kernel_dim, out_channels, stride_dim,
-                         in_channels, padding_amount, padding_type, dilation,
-                         groups, bias, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out, is_layer_call,
-                         input_var, output_var)
+        super().__init__(
+            name,
+            kernel_dim,
+            out_channels,
+            stride_dim,
+            in_channels=in_channels,
+            padding_amount=padding_amount,
+            padding_type=padding_type,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
 
     @property
     def kernel_dim(self) -> list[int]:
@@ -1977,23 +2121,46 @@ class PoolingLayer(CNN):
         output_var (str): Inherited from Layer. Output variable name
             for this layer.
     """
-    def __init__(self, name: str, pooling_type: str, dimension: str,
-                 kernel_dim: list[int] | None = None, stride_dim: list[int] | None = None,
-                 padding_amount: int = 0, padding_type: str = "valid",
-                 output_dim: list[int] | None = None, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 permute_in: bool = False, permute_out: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
+    def __init__(
+            self,
+            name: str,
+            pooling_type: str,
+            dimension: str,
+            *,
+            kernel_dim: list[int] | None = None,
+            stride_dim: list[int] | None = None,
+            padding_amount: int = 0,
+            padding_type: str = "valid",
+            output_dim: list[int] | None = None,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
         self.output_dim: list[int] = output_dim
         if output_dim is None:
             output_dim = []
-        super().__init__(name, kernel_dim, stride_dim, padding_amount,
-                         padding_type, actv_func, name_module_input,
-                         input_reused, permute_in, permute_out, is_layer_call,
-                         input_var, output_var)
+        super().__init__(
+            name,
+            kernel_dim=kernel_dim,
+            stride_dim=stride_dim,
+            padding_amount=padding_amount,
+            padding_type=padding_type,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
 
     @property
     def kernel_dim(self) -> list[int]:
@@ -2208,14 +2375,32 @@ class NormalizationLayer(LayerModifier):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, eps: float = 1e-5, affine: bool = True,
-                 permute_in: bool = False, permute_out: bool = False,
-                 actv_func: str | None = None, name_module_input: str | None = None,
-                 input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str | None = None, output_var: str | None = None):
-        super().__init__(name, actv_func, name_module_input, input_reused,
-                         is_layer_call, permute_in, permute_out, input_var,
-                         output_var)
+    def __init__(
+            self,
+            name: str,
+            *,
+            eps: float = 1e-5,
+            affine: bool = True,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.eps: float = eps
         self.affine: bool = affine
 
@@ -2315,17 +2500,37 @@ class BatchNormLayer(NormalizationLayer):
         output_var (str): Inherited from Layer. Output variable name
             for this layer.
     """
-    def __init__(self, name: str, num_features: int, dimension: str,
-                 eps: float = 1e-5, momentum: float = 0.1,
-                 affine: bool = True, track_running_stats: bool = True,
-                 permute_in: bool = False, permute_out: bool = False,
-                 actv_func: str | None = None, name_module_input: str | None = None,
-                 input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, eps, affine, permute_in, permute_out,
-                         actv_func, name_module_input, input_reused,
-                         is_layer_call, input_var, output_var)
+    def __init__(
+            self, name: str,
+            num_features: int,
+            dimension: str,
+            *,
+            eps: float = 1e-5,
+            momentum: float = 0.1,
+            affine: bool = True,
+            track_running_stats: bool = True,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            eps=eps,
+            affine=affine,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.num_features: int = num_features
         self.dimension: str = dimension
         self.momentum: float = momentum
@@ -2440,14 +2645,33 @@ class LayerNormLayer(NormalizationLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, normalized_shape: list[int],
-                 eps: float = 1e-5, affine: bool = True,
-                 actv_func: str | None = None, name_module_input: str | None = None,
-                 input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str | None = None, output_var: str | None = None):
-        super().__init__(name, eps, affine, False, False, actv_func,
-                         name_module_input, input_reused, is_layer_call,
-                         input_var, output_var)
+    def __init__(
+            self,
+            name: str,
+            normalized_shape: list[int],
+            *,
+            eps: float = 1e-5,
+            affine: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            eps=eps,
+            affine=affine,
+            permute_in=False,
+            permute_out=False,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.normalized_shape: list[int] = normalized_shape
 
     @property
@@ -2516,14 +2740,31 @@ class DropoutLayer(LayerModifier):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, rate: float, dimension: str | None = None,
-                 permute_in: bool = False, permute_out: bool = False,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, None, name_module_input, input_reused,
-                         is_layer_call, permute_in, permute_out, input_var,
-                         output_var)
+    def __init__(
+            self,
+            name: str,
+            rate: float,
+            *,
+            dimension: str | None = None,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=None,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=permute_in,
+            permute_out=permute_out,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.rate: float = rate
         self.dimension: str | None = dimension
 
@@ -2645,19 +2886,42 @@ class RNN(Layer):
         hidden_subscript_target (str): Target variable for hidden
             subscript assignment (e.g., 'x' in 'x = h').
     """
-    def __init__(self, name: str, hidden_size: int, return_type: str = "full",
-                 input_size: int | None = None, bidirectional: bool = False,
-                 dropout: float = 0.0, batch_first: bool = True,
-                 bias: bool = True, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 hx_source: str | None = None, is_layer_call: bool = False,
-                 hidden_state_var: str | None = None, cell_state_var: str | None = None,
-                 hidden_unused: bool = False, cell_unused: bool = False,
-                 hidden_subscript_source: str | None = None,
-                 hidden_subscript_target: str | None = None, input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, actv_func, name_module_input, input_reused,
-                         is_layer_call, False, False, input_var, output_var)
+    def __init__(
+            self,
+            name: str,
+            hidden_size: int,
+            *,
+            return_type: str = "full",
+            input_size: int | None = None,
+            bidirectional: bool = False,
+            dropout: float = 0.0,
+            batch_first: bool = True,
+            bias: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            hx_source: str | None = None,
+            is_layer_call: bool = False,
+            hidden_state_var: str | None = None,
+            cell_state_var: str | None = None,
+            hidden_unused: bool = False,
+            cell_unused: bool = False,
+            hidden_subscript_source: str | None = None,
+            hidden_subscript_target: str | None = None,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=False,
+            permute_out=False,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
         self.batch_first: bool = batch_first
@@ -3237,13 +3501,31 @@ class LinearLayer(GeneralLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, out_features: int, in_features: int | None = None,
-                 bias: bool = True, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, actv_func, name_module_input, input_reused,
-                         is_layer_call, False, False, input_var, output_var)
+    def __init__(
+            self,
+            name: str,
+            out_features: int,
+            *,
+            in_features: int | None = None,
+            bias: bool = True,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=False,
+            permute_out=False,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.in_features: int = in_features
         self.out_features: int = out_features
         self.bias: bool = bias
@@ -3323,12 +3605,30 @@ class FlattenLayer(GeneralLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
-                 actv_func: str | None = None, name_module_input: str | None = None,
-                 input_reused: bool = False, is_layer_call: bool = False,
-                 input_var: str | None = None, output_var: str | None = None):
-        super().__init__(name, actv_func, name_module_input, input_reused,
-                         is_layer_call, False, False, input_var, output_var)
+    def __init__(
+            self,
+            name: str,
+            *,
+            start_dim: int = 1,
+            end_dim: int = -1,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=False,
+            permute_out=False,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.start_dim: int = start_dim
         self.end_dim: int = end_dim
 
@@ -3409,14 +3709,33 @@ class EmbeddingLayer(GeneralLayer):
         output_var (str): Inherited from Layer. Output variable name 
             for this layer.
     """
-    def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
-                 padding_idx: int | None = None, permute_in: bool = False,
-                 permute_out: bool = False, actv_func: str | None = None,
-                 name_module_input: str | None = None, input_reused: bool = False,
-                 is_layer_call: bool = False, input_var: str | None = None,
-                 output_var: str | None = None):
-        super().__init__(name, actv_func, name_module_input, input_reused,
-                         is_layer_call, False, False, input_var, output_var)
+    def __init__(
+            self,
+            name: str,
+            num_embeddings: int,
+            embedding_dim: int,
+            *,
+            padding_idx: int | None = None,
+            permute_in: bool = False,
+            permute_out: bool = False,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
+            is_layer_call: bool = False,
+            input_var: str | None = None,
+            output_var: str | None = None
+        ):
+        super().__init__(
+            name,
+            actv_func=actv_func,
+            name_module_input=name_module_input,
+            input_reused=input_reused,
+            is_layer_call=is_layer_call,
+            permute_in=False,
+            permute_out=False,
+            input_var=input_var,
+            output_var=output_var
+        )
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
         self.padding_idx: int = padding_idx
@@ -3540,8 +3859,11 @@ class Image(Feature):
             to zero mean and unit standard deviation.
 
     """
-    def __init__(self, shape: list[int] | None = None,
-                 normalize: bool = False):
+    def __init__(
+            self,
+            shape: list[int] | None = None,
+            normalize: bool = False
+        ):
         if shape is None:
             shape = [256, 256]
         self.shape: list[int] = shape
@@ -3619,9 +3941,15 @@ class Dataset(NamedElement):
             to 'images'.
         labels (set[Label]): The set of labels in the dataset.
     """
-    def __init__(self, name: str, path_data: str, task_type: str | None = None,
-                 input_format: str | None = None, image: Image | None = None,
-                 labels: set[Label] | None = None):
+    def __init__(
+            self,
+            name: str,
+            path_data: str,
+            task_type: str | None = None,
+            input_format: str | None = None,
+            image: Image | None = None,
+            labels: set[Label] | None = None
+        ):
         if labels is None:
             labels = set()
         super().__init__(name)
@@ -3779,9 +4107,17 @@ class Configuration:
             optimization that helps speed up training by using past
             gradients to smooth out updates.
     """
-    def __init__(self, batch_size: int, epochs: int, learning_rate: float,
-                 optimizer: str, loss_function: str, metrics: list[str],
-                 weight_decay: float = 0, momentum: float = 0):
+    def __init__(
+            self,
+            batch_size: int,
+            epochs: int,
+            learning_rate: float,
+            optimizer: str,
+            loss_function: str,
+            metrics: list[str],
+            weight_decay: float = 0,
+            momentum: float = 0
+        ):
         self.batch_size: int = batch_size
         self.epochs: int = epochs
         self.learning_rate: float = learning_rate
@@ -3964,9 +4300,15 @@ class NN(BehaviorImplementation):
         return_vars (str): Comma-separated string of variable names
             returned by the forward/call method (e.g., "rep, recon").
     """
-    def __init__(self, name: str, configuration: Configuration | None = None,
-                 train_data: Dataset | None = None, test_data: Dataset | None = None,
-                 input_var: str | None = None, return_vars: str | None = None):
+    def __init__(
+            self,
+            name: str,
+            configuration: Configuration | None = None,
+            train_data: Dataset | None = None,
+            test_data: Dataset | None = None,
+            input_var: str | None = None,
+            return_vars: str | None = None
+        ):
         super().__init__(name)
         self.configuration: Configuration = configuration
         self.__sub_nns: list[NN] = []

@@ -3,7 +3,7 @@ import os
 import pytest
 from besser.BUML.metamodel.structural import (
     AssociationClass, Class, DomainModel, Property, StringType, IntegerType, FloatType,
-    BinaryAssociation, Multiplicity
+    BinaryAssociation, Multiplicity, Enumeration, EnumerationLiteral, BooleanType
 )
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text, DataBinding
 from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, Table
@@ -517,3 +517,42 @@ def test_data_binding_row_key_fields(assoc_class_models):
         "Room": ["number"],                         # declared is_id attribute
         "ReservedRoom": ["bookings_id", "rooms_id"],  # /reservedroom/{bookings_id}/{rooms_id}/
     }
+
+
+# ---------------------------------------------------------------------------
+# Attribute defaults: preselected in the create form
+# ---------------------------------------------------------------------------
+
+def test_form_columns_carry_attribute_defaults_and_the_form_preselects_them(tmp_path):
+    """An enumeration attribute with a model default (booking_status =
+    pending_payment) must reach the form column as defaultValue, and the
+    generated table must initialize a new record with it - an empty "" was
+    posted before, which the backend rejects for an enumeration."""
+    status = Enumeration(name="BookingStatus", literals={
+        EnumerationLiteral(name="pending_payment"), EnumerationLiteral(name="confirmed"),
+    })
+    booking = Class(name="Booking", attributes={
+        Property(name="reference", type=StringType),
+        Property(name="booking_status", type=status, default_value="pending_payment"),
+        Property(name="paid", type=BooleanType, default_value=False),
+    })
+    domain_model = DomainModel(name="DefaultsModel", types={booking, status})
+    table = Table(name="BookingTable", title="Bookings", action_buttons=True,
+                  data_binding=DataBinding(name="booking_binding", domain_concept=booking))
+    screen = Screen(name="Bookings", description="Bookings", view_elements={table}, is_main_page=True)
+    gui_model = GUIModel(name="DefaultsApp", package="com.test.defaults", versionCode="1", versionName="1.0",
+                         modules={Module(name="M", screens={screen})}, description="Defaults GUI")
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model, output_dir=str(tmp_path))
+
+    columns = {col["field"]: col for col in _form_columns(generator)}
+    assert columns["booking_status"]["type"] == "enum"
+    assert columns["booking_status"]["defaultValue"] == "pending_payment"
+    assert columns["paid"]["defaultValue"] is False
+
+    generator.generate()
+    with open(os.path.join(str(tmp_path), "src", "components", "table", "TableComponent.tsx"), encoding="utf-8") as f:
+        component = f.read()
+    assert "defaultValue: (col as any).defaultValue ?? (col as any).default_value" in component
+    assert "Preselect the model's default" in component
+    # An enum left unselected is omitted from the payload instead of sent as ""
+    assert "col.type === 'enum' && (value === undefined || value === null || value === '')" in component

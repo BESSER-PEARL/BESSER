@@ -5,6 +5,7 @@ This module defines the neural network metamodel.
 from __future__ import annotations
 
 import keyword
+from pyexpat import errors
 import re
 from typing import Self
 
@@ -132,7 +133,7 @@ class TensorOp(NamedElement):
             operations (split/chunk).
     """
     def __init__(
-            self, 
+            self,
             name: str,
             tns_type: str,
             *,
@@ -241,14 +242,6 @@ class TensorOp(NamedElement):
         int: Set the dimension along which the tensors will be
         concatenated with the cat operation.
         """
-        if (
-            concatenate_dim is not None
-            and (not isinstance(concatenate_dim, int))
-        ):
-            raise TypeError(
-                "concatenate_dim must be int, got "
-                f"{type(concatenate_dim).__name__}"
-            )
         self.__concatenate_dim = concatenate_dim
 
     @property
@@ -269,18 +262,6 @@ class TensorOp(NamedElement):
         originate. Can include float or int values for binary
         operations with constants.
         """
-        if layers_of_tensors is not None:
-            if not isinstance(layers_of_tensors, list):
-                raise TypeError(
-                    "layers_of_tensors must be list, got "
-                    f"{type(layers_of_tensors).__name__}"
-                )
-            for i, elem in enumerate(layers_of_tensors):
-                if not isinstance(elem, (str, float, int)):
-                    raise TypeError(
-                        f"layers_of_tensors[{i}] must be str or float or int,"
-                        f" got {type(elem).__name__}"
-                    )
         self.__layers_of_tensors = layers_of_tensors
 
     @property
@@ -297,14 +278,6 @@ class TensorOp(NamedElement):
         list[int]: Set the list specifying the new shape of the tensor
         after reshaping with the view operation.
         """
-        if reshape_dim is not None:
-            if not isinstance(reshape_dim, list):
-                raise TypeError(
-                    "reshape_dim must be list, got "
-                    f"{type(reshape_dim).__name__}"
-                )
-            if not all(isinstance(d, (int, str)) for d in reshape_dim):
-                raise TypeError("reshape_dim elements must be int or str")
         self.__reshape_dim = reshape_dim
 
     @property
@@ -319,19 +292,6 @@ class TensorOp(NamedElement):
         """
         list[int]: Set the list specifying the transpose dimensions.
         """
-        if transpose_dim is not None:
-            if not isinstance(transpose_dim, list):
-                raise TypeError(
-                    "transpose_dim must be list, got "
-                    f"{type(transpose_dim).__name__}"
-                )
-            if len(transpose_dim) != 2:
-                raise ValueError(
-                    "transpose_dim must have exactly 2 elements, got "
-                    f"{len(transpose_dim)}"
-                )
-            if not all(isinstance(d, int) for d in transpose_dim):
-                raise TypeError("transpose_dim elements must be int")
         self.__transpose_dim = transpose_dim
 
     @property
@@ -348,14 +308,6 @@ class TensorOp(NamedElement):
         list[int]: Set the list containing the desired ordering of
         dimensions for permute operation.
         """
-        if permute_dim is not None:
-            if not isinstance(permute_dim, list):
-                raise TypeError(
-                    "permute_dim must be list, got "
-                    f"{type(permute_dim).__name__}"
-                )
-            if not all(isinstance(d, int) for d in permute_dim):
-                raise TypeError("permute_dim elements must be int")
         self.__permute_dim = permute_dim
 
     @property
@@ -366,10 +318,6 @@ class TensorOp(NamedElement):
     @shape_dim.setter
     def shape_dim(self, shape_dim: int):
         """int: Set the dimension index for shape extraction."""
-        if shape_dim is not None and (not isinstance(shape_dim, int)):
-            raise TypeError(
-                f"shape_dim must be int, got {type(shape_dim).__name__}"
-            )
         self.__shape_dim = shape_dim
 
     @property
@@ -386,11 +334,6 @@ class TensorOp(NamedElement):
         bool: Set whether the input to this layer is reused as input to
         another layer.
         """
-        if input_reused is not None and (not isinstance(input_reused, bool)):
-            raise TypeError(
-                "input_reused must be bool, got "
-                f"{type(input_reused).__name__}"
-            )
         self.__input_reused = input_reused
 
     @property
@@ -401,10 +344,6 @@ class TensorOp(NamedElement):
     @reduce_dim.setter
     def reduce_dim(self, reduce_dim: int):
         """int: Set the dimension for reduction operations."""
-        if (reduce_dim is not None and (not isinstance(reduce_dim, int))):
-            raise TypeError(
-                f"reduce_dim must be int, got {type(reduce_dim).__name__}"
-            )
         self.__reduce_dim = reduce_dim
 
     @property
@@ -415,14 +354,6 @@ class TensorOp(NamedElement):
     @reduce_keepdims.setter
     def reduce_keepdims(self, reduce_keepdims: bool):
         """bool: Set whether to keep dimensions after reduction."""
-        if (
-            reduce_keepdims is not None
-            and not isinstance(reduce_keepdims, bool)
-        ):
-            raise TypeError(
-                "reduce_keepdims must be bool, got "
-                f"{type(reduce_keepdims).__name__}"
-            )
         self.__reduce_keepdims = reduce_keepdims
 
     @property
@@ -445,20 +376,6 @@ class TensorOp(NamedElement):
         to inputs in layers_of_tensors. Used to determine which
         component variable to reference during code generation.
         """
-        if actual_vars is not None:
-            if not isinstance(actual_vars, list):
-                raise TypeError(
-                    "actual_vars must be list, got "
-                    f"{type(actual_vars).__name__}"
-                )
-            if not all(
-                isinstance(v, str) and v in ("output", "hidden")
-                for v in actual_vars
-            ):
-                raise ValueError(
-                    f"actual_vars must contain only 'output' or 'hidden', "
-                    f"got {actual_vars}"
-                )
         self.__actual_vars = actual_vars
 
     @property
@@ -471,52 +388,6 @@ class TensorOp(NamedElement):
         """list[dict]: Set the indices for subscript operations."""
         # subscript_indices: list of dicts
         # (variable length based on tensor dimensions)
-        if subscript_indices is not None:
-            if not isinstance(subscript_indices, list):
-                raise TypeError(
-                    "subscript_indices must be list, got "
-                    f"{type(subscript_indices).__name__}"
-                )
-            if len(subscript_indices) == 0:
-                raise ValueError("subscript_indices cannot be empty")
-
-            for i, elem in enumerate(subscript_indices):
-                if not isinstance(elem, dict):
-                    raise TypeError(
-                        "subscript_indices[{i}] must be dict, got "
-                        f"{type(elem).__name__}"
-                    )
-                if "type" not in elem:
-                    raise ValueError(
-                        f"subscript_indices[{i}] missing required 'type' key"
-                    )
-                if elem["type"] == "index":
-                    if "value" not in elem:
-                        raise ValueError(
-                            f"subscript_indices[{i}] type 'index' requires "
-                            f"'value' key"
-                        )
-                    if not isinstance(elem["value"], int):
-                        raise TypeError(
-                            f"subscript_indices[{i}]['value'] must be int, "
-                            f"got {type(elem['value']).__name__}"
-                        )
-                elif elem["type"] == "slice":
-                    for key in ["start", "stop", "step"]:
-                        if (
-                            key in elem
-                            and elem[key] is not None
-                            and not isinstance(elem[key], int)
-                        ):
-                            raise TypeError(
-                                f"subscript_indices[{i}]['{key}'] must be int"
-                                f" or None, got {type(elem[key]).__name__}"
-                            )
-                else:
-                    raise ValueError(
-                        f"subscript_indices[{i}]['type'] must be 'index' "
-                        f"or 'slice', got {elem['type']}"
-                    )
         self.__subscript_indices = subscript_indices
 
     @property
@@ -540,18 +411,6 @@ class TensorOp(NamedElement):
         counts or strings representing variable/tensorop names that
         evaluate to integers at runtime.
         """
-        if repeat_dim is not None:
-            if not isinstance(repeat_dim, list):
-                raise TypeError(
-                    "repeat_dim must be list, got "
-                    f"{type(repeat_dim).__name__}"
-                )
-            for i, elem in enumerate(repeat_dim):
-                if not isinstance(elem, (int, str)):
-                    raise TypeError(
-                        f"repeat_dim[{i}] must be int or str, got "
-                        f"{type(elem).__name__}"
-                    )
         self.__repeat_dim = repeat_dim
 
     @property
@@ -563,16 +422,6 @@ class TensorOp(NamedElement):
     def interpolate_size(self, interpolate_size: tuple):
         """Set target size for interpolation. Must be a tuple of
         integers."""
-        if interpolate_size is not None:
-            if not isinstance(interpolate_size, tuple):
-                raise TypeError(
-                    "interpolate_size must be a tuple, got "
-                    f"{type(interpolate_size).__name__}"
-                )
-            if not all(isinstance(v, int) for v in interpolate_size):
-                raise TypeError(
-                    "All elements in interpolate_size must be integers"
-                )
         self.__interpolate_size = interpolate_size
 
     @property
@@ -583,16 +432,6 @@ class TensorOp(NamedElement):
     @interpolate_scale.setter
     def interpolate_scale(self, interpolate_scale: float):
         """float: Set scale factor for interpolation. Must be > 0."""
-        if interpolate_scale is not None:
-            if not isinstance(interpolate_scale, (int, float)):
-                raise TypeError(
-                    "interpolate_scale must be numeric (int or float), got "
-                    f"{type(interpolate_scale).__name__}"
-                )
-            if interpolate_scale <= 0:
-                raise ValueError(
-                    f"interpolate_scale must be > 0, got {interpolate_scale}"
-                )
         self.__interpolate_scale = interpolate_scale
     @property
     def interpolate_mode(self) -> str:
@@ -603,22 +442,20 @@ class TensorOp(NamedElement):
     def interpolate_mode(self, interpolate_mode: str):
         """str: Set interpolation mode. Must be one of the valid
         modes."""
-        if interpolate_mode is not None:
-            if not isinstance(interpolate_mode, str):
-                raise TypeError(
-                    "interpolate_mode must be a string, got "
-                    f"{type(interpolate_mode).__name__}"
-                )
-            valid_modes = {
-                'nearest', 'linear', 'bilinear', 'bicubic', 'trilinear',
-                'area', 'nearest-exact', 'lanczos3', 'lanczos5', 'gaussian',
-                'mitchellcubic'
-            }
-            if interpolate_mode not in valid_modes:
-                raise ValueError(
-                    f"interpolate_mode must be one of {sorted(valid_modes)}, "
-                    f"got '{interpolate_mode}'"
-                )
+        
+        valid_modes = {
+            'nearest', 'linear', 'bilinear', 'bicubic', 'trilinear',
+            'area', 'nearest-exact', 'lanczos3', 'lanczos5', 'gaussian',
+            'mitchellcubic'
+        }
+        if (
+            interpolate_mode is not None
+            and interpolate_mode not in valid_modes
+        ):
+            raise ValueError(
+                f"interpolate_mode must be one of {sorted(valid_modes)}, "
+                f"got '{interpolate_mode}'"
+            )
         self.__interpolate_mode = interpolate_mode
 
     @property
@@ -631,17 +468,6 @@ class TensorOp(NamedElement):
     def pad_amount(self, pad_amount):
         """Set padding amounts. Expected format: [[before, after], ...]
         for each dimension. All values must be >= 0."""
-        if pad_amount is not None:
-            if not isinstance(pad_amount, list):
-                raise ValueError("pad_amount must be a list")
-            for dim_pad in pad_amount:
-                if not isinstance(dim_pad, list) or len(dim_pad) != 2:
-                    raise ValueError(
-                        "Each dimension in pad_amount must be a 2-element "
-                        "list [before, after]"
-                    )
-                if any(v < 0 for v in dim_pad):
-                    raise ValueError("Padding values must be >= 0")
         self.__pad_amount = pad_amount
 
     @property
@@ -673,17 +499,6 @@ class TensorOp(NamedElement):
         """float: Set value for constant padding (used only when
         pad_mode='constant'). Can be any numeric value (int or
         float)."""
-        if pad_value is not None:
-            if not isinstance(pad_value, (int, float)):
-                raise TypeError(
-                    f"pad_value must be numeric (int or float), got "
-                    f"{type(pad_value).__name__}"
-                )
-            if pad_value != 0 and self.__pad_mode not in (None, 'constant'):
-                raise ValueError(
-                    "pad_value can only be set when pad_mode='constant', "
-                    f"current pad_mode='{self.__pad_mode}'"
-                )
         self.__pad_value = pad_value
 
     @property
@@ -694,17 +509,6 @@ class TensorOp(NamedElement):
     @dropout_rate.setter
     def dropout_rate(self, dropout_rate: float):
         """Set dropout probability. Must be in range [0.0, 1.0]."""
-        if dropout_rate is not None:
-            if not isinstance(dropout_rate, (int, float)):
-                raise TypeError(
-                    "dropout_rate must be numeric (int or float), got "
-                    f"{type(dropout_rate).__name__}"
-                )
-            if not (0.0 <= dropout_rate <= 1.0):
-                raise ValueError(
-                    "dropout_rate must be in range [0.0, 1.0], got "
-                    f"{dropout_rate}"
-                )
         self.__dropout_rate = dropout_rate
 
     @property
@@ -715,14 +519,6 @@ class TensorOp(NamedElement):
     @dropout_training_aware.setter
     def dropout_training_aware(self, dropout_training_aware: bool):
         """Set whether dropout is training aware. Must be bool."""
-        if (
-            dropout_training_aware is not None
-            and not isinstance(dropout_training_aware, bool)
-        ):
-            raise TypeError(
-                "dropout_training_aware must be bool, got "
-                f"{type(dropout_training_aware).__name__}"
-            )
         self.__dropout_training_aware = dropout_training_aware
 
     @property
@@ -734,10 +530,6 @@ class TensorOp(NamedElement):
     def split_dim(self, split_dim: int):
         """Set dimension along which to split. Supports negative
         indexing."""
-        if split_dim is not None and not isinstance(split_dim, int):
-            raise TypeError(
-                f"split_dim must be int, got {type(split_dim).__name__}"
-            )
         self.__split_dim = split_dim
 
     @property
@@ -750,22 +542,6 @@ class TensorOp(NamedElement):
     def split_sizes(self, split_sizes: int | list[int]):
         """Set number of splits (int) or size per chunk
         (list of ints)."""
-        if split_sizes is not None:
-            if isinstance(split_sizes, int):
-                if split_sizes <= 0:
-                    raise ValueError(
-                        f"split_sizes must be > 0, got {split_sizes}"
-                    )
-            elif isinstance(split_sizes, list):
-                if not all(isinstance(x, int) and x > 0 for x in split_sizes):
-                    raise ValueError(
-                        "split_sizes list must contain only positive ints"
-                    )
-            else:
-                raise TypeError(
-                    "split_sizes must be int or list[int], got "
-                    f"{type(split_sizes).__name__}"
-                )
         self.__split_sizes = split_sizes
 
     @property
@@ -776,10 +552,6 @@ class TensorOp(NamedElement):
     @permute_in.setter
     def permute_in(self, permute_in: bool):
         """bool: Set whether to permute input dimensions."""
-        if (permute_in is not None and (not isinstance(permute_in, bool))):
-            raise TypeError(
-                f"permute_in must be bool, got {type(permute_in).__name__}"
-            )
         self.__permute_in = permute_in
 
     @property
@@ -790,10 +562,6 @@ class TensorOp(NamedElement):
     @permute_out.setter
     def permute_out(self, permute_out: bool):
         """bool: Set whether to permute output dimensions."""
-        if (permute_out is not None and (not isinstance(permute_out, bool))):
-            raise TypeError(
-                f"permute_out must be bool, got {type(permute_out).__name__}"
-            )
         self.__permute_out = permute_out
 
     @property
@@ -806,15 +574,6 @@ class TensorOp(NamedElement):
     def input_var(self, input_var: str):
         """str: Set the input variable name for this tensor
         operation."""
-        if (
-            input_var is not None
-            and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*$', input_var)
-        ):
-            raise ValueError(
-                "input_var must be a valid identifier, or a comma-separated "
-                "list of identifiers, each starting with a letter "
-                "or underscore"
-            )
         self.__input_var = input_var
 
     @property
@@ -827,14 +586,6 @@ class TensorOp(NamedElement):
     def output_var(self, output_var: str):
         """str: Set the output variable name for this tensor
         operation."""
-        if (
-            output_var is not None
-            and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', output_var)
-        ):
-            raise ValueError(
-                "output_var must be a valid identifier starting with a letter"
-                "or underscore"
-            )
         self.__output_var = output_var
 
     @property
@@ -847,30 +598,6 @@ class TensorOp(NamedElement):
     def output_vars(self, output_vars: list[str]):
         """list[str]: Set the output variable names for multi-output 
         operations (split/chunk)."""
-        if output_vars is not None:
-            if not isinstance(output_vars, list):
-                raise TypeError(
-                    "output_vars must be a list, got "
-                    f"{type(output_vars).__name__}"
-                )
-            for var in output_vars:
-                if not isinstance(var, str):
-                    raise TypeError(
-                        f"each element of output_vars must be str, "
-                        f"got {type(var).__name__}"
-                    )
-                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', var):
-                    raise ValueError(
-                        f"'{var}' is not valid, each output_var must be a "
-                        "valid identifier starting with an alphabetic "
-                        "character"
-                    )
-            if len(output_vars) != self.__split_sizes:
-                raise ValueError(
-                    f"Length of output_vars ({len(output_vars)}) must match "
-                    f"the number of splits specified in split_sizes "
-                    f"({self.__split_sizes})"
-                )
         self.__output_vars = output_vars
 
     @property
@@ -880,108 +607,6 @@ class TensorOp(NamedElement):
         if self.output_vars:
             return ", ".join(self.output_vars)
         return self.output_var or ""
-
-    def _validate(self):
-        """Validate the tensor operation parameters based on
-        the type of operation."""
-        binops = ['binop_add', 'binop_subtract', 'binop_multiply',
-                  'binop_divide', 'binop_floor_divide']
-        if self.tns_type == 'reshape' and self.reshape_dim is None:
-            raise ValueError(
-                "reshape_dim parameter cannot be None when type is 'reshape'"
-            )
-        elif self.tns_type == 'concatenate' and self.concatenate_dim is None:
-            raise ValueError(
-                "concatenate_dim parameter cannot be None when type is "
-                "'concatenate'"
-            )
-        elif self.tns_type == 'transpose' and self.transpose_dim is None:
-            raise ValueError(
-                "transpose_dim parameter cannot be None when type is "
-                "'transpose'"
-            )
-        elif self.tns_type == 'permute' and self.permute_dim is None:
-            raise ValueError(
-                "permute_dim parameter cannot be None when type is 'permute'"
-            )
-        elif (
-            self.tns_type in  [
-                'shape_dim', 'mean', 'max',
-                'squeeze', 'unsqueeze', 'normalize'
-            ] 
-        and self.reduce_dim is None
-        ):
-            raise ValueError(
-                "reduce_dim parameter cannot be None when "
-                f"type is {self.tns_type}"
-            )
-        elif self.tns_type == 'max' and self.reduce_keepdims is None:
-            raise ValueError(
-                "reduce_keepdims parameter cannot be None when type is 'max'"
-            )
-        elif self.tns_type == 'subscript' and self.subscript_indices is None:
-            raise ValueError(
-                "subscript_indices parameter cannot be None when "
-                "type is 'subscript'"
-            )
-        elif self.tns_type == 'repeat' and self.repeat_dim is None:
-            raise ValueError(
-                "repeat_dim parameter cannot be None when type is 'repeat'"
-            )
-        elif self.tns_type == 'interpolate':
-            if (
-                self.interpolate_size is None
-                and self.interpolate_scale is None
-            ):
-                raise ValueError(
-                    "Either interpolate_size or interpolate_scale must "
-                    "be set when type is 'interpolate'"
-                )
-            if (
-                self.interpolate_size is not None
-                and self.interpolate_scale is not None
-            ):
-                raise ValueError(
-                    "Cannot set both interpolate_size and interpolate_scale. "
-                     "Use one or the other")
-        elif self.tns_type == 'pad':
-            if self.pad_amount is None:
-                raise ValueError(
-                    "pad_amount parameter cannot be None when type is 'pad'"
-                )
-            elif self.pad_mode is None:
-                self.pad_mode = 'constant'
-            elif self.pad_mode == 'constant' and self.pad_value is None:
-                self.pad_value = 0.0
-        elif self.tns_type == 'dropout' and self.dropout_rate is None:
-            raise ValueError(
-                "dropout_rate parameter cannot be None when type is 'dropout'"
-            )
-        elif self.tns_type == 'split':
-            if self.split_dim is None:
-                self.split_dim = 0
-            elif self.split_sizes is None:
-                raise ValueError(
-                    "split_sizes parameter cannot be None "
-                    "when type is 'split'"
-                )
-        if self.tns_type in binops + ['multiply', 'matmultiply']:
-            if self.layers_of_tensors is None:
-                raise ValueError(
-                    "layers_of_tensors parameter should "
-                    f"be provided for {self.tns_type} operations"
-                )
-        elif (
-            self.tns_type in ['max', 'mean', 'normalize', 'repeat', 'reshape',
-                              'shape_dim', 'split', 'squeeze', 'transpose',
-                              'unsqueeze', 'zeros_like']
-            and self.layers_of_tensors is None
-            and self.input_var is None
-        ):
-            raise ValueError(
-                "Either layers_of_tensors or input_var parameter should "
-                f"be provided for {self.tns_type} operations"
-            )
 
     def __repr__(self):
         return (
@@ -4528,8 +4153,13 @@ class NN(BehaviorImplementation):
         self._validate_module_uniqueness(errors)
         self._validate_module_input_references(errors)
         self._validate_tensor_op_references(errors)
+        self._validate_tensorop_required_params(errors, warnings)
+        self._validate_layer_input(errors)
         self._validate_first_module_entry_point(errors)
-        self._validate_numerical_bounds(errors)
+        self._validate_layer_values(errors)
+        self._validate_tensorop_values(errors)
+        self._validate_config_values(errors)
+        self._validate_data_values(errors)
         self._validate_module_names(errors, warnings)
         self._validate_input_output_var_chain(errors)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
@@ -4543,6 +4173,154 @@ class NN(BehaviorImplementation):
         if errors and raise_exception:
             raise ValueError("\n".join(errors))
         return result
+
+    def _is_multi_output_module(self, module):
+        """Check if a module returns multiple outputs (RNN layers or split tensorop)."""
+        if module is None:
+            return False
+
+        # RNN layers return (output, hidden) or (output, hidden, cell)
+        if isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+            return True
+
+        # Split tensorop returns multiple outputs
+        if isinstance(module, TensorOp) and module.tns_type == 'split':
+            return True
+
+        return False
+
+    def _get_previous_module(self, current_module):
+        """Get the module that appears immediately before current_module in self.modules."""
+        try:
+            idx = self.modules.index(current_module)
+            if idx > 0:
+                return self.modules[idx - 1]
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    def _validate_tensorop_required_params(self, errors: list, warnings:list):
+        for md in self.modules:
+            if isinstance(md, TensorOp):
+                tn_type = md.tns_type
+                required_msg = (
+                    f"TensorOp '{md.name}': {{param}} is required "
+                    f"when tns_type is '{tn_type}'"
+                )
+                if tn_type == 'reshape' and md.reshape_dim is None:
+                    errors.append(required_msg.format(param="reshape_dim"))
+                elif tn_type == 'concatenate' and md.concatenate_dim is None:
+                    errors.append(required_msg.format(param="concatenate_dim"))
+                elif tn_type == 'transpose' and md.transpose_dim is None:
+                    errors.append(required_msg.format(param="transpose_dim"))
+                elif tn_type == 'permute' and md.permute_dim is None:
+                    errors.append(required_msg.format(param="permute_dim"))
+                elif (
+                    tn_type in  [
+                        'shape_dim', 'mean', 'max',
+                        'squeeze', 'unsqueeze', 'normalize'
+                    ]
+                    and md.reduce_dim is None
+                ):
+                    errors.append(required_msg.format(param="reduce_dim"))
+                elif tn_type == 'max' and md.reduce_keepdims is None:
+                    errors.append(required_msg.format(param="reduce_keepdims"))
+                elif tn_type == 'subscript' and md.subscript_indices is None:
+                    errors.append(required_msg.format(param="subscript_indices"))
+                elif tn_type == 'repeat' and md.repeat_dim is None:
+                    errors.append(required_msg.format(param="repeat_dim"))
+                elif tn_type == 'interpolate':
+                    if (
+                        md.interpolate_size is None
+                        and md.interpolate_scale is None
+                    ):
+                        errors.append(
+                            "Either interpolate_size or interpolate_scale must "
+                            "be set when tns_type is 'interpolate'"
+                        )
+                    if (
+                        md.interpolate_size is not None
+                        and md.interpolate_scale is not None
+                    ):
+                        errors.append(
+                            "Cannot set both interpolate_size and "
+                            "interpolate_scale. Use one or the other"
+                        )
+                elif tn_type == 'pad':
+                    if md.pad_amount is None:
+                        errors.append(required_msg.format(param="pad_amount"))
+                    if (
+                        md.pad_value != 0
+                        and md.pad_mode not in (None, 'constant')
+                    ):
+                        warnings.append(
+                            f"TensorOp '{md.name}': pad_value is set but "
+                            f"will be ignored when pad_mode='{md.pad_mode}'"
+                        )
+                elif tn_type == 'dropout' and md.dropout_rate is None:
+                    errors.append(required_msg.format(param="dropout_rate"))
+                elif tn_type == 'split' and md.split_sizes is None:
+                    errors.append(required_msg.format(param="split_sizes"))
+
+                # Binops and multiply/matmultiply must have layers_of_tensors (need two operands)
+                elif (
+                    tn_type in [
+                        'binop_add', 'binop_subtract', 'binop_multiply',
+                        'binop_divide', 'binop_floor_divide', 'multiply', 'matmultiply'
+                    ]
+                    and md.layers_of_tensors is None
+                ):
+                    errors.append(
+                        f"TensorOp '{md.name}': layers_of_tensors is required for "
+                        f"'{tn_type}' operation"
+                    )
+
+                # Concatenate can use either layers_of_tensors or input_var
+                elif (
+                    tn_type == 'concatenate'
+                    and md.layers_of_tensors is None
+                    and md.input_var is None
+                ):
+                    errors.append(
+                        f"TensorOp '{md.name}': Either layers_of_tensors or input_var "
+                        f"is required for concatenate operation"
+                    )
+
+                # Single-input operations (only need explicit input if prev module is multi-output)
+                elif (
+                    tn_type in [
+                        'max', 'mean', 'normalize', 'repeat', 'reshape',
+                        'shape_dim', 'squeeze', 'transpose', 'unsqueeze',
+                        'zeros_like', 'identity', 'permute', 'subscript',
+                        'interpolate', 'pad', 'dropout'
+                    ]
+                    and md.layers_of_tensors is None
+                    and md.input_var is None
+                ):
+                    # Check if previous module returns multiple outputs
+                    prev_module = self._get_previous_module(md)
+                    if self._is_multi_output_module(prev_module):
+                        errors.append(
+                            f"TensorOp '{md.name}': Either layers_of_tensors or input_var "
+                            f"is required for '{tn_type}' operation when previous module "
+                            f"'{prev_module.name}' returns multiple outputs"
+                        )
+
+    def _validate_layer_input(self, errors: list):
+        """Validate that layers have required input specification when
+        previous module returns multiple outputs."""
+        for md in self.modules:
+            if isinstance(md, Layer):
+                # Check if previous module returns multiple outputs
+                prev_module = self._get_previous_module(md)
+                if self._is_multi_output_module(prev_module):
+                    # Layer needs explicit input specification
+                    if md.input_var is None:
+                        errors.append(
+                            f"Layer '{md.name}': input_var is required when "
+                            f"previous module '{prev_module.name}' returns "
+                            f"multiple outputs"
+                        )
 
     def _module_names(self) -> set:
         """Names of every module declared in this NN (layers, 
@@ -4724,10 +4502,9 @@ class NN(BehaviorImplementation):
         _check(self.name, "NN")
         for module in self.modules:
             _check(module.name, type(module).__name__)
-
-    def _validate_numerical_bounds(self, errors: list):
-        """Reject non-positive sizes/rates that would crash the trainer 
-        at runtime."""
+    def _validate_config_values(self, errors: list):
+        """Validate numerical bounds for configuration parameters
+        to ensure they are within acceptable ranges."""
         cfg = self.configuration
         if cfg is not None:
             if cfg.batch_size <= 0:
@@ -4750,7 +4527,9 @@ class NN(BehaviorImplementation):
                     f"NN '{self.name}': configuration weight_decay "
                     f"must be >= 0, got {cfg.weight_decay}."
                 )
-
+    def _validate_layer_values(self, errors: list):
+        """Validate numerical bounds for layer parameters
+        to ensure they are within acceptable ranges."""
         for layer in self.layers:
             cls_name = type(layer).__name__
             label = f"NN '{self.name}': {cls_name} '{layer.name}'"
@@ -4847,6 +4626,331 @@ class NN(BehaviorImplementation):
                         f"{label} embedding_dim must be > 0, got "
                         f"{layer.embedding_dim}."
                     )
+
+    def _validate_tensorop_values(self, errors: list):
+        """Validate numerical bounds for tensorop parameters
+        to ensure they are within acceptable ranges."""
+        for tns in self.tensor_ops:
+            tns_name = type(tns).__name__
+            label = f"NN '{self.name}': {tns_name} '{tns.name}'"
+            if (
+                tns.concatenate_dim is not None
+                and not isinstance(tns.concatenate_dim, int)
+            ):
+                errors.append(
+                    f"{label} concatenate_dim must be int, got "
+                    f"{type(tns.concatenate_dim).__name__}"
+                )
+            if tns.layers_of_tensors is not None:
+                if not isinstance(tns.layers_of_tensors, list):
+                    errors.append(
+                        f"{label} layers_of_tensors must be list, got "
+                        f"{type(tns.layers_of_tensors).__name__}"
+                    )
+                for i, elem in enumerate(tns.layers_of_tensors):
+                    if not isinstance(elem, (str, float, int)):
+                        errors.append(
+                            f"{label} layers_of_tensors[{i}] must be str or "
+                            f"float or int, got {type(elem).__name__}"
+                        )
+            if tns.reshape_dim is not None:
+                if not isinstance(tns.reshape_dim, list):
+                    errors.append(
+                        f"{label} reshape_dim must be list, got "
+                        f"{type(tns.reshape_dim).__name__}"
+                    )
+                if not all(isinstance(d, (int, str)) for d in tns.reshape_dim):
+                    errors.append(
+                        f"{label} reshape_dim elements must be int or str"
+                    )
+            if tns.transpose_dim is not None:
+                if not isinstance(tns.transpose_dim, list):
+                    errors.append(
+                        f"{label} transpose_dim must be list, got "
+                        f"{type(tns.transpose_dim).__name__}"
+                    )
+                if len(tns.transpose_dim) != 2:
+                    errors.append(
+                        f"{label} transpose_dim must have exactly 2 elements,"
+                        f" got {len(tns.transpose_dim)}"
+                    )
+                if not all(isinstance(d, int) for d in tns.transpose_dim):
+                    errors.append(
+                        f"{label} transpose_dim elements must be int"
+                    )
+            if tns.permute_dim is not None:
+                if not isinstance(tns.permute_dim, list):
+                    errors.append(
+                        f"{label} permute_dim must be list, got "
+                        f"{type(tns.permute_dim).__name__}"
+                    )
+                if not all(isinstance(d, int) for d in tns.permute_dim):
+                    errors.append(f"{label} permute_dim elements must be int")
+            if (
+                tns.shape_dim is not None
+                and (not isinstance(tns.shape_dim, int))
+            ):
+                errors.append(
+                    f"{label} shape_dim must be int, got "
+                    f"{type(tns.shape_dim).__name__}"
+                )
+            if (
+                tns.input_reused is not None
+                and (not isinstance(tns.input_reused, bool))
+            ):
+                errors.append(
+                    f"{label} input_reused must be bool, got "
+                    f"{type(tns.input_reused).__name__}"
+                )
+            if (
+                tns.reduce_dim is not None
+                and (not isinstance(tns.reduce_dim, int))
+            ):
+                errors.append(
+                    f"{label} reduce_dim must be int, got "
+                    f"{type(tns.reduce_dim).__name__}"
+                )
+            if (
+                tns.reduce_keepdims is not None
+                and not isinstance(tns.reduce_keepdims, bool)
+            ):
+                errors.append(
+                    f"{label} reduce_keepdims must be bool, got "
+                    f"{type(tns.reduce_keepdims).__name__}"
+                )
+            if tns.actual_vars is not None:
+                if not isinstance(tns.actual_vars, list):
+                    errors.append(
+                        f"{label} actual_vars must be list, got "
+                        f"{type(tns.actual_vars).__name__}"
+                    )
+                if not all(
+                    isinstance(v, str) and v in ("output", "hidden")
+                    for v in tns.actual_vars
+                ):
+                    errors.append(
+                        f"{label} actual_vars must contain only 'output' "
+                        f"or 'hidden', got {tns.actual_vars}"
+                    )
+            # subscript_indices: list of dicts
+            # (variable length based on tensor dimensions)
+            if tns.subscript_indices is not None:
+                if not isinstance(tns.subscript_indices, list):
+                    errors.append(
+                        f"{label} subscript_indices must be list, got "
+                        f"{type(tns.subscript_indices).__name__}"
+                    )
+                if len(tns.subscript_indices) == 0:
+                    errors.append(
+                        f"{label} subscript_indices cannot be empty"
+                    )
+                for i, elem in enumerate(tns.subscript_indices):
+                    if not isinstance(elem, dict):
+                        errors.append(
+                            f"{label} subscript_indices[{i}] must be dict"
+                            f", got {type(elem).__name__}"
+                        )
+                    if "type" not in elem:
+                        errors.append(
+                        f"{label} subscript_indices[{i}] missing required"
+                        "'type' key"
+                        )
+                    if elem["type"] == "index":
+                        if "value" not in elem:
+                            errors.append(
+                                f"{label} subscript_indices[{i}] type 'index'"
+                                f" requires 'value' key"
+                            )
+                        if not isinstance(elem["value"], int):
+                            errors.append(
+                                f"{label} subscript_indices[{i}]['value'] "
+                                "must be int, got "
+                                f"{type(elem['value']).__name__}"
+                            )
+                    elif elem["type"] == "slice":
+                        for key in ["start", "stop", "step"]:
+                            if (
+                                key in elem
+                                and elem[key] is not None
+                                and not isinstance(elem[key], int)
+                            ):
+                                errors.append(
+                                    f"{label} subscript_indices[{i}]['{key}']"
+                                    " must be int or None, got "
+                                    f"{type(elem[key]).__name__}"
+                                )
+                    else:
+                        errors.append(
+                            f"{label} subscript_indices[{i}]['type'] must be "
+                            f"'index' or 'slice', got {elem['type']}"
+                        )
+            if tns.repeat_dim is not None:
+                if not isinstance(tns.repeat_dim, list):
+                    errors.append(
+                        f"{label} repeat_dim must be list, got "
+                        f"{type(tns.repeat_dim).__name__}"
+                    )
+                for i, elem in enumerate(tns.repeat_dim):
+                    if not isinstance(elem, (int, str)):
+                        errors.append(
+                            f"{label} repeat_dim[{i}] must be int or str"
+                            f", got {type(elem).__name__}"
+                        )
+            if tns.interpolate_size is not None:
+                if not isinstance(tns.interpolate_size, tuple):
+                    errors.append(
+                        f"{label} interpolate_size must be a tuple, got "
+                        f"{type(tns.interpolate_size).__name__}"
+                    )
+                if not all(isinstance(v, int) for v in tns.interpolate_size):
+                    errors.append(
+                        f"{label} All elements in interpolate_size "
+                        "must be integers"
+                    )
+            if tns.interpolate_scale is not None:
+                if not isinstance(tns.interpolate_scale, (int, float)):
+                    errors.append(
+                        f"{label} interpolate_scale must be numeric (int or "
+                        f"float), got {type(tns.interpolate_scale).__name__}"
+                    )
+                if tns.interpolate_scale <= 0:
+                    errors.append(
+                        f"{label} interpolate_scale must be > 0, "
+                        f"got {tns.interpolate_scale}"
+                    )
+            if tns.interpolate_mode is not None:
+                if tns.pad_amount is not None:
+                    if not isinstance(tns.pad_amount, list):
+                        errors.append(f"{label} pad_amount must be a list")
+                    for dim_pad in tns.pad_amount:
+                        if not isinstance(dim_pad, list) or len(dim_pad) != 2:
+                            errors.append(
+                                f"{label} Each dimension in pad_amount must "
+                                "be a 2-element list [before, after]"
+                            )
+                        if any(v < 0 for v in dim_pad):
+                            errors.append(
+                                f"{label} Padding values must be >= 0"
+                            )
+                if tns.pad_value is not None:
+                    if not isinstance(tns.pad_value, (int, float)):
+                        errors.append(
+                            f"{label} pad_value must be numeric (int or "
+                            f"float), got {type(tns.pad_value).__name__}"
+                        )
+                if tns.dropout_rate is not None:
+                    if not isinstance(tns.dropout_rate, (int, float)):
+                        errors.append(
+                            f"{label} dropout_rate must be numeric (int or "
+                            f"float), got {type(tns.dropout_rate).__name__}"
+                        )
+                    if not (0.0 <= tns.dropout_rate <= 1.0):
+                        errors.append(
+                            f"{label} dropout_rate must be in range "
+                            f"[0.0, 1.0], got {tns.dropout_rate}"
+                        )
+                if (
+                    tns.dropout_training_aware is not None
+                    and not isinstance(tns.dropout_training_aware, bool)
+                ):
+                    errors.append(
+                        f"{label} dropout_training_aware must be bool, got "
+                        f"{type(tns.dropout_training_aware).__name__}"
+                    )
+                if (
+                    tns.split_dim is not None
+                    and not isinstance(tns.split_dim, int)
+                ):
+                    errors.append(
+                        f"{label} split_dim must be int, got "
+                        f"{type(tns.split_dim).__name__}"
+                    )
+                if tns.split_sizes is not None:
+                    if isinstance(tns.split_sizes, int):
+                        if tns.split_sizes <= 0:
+                            errors.append(
+                                f"{label} split_sizes must be > 0, got "
+                                f"{tns.split_sizes}"
+                            )
+                    elif isinstance(tns.split_sizes, list):
+                        if not all(
+                            isinstance(x, int) and x > 0 
+                            for x in tns.split_sizes
+                        ):
+                            errors.append(
+                                f"{label} split_sizes list must contain "
+                                "only positive ints"
+                            )
+                    else:
+                        errors.append(
+                            f"{label} split_sizes must be int or list[int], "
+                            f"got {type(tns.split_sizes).__name__}"
+                        )
+                if (
+                    tns.permute_in is not None
+                    and (not isinstance(tns.permute_in, bool))
+                ):
+                    errors.append(
+                        f"{label} permute_in must be bool, got "
+                        f"{type(tns.permute_in).__name__}"
+                    )
+                if (
+                    tns.permute_out is not None
+                    and (not isinstance(tns.permute_out, bool))
+                ):
+                    errors.append(
+                        f"{label} permute_out must be bool, got "
+                        f"{type(tns.permute_out).__name__}"
+                    )
+                pattern = r'^[a-zA-Z_][a-zA-Z0-9_]*(\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*$'
+                if (
+                    tns.input_var is not None
+                    and not re.match(pattern, tns.input_var)
+                ):
+                    errors.append(
+                        f"{label} input_var must be a valid identifier, or a "
+                        "comma-separated list of identifiers, each starting "
+                        "with a letter or underscore"
+                    )
+                if (
+                    tns.output_var is not None
+                    and not re.match(
+                        r'^[a-zA-Z_][a-zA-Z0-9_]*$',
+                        tns.output_var
+                    )
+                ):
+                    errors.append(
+                        f"{label} output_var must be a valid identifier "
+                        "starting with a letter or underscore"
+                    )
+                if tns.output_vars is not None:
+                    if not isinstance(tns.output_vars, list):
+                        errors.append(
+                            f"{label} output_vars must be a list, got "
+                            f"{type(tns.output_vars).__name__}"
+                        )
+                    for var in tns.output_vars:
+                        if not isinstance(var, str):
+                            errors.append(
+                                f"{label} each element of output_vars must be"
+                                f" str, got {type(var).__name__}"
+                            )
+                        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', var):
+                            errors.append(
+                                f"{label} '{var}' is not valid, each "
+                                "output_var must be a valid identifier "
+                                "starting with an alphabetic character"
+                            )
+                    if len(tns.output_vars) != self.__split_sizes:
+                        errors.append(
+                            f"{label} Length of output_vars "
+                            f"({len(tns.output_vars)}) must match "
+                            f"the number of splits specified in split_sizes "
+                            f"({self.__split_sizes})"
+                        )
+    def _validate_data_values(self, errors: list):
+        """Validate numerical bounds for data parameters
+        to ensure they are within acceptable ranges."""
         for ds_label, ds in (
             ("train_data", self.train_data),
             ("test_data", self.test_data)

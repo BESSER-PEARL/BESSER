@@ -5,6 +5,7 @@ networks based on the B-UML model.
 """
 
 import os
+from pyexpat import model
 import re
 from collections.abc import Callable
 
@@ -65,6 +66,8 @@ class NNCodeGenerator(GeneratorInterface):
                  strip_layer_counter_suffix: bool = False):
 
         super().__init__(model, output_dir)
+        model.resolve_var_chain()
+        model.validate()
         self.setup_layer: SetupLayerTF | SetupLayerTorch = setup_layer
         self.get_tensorop_syntax: Callable = get_tensorop_syntax
         self.generation_type: str = generation_type

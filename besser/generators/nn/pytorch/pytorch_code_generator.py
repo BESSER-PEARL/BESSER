@@ -50,9 +50,9 @@ class PytorchGenerator(NNCodeGenerator):
                  generation_type: str = "subclassing",
                  channel_last: bool = False,
                  strip_layer_counter_suffix: bool = False,
-                 skip_validation: bool = False):
+                 allow_unresolved_shapes: bool = False):
 
-        if not skip_validation:
+        if not allow_unresolved_shapes:
             self._validate_required_layer_attributes(model)
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax

@@ -240,7 +240,6 @@ class TensorOp(NamedElement):
         if tns_type not in valid_types:
             raise ValueError("Invalid value of tensorOp type")
         self.__tns_type = tns_type
-        self._validate()
 
     @property
     def concatenate_dim(self) -> int:
@@ -4130,6 +4129,35 @@ class NN(BehaviorImplementation):
             f'{self.input_var})'
             )
 
+    def resolve_var_chain(self):
+        """Propagate NN-level input_var and return_vars down into
+        the first and last modules respectively. 
+        It should be called explicitly before code generation."""
+        if not self.modules:
+            return
+
+        # Propagate NN's input_var into first module
+        first = self.modules[0]
+        if self.input_var is not None:
+            if hasattr(first, 'input_var') and first.input_var is None:
+                first.input_var = self.input_var
+
+        # Propagate NN's return_vars into last module
+        last = self.modules[-1]
+        if self.return_vars is not None:
+            last_output_var = getattr(last, 'output_var', None)
+            if last_output_var is None:
+                last_output_var = getattr(last, 'output_vars', None)
+                if last_output_var:
+                    last_output_var = ", ".join(last_output_var)
+            if last_output_var is None:
+                if isinstance(last, TensorOp) and last.tns_type == "split":
+                    last.output_vars = [
+                        x.strip() for x in self.return_vars.split(",")
+                    ]
+                elif hasattr(last, 'output_var'):
+                    last.output_var = self.return_vars
+
     def validate(self, raise_exception: bool = True,
                  _visited: set | None = None) -> dict:
         """
@@ -4282,7 +4310,8 @@ class NN(BehaviorImplementation):
                 elif (
                     tn_type in [
                         'binop_add', 'binop_subtract', 'binop_multiply',
-                        'binop_divide', 'binop_floor_divide', 'multiply', 'matmultiply'
+                        'binop_divide', 'binop_floor_divide', 'multiply',
+                        'matmultiply'
                     ]
                     and md.layers_of_tensors is None
                 ):
@@ -4298,11 +4327,12 @@ class NN(BehaviorImplementation):
                     and md.input_var is None
                 ):
                     errors.append(
-                        f"TensorOp '{md.name}': Either layers_of_tensors or input_var "
-                        f"is required for concatenate operation"
+                        f"TensorOp '{md.name}': Either layers_of_tensors or "
+                        f"input_var is required for concatenate operation"
                     )
 
-                # Single-input operations (only need explicit input if prev module is multi-output)
+                # Single-input operations (only need explicit 
+                # input if prev module is multi-output)
                 elif (
                     tn_type in [
                         'max', 'mean', 'normalize', 'repeat', 'reshape',
@@ -4317,8 +4347,9 @@ class NN(BehaviorImplementation):
                     prev_module = self._get_previous_module(md)
                     if self._is_multi_output_module(prev_module):
                         errors.append(
-                            f"TensorOp '{md.name}': Either layers_of_tensors or input_var "
-                            f"is required for '{tn_type}' operation when previous module "
+                            f"TensorOp '{md.name}': Either layers_of_tensors "
+                            f"or input_var is required for '{tn_type}' "
+                            f"operation when previous module "
                             f"'{prev_module.name}' returns multiple outputs"
                         )
 
@@ -4398,11 +4429,7 @@ class NN(BehaviorImplementation):
         first = self.modules[0]
         if self.input_var is not None:
             first_input_var = getattr(first, 'input_var', None)
-            if first_input_var is None:
-                # Set it to match NN's input_var
-                if hasattr(first, 'input_var'):
-                    first.input_var = self.input_var
-            elif first_input_var != self.input_var:
+            if first_input_var != self.input_var:
                 errors.append(
                     f"NN '{self.name}': first module '{first.name}' has "
                     f"input_var '{first_input_var}' which differs from NN's "
@@ -4418,16 +4445,7 @@ class NN(BehaviorImplementation):
                 last_output_var = getattr(last, "output_vars", None)
                 if last_output_var:
                     last_output_var = ", ".join(last_output_var)
-            if last_output_var is None:
-                # Set it to match NN's return_vars
-                if (isinstance(last, TensorOp)
-                    and last.tns_type == "split"):
-                    last.output_vars = [
-                        x.strip() for x in self.return_vars.split(",")
-                    ]
-                elif hasattr(last, 'output_var'):
-                    last.output_var = self.return_vars
-            elif last_output_var != self.return_vars:
+            if last_output_var != self.return_vars:
                 errors.append(
                     f"NN '{self.name}': last module '{last.name}' has "
                     f"output_var '{last_output_var}' which differs from NN's "

@@ -32,6 +32,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.generators.llm.llm_client import (
     ClaudeLLMClient,
+    FROM_SCRATCH_MAX_TOKENS,
     MODIFY_MAX_TOKENS,
 )
 from besser.generators.llm.orchestrator import LLMOrchestrator
@@ -501,14 +502,20 @@ def test_modify_run_raises_output_budget(tmp_path, monkeypatch):
     assert modify_client.max_tokens == MODIFY_MAX_TOKENS
     assert orch._adaptive_budget_applied is True
 
-    # --- a scaffolded first-gen run() keeps the client default ---
+    # --- a scaffolded first-gen run() ALSO raises the ceiling ---
+    # Changed 2026-09-10. This used to assert the scaffolded path kept the
+    # 16384 default, on the theory that a scaffold underneath means smaller
+    # responses. Live evidence says otherwise: a scaffolded run asked for a
+    # React frontend, overran 16384 on its FIRST customisation turn, and
+    # Phase 2 ended with zero LLM writes. A customisation turn writes whole
+    # NEW files the generator never emitted, so it is the same large-response
+    # case as from-scratch and modify — both of which already got the raise.
     scaffold_client = _ScriptedClient([])
     scaffold_client.max_tokens = default
     orch2 = _make_orchestrator(tmp_path, scaffold_client)
 
     def _fake_phase1(instr):
-        # Simulate that a deterministic generator ran (scaffolded path):
-        # _apply_adaptive_budget only raises the cap when NO generator ran.
+        # Simulate that a deterministic generator ran (scaffolded path).
         orch2._generator_used = "python"
 
     monkeypatch.setattr(orch2, "_run_phase1", _fake_phase1)
@@ -522,5 +529,5 @@ def test_modify_run_raises_output_budget(tmp_path, monkeypatch):
 
     orch2.run("build a library app")
 
-    assert scaffold_client.max_tokens == default  # unchanged: no bump
-    assert orch2._adaptive_budget_applied is False
+    assert scaffold_client.max_tokens == FROM_SCRATCH_MAX_TOKENS
+    assert orch2._adaptive_budget_applied is True

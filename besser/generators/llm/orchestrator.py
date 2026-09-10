@@ -546,6 +546,14 @@ class LLMOrchestrator:
         # ``modify()`` run. The legacy recipe field name is retained for
         # compatibility; cost and runtime limits are never raised.
         self._adaptive_budget_applied: bool = False
+        # Output-truncation retries used in this Phase 2, as a PER-RUN total
+        # (deliberately not reset on a good turn: a model that truncates
+        # repeatedly is not adapting, and an unbounded allowance would let it
+        # spend the cost cap rediscovering that). A truncated turn is
+        # recoverable - the model can emit less next turn - so it must not end
+        # the run on first occurrence; see the ``max_tokens``/``length`` branch
+        # in _run_customization_loop.
+        self._truncation_retries: int = 0
         self._start_time: float | None = None
         # Stored as ValidationIssue objects so the recipe captures severity.
         # Cast to strings via `[str(i) for i in self._validation_issues]`
@@ -664,6 +672,10 @@ class LLMOrchestrator:
     # doesn't change behaviour. At 3 consecutive single-file edits we
     # inject a high-salience reminder before the NEXT LLM call.
     _PER_FILE_MODIFY_THRESHOLD = 3
+    # How many output-token truncations one Phase 2 may recover from in
+    # total. Two is enough to let the model shrink its turn; beyond that it is
+    # not adapting, and resume is a better answer than burning the cost cap.
+    _MAX_TRUNCATION_RETRIES = 2
 
     def _auto_detect_primary_kind(self) -> str | None:
         """Pick the primary model kind from whatever is present.
@@ -2199,8 +2211,18 @@ class LLMOrchestrator:
         changed here: a from-scratch run may need more budget, but it must
         stop at the explicit cap rather than silently spending more.
         """
-        if self._generator_used is not None:
-            return  # scaffolded Python run — caller's cap is untouched
+        # Previously this returned early for any scaffolded run, leaving the
+        # MOST COMMON path (deterministic generator -> LLM customisation) on
+        # the client default of 16_384 while pure from-scratch and modify runs
+        # both got FROM_SCRATCH_MAX_TOKENS. That asymmetry had no basis: a
+        # customisation turn writes whole NEW files the scaffold never emitted
+        # (React pages, auth modules), which is the same large-response case.
+        #
+        # Observed live 2026-09-10: a scaffolded run asked for a React frontend,
+        # overran 16_384 on its FIRST customisation turn, and Phase 2 exited
+        # with zero LLM writes. Raising this ceiling costs nothing unless the
+        # model actually emits the tokens, and the cost/runtime rails are
+        # untouched below.
 
         # Widen the per-call output-token limit: a from-scratch run
         # writes large files with no scaffold underneath them, which is
@@ -2217,9 +2239,9 @@ class LLMOrchestrator:
             current_max_tokens = None
         if current_max_tokens is not None and current_max_tokens < FROM_SCRATCH_MAX_TOKENS:
             logger.info(
-                "Adaptive response sizing: raising output-token limit %d -> %d for "
-                "from-scratch run",
-                current_max_tokens, FROM_SCRATCH_MAX_TOKENS,
+                "Adaptive response sizing: raising output-token limit %d -> %d "
+                "(generator_used=%s)",
+                current_max_tokens, FROM_SCRATCH_MAX_TOKENS, self._generator_used,
             )
             self.client.max_tokens = FROM_SCRATCH_MAX_TOKENS
             self._adaptive_budget_applied = True
@@ -2706,13 +2728,43 @@ class LLMOrchestrator:
                     "adaptive_budget_applied=%s)",
                     turn + 1, current_max_tokens, self._adaptive_budget_applied,
                 )
+                # Recoverable: the model can simply emit less next turn.
+                # Ending Phase 2 here used to throw away the whole run on the
+                # FIRST truncation - observed live 2026-09-10, where a
+                # scaffolded run died on turn 1 with zero LLM writes. Feed the
+                # truncation back and let it try a smaller turn, bounded by
+                # _MAX_TRUNCATION_RETRIES. (Pattern from SWE-agent: the error
+                # is explained to the model rather than being fatal.)
+                if self._truncation_retries < self._MAX_TRUNCATION_RETRIES:
+                    self._truncation_retries += 1
+                    messages.append({"role": "user", "content": [{
+                        "type": "text",
+                        "text": (
+                            "Your previous response was CUT OFF at the output "
+                            "token limit"
+                            + (f" ({current_max_tokens} tokens)"
+                               if current_max_tokens else "")
+                            + ", so it was discarded and NOTHING was written to "
+                            "disk. Do not repeat it as-is. Emit a SMALLER turn: "
+                            "one file per tool call, and at most one or two tool "
+                            "calls in this turn. Continue from where you left "
+                            "off — re-state only what you still need to write."
+                        ),
+                    }]})
+                    logger.warning(
+                        "Output truncation recovery %d/%d — asking for a smaller turn",
+                        self._truncation_retries, self._MAX_TRUNCATION_RETRIES,
+                    )
+                    continue
+
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = (
                     "The model hit its output token limit"
                     + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")
-                    + ", so the generated code may be truncated. The run can be "
-                    "resumed to continue from the last completed step, or try a "
-                    "smaller scope / fewer files per run."
+                    + f" on {self._truncation_retries + 1} consecutive turns, so "
+                    "the generated code may be truncated. The run can be resumed "
+                    "to continue from the last completed step, or try a smaller "
+                    "scope / fewer files per run."
                 )
                 break
             else:

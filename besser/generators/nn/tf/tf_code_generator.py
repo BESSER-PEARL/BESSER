@@ -32,7 +32,8 @@ class TFGenerator(NNCodeGenerator):
     """
     def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing",
-                 strip_layer_counter_suffix: bool = False):
+                 strip_layer_counter_suffix: bool = False,
+                 validate_graph_structure: bool = True):
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax
         setup_tensorop: Callable = get_tensorop_syntax
@@ -43,7 +44,8 @@ class TFGenerator(NNCodeGenerator):
         super().__init__(model, setup_layer, setup_tensorop, generation_type,
                          template_dir, file_name=file_name,
                          output_dir=output_dir,
-                         strip_layer_counter_suffix=strip_layer_counter_suffix)
+                         strip_layer_counter_suffix=strip_layer_counter_suffix,
+                         validate_graph_structure=validate_graph_structure)
 
     def _wrap_in_lambda(self, syntax):
         """Keras ``Sequential`` only accepts ``keras.Layer`` instances, so a

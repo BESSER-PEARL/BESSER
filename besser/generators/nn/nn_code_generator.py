@@ -63,11 +63,13 @@ class NNCodeGenerator(GeneratorInterface):
                  get_tensorop_syntax: Callable, generation_type: str,
                  template_dir: str, channel_last: bool | None = None,
                  file_name: str = "nn.py", output_dir: str | None = None,
-                 strip_layer_counter_suffix: bool = False):
+                 strip_layer_counter_suffix: bool = False,
+                 validate_graph_structure: bool = True):
 
         super().__init__(model, output_dir)
+        self.validate_graph_structure: bool = validate_graph_structure
         model.resolve_var_chain()
-        model.validate()
+        model.validate(validate_graph_structure=self.validate_graph_structure)
         self.setup_layer: SetupLayerTF | SetupLayerTorch = setup_layer
         self.get_tensorop_syntax: Callable = get_tensorop_syntax
         self.generation_type: str = generation_type

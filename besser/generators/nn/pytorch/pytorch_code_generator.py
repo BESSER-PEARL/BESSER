@@ -50,7 +50,8 @@ class PytorchGenerator(NNCodeGenerator):
                  generation_type: str = "subclassing",
                  channel_last: bool = False,
                  strip_layer_counter_suffix: bool = False,
-                 allow_unresolved_shapes: bool = False):
+                 allow_unresolved_shapes: bool = False,
+                 validate_graph_structure: bool = True):
 
         if not allow_unresolved_shapes:
             self._validate_required_layer_attributes(model)
@@ -63,7 +64,8 @@ class PytorchGenerator(NNCodeGenerator):
 
         super().__init__(model, setup_layer, setup_tensorop, generation_type,
                          template_dir, channel_last, file_name, output_dir,
-                         strip_layer_counter_suffix=strip_layer_counter_suffix)
+                         strip_layer_counter_suffix=strip_layer_counter_suffix,
+                         validate_graph_structure=validate_graph_structure)
 
     def _validate_dropout_for_sequential(self, module):
         """Handle PyTorch-specific dropout constraints."""

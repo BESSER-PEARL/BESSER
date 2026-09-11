@@ -4169,6 +4169,7 @@ class NN(BehaviorImplementation):
                     last.output_var = self.return_vars
 
     def validate(self, raise_exception: bool = True,
+                 validate_graph_structure: bool = True,
                  _visited: set | None = None) -> dict:
         """
         Validate the neural network model.
@@ -4176,9 +4177,9 @@ class NN(BehaviorImplementation):
         Checks performed:
             * Module names are unique within this NN scope.
             * Layer ``name_module_input`` references resolve to
-              a module defined in the same NN.
+              a module defined in the same NN (optional).
             * TensorOp ``layers_of_tensors`` string entries resolve to
-              a module defined in the same NN or scalar values for binops.
+              a module defined in the same NN or scalar values for binops (optional).
             * Sub-NNs are acyclic (no NN directly or transitively
               contains itself).
             * Each sub-NN is itself valid (recursive validation).
@@ -4188,11 +4189,15 @@ class NN(BehaviorImplementation):
         Args:
             raise_exception: If True, raises ``ValueError`` when errors
                 are found. Warnings never raise.
+            validate_graph_structure: If True, validates that module input
+                references and tensor op references resolve correctly.
+                Set to False during framework migration when intermediate
+                layers/tensorops are created. Default True.
             _visited: Internal — tracks NN instances already validated
                 to stop infinite recursion on cyclic sub-NN graphs.
 
         Returns:
-            dict: ``{"success": bool, "errors": list[str], 
+            dict: ``{"success": bool, "errors": list[str],
                      "warnings": list[str]}``
         """
         errors: list[str] = []
@@ -4205,11 +4210,12 @@ class NN(BehaviorImplementation):
         _visited.add(id(self))
 
         self._validate_module_uniqueness(errors)
-        self._validate_module_input_references(errors)
-        self._validate_tensor_op_references(errors)
+        if validate_graph_structure:
+            self._validate_module_input_references(errors)
+            self._validate_tensor_op_references(errors)
+            self._validate_first_module_entry_point(errors)
         self._validate_tensorop_required_params(errors, warnings)
         self._validate_layer_input(errors)
-        self._validate_first_module_entry_point(errors)
         self._validate_layer_values(errors)
         self._validate_tensorop_values(errors)
         self._validate_config_values(errors)
@@ -4218,7 +4224,7 @@ class NN(BehaviorImplementation):
         self._validate_input_output_var_chain(errors)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
         if not cycle_detected:
-            self._validate_sub_nns_recursive(errors, warnings, _visited)
+            self._validate_sub_nns_recursive(errors, warnings, _visited, validate_graph_structure)
         self._collect_nn_warnings(warnings)
         self._validate_dataset_consistency(warnings)
 
@@ -4485,9 +4491,10 @@ class NN(BehaviorImplementation):
         return False
 
     def _validate_sub_nns_recursive(self, errors: list, warnings: list,
-                                    _visited: set):
+                                    _visited: set, validate_graph_structure: bool):
         for sub in self.sub_nns:
             sub_result = sub.validate(raise_exception=False,
+                                      validate_graph_structure=validate_graph_structure,
                                       _visited=_visited)
             errors.extend(sub_result["errors"])
             warnings.extend(sub_result["warnings"])

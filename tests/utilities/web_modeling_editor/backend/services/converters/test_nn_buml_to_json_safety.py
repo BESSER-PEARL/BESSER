@@ -8,11 +8,9 @@ of node types, so these probes must be rejected.
 """
 
 import pytest
-
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
     nn_buml_to_json,
 )
-
 
 LEGITIMATE_BUML = """
 from besser.BUML.metamodel.nn import (
@@ -72,7 +70,7 @@ from besser.BUML.metamodel.nn import NN
 main_nn = NN(name='x')
 pwned = ().__class__.__bases__[0].__subclasses__()
 """
-    with pytest.raises(ValueError, match=r"(Disallowed|whitelisted)"):
+    with pytest.raises(TypeError, match=r"(Disallowed|whitelisted)"):
         nn_buml_to_json(malicious)
 
 
@@ -108,7 +106,7 @@ from besser.BUML.metamodel.nn import NN
 main_nn = NN(name='x')
 main_nn.__class__ = object
 """
-    with pytest.raises(ValueError, match=r"simple-name assignment targets"):
+    with pytest.raises(TypeError, match=r"simple-name assignment targets"):
         nn_buml_to_json(malicious)
 
 
@@ -145,13 +143,13 @@ stuff = {**{'a': 1}}
 
 
 def test_iterable_unpacking_in_list_rejected():
-    """``*expr`` inside a list literal must raise ValueError explicitly."""
+    """``*expr`` inside a list literal must raise TypeError explicitly."""
     malicious = """
 from besser.BUML.metamodel.nn import NN
 main = NN(name='x')
 dims = [*[1, 2, 3]]
 """
-    with pytest.raises(ValueError, match=r"(Iterable unpacking|Disallowed)"):
+    with pytest.raises(TypeError, match=r"(Iterable unpacking|Disallowed)"):
         nn_buml_to_json(malicious)
 
 
@@ -180,7 +178,11 @@ def test_builder_output_roundtrips_through_ast_parser(tmp_path):
     layer types. Exercises the real round-trip that ``/export-buml`` →
     ``/get-json-model`` would see."""
     from besser.BUML.metamodel.nn import (
-        NN, Conv2D, LinearLayer, FlattenLayer, Configuration,
+        NN,
+        Configuration,
+        Conv2D,
+        FlattenLayer,
+        LinearLayer,
     )
     from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 

@@ -20,7 +20,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_nn_diagram,
 )
 
-
 _TEMPLATE_DIR = (
     Path(__file__).resolve().parents[5]
     / "besser"

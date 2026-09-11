@@ -1,0 +1,51 @@
+Version 7.17.0
+==============
+
+Minor release: **Extended neural network metamodel**. The NN metamodel
+gains 19 new tensor operation types, new layer and NN-level attributes,
+a cleaner validation pipeline, and expanded code generation support for
+both generators.
+
+Highlights
+----------
+
+* **New tensor operations**: ``squeeze``, ``unsqueeze``, ``mean``,
+  ``max``, ``normalize``, ``repeat``, ``interpolate``, ``pad``,
+  ``dropout``, ``subscript``, ``shape_dim``, ``zeros_like``, ``split``,
+  ``identity``, ``binop_add``, ``binop_subtract``, ``binop_multiply``,
+  ``binop_divide``, and ``binop_floor_divide``, each with full parameter
+  validation and code generation support.
+
+* **New NN-level attributes**: ``input_var`` and ``return_vars`` allow
+  explicit naming of the forward method's input and output variables.
+  A new ``resolve_var_chain()`` method propagates these into the first
+  and last modules automatically before generation.
+
+* **New layer attributes**: all layers gain ``input_var``, ``output_var``,
+and ``is_layer_call``. Conv layers gain ``dilation``, ``groups``, and
+``bias``; Linear, RNN, GRU, and LSTM layers gain ``bias``;
+Embedding gains ``padding_idx``; BatchNorm gains ``eps``, ``momentum``,
+``affine``, and ``track_running_stats``; LayerNorm gains ``eps`` and
+``affine``; Dropout gains ``dimension`` for spatial variants (1D/2D/3D).
+RNN layers gain ``hx_source``, ``hidden_state_var``, ``hidden_unused``,
+``hidden_subscript_source``, and ``hidden_subscript_target``; LSTM
+additionally gains ``cell_state_var`` and ``cell_unused``.
+
+* **Validation**: split ``_validate_numerical_bounds()`` into focused methods: 
+``_validate_layer_values()``, ``_validate_config_values()``, and 
+``_validate_data_values()``, and added a new ``_validate_tensorop_values()``
+covering tensor operation types and parameter values.
+Added ``_validate_tensorop_required_params()`` to check for missing required
+parameters per tensor operation type.
+
+* **Input resolution order**: across all tensor operation types, the
+  generator now consistently checks ``input_var`` first, then
+  ``layers_of_tensors``, then falls back to the previous module's output.
+
+
+Frontend
+---------
+The web editor is updated to support all new metamodel features:
+new layer parameters, tensor operation attributes, and NN-level
+attributes are fully exposed in the diagram popups, enabling full
+control over the new model elements directly from the editor.

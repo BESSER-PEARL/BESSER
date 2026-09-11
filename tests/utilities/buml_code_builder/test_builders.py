@@ -1705,8 +1705,8 @@ class TestNNModelBuilder:
             ("concatenate", {"concatenate_dim": 1, "layers_of_tensors": ["a", "b"]}),
             ("multiply",    {"layers_of_tensors": ["a", "b"]}),
             ("matmultiply", {"layers_of_tensors": ["a", "b"]}),
-            ("reshape",     {"reshape_dim": [1, -1]}),
-            ("transpose",   {"transpose_dim": [0, 2, 1]}),
+            ("reshape",     {"layers_of_tensors": ["a"], "reshape_dim": [1, -1]}),
+            ("transpose",   {"layers_of_tensors": ["a"], "transpose_dim": [0, 2]}),
             ("permute",     {"permute_dim": [0, 3, 1, 2]}),
         ]
         for tns_type, kwargs in cases:
@@ -1718,3 +1718,39 @@ class TestNNModelBuilder:
             assert ops[0].tns_type == tns_type, (
                 f"tns_type mismatch: expected {tns_type}, got {ops[0].tns_type}"
             )
+
+    def test_explicit_but_none_attrs_do_not_emit_empty_strings(self, tmp_path):
+        """A field marked explicit while still holding None must be omitted
+        by the builder, never emitted as input_var='' / output_var='' /
+        dimension='' — the metamodel rejects '' as an identifier, so the
+        generated file would fail to exec()."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import (
+            mark_explicit,
+        )
+
+        nn = NN(name="ExplicitNone")
+        layer = EmbeddingLayer(name="e1", num_embeddings=10, embedding_dim=4)
+        for attr in ("input_var", "output_var"):
+            mark_explicit(layer, attr)
+        nn.add_layer(layer)
+        drop = DropoutLayer(name="d1", rate=0.5)
+        for attr in ("dimension", "input_var", "output_var"):
+            mark_explicit(drop, attr)
+        nn.add_layer(drop)
+        op = TensorOp(name="r1", tns_type="repeat", repeat_dim=[2],
+                      layers_of_tensors=["e1"])
+        for attr in ("input_var", "output_var"):
+            mark_explicit(op, attr)
+        nn.add_tensor_op(op)
+
+        path = str(tmp_path / f"nn_{nn.name}.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "input_var=''" not in code
+        assert "output_var=''" not in code
+        assert "dimension=''" not in code
+
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert {type(m).__name__ for m in out.modules} == {
+            "EmbeddingLayer", "DropoutLayer", "TensorOp"}

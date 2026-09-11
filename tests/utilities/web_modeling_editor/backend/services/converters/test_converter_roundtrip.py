@@ -1817,6 +1817,17 @@ class TestNNDiagramRoundtrip:
             ('LSTM', 'hidden_size', '128'),
             ('LSTM', 'input_size', '64'),
             ('LSTM', 'return_type', 'last'),
+            ('LSTM', 'bias', 'false'),
+            ('LSTM', 'hx_source', 'encoder_h'),
+            ('LSTM', 'hidden_state_var', 'h_0'),
+            ('LSTM', 'hidden_unused', 'true'),
+            ('LSTM', 'hidden_subscript_source', 'h'),
+            ('LSTM', 'hidden_subscript_target', 'h_t'),
+            ('LSTM', 'cell_state_var', 'c_0'),
+            ('LSTM', 'cell_unused', 'false'),
+            ('LSTM', 'is_layer_call', 'true'),
+            ('LSTM', 'input_var', 'seq_in'),
+            ('LSTM', 'output_var', 'seq_out'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1827,11 +1838,31 @@ class TestNNDiagramRoundtrip:
         assert attrs.get('hidden_size') == '128'
         assert attrs.get('input_size') == '64'
         assert attrs.get('return_type') == 'last'
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('hx_source') == 'encoder_h'
+        assert attrs.get('hidden_state_var') == 'h_0'
+        assert attrs.get('hidden_unused') == 'true'
+        assert attrs.get('hidden_subscript_source') == 'h'
+        assert attrs.get('hidden_subscript_target') == 'h_t'
+        assert attrs.get('cell_state_var') == 'c_0'
+        assert attrs.get('cell_unused') == 'false'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'seq_in'
+        assert attrs.get('output_var') == 'seq_out'
 
     def test_gru_roundtrip(self):
         payload = self._single_layer_json('GRULayer', [
             ('GRU', 'name', 'gru1'),
             ('GRU', 'hidden_size', '32'),
+            ('GRU', 'bias', 'false'),
+            ('GRU', 'hx_source', 'context'),
+            ('GRU', 'hidden_state_var', 'h'),
+            ('GRU', 'hidden_unused', 'true'),
+            ('GRU', 'hidden_subscript_source', 'hs'),
+            ('GRU', 'hidden_subscript_target', 'ht'),
+            ('GRU', 'is_layer_call', 'true'),
+            ('GRU', 'input_var', 'in'),
+            ('GRU', 'output_var', 'out'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1840,12 +1871,27 @@ class TestNNDiagramRoundtrip:
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in gru[0]['attributes']}
         assert attrs.get('name') == 'gru1'
         assert attrs.get('hidden_size') == '32'
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('hx_source') == 'context'
+        assert attrs.get('hidden_state_var') == 'h'
+        assert attrs.get('hidden_unused') == 'true'
+        assert attrs.get('hidden_subscript_source') == 'hs'
+        assert attrs.get('hidden_subscript_target') == 'ht'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'in'
+        assert attrs.get('output_var') == 'out'
 
     def test_embedding_roundtrip(self):
         payload = self._single_layer_json('EmbeddingLayer', [
             ('Embedding', 'name', 'emb'),
             ('Embedding', 'num_embeddings', '1000'),
             ('Embedding', 'embedding_dim', '64'),
+            ('Embedding', 'padding_idx', '0'),
+            ('Embedding', 'permute_in', 'true'),
+            ('Embedding', 'permute_out', 'false'),
+            ('Embedding', 'is_layer_call', 'true'),
+            ('Embedding', 'input_var', 'tokens'),
+            ('Embedding', 'output_var', 'embeddings'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1854,12 +1900,25 @@ class TestNNDiagramRoundtrip:
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in emb[0]['attributes']}
         assert attrs.get('num_embeddings') == '1000'
         assert attrs.get('embedding_dim') == '64'
+        assert attrs.get('padding_idx') == '0'
+        assert attrs.get('permute_in') == 'true'
+        assert attrs.get('permute_out') == 'false'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'tokens'
+        assert attrs.get('output_var') == 'embeddings'
 
     def test_batchnorm_roundtrip(self):
         payload = self._single_layer_json('BatchNormalizationLayer', [
             ('BatchNormalization', 'name', 'bn'),
             ('BatchNormalization', 'num_features', '64'),
             ('BatchNormalization', 'dimension', '2D'),
+            ('BatchNormalization', 'eps', '0.001'),
+            ('BatchNormalization', 'momentum', '0.05'),
+            ('BatchNormalization', 'affine', 'false'),
+            ('BatchNormalization', 'track_running_stats', 'true'),
+            ('BatchNormalization', 'is_layer_call', 'true'),
+            ('BatchNormalization', 'input_var', 'x_bn'),
+            ('BatchNormalization', 'output_var', 'y_bn'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1868,11 +1927,23 @@ class TestNNDiagramRoundtrip:
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in bn[0]['attributes']}
         assert attrs.get('num_features') == '64'
         assert attrs.get('dimension') == '2D'
+        assert attrs.get('eps') == '0.001'
+        assert attrs.get('momentum') == '0.05'
+        assert attrs.get('affine') == 'false'
+        assert attrs.get('track_running_stats') == 'true'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'x_bn'
+        assert attrs.get('output_var') == 'y_bn'
 
     def test_layernorm_roundtrip(self):
         payload = self._single_layer_json('LayerNormalizationLayer', [
             ('LayerNormalization', 'name', 'ln'),
             ('LayerNormalization', 'normalized_shape', '[32, 32]'),
+            ('LayerNormalization', 'eps', '0.0001'),
+            ('LayerNormalization', 'affine', 'true'),
+            ('LayerNormalization', 'is_layer_call', 'false'),
+            ('LayerNormalization', 'input_var', 'norm_in'),
+            ('LayerNormalization', 'output_var', 'norm_out'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1880,11 +1951,22 @@ class TestNNDiagramRoundtrip:
         assert ln, 'LayerNormalizationLayer missing from output'
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ln[0]['attributes']}
         assert attrs.get('normalized_shape') == '[32, 32]'
+        assert attrs.get('eps') == '0.0001'
+        assert attrs.get('affine') == 'true'
+        assert attrs.get('is_layer_call') == 'false'
+        assert attrs.get('input_var') == 'norm_in'
+        assert attrs.get('output_var') == 'norm_out'
 
     def test_dropout_roundtrip(self):
         payload = self._single_layer_json('DropoutLayer', [
             ('Dropout', 'name', 'drop'),
             ('Dropout', 'rate', '0.5'),
+            ('Dropout', 'dimension', '2D'),
+            ('Dropout', 'permute_in', 'false'),
+            ('Dropout', 'permute_out', 'true'),
+            ('Dropout', 'is_layer_call', 'false'),
+            ('Dropout', 'input_var', 'drop_in'),
+            ('Dropout', 'output_var', 'drop_out'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1892,12 +1974,24 @@ class TestNNDiagramRoundtrip:
         assert drop, 'DropoutLayer missing from output'
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in drop[0]['attributes']}
         assert attrs.get('rate') == '0.5'
+        assert attrs.get('dimension') == '2D'
+        assert attrs.get('permute_in') == 'false'
+        assert attrs.get('permute_out') == 'true'
+        assert attrs.get('is_layer_call') == 'false'
+        assert attrs.get('input_var') == 'drop_in'
+        assert attrs.get('output_var') == 'drop_out'
 
     def test_conv1d_roundtrip(self):
         payload = self._single_layer_json('Conv1DLayer', [
             ('Conv1D', 'name', 'c1'),
             ('Conv1D', 'kernel_dim', '[3]'),
             ('Conv1D', 'out_channels', '16'),
+            ('Conv1D', 'dilation', '[2]'),
+            ('Conv1D', 'groups', '2'),
+            ('Conv1D', 'bias', 'false'),
+            ('Conv1D', 'is_layer_call', 'true'),
+            ('Conv1D', 'input_var', 'x_in'),
+            ('Conv1D', 'output_var', 'x_out'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1906,6 +2000,84 @@ class TestNNDiagramRoundtrip:
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in c1[0]['attributes']}
         assert attrs.get('kernel_dim') == '[3]'
         assert attrs.get('out_channels') == '16'
+        assert attrs.get('dilation') == '[2]'
+        assert attrs.get('groups') == '2'
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'x_in'
+        assert attrs.get('output_var') == 'x_out'
+
+    def test_conv2d_roundtrip(self):
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c2'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '32'),
+            ('Conv2D', 'dilation', '[1, 1]'),
+            ('Conv2D', 'groups', '1'),
+            ('Conv2D', 'bias', 'true'),
+            ('Conv2D', 'is_layer_call', 'false'),
+            ('Conv2D', 'input_var', 'img'),
+            ('Conv2D', 'output_var', 'feat'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        c2 = _extract_elements_by_type(out, 'Conv2DLayer')
+        assert c2, 'Conv2DLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in c2[0]['attributes']}
+        assert attrs.get('kernel_dim') == '[3, 3]'
+        assert attrs.get('out_channels') == '32'
+        assert attrs.get('dilation') == '[1, 1]'
+        assert attrs.get('groups') == '1'
+        assert attrs.get('bias') == 'true'
+        assert attrs.get('is_layer_call') == 'false'
+        assert attrs.get('input_var') == 'img'
+        assert attrs.get('output_var') == 'feat'
+
+    def test_conv3d_roundtrip(self):
+        payload = self._single_layer_json('Conv3DLayer', [
+            ('Conv3D', 'name', 'c3'),
+            ('Conv3D', 'kernel_dim', '[3, 3, 3]'),
+            ('Conv3D', 'out_channels', '64'),
+            ('Conv3D', 'dilation', '[2, 2, 2]'),
+            ('Conv3D', 'groups', '4'),
+            ('Conv3D', 'bias', 'false'),
+            ('Conv3D', 'is_layer_call', 'true'),
+            ('Conv3D', 'input_var', 'volume_in'),
+            ('Conv3D', 'output_var', 'volume_out'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        c3 = _extract_elements_by_type(out, 'Conv3DLayer')
+        assert c3, 'Conv3DLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in c3[0]['attributes']}
+        assert attrs.get('kernel_dim') == '[3, 3, 3]'
+        assert attrs.get('out_channels') == '64'
+        assert attrs.get('dilation') == '[2, 2, 2]'
+        assert attrs.get('groups') == '4'
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'volume_in'
+        assert attrs.get('output_var') == 'volume_out'
+
+    def test_linear_roundtrip(self):
+        payload = self._single_layer_json('LinearLayer', [
+            ('Linear', 'name', 'fc'),
+            ('Linear', 'out_features', '10'),
+            ('Linear', 'bias', 'false'),
+            ('Linear', 'is_layer_call', 'true'),
+            ('Linear', 'input_var', 'hidden'),
+            ('Linear', 'output_var', 'logits'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        fc = _extract_elements_by_type(out, 'LinearLayer')
+        assert fc, 'LinearLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in fc[0]['attributes']}
+        assert attrs.get('out_features') == '10'
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_var') == 'hidden'
+        assert attrs.get('output_var') == 'logits'
 
     def test_pooling_roundtrip(self):
         payload = self._single_layer_json('PoolingLayer', [
@@ -1927,6 +2099,15 @@ class TestNNDiagramRoundtrip:
         payload = self._single_layer_json('RNNLayer', [
             ('RNN', 'name', 'rnn1'),
             ('RNN', 'hidden_size', '64'),
+            ('RNN', 'bias', 'true'),
+            ('RNN', 'hx_source', 'prev_h'),
+            ('RNN', 'hidden_state_var', 'h_init'),
+            ('RNN', 'hidden_unused', 'false'),
+            ('RNN', 'hidden_subscript_source', 'h_src'),
+            ('RNN', 'hidden_subscript_target', 'h_tgt'),
+            ('RNN', 'is_layer_call', 'false'),
+            ('RNN', 'input_var', 'x'),
+            ('RNN', 'output_var', 'y'),
         ])
         out = self._roundtrip(payload)
         elements = _resolve_elements(out)
@@ -1934,6 +2115,15 @@ class TestNNDiagramRoundtrip:
         assert rnn, 'RNNLayer missing from output'
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in rnn[0]['attributes']}
         assert attrs.get('hidden_size') == '64'
+        assert attrs.get('bias') == 'true'
+        assert attrs.get('hx_source') == 'prev_h'
+        assert attrs.get('hidden_state_var') == 'h_init'
+        assert attrs.get('hidden_unused') == 'false'
+        assert attrs.get('hidden_subscript_source') == 'h_src'
+        assert attrs.get('hidden_subscript_target') == 'h_tgt'
+        assert attrs.get('is_layer_call') == 'false'
+        assert attrs.get('input_var') == 'x'
+        assert attrs.get('output_var') == 'y'
 
     @staticmethod
     def _tensor_op_json(tns_type: str, extra_attrs: list):
@@ -1974,6 +2164,11 @@ class TestNNDiagramRoundtrip:
         out = self._roundtrip(self._tensor_op_json('concatenate', [
             ('TensorOp', 'concatenate_dim', '1'),
             ('TensorOp', 'layers_of_tensors', "['layer_a', 'layer_b']"),
+            ('TensorOp', 'actual_vars', "['output', 'hidden']"),
+            ('TensorOp', 'input_var', 'concat_in'),
+            ('TensorOp', 'output_var', 'concat_out'),
+            ('TensorOp', 'permute_in', 'true'),
+            ('TensorOp', 'permute_out', 'false'),
         ]))
         elements = _resolve_elements(out)
         ops = _extract_elements_by_type(out, 'TensorOp')
@@ -1981,6 +2176,11 @@ class TestNNDiagramRoundtrip:
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
         assert attrs.get('tns_type') == 'concatenate'
         assert attrs.get('concatenate_dim') == '1'
+        assert attrs.get('actual_vars') == "['output', 'hidden']"
+        assert attrs.get('input_var') == 'concat_in'
+        assert attrs.get('output_var') == 'concat_out'
+        assert attrs.get('permute_in') == 'true'
+        assert attrs.get('permute_out') == 'false'
 
     def test_tensorop_multiply_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('multiply', [
@@ -2002,6 +2202,7 @@ class TestNNDiagramRoundtrip:
 
     def test_tensorop_reshape_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('reshape', [
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
             ('TensorOp', 'reshape_dim', '[1, -1]'),
         ]))
         elements = _resolve_elements(out)
@@ -2012,13 +2213,14 @@ class TestNNDiagramRoundtrip:
 
     def test_tensorop_transpose_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('transpose', [
-            ('TensorOp', 'transpose_dim', '[0, 2, 1]'),
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
+            ('TensorOp', 'transpose_dim', '[0, 2]'),
         ]))
         elements = _resolve_elements(out)
         ops = _extract_elements_by_type(out, 'TensorOp')
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
         assert attrs.get('tns_type') == 'transpose'
-        assert attrs.get('transpose_dim') == '[0, 2, 1]'
+        assert attrs.get('transpose_dim') == '[0, 2]'
 
     def test_tensorop_permute_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('permute', [
@@ -2029,6 +2231,167 @@ class TestNNDiagramRoundtrip:
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
         assert attrs.get('tns_type') == 'permute'
         assert attrs.get('permute_dim') == '[0, 3, 1, 2]'
+
+    def test_tensorop_binop_add_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('binop_add', [
+            ('TensorOp', 'layers_of_tensors', "['layer_a', 'layer_b']"),
+            ('TensorOp', 'actual_vars', "['output', 'hidden']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'binop_add'
+        assert attrs.get('actual_vars') == "['output', 'hidden']"
+
+    def test_tensorop_mean_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('mean', [
+            ('TensorOp', 'reduce_dim', '1'),
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'mean'
+        assert attrs.get('reduce_dim') == '1'
+
+    def test_tensorop_max_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('max', [
+            ('TensorOp', 'reduce_dim', '0'),
+            ('TensorOp', 'reduce_keepdims', 'true'),
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'max'
+        assert attrs.get('reduce_dim') == '0'
+        assert attrs.get('reduce_keepdims') == 'true'
+
+    def test_tensorop_squeeze_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('squeeze', [
+            ('TensorOp', 'reduce_dim', '2'),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'squeeze'
+        assert attrs.get('reduce_dim') == '2'
+        assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_subscript_roundtrip(self):
+        # subscript_indices format: list of dicts with type='index' or 'slice'
+        # Represents [0, :, 1:3]
+        subscript_val = str([
+            {"type": "index", "value": 0},
+            {"type": "slice", "start": None, "stop": None, "step": None},
+            {"type": "slice", "start": 1, "stop": 3, "step": None}
+        ])
+        out = self._roundtrip(self._tensor_op_json('subscript', [
+            ('TensorOp', 'subscript_indices', subscript_val),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'subscript'
+        # The round-trip preserves the dict structure
+        assert attrs.get('subscript_indices') == subscript_val
+        assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_interpolate_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('interpolate', [
+            ('TensorOp', 'interpolate_size', '[256, 256]'),
+            ('TensorOp', 'interpolate_mode', 'bilinear'),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'interpolate'
+        assert attrs.get('interpolate_size') == '[256, 256]'
+        assert attrs.get('interpolate_mode') == 'bilinear'
+        assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_pad_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('pad', [
+            ('TensorOp', 'pad_amount', '[[1, 1], [2, 2]]'),
+            ('TensorOp', 'pad_mode', 'constant'),
+            ('TensorOp', 'pad_value', '0.0'),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'pad'
+        assert attrs.get('pad_amount') == '[[1, 1], [2, 2]]'
+        assert attrs.get('pad_mode') == 'constant'
+        assert attrs.get('pad_value') == '0.0'
+        assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_dropout_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('dropout', [
+            ('TensorOp', 'dropout_rate', '0.3'),
+            ('TensorOp', 'dropout_training_aware', 'true'),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'dropout'
+        assert attrs.get('dropout_rate') == '0.3'
+        assert attrs.get('dropout_training_aware') == 'true'
+        assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_split_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('split', [
+            ('TensorOp', 'split_dim', '1'),
+            ('TensorOp', 'split_sizes', '3'),
+            ('TensorOp', 'output_vars', "['chunk1', 'chunk2', 'chunk3']"),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'split'
+        assert attrs.get('split_dim') == '1'
+        assert attrs.get('split_sizes') == '3'
+        assert attrs.get('output_vars') == "['chunk1', 'chunk2', 'chunk3']"
+        assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_identity_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('identity', [
+            ('TensorOp', 'layers_of_tensors', "['layer_a']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'identity'
+
+    def test_tensorop_shape_dim_roundtrip(self):
+        # shape_dim tns_type requires reduce_dim parameter
+        out = self._roundtrip(self._tensor_op_json('shape_dim', [
+            ('TensorOp', 'reduce_dim', '2'),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'shape_dim'
+        assert attrs.get('reduce_dim') == '2'
+
+    def test_nn_container_vars_roundtrip(self):
+        """NNContainer preserves input_var and return_vars."""
+        payload = self._minimal_nn_json()
+        container_elem = payload['model']['elements']['c1']
+        container_elem['input_var'] = 'x_input'
+        container_elem['return_vars'] = ['output1', 'output2']
+        out = self._roundtrip(payload)
+        containers = _extract_elements_by_type(out, "NNContainer")
+        assert len(containers) == 1
+        container = containers[0]
+        assert container['input_var'] == 'x_input'
+        assert container['return_vars'] == ['output1', 'output2']
 
     def test_pooling_invalid_pooling_type_lists_allowed_values(self):
         """Unknown pooling_type raises with the whitelist in the message."""

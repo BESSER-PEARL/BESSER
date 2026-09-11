@@ -3,11 +3,14 @@ BUML code for a regression prediction problem.
 The task is to predict house prices using the BostonHousing dataset.
 """
 
-from besser.BUML.metamodel.nn import NN, LinearLayer, DropoutLayer, \
-    Configuration, Dataset
-from besser.generators.nn.pytorch.pytorch_code_generator import (
-    PytorchGenerator
+from besser.BUML.metamodel.nn import (
+    NN,
+    Configuration,
+    Dataset,
+    DropoutLayer,
+    LinearLayer,
 )
+from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 from besser.generators.nn.tf.tf_code_generator import TFGenerator
 
 nn_model: NN = NN(name="my_model")

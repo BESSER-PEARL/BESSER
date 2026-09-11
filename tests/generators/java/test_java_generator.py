@@ -1,4 +1,7 @@
 import os
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from besser.BUML.metamodel.structural import (
@@ -364,3 +367,36 @@ def test_primary_constructor_no_leading_comma_for_bare_subclass(bare_subclass_mo
     code = _read(os.path.join(str(output_dir), "Car.java"))
     assert "(, " not in code
     assert "extends Vehicle" in code
+
+
+def test_method_stub_body_compiles(model_with_methods, tmpdir):
+    """A stub has to compile whatever it returns.
+
+    An empty body is only valid for void: anything else fails the file it is in
+    with "missing return statement", so a single typed method took its whole
+    class down. Throwing also stops a missing implementation from passing for a
+    real answer, the way `return null` would.
+    """
+    output_dir = tmpdir.mkdir("output")
+    JavaGenerator(model=model_with_methods, output_dir=str(output_dir)).generate()
+
+    code = _read(os.path.join(str(output_dir), "Book.java"))
+    assert "// TODO: implement getInfo" in code
+    assert 'throw new UnsupportedOperationException("getInfo is not implemented");' in code
+    # Every declared method gets a body, not just the typed ones.
+    assert code.count("UnsupportedOperationException") == code.count("// TODO: implement")
+
+
+def test_generated_java_compiles(model_with_methods, tmpdir):
+    """Compile the output when a JDK is on the machine, since that is the only
+    check that catches a template emitting Java no compiler accepts."""
+    javac = shutil.which("javac")
+    if javac is None:
+        pytest.skip("no JDK available")
+
+    output_dir = tmpdir.mkdir("output")
+    JavaGenerator(model=model_with_methods, output_dir=str(output_dir)).generate()
+
+    sources = [str(p) for p in Path(str(output_dir)).glob("*.java")]
+    result = subprocess.run([javac, *sources], capture_output=True, text=True, cwd=str(output_dir))
+    assert result.returncode == 0, result.stderr

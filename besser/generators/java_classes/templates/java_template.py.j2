@@ -223,6 +223,10 @@ public class {{ class_obj.name }} {{ extends }}{
         {% endif %}
     {% endif %}
 {% endfor %}
+{# A stub has to compile whatever it returns. An empty body is only valid for
+   void, so anything else fails the whole file with "missing return statement";
+   throwing also keeps a missing implementation from passing for a real answer,
+   the way `return null` would. #}
 {% for method in class_obj.methods %}
     {% if method.name not in generated_assoc_methods %}
         {% set ns = namespace(return_type="void") %}
@@ -235,6 +239,8 @@ public class {{ class_obj.name }} {{ extends }}{
             {{ java_fields.get_field(param.type.name) | trim }} {{ param.name }}{% if not loop.last %}, {% endif %}
         {%- endfor -%}
     ) {
+        // TODO: implement {{ method.name }}
+        throw new UnsupportedOperationException("{{ method.name }} is not implemented");
     }
     {% endif %}
 {% endfor %}

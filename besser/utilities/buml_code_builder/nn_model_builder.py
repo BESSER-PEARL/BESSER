@@ -681,6 +681,8 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
     elif tns_type == 'permute':
         if tensor_op.permute_dim is not None:
             params.append(f"permute_dim={tensor_op.permute_dim}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
         if tensor_op.reduce_dim is not None:
             params.append(f"reduce_dim={tensor_op.reduce_dim}")
@@ -691,6 +693,8 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
     elif tns_type == 'subscript':
         if tensor_op.subscript_indices is not None:
             params.append(f"subscript_indices={tensor_op.subscript_indices}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type == 'repeat':
         if tensor_op.repeat_dim is not None:
             params.append(f"repeat_dim={tensor_op.repeat_dim}")
@@ -715,6 +719,8 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
             params.append(f"dropout_rate={tensor_op.dropout_rate}")
         if tensor_op.dropout_training_aware is not None:
             params.append(f"dropout_training_aware={tensor_op.dropout_training_aware}")
+        if tensor_op.layers_of_tensors is not None:
+            params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type == 'split':
         if tensor_op.split_dim is not None:
             params.append(f"split_dim={tensor_op.split_dim}")

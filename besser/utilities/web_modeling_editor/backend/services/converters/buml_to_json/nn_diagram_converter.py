@@ -441,8 +441,11 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type == 'transpose' and module.transpose_dim is not None:
             fields.append(('transpose_dim', module.transpose_dim, 'List', False))
-        elif tns_type == 'permute' and module.permute_dim is not None:
-            fields.append(('permute_dim', module.permute_dim, 'List', False))
+        elif tns_type == 'permute':
+            if module.permute_dim is not None:
+                fields.append(('permute_dim', module.permute_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type == 'repeat':
             if module.repeat_dim is not None:
                 fields.append(('repeat_dim', module.repeat_dim, 'List', False))
@@ -467,6 +470,8 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
         elif tns_type == 'subscript':
             if module.subscript_indices is not None:
                 fields.append(('subscript_indices', module.subscript_indices, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         # Shape_dim (deprecated field)
         elif tns_type == 'shape_dim':
             if module.shape_dim is not None:
@@ -493,6 +498,8 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
                 fields.append(('dropout_rate', module.dropout_rate, 'float', False))
             if module.dropout_training_aware is not None:
                 fields.append(('dropout_training_aware', module.dropout_training_aware, 'bool', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         # Split
         elif tns_type == 'split':
             if module.split_dim is not None:

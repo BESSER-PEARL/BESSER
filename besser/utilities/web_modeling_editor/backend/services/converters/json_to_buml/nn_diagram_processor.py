@@ -1912,6 +1912,8 @@ def create_tensor_op(element, elements):
             tensor_op_params['input_var'] = input_var
     elif tns_type == 'permute':
         tensor_op_params['permute_dim'] = permute_dim
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
     elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
         if reduce_dim is not None:
             tensor_op_params['reduce_dim'] = reduce_dim
@@ -1924,6 +1926,8 @@ def create_tensor_op(element, elements):
     elif tns_type == 'subscript':
         if subscript_indices is not None:
             tensor_op_params['subscript_indices'] = subscript_indices
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
     elif tns_type == 'repeat':
         if repeat_dim is not None:
             tensor_op_params['repeat_dim'] = repeat_dim
@@ -1950,6 +1954,8 @@ def create_tensor_op(element, elements):
             tensor_op_params['dropout_rate'] = dropout_rate
         if dropout_training_aware is not None:
             tensor_op_params['dropout_training_aware'] = dropout_training_aware
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
     elif tns_type == 'split':
         if split_dim is not None:
             tensor_op_params['split_dim'] = split_dim

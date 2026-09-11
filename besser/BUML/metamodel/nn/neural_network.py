@@ -5009,12 +5009,12 @@ class NN(BehaviorImplementation):
                                 "output_var must be a valid identifier "
                                 "starting with an alphabetic character"
                             )
-                    if len(tns.output_vars) != self.__split_sizes:
+                    if len(tns.output_vars) != tns.split_sizes:
                         errors.append(
                             f"{label} Length of output_vars "
                             f"({len(tns.output_vars)}) must match "
                             f"the number of splits specified in split_sizes "
-                            f"({self.__split_sizes})"
+                            f"({tns.split_sizes})"
                         )
     def _validate_data_values(self, errors: list):
         """Validate numerical bounds for data parameters

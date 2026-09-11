@@ -173,6 +173,63 @@ def _names_unsupported_stack(instructions: str) -> bool:
     return False
 
 
+def _is_dockerfile(fname: str) -> bool:
+    """True for any Dockerfile naming convention, not just the bare name.
+
+    Covers ``Dockerfile``, ``Dockerfile.frontend`` / ``.backend`` / ``.dev``
+    (the common multi-service layout) and the ``frontend.Dockerfile`` spelling.
+    """
+    low = fname.lower()
+    return (
+        low == "dockerfile"
+        or low.startswith("dockerfile.")
+        or low.endswith(".dockerfile")
+    )
+
+
+def _strip_missing_lockfile_copy(content: str) -> str:
+    """Remove package-lock.json from Dockerfile COPY lines.
+
+    Handles the two shapes an LLM writes:
+
+        COPY frontend/package.json frontend/package-lock.json ./
+        COPY package-lock.json ./
+
+    The first loses just the lockfile argument; the second has nothing left to
+    copy, so the whole line goes. A COPY naming a file absent from the build
+    context fails the build before any command runs, so leaving it is never an
+    option.
+    """
+    out: list[str] = []
+    for line in content.splitlines():
+        if "package-lock.json" not in line or not line.lstrip().upper().startswith("COPY"):
+            out.append(line)
+            continue
+        parts = line.split()
+        kept = [p for p in parts if "package-lock.json" not in p]
+        # COPY + at least one source + one destination is the minimum that still
+        # copies something; below that the line only existed for the lockfile.
+        if len(kept) >= 3:
+            indent = line[: len(line) - len(line.lstrip())]
+            out.append(indent + " ".join(kept))
+        # else: drop the line entirely
+    return "\n".join(out) + ("\n" if content.endswith("\n") else "")
+
+
+def _project_has_npm_lockfile(output_dir: str) -> bool:
+    """True when the project contains an npm lockfile anywhere.
+
+    ``npm ci`` refuses to run without one, so its absence ANYWHERE in the
+    generated project means the command cannot succeed regardless of which
+    directory the Dockerfile builds from.
+    """
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
+        if "package-lock.json" in files or "npm-shrinkwrap.json" in files:
+            return True
+    return False
+
+
 def _ensure_requirements_txt(docker_dir: str) -> bool:
     """Write a sensible requirements.txt next to a Dockerfile when it's missing.
 
@@ -3514,21 +3571,58 @@ class LLMOrchestrator:
                     except SyntaxError as e:
                         raw_issues.append(f"Syntax error in {rel} line {e.lineno}: {e.msg}")
 
-                # Check Dockerfiles
-                if fname == "Dockerfile":
+                # Check Dockerfiles.
+                #
+                # Matching only the exact name "Dockerfile" silently skipped
+                # every multi-service layout. A user's generated app had
+                # Dockerfile.frontend / Dockerfile.backend, so NONE of the
+                # checks below ran and `docker compose build` failed on
+                # `npm ci` with "can only install with an existing
+                # package-lock.json" - a 100% reproducible failure that the
+                # auto-fix right here was written to prevent (2026-09-11).
+                if _is_dockerfile(fname):
                     try:
                         with open(fpath, "r", encoding="utf-8") as f:
                             content = f.read()
                         docker_dir = os.path.dirname(fpath)
-                        # npm ci without lock file -> should be npm install
+                        # npm ci without lock file -> should be npm install.
+                        #
+                        # The lockfile is searched across the WHOLE project, not
+                        # just beside the Dockerfile: a root Dockerfile.frontend
+                        # typically COPYs from a frontend/ subdirectory, so
+                        # looking only in docker_dir found nothing even when a
+                        # lockfile existed - and found nothing when it did not,
+                        # for the wrong reason. `npm ci` needs a lockfile
+                        # SOMEWHERE in the build context; if the project has
+                        # none at all it cannot work, whatever the layout.
                         if "npm ci" in content:
-                            lock = os.path.join(docker_dir, "package-lock.json")
-                            if not os.path.isfile(lock):
+                            if not _project_has_npm_lockfile(self.output_dir):
                                 # Auto-fix this common mistake
                                 fixed = content.replace("npm ci", "npm install")
                                 with open(fpath, "w", encoding="utf-8") as f:
                                     f.write(fixed)
                                 logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
+                        # COPY of a package-lock.json that does not exist is a
+                        # HARD build failure ("failed to compute cache key ...
+                        # not found"), and the LLM cannot write a lockfile -
+                        # npm generates it by resolving the registry. Observed
+                        # live 2026-09-11: a user burned FIVE fix runs on this,
+                        # and the last one mis-diagnosed it entirely. Strip the
+                        # reference; package.json alone is enough for
+                        # `npm install`.
+                        if "package-lock.json" in content and not _project_has_npm_lockfile(
+                            self.output_dir
+                        ):
+                            stripped = _strip_missing_lockfile_copy(content)
+                            if stripped != content:
+                                content = stripped
+                                with open(fpath, "w", encoding="utf-8") as f:
+                                    f.write(content)
+                                logger.info(
+                                    "Auto-fixed: %s: dropped COPY of a "
+                                    "package-lock.json that does not exist", rel,
+                                )
+
                         # Check COPY references
                         if "package.json" in content or "package*.json" in content:
                             pkg = os.path.join(docker_dir, "package.json")

@@ -4574,6 +4574,28 @@ class NN(BehaviorImplementation):
     def _validate_layer_values(self, errors: list):
         """Validate numerical bounds for layer parameters
         to ensure they are within acceptable ranges."""
+
+        def _eval_numeric_value(value, param_name, label):
+            """Helper to evaluate numeric values that may be strings or expressions."""
+            if value is None:
+                return None
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, str):
+                try:
+                    return eval(value, {"__builtins__": {}})
+                except Exception:
+                    errors.append(
+                        f"{label} {param_name} must be a valid numeric value, "
+                        f"got '{value}'."
+                    )
+                    return None
+            errors.append(
+                f"{label} {param_name} must be numeric, "
+                f"got {type(value).__name__}."
+            )
+            return None
+
         for layer in self.layers:
             cls_name = type(layer).__name__
             label = f"NN '{self.name}': {cls_name} '{layer.name}'"
@@ -4583,34 +4605,40 @@ class NN(BehaviorImplementation):
                         f"{label} rate must be in [0, 1), got {layer.rate}."
                     )
             if isinstance(layer, RNN):
-                if layer.hidden_size <= 0:
+                hidden_size_val = _eval_numeric_value(layer.hidden_size, "hidden_size", label)
+                if hidden_size_val is not None and hidden_size_val <= 0:
                     errors.append(
                         f"{label} hidden_size must be > 0, "
                         f"got {layer.hidden_size}."
                     )
-                if not 0 <= layer.dropout < 1:
+                dropout_val = _eval_numeric_value(layer.dropout, "dropout", label)
+                if dropout_val is not None and not (0 <= dropout_val < 1):
                     errors.append(
                         f"{label} dropout must be in [0, 1), "
                         f"got {layer.dropout}."
                     )
             if isinstance(layer, LinearLayer):
-                if layer.out_features <= 0:
+                out_features_val = _eval_numeric_value(layer.out_features, "out_features", label)
+                if out_features_val is not None and out_features_val <= 0:
                     errors.append(
                         f"{label} out_features must be > 0, "
                         f"got {layer.out_features}."
                     )
-                if layer.in_features is not None and layer.in_features <= 0:
+                in_features_val = _eval_numeric_value(layer.in_features, "in_features", label)
+                if in_features_val is not None and in_features_val <= 0:
                     errors.append(
                         f"{label} in_features must be > 0, "
                         f"got {layer.in_features}."
                     )
             if isinstance(layer, ConvolutionalLayer):
-                if layer.out_channels <= 0:
+                out_channels_val = _eval_numeric_value(layer.out_channels, "out_channels", label)
+                if out_channels_val is not None and out_channels_val <= 0:
                     errors.append(
                         f"{label} out_channels must be > 0, "
                         f"got {layer.out_channels}."
                     )
-                if layer.in_channels is not None and layer.in_channels <= 0:
+                in_channels_val = _eval_numeric_value(layer.in_channels, "in_channels", label)
+                if in_channels_val is not None and in_channels_val <= 0:
                     errors.append(
                         f"{label} in_channels must be > 0, "
                         f"got {layer.in_channels}."
@@ -4645,11 +4673,13 @@ class NN(BehaviorImplementation):
                         f"{label} stride_dim entries must all be > 0, "
                         f"got {layer.stride_dim}."
                     )
-            if isinstance(layer, BatchNormLayer) and layer.num_features <= 0:
-                errors.append(
-                    f"{label} num_features must be > 0, got "
-                    f"{layer.num_features}."
-                )
+            if isinstance(layer, BatchNormLayer):
+                num_features_val = _eval_numeric_value(layer.num_features, "num_features", label)
+                if num_features_val is not None and num_features_val <= 0:
+                    errors.append(
+                        f"{label} num_features must be > 0, got "
+                        f"{layer.num_features}."
+                    )
             if (
                 isinstance(layer, LayerNormLayer)
                 and layer.normalized_shape is not None
@@ -4660,12 +4690,14 @@ class NN(BehaviorImplementation):
                     f"got {layer.normalized_shape}."
                 )
             if isinstance(layer, EmbeddingLayer):
-                if layer.num_embeddings <= 0:
+                num_embeddings_val = _eval_numeric_value(layer.num_embeddings, "num_embeddings", label)
+                if num_embeddings_val is not None and num_embeddings_val <= 0:
                     errors.append(
                         f"{label} num_embeddings must be > 0, got "
                         f"{layer.num_embeddings}."
                     )
-                if layer.embedding_dim <= 0:
+                embedding_dim_val = _eval_numeric_value(layer.embedding_dim, "embedding_dim", label)
+                if embedding_dim_val is not None and embedding_dim_val <= 0:
                     errors.append(
                         f"{label} embedding_dim must be > 0, got "
                         f"{layer.embedding_dim}."

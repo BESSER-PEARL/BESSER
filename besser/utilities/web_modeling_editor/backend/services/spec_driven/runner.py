@@ -1011,7 +1011,8 @@ class SmartGenerationRunner:
                     "PhaseUpdateEvent emission failed (phase=%s)", phase, exc_info=True
                 )
 
-        def on_progress(turn: int, tool: str, status: str) -> None:
+        def on_progress(turn: int, tool: str, status: str,
+                        detail: str | None = None) -> None:
             # Any tool/phase activity ends the current turn's prose; the
             # next text delta should open a new paragraph.
             if text_state["emitted"]:
@@ -1105,7 +1106,8 @@ class SmartGenerationRunner:
                         message="LLM customising generator output",
                     )
                 )
-            _put(ToolCallEvent(turn=turn, tool=tool, status="executing"))
+            _put(ToolCallEvent(turn=turn, tool=tool, status="executing",
+                               detail=detail or None))
 
         # Register this run for cancellation NOW that we've cleared all
         # the early-return paths (mkdtemp / model assembly / LLM client

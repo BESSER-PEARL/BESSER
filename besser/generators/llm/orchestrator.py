@@ -288,8 +288,163 @@ class ValidationIssue:
 
 # Ruff rule codes that are pure style: dead imports, unused vars, line length.
 # Anything else we treat as a warning (could be a real bug).
+_TOOL_DETAIL_MAX_CHARS = 160
+# Argument keys worth putting in the stream, per tool. Deliberately a allow
+# list: file CONTENT must never reach the event stream (size, and it can carry
+# whatever the model wrote), but the path, the target and the action are what
+# make a run readable afterwards.
+_TOOL_DETAIL_KEYS = (
+    "path", "file_path", "filename", "target", "action", "id", "ids",
+    "text", "command", "pattern", "query", "class_name", "generator",
+)
+
+
+def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -> str:
+    """One short line saying what this tool call was about.
+
+    Streamed alongside the tool name so a finished run can be read back from
+    the durable event store. ``blocks_in_turn`` is included because 1 means the
+    model batched nothing, and every turn costs a full prompt prefill - the
+    binding cost on the self-hosted box. Across a 10-run live batch every
+    single turn carried exactly one call, which is invisible without this.
+    """
+    parts: list[str] = []
+    if isinstance(tool_input, dict):
+        for key in _TOOL_DETAIL_KEYS:
+            if key not in tool_input:
+                continue
+            value = tool_input[key]
+            if isinstance(value, (list, tuple)):
+                rendered = ",".join(str(v) for v in value)
+            else:
+                rendered = str(value)
+            rendered = " ".join(rendered.split())          # collapse newlines
+            if not rendered:
+                continue
+            if len(rendered) > 60:
+                rendered = rendered[:57] + "..."
+            parts.append(f"{key}={rendered}")
+    if blocks_in_turn and blocks_in_turn > 1:
+        parts.append(f"batched={blocks_in_turn}")
+    detail = " ".join(parts)
+    return detail[:_TOOL_DETAIL_MAX_CHARS]
+
+
+# Third-party / stdlib roots a generated Python app legitimately imports.
+# Anything else is expected to be a module the app itself ships.
+_EXTERNAL_IMPORT_ROOTS = frozenset({
+    "fastapi", "pydantic", "pydantic_settings", "sqlalchemy", "starlette",
+    "uvicorn", "alembic", "psycopg2", "pymysql", "aiosqlite", "httpx",
+    "requests", "jose", "jwt", "passlib", "bcrypt", "dotenv", "multipart",
+    "email_validator", "pytest", "unittest", "typing", "typing_extensions",
+    "datetime", "enum", "os", "sys", "re", "json", "logging", "time", "uuid",
+    "pathlib", "decimal", "collections", "contextlib", "functools", "math",
+    "random", "string", "itertools", "abc", "dataclasses", "asyncio",
+    "secrets", "hashlib", "hmac", "base64", "email", "io", "csv", "tempfile",
+    "shutil", "traceback", "types", "copy", "warnings", "threading",
+    "subprocess", "socket", "urllib", "http", "struct", "binascii", "operator",
+    "statistics", "textwrap", "inspect", "importlib",
+})
+
+
+def _unresolvable_local_imports(output_dir: str) -> list[str]:
+    """Local imports that name a module the app does not ship where it is used.
+
+    Ruff cannot find these. ``from sql_alchemy import *`` makes it report
+    "unable to detect undefined names", which EXCUSES every name the module
+    needed instead of flagging it, so a missing MODULE is invisible to F821.
+    Live 2026-09-11: an app shipped ``backend/main_api.py`` importing
+    ``sql_alchemy`` and ``pydantic_classes`` with neither file present, and the
+    run reported "0 blockers / 23 total" and status=done. It could not start.
+
+    Resolution rules, each one learned from a false positive while calibrating
+    this against apps known to work:
+
+    * A service runs with its OWN folder as cwd (``uvicorn main_api:app`` from
+      ``backend/``), so that folder is importable from everything beneath it:
+      ``backend/routers/player.py`` importing ``sql_alchemy`` is correct.
+      Resolving only against the file's own directory condemned six imports in
+      a working app.
+    * Any directory holding ``.py`` files is importable as a package - Python 3
+      implicit namespace packages mean ``from routers import post`` works with
+      no ``__init__.py``.
+    * The module existing in SOME OTHER directory does not count: a copy of
+      ``pydantic_classes.py`` under ``pydantic/`` is not reachable from
+      ``backend/``. Accepting that hid half of the live breakage.
+    """
+    try:
+        py_files = [
+            os.path.join(root, name)
+            for root, dirs, files in os.walk(output_dir)
+            for name in files
+            if name.endswith(".py")
+            if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")
+                       for part in root.split(os.sep))
+        ]
+    except OSError:
+        return []
+
+    provided: dict[str, set[str]] = {}
+    for path in py_files:
+        provided.setdefault(os.path.dirname(path), set()).add(
+            os.path.splitext(os.path.basename(path))[0]
+        )
+    package_dirs = set(provided)
+
+    problems: list[str] = []
+    for path in py_files:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                tree = _ast.parse(handle.read())
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue  # syntax errors are reported by their own check
+
+        # Everything importable from this file: its own folder plus every
+        # ancestor folder up to the app root (the service's cwd).
+        reachable: set[str] = set()
+        probe = os.path.dirname(path)
+        while True:
+            reachable |= provided.get(probe, set())
+            if os.path.normpath(probe) == os.path.normpath(output_dir):
+                break
+            parent = os.path.dirname(probe)
+            if not parent or parent == probe:
+                break
+            probe = parent
+
+        roots: list[str] = []
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.ImportFrom):
+                if node.level:            # explicit relative import
+                    continue
+                if node.module:
+                    roots.append(node.module.split(".")[0])
+            elif isinstance(node, _ast.Import):
+                roots.extend(alias.name.split(".")[0] for alias in node.names)
+
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        for root_name in sorted(set(roots)):
+            if root_name in _EXTERNAL_IMPORT_ROOTS or root_name in reachable:
+                continue
+            if any(os.path.basename(d) == root_name and os.path.dirname(d) ==
+                   os.path.dirname(path) for d in package_dirs):
+                continue
+            problems.append(
+                f"missing module: {rel} imports '{root_name}', which the app "
+                f"does not provide where it is used - this app cannot start"
+            )
+    return problems
+
+
 _RUFF_STYLE_CODES = frozenset({
-    "F401", "F811", "F841",      # unused / redefinition
+    "F401", "F841",               # genuinely cosmetic: unused import / variable
+    # F811 (redefinition) was grouped here as "unused / redefinition". It is
+    # NOT cosmetic: it means two things share a name and the later one silently
+    # wins. Every one of the four hits across a 10-app live batch was a real
+    # defect (2026-09-11) - a duplicated ORM model, a duplicated Create schema,
+    # a duplicated endpoint function that replaced the first, and an ORM model
+    # shadowed by a Pydantic model which was then used in db.query(). It is a
+    # blocker below.
     "E501",                       # line too long
     "W291", "W292", "W293", "W391",  # whitespace
     "E302", "E303", "E305", "E261", "E262", "E266",  # blank lines / comments
@@ -329,6 +484,12 @@ def _classify_issue(message: str) -> ValidationIssue:
     if lower.startswith("data contract:"):
         return ValidationIssue("blocker", text)
 
+    # An import naming a module the app does not ship is fatal at startup, and
+    # ruff is structurally blind to it (a star import excuses every name rather
+    # than flagging it). See _unresolvable_local_imports.
+    if lower.startswith("missing module:"):
+        return ValidationIssue("blocker", text)
+
     # Ruff: classify by rule code. F821 (undefined name) is a BLOCKER:
     # it means the backend imports crash on `uvicorn` even though
     # ast.parse was clean — the classic "ships green, boots dead" bug.
@@ -336,7 +497,12 @@ def _classify_issue(message: str) -> ValidationIssue:
         match = _RUFF_LINE_RE.search(text)
         if match and match.group(1) in _RUFF_STYLE_CODES:
             return ValidationIssue("style", text)
-        if match and match.group(1) in ("F821", "F822", "F823"):
+        # F811 joins them: a redefinition is how a generated app ends up with
+        # the ORM `User` shadowed by the Pydantic `User` and then queried
+        # through the wrong one, or with a second endpoint function silently
+        # replacing the first. Observed in 2 of 10 live apps; ruff reports it
+        # already, it was simply filed as style.
+        if match and match.group(1) in ("F811", "F821", "F822", "F823"):
             return ValidationIssue("blocker", text)
         return ValidationIssue("warning", text)
 
@@ -449,7 +615,7 @@ class LLMOrchestrator:
         max_turns: int | None = None,
         max_cost_usd: float = 5.0,
         max_runtime_seconds: int = 1200,
-        on_progress: Callable[[int, str, str], None] | None = None,
+        on_progress: Callable[..., None] | None = None,
         on_text: Callable[[str], None] | None = None,
         on_phase_details: Callable[[str, str], None] | None = None,
         use_streaming: bool = True,
@@ -2841,6 +3007,31 @@ class LLMOrchestrator:
                         "did_you_mean", "diagnostic_message")
     _TRACE_DIAG_MAX_CHARS = 400
 
+    def _emit_progress(self, turn: int, tool: str, status: str,
+                       detail: str | None = None) -> None:
+        """Fire ``on_progress``, tolerating a callback that predates `detail`.
+
+        ``on_progress`` is public API of a published package, so a caller may
+        still supply the original three-argument callback. Passing four
+        arguments unconditionally raised TypeError for them; the detail is a
+        diagnostic nicety and must never break a run.
+        """
+        if not self.on_progress:
+            return
+        if not getattr(self, "_progress_takes_detail", True):
+            self.on_progress(turn, tool, status)
+            return
+        try:
+            self.on_progress(turn, tool, status, detail)
+        except TypeError:
+            self._progress_takes_detail = False
+            try:
+                self.on_progress(turn, tool, status)
+            except Exception:
+                logger.debug("on_progress callback raised; continuing", exc_info=True)
+        except Exception:
+            logger.debug("on_progress callback raised; continuing", exc_info=True)
+
     @classmethod
     def _trace_diagnostics(cls, result: str) -> dict:
         """Bounded diagnostic fields from a tool result, for the trace.
@@ -3020,7 +3211,18 @@ class LLMOrchestrator:
             ]
 
         if self.on_progress:
-            self.on_progress(turn + 1, tool_name, "executing")
+            # `detail` says WHAT the call was about, and how many calls the
+            # model batched into this turn. Without it a run cannot be
+            # diagnosed after the fact: the streamed events recorded only that
+            # `task_list` was called, 71 times in one live run, with no way to
+            # tell bookkeeping from a livelock (2026-09-11). The richer trace
+            # file has always carried this; the stream did not, and the stream
+            # is what the durable run store keeps.
+            self._emit_progress(
+                turn + 1, tool_name, "executing",
+                _tool_call_detail(tool_name, block.input,
+                                  getattr(self, "_blocks_in_turn", 1)),
+            )
 
         execution = self.executor.execute_typed(tool_name, block.input)
         result = execution.to_json()
@@ -3739,6 +3941,7 @@ class LLMOrchestrator:
             logger.debug("Acceptance matrix computation failed", exc_info=True)
 
         raw_issues.extend(self._collect_ruff_issues())
+        raw_issues.extend(_unresolvable_local_imports(self.output_dir))
         if self.enable_toolchain_validation:
             raw_issues.extend(self._collect_tsc_issues())
             raw_issues.extend(self._collect_cargo_issues())

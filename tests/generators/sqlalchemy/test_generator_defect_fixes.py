@@ -298,3 +298,83 @@ def test_a_bare_Optional_annotation_still_imports(tmp_path):
     namespace: dict = {}
     exec(compile(edited, str(path), "exec"), namespace)   # must not NameError
     assert "Team" in namespace and "Player" in namespace
+
+
+# ----------------------------------------------------------------------
+# 7. The same applies to the SQLAlchemy column types.
+#
+# Fixing only List/Optional above left the identical trap set for the thirteen
+# column types, which are aliased the same way. Verification run on 2026-09-11
+# walked straight into it: the LLM added a User class for JWT auth and wrote
+#
+#     created_at: Mapped_[dt_datetime] = mapped_column(DateTime(), ...)
+#                                                      ^^^^^^^^
+#
+# F821 Undefined name `DateTime` — one blocker, app dead on arrival, the same
+# failure as 'Optional' one fix earlier. Bind every aliased name both ways so
+# the class of bug is closed rather than its latest instance.
+# ----------------------------------------------------------------------
+
+_ALIASED_COLUMN_TYPES = (
+    "Boolean", "Column", "Date", "DateTime", "Float", "ForeignKey", "Integer",
+    "Interval", "PickleType", "String", "Table", "Text", "Time",
+)
+
+
+def _names_imported_from(src: str, module: str) -> set:
+    """Names the module actually binds from ``module`` (alias-aware)."""
+    import ast
+
+    bound = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            for alias in node.names:
+                bound.add(alias.asname or alias.name)
+    return bound
+
+
+def test_every_aliased_column_type_is_bound_under_its_plain_name(tmp_path):
+    SQLAlchemyGenerator(model=_optional_fk_model(), output_dir=str(tmp_path)).generate()
+    src = (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8")
+    bound = _names_imported_from(src, "sqlalchemy")
+    for name in _ALIASED_COLUMN_TYPES:
+        assert f"{name}_" in bound, f"alias {name}_ missing — generated code needs it"
+        assert name in bound, f"plain {name} not bound — an LLM edit using it cannot import"
+
+
+def test_bare_Mapped_is_bound_too(tmp_path):
+    """A class the LLM adds is annotated Mapped[...], not Mapped_[...]."""
+    SQLAlchemyGenerator(model=_optional_fk_model(), output_dir=str(tmp_path)).generate()
+    src = (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8")
+    bound = _names_imported_from(src, "sqlalchemy.orm")
+    assert "Mapped_" in bound and "Mapped" in bound
+
+
+def test_the_live_auth_class_blocker_now_imports(tmp_path):
+    """Verbatim shape of the blocker from the 2026-09-11 verification run.
+
+    An LLM adding JWT auth appends a User model written in ordinary Python:
+    bare DateTime, String, Integer and Mapped. Before this fix the module
+    raised NameError on import and the generated app could not start.
+    """
+    SQLAlchemyGenerator(model=_optional_fk_model(), output_dir=str(tmp_path)).generate()
+    path = tmp_path / "sql_alchemy.py"
+    src = path.read_text(encoding="utf-8")
+
+    appended = src + (
+        "\n\n"
+        "class User(Base):\n"
+        '    __tablename__ = "user"\n'
+        "    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n"
+        "    email: Mapped[str] = mapped_column(String(255), unique=True)\n"
+        "    hashed_password: Mapped[str] = mapped_column(String(255))\n"
+        "    is_active: Mapped[bool] = mapped_column(Boolean, default=True)\n"
+        "    created_at: Mapped[dt_datetime] = mapped_column(\n"
+        "        DateTime(), default=dt_datetime.utcnow\n"
+        "    )\n"
+    )
+
+    namespace: dict = {}
+    exec(compile(appended, str(path), "exec"), namespace)   # must not NameError
+    assert "User" in namespace
+    assert namespace["User"].__tablename__ == "user"

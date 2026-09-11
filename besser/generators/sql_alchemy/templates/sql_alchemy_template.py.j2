@@ -2,24 +2,33 @@
 import enum
 import os
 # Both spellings are bound on purpose. Generated code uses the trailing-
-# underscore aliases so a modelled class named List or Optional cannot
-# shadow them. The PLAIN names are imported too because this file is
-# routinely edited afterwards by an LLM, which writes ordinary Python:
-# a nullable FK column correctly wants Mapped_[Optional[int]], and with
-# only the aliases bound that raised "undefined name 'Optional'" and the
-# app would not import (observed in a generated app, 2026-09-11).
+# underscore aliases so a modelled class named List, Optional or DateTime
+# cannot shadow them. The PLAIN names are imported too because this file is
+# routinely edited afterwards by an LLM, which writes ordinary Python and has
+# no reason to know about our aliasing convention. Observed in generated apps
+# on 2026-09-11, each one an app that would not import:
+#
+#     Mapped_[Optional[int]]        undefined name 'Optional'
+#     mapped_column(DateTime())     undefined name 'DateTime'
+#
+# Binding only the names we had seen fail left the same trap set for every
+# other alias, so every aliased name below is bound both ways.
 from typing import List, Optional, List as List_, Optional as Optional_
 from sqlalchemy import (
-    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    create_engine, Enum,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Interval,
+    PickleType, String, Table, Text, Time,
+    Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
     Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
     Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
-    Interval as Interval_, PickleType as PickleType_, Enum
+    Interval as Interval_, PickleType as PickleType_,
 )
 {%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
 {%- endif %}
 from sqlalchemy.orm import (
-    column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
+    column_property, DeclarativeBase, Mapped, Mapped as Mapped_, mapped_column,
+    relationship
 )
 from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
 from uuid import uuid4 as _uuid4

@@ -2,10 +2,11 @@ import os
 import re
 import unicodedata
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
+from besser.utilities.utils import sort_by_timestamp
 
 class PydanticGenerator(GeneratorInterface):
     """
@@ -60,10 +61,42 @@ class PydanticGenerator(GeneratorInterface):
         # Use DomainModel's built-in method to sort classes by inheritance (parents before children)
         sorted_classes = self.domain_model.classes_sorted_by_inheritance()
 
-        # Build constraints map for OCL validation
-        constraints_map = build_constraints_map(self.domain_model)
+        # Build constraints map for OCL validation. The Pydantic template can
+        # render model-level validators and leave a NOTE comment for the
+        # constraints it cannot enforce, so it asks for both.
+        constraints_map = build_constraints_map(
+            self.domain_model, include_model_level=True, include_skipped=True
+        )
 
         class_names = {cls.name for cls in sorted_classes}
+
+        # Associations that carry an association class exchange their links as
+        # <AssocClass>LinkCreate payloads (target id + association attributes),
+        # mirroring the shapes the REST API generator consumes.
+        assoc_by_association = {}
+        assoc_link_meta = []
+        assoc_end_fields = {}
+        for cls in sorted_classes:
+            if not isinstance(cls, AssociationClass):
+                continue
+            link_class = f"{cls.name}LinkCreate"
+            assoc_by_association[cls.association.name] = link_class
+            assoc_link_meta.append({
+                "link_class": link_class,
+                "attributes": [
+                    {
+                        "name": attr.name,
+                        "type_name": attr.type.name,
+                        "optional": attr.is_optional,
+                    }
+                    for attr in sort_by_timestamp(cls.attributes)
+                ],
+            })
+            assoc_end_fields[cls.name] = [
+                {"name": end.name, "type_name": end.type.name}
+                for end in sorted(cls.association.ends, key=lambda e: e.name)
+            ]
+
         with open(file_path, mode="w", newline='\n', encoding="utf-8") as f:
             generated_code = template.render(
                 domain=self.domain_model,
@@ -72,7 +105,10 @@ class PydanticGenerator(GeneratorInterface):
                 nested_creations=self.nested_creations,
                 constraints_map=constraints_map,
                 fkeys=get_foreign_keys(self.domain_model),
-                class_names=class_names
+                class_names=class_names,
+                assoc_by_association=assoc_by_association,
+                assoc_link_meta=assoc_link_meta,
+                assoc_end_fields=assoc_end_fields
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

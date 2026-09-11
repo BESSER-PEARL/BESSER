@@ -1,7 +1,23 @@
+{% set ocl_ns = namespace(needs_re=false, needs_model_validator=false) -%}
+{% if constraints_map -%}
+    {% for constraint_list in constraints_map.values() -%}
+        {% for constraint in constraint_list -%}
+            {% if constraint.uses_re -%}
+                {% set ocl_ns.needs_re = true -%}
+            {% endif -%}
+            {% if constraint.model_expression is defined -%}
+                {% set ocl_ns.needs_model_validator = true -%}
+            {% endif -%}
+        {% endfor -%}
+    {% endfor -%}
+{% endif -%}
+{% if ocl_ns.needs_re %}
+import re
+{% endif %}
 from datetime import datetime, date, time
 from typing import Any, List, Optional, Union, Set
 from enum import Enum
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator{{ ", model_validator" if ocl_ns.needs_model_validator else "" }}
 
 {% set ns = namespace(abstract_found=false, id_found = false, same_name_found = false, has_field = false )-%}
 {% for class in domain.get_classes() -%}
@@ -26,6 +42,21 @@ class {{ enum.name }}(Enum):
 
 {% endfor -%}
 
+{% if backend and assoc_link_meta %}
+############################################
+# Association-class link payloads
+############################################
+
+{% for link in assoc_link_meta %}
+class {{ link.link_class }}(BaseModel):
+    target: int  # primary key of the linked entity
+{% for attr in link.attributes %}
+{% set link_attr_type = 'Any' if attr.type_name == 'any' else attr.type_name %}
+    {{ attr.name }}: {{ ('Optional[' ~ link_attr_type ~ '] = None') if attr.optional else link_attr_type }}
+{% endfor %}
+
+{% endfor %}
+{% endif %}
 ############################################
 # Classes are defined here
 ############################################
@@ -63,8 +94,35 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     id: int  # id created
     {% set ns.has_field = true %}
     {% endif %}
+    {%- if backend and assoc_end_fields and class.name in assoc_end_fields %}
+    {%- for ef in assoc_end_fields[class.name] %}
+    {{ ef.name }}: int  # association end -> {{ ef.type_name }} primary key
+    {% set ns.has_field = true %}
+    {%- endfor %}
+    {%- endif %}
     {%- for association in class.associations %}
         {%- if association.ends|length == 2 %}
+            {%- set link_class = assoc_by_association.get(association.name) if backend and assoc_by_association else none %}
+            {%- if link_class %}
+            {# The association carries an association class: links travel as
+               <AssocClass>LinkCreate payloads (target id + association attributes). #}
+            {%- for end in association.ends %}
+                {%- if end.type.name != class.name %}
+                    {%- if end.multiplicity.max > 1 %}
+                        {%- if end.multiplicity.min == 0 %}
+    {{ end.name }}: Optional[List[Union["{{ link_class }}", int]]] = None  # via association class (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
+    {{ end.name }}: List[Union["{{ link_class }}", int]]  # via association class
+    {% set ns.has_field = true %}
+                        {%- endif %}
+                    {%- else %}
+    {{ end.name }}: Optional[Union["{{ link_class }}", int]] = None  # via association class (link is created from the other side or via its own endpoint)
+    {% set ns.has_field = true %}
+                    {%- endif %}
+                {%- endif %}
+            {%- endfor %}
+            {%- else %}
             {%- set ends_list = association.ends | list %}
             {%- set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
             {%- if is_self_assoc %}
@@ -261,6 +319,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- endif %}
             {%- endif %}
             {%- endif %}
+            {%- endif %}
         {%- endif %}
     {%- endfor %}
     {%- if not ns.has_field %}
@@ -269,6 +328,18 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {# OCL Constraint Validators #}
     {%- if constraints_map and class.name in constraints_map %}
     {%- for constraint in constraints_map[class.name] %}
+    {%- if constraint.skipped %}
+
+    # NOTE: OCL constraint '{{ constraint.constraint_name }}' involves collections/relationships and is not enforced by this Create model.
+    {%- elif constraint.model_expression is defined %}
+
+    @model_validator(mode='after')
+    def validate_{{ constraint.validator_name }}(self):
+        """OCL Constraint: {{ constraint.constraint_name }}"""
+        if not ({{ constraint.model_expression }}):
+            raise ValueError({{ constraint.message_repr }})
+        return self
+    {%- else %}
 
     @field_validator('{{ constraint.property }}')
     @classmethod
@@ -276,12 +347,13 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         """OCL Constraint: {{ constraint.constraint_name }}"""
         {% if constraint.python_expression is defined %}
         if not ({{ constraint.python_expression }}):
-            raise ValueError('{{ constraint.message }}')
+            raise ValueError({{ constraint.message_repr }})
         {% else %}
         if not (v {{ constraint.python_operator }} {{ constraint.value_repr }}):
-            raise ValueError('{{ constraint.property }} must be {{ constraint.python_operator }} {{ constraint.value_repr }}')
+            raise ValueError({{ constraint.message_repr }})
         {% endif %}
         return v
+    {%- endif %}
     {%- endfor %}
     {%- endif %}
 

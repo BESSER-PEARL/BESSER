@@ -226,3 +226,36 @@ def test_baf_generator_single_rag_still_uses_explicit_instance(tmp_path):
     assert "rag_message = session.run_rag(session.event.message)" not in code
 
 
+
+
+def test_baf_generator_hybrid_rag(tmp_path):
+    """A RAG with use_hybrid_rag emits HybridRAG with its bm25_weight (and the
+    matching import); a plain RAG keeps emitting RAG without it."""
+    agent = Agent("hybrid_rag_agent")
+    agent.platforms.append(WebSocketPlatform())
+    LLMOpenAI(agent=agent, name="gpt-4o-mini", parameters={})
+    docs_vs, docs_splitter = _make_rag("docs")
+    agent.new_rag(
+        name="docs_rag", vector_store=docs_vs, splitter=docs_splitter, llm_name="gpt-4o-mini",
+        use_hybrid_rag=True, bm25_weight=0.7,
+    )
+    state = agent.new_state(name="ask", initial=True)
+    state.set_body(Body("ask_body", actions=[RAGReply("docs_rag")]))
+
+    BAFGenerator(model=agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    with open(os.path.join(str(tmp_path), f"{agent.name}.py"), "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert "from baf.nlp.rag.rag import RAG, HybridRAG" in code
+    assert "docs_rag = HybridRAG(" in code
+    assert "bm25_weight=0.7" in code
+
+
+def test_baf_generator_plain_rag_has_no_hybrid_import(multi_rag_agent_model, tmp_path):
+    BAFGenerator(model=multi_rag_agent_model, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    with open(os.path.join(str(tmp_path), f"{multi_rag_agent_model.name}.py"), "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert "from baf.nlp.rag.rag import RAG\n" in code
+    assert "HybridRAG" not in code
+    assert "bm25_weight" not in code

@@ -1,0 +1,1515 @@
+{% macro link_attr_names(assoc_class_name) %}({% for attribute in assoc_classes[assoc_class_name].attributes %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
+{# Rendered once per class. Context: class (the owning class), classes (all classes in
+   the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
+   assoc_by_association. Mirrors the per-class block that used to live inline in the
+   monolithic main_api.py, with @app.* routes rewritten to @router.* and split into its
+   own APIRouter file. Association-class links (e.g. Trip.seats -> Reservation rows) and
+   non-`id` primary keys (e.g. Seat.code) are handled exactly as the monolith does; the
+   `pk` filter yields each class's real primary-key attribute name, and link_target /
+   link_attrs (from bal_stdlib) read the {target, <attrs>} link payloads. #}
+from fastapi import APIRouter, Depends, HTTPException, Body
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
+from pydantic_classes import *
+from sql_alchemy import *
+from database import get_db
+from bal_stdlib import *
+
+router = APIRouter()
+
+{% set pk = class.name | pk %}
+{% set is_assoc_class = class.name in assoc_classes %}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[], assoc_links=[], lower_bound_guards=[]) %}
+{% set all_parents = class.all_parents() | sort(attribute='name') %}
+{% for association in class.associations %}
+    {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
+        {% set lns = namespace(end1=None, end2=None) %}
+        {% set ends_list = association.ends | list %}
+        {% if ends_list[0].type.name == ends_list[1].type.name %}
+            {% set lns.end1 = ends_list[1] %}
+            {% set lns.end2 = ends_list[0] %}
+        {% else %}
+            {% for end in association.ends %}
+                {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
+                {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
+            {% endfor %}
+        {% endif %}
+        {% set class1_name = lns.end1.type.name %}
+        {% set class2_name = lns.end2.type.name %}
+        {% set name_end1 = lns.end1.name %}
+        {% set name_end2 = lns.end2.name %}
+        {% if lns.end2.is_navigable %}
+        {# Lower-bound guard: the other class requires at least end1.min instances of this class
+           (self-associations are left alone: their ends are not distinguishable by type) #}
+        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+            {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min, lns.end1.multiplicity.max, lns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
+        {% endif %}
+        {% if association.name in assoc_by_association %}
+            {# The association is materialized by an association class, not by a foreign key or a secondary table #}
+            {% do ns.assoc_links.append((class1_name, class2_name, name_end1, name_end2, assoc_by_association[association.name], lns.end2.multiplicity.min, lns.end2.multiplicity.max, lns.end1.multiplicity.min)) %}
+        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max, lns.end1.multiplicity.min)) %}
+        {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
+            {# 1:N relationship - Library has many Books #}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min)) %}
+        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{# Include inherited associations from parent classes #}
+{% for parent in all_parents %}
+{% for association in parent.associations %}
+    {% if association.ends|length == 2 %}
+        {% set plns = namespace(end1=None, end2=None) %}
+        {% set ends_list = association.ends | list %}
+        {% if ends_list[0].type.name == ends_list[1].type.name %}
+            {% set plns.end1 = ends_list[1] %}
+            {% set plns.end2 = ends_list[0] %}
+        {% else %}
+            {% for end in association.ends %}
+                {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+            {% endfor %}
+        {% endif %}
+        {% set class1_name = plns.end1.type.name %}
+        {% set class2_name = plns.end2.type.name %}
+        {% set name_end1 = plns.end1.name %}
+        {% set name_end2 = plns.end2.name %}
+        {% if plns.end2.is_navigable %}
+        {# Lower-bound guard: the other class requires at least end1.min instances of this class
+           (self-associations are left alone: their ends are not distinguishable by type) #}
+        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+            {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min, plns.end1.multiplicity.max, plns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
+        {% endif %}
+        {% if association.name in assoc_by_association %}
+            {# The inherited association is materialized by an association class #}
+            {% do ns.assoc_links.append((class1_name, class2_name, name_end1, name_end2, assoc_by_association[association.name], plns.end2.multiplicity.min, plns.end2.multiplicity.max, plns.end1.multiplicity.min)) %}
+        {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max, plns.end1.multiplicity.min)) %}
+        {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
+            {# 1:N inherited relationship #}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min)) %}
+        {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{% endfor %}
+
+{% if "GET" in http_methods %}
+@router.get("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
+def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = Depends(get_db)) -> list:
+    {% if ns.end_name_one or ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    # Use detailed=true to get entities with eagerly loaded relationships (for tables with lookup columns)
+    if detailed:
+        # Eagerly load all relationships to avoid N+1 queries
+        query = database.query({{ class.name }})
+        {% for x in ns.end_name_one %}
+        query = query.options(joinedload({{ class.name }}.{{ x[2] }}))
+        {% endfor %}
+        {{ class.name | lower}}_list = query.all()
+
+        # Serialize with relationships included
+        result = []
+        for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+            item_dict = {{ class.name | lower}}_item.__dict__.copy()
+            item_dict.pop('_sa_instance_state', None)
+
+            # Add many-to-one relationships (foreign keys for lookup columns)
+            {% for x in ns.end_name_one %}
+            if {{ class.name | lower}}_item.{{ x[2] }}:
+                related_obj = {{ class.name | lower}}_item.{{ x[2] }}
+                related_dict = related_obj.__dict__.copy()
+                related_dict.pop('_sa_instance_state', None)
+                item_dict['{{ x[2] }}'] = related_dict
+            else:
+                item_dict['{{ x[2] }}'] = None
+            {% endfor %}
+
+            {% if ns.end_name_multiple or ns.one_to_many %}
+            # Add many-to-many and one-to-many relationship objects (full details)
+            {% for x in ns.end_name_multiple %}
+            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+            item_dict['{{x[3]}}'] = []
+            for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
+                {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
+                {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
+            {% endfor %}
+            {% for x in ns.one_to_many %}
+            {{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
+            item_dict['{{x[2]}}'] = []
+            for {{x[0] | lower}}_obj in {{x[0] | lower}}_list:
+                {{x[0] | lower}}_dict = {{x[0] | lower}}_obj.__dict__.copy()
+                {{x[0] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[2]}}'].append({{x[0] | lower}}_dict)
+            {% endfor %}
+            {% endif %}
+            {% if ns.assoc_links %}
+            # Add association class links (target entities and the link rows themselves)
+            {% for x in ns.assoc_links %}
+            {{x[3]}}_link_rows = database.query({{x[4]}}).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
+            item_dict['{{x[3]}}_links'] = []
+            for link_row in {{x[3]}}_link_rows:
+                link_dict = link_row.__dict__.copy()
+                link_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[3]}}_links'].append(link_dict)
+            item_dict['{{x[3]}}'] = []
+            for {{x[1] | lower}}_obj in database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([getattr(link_row, '{{x[3]}}_id') for link_row in {{x[3]}}_link_rows])).all():
+                {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
+                {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
+            {% endfor %}
+            {% endif %}
+
+            result.append(item_dict)
+        return result
+    else:
+        # Default: return flat entities (faster for charts/widgets without lookup columns)
+        return database.query({{ class.name }}).all()
+    {% else %}
+    return database.query({{ class.name }}).all()
+    {% endif %}
+
+
+@router.get("/{{ class.name | lower}}/count/", response_model=None, tags=["{{ class.name }}"])
+def get_count_{{ class.name | lower}}(database: Session = Depends(get_db)) -> dict:
+    """Get the total count of {{ class.name }} entities"""
+    count = database.query({{ class.name }}).count()
+    return {"count": count}
+
+
+@router.get("/{{ class.name | lower}}/paginated/", response_model=None, tags=["{{ class.name }}"])
+def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detailed: bool = False, database: Session = Depends(get_db)) -> dict:
+    """Get paginated list of {{ class.name }} entities"""
+    total = database.query({{ class.name }}).count()
+    {{ class.name | lower}}_list = database.query({{ class.name }}).offset(skip).limit(limit).all()
+    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    # By default, return flat entities (for charts/widgets)
+    # Use detailed=true to get entities with relationships
+    if not detailed:
+        return {
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "data": {{ class.name | lower}}_list
+        }
+
+    result = []
+    for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+        {% for x in ns.end_name_multiple %}
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
+        {% endfor %}
+        item_data = {
+            "{{class.name | lower}}": {{ class.name | lower}}_item,
+            {% for x in ns.end_name_multiple %}
+            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+            {% endfor %}
+            {% for x in ns.assoc_links %}
+            "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
+            {% endfor %}
+            {% for x in ns.one_to_many %}
+            "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+            {% endfor %}
+        }
+        result.append(item_data)
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": result
+    }
+    {% else %}
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": {{ class.name | lower}}_list
+    }
+    {% endif %}
+
+
+{#- Search endpoint. Attribute types are matched by NAME, not python
+    class: converter-produced attributes arrive as PrimitiveDataType
+    instances, so the old __class__.__name__ check matched nothing and
+    every search endpoint shipped with ZERO parameters (a facade that
+    returned query.all()). Inherited attributes are searchable too
+    (joined-table inheritance exposes the parent's columns on the
+    subclass), so a subclass without own attributes keeps its /search/
+    route instead of the path falling through to /{id}/ as a 422. When
+    the whole hierarchy has no searchable primitive attribute the
+    endpoint is not generated at all. #}
+{%- set ns_search = namespace(attrs=[]) %}
+{%- for parent in all_parents %}
+{%- for attribute in parent.attributes | sort(attribute='name') %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+{%- do ns_search.attrs.append(attribute) %}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- for attribute in class.attributes | sort(attribute='name') %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+{%- do ns_search.attrs.append(attribute) %}
+{%- endif %}
+{%- endfor %}
+{% if ns_search.attrs %}
+@router.get("/{{ class.name | lower}}/search/", response_model=None, tags=["{{ class.name }}"])
+def search_{{ class.name | lower}}(
+    {% for attribute in ns_search.attrs %}
+    {{attribute.name}}: {% if attribute.type.name in ['str', 'string'] %}str{% elif attribute.type.name in ['int', 'integer'] %}int{% elif attribute.type.name == 'float' %}float{% else %}bool{% endif %} = None,
+    {% endfor %}
+    database: Session = Depends(get_db)
+) -> list:
+    """Search {{ class.name }} entities by attributes"""
+    query = database.query({{ class.name }})
+
+    {% for attribute in ns_search.attrs %}
+    if {{attribute.name}} is not None:
+        {% if attribute.type.name in ['str', 'string'] %}
+        query = query.filter({{ class.name }}.{{attribute.name}}.ilike(f"%{% raw %}{{% endraw %}{{attribute.name}}{% raw %}}{% endraw %}%"))
+        {% else %}
+        query = query.filter({{ class.name }}.{{attribute.name}} == {{attribute.name}})
+        {% endif %}
+    {% endfor %}
+
+    results = query.all()
+    return results
+{% endif %}
+
+
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+{# An association class is keyed by the foreign keys of its two association ends, so it is
+   addressed as /{{ class.name | lower }}/{<{{ ac_ends[0].name }} id>}/{<{{ ac_ends[1].name }} id>}/ #}
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def get_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, database: Session = Depends(get_db)) -> {{ class.name }}:
+    """Get the {{ class.name }} link between a {{ ac_ends[0].type_name }} and a {{ ac_ends[1].type_name }}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
+        ({{ class.name }}.{{ ac_ends[0].name }}_id == {{ ac_ends[0].name }}_id) &
+        ({{ class.name }}.{{ ac_ends[1].name }}_id == {{ ac_ends[1].name }}_id)
+    ).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    return db_{{ class.name | lower}}
+{% else %}
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def get_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {% if ns.end_name_multiple  %}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% endif %}
+    {% if ns.assoc_links %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% endif %}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% endif %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor -%}
+    }
+    return response_data
+{% endif %}
+
+{% endif %}
+
+
+{% if "POST" in http_methods %}
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+@router.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
+async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    """Create a {{ class.name }} link.
+
+    The Create model carries one field per association end ({% for end in ac_ends %}`{{ end.name }}`{% if not loop.last %}, {% endif %}{% endfor %}) holding
+    the id of the linked entity, plus the attributes of the association class.
+    """
+    {% for end in ac_ends %}
+    {{ end.name }}_target = link_target(getattr({{ class.name | lower}}_data, '{{ end.name }}', None))
+    if {{ end.name }}_target is None:
+        raise HTTPException(status_code=400, detail="{{ end.type_name }} ID is required")
+    db_{{ end.name }} = database.query({{ end.type_name }}).filter({{ end.type_name }}.{{ end.type_name | pk }} == {{ end.name }}_target).first()
+    if db_{{ end.name }} is None:
+        raise HTTPException(status_code=404, detail=f"{{ end.type_name }} with ID {% raw %}{{% endraw %}{{ end.name }}_target{% raw %}}{% endraw %} not found")
+    {% endfor %}
+
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for end in ac_ends %}
+        {{ end.name }}_id={{ end.name }}_target,
+        {% endfor %}
+        {% for attribute in assoc_classes[class.name].attributes %}
+        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %}{% if not loop.last %},{% endif %}
+        {% endfor %}
+        )
+
+    database.add(db_{{ class.name | lower}})
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+    return db_{{ class.name | lower}}
+{% else %}
+@router.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
+async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+
+    {% if ns.end_name_one %}
+    {% for x in ns.end_name_one %}
+    {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+    {% if has_fk %}
+    if {{ class.name | lower}}_data.{{x[2]}} {% if x[1]==1 %}is not None{%endif%}:
+        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{ class.name | lower}}_data.{{x[2]}}).first()
+        if not db_{{x[2]}}:
+            raise HTTPException(status_code=400, detail="{{x[0]}} not found")
+    {%if x[1] == 1 %}
+    else:
+        raise HTTPException(status_code=400, detail="{{x[0]}} ID is required")
+    {% endif -%}
+    {% endif -%}
+    {% endfor -%}
+    {%- endif %}
+    {# Validate inherited mandatory relationships #}
+    {% for parent in all_parents %}
+    {% for association in parent.associations %}
+        {% if association.ends|length == 2 %}
+            {% set plns = namespace(end1=None, end2=None) %}
+            {% set ends_list = association.ends | list %}
+            {% if ends_list[0].type.name == ends_list[1].type.name %}
+                {% set plns.end1 = ends_list[1] %}
+                {% set plns.end2 = ends_list[0] %}
+            {% else %}
+                {% for end in association.ends %}
+                    {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                    {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                {% endfor %}
+            {% endif %}
+            {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
+                {% if parent_has_fk %}
+    if {{ class.name | lower}}_data.{{plns.end2.name}} {% if plns.end2.multiplicity.min==1 %}is not None{%endif%}:
+        db_{{plns.end2.name}} = database.query({{plns.end2.type.name}}).filter({{plns.end2.type.name}}.{{ plns.end2.type.name | pk }} == {{ class.name | lower}}_data.{{plns.end2.name}}).first()
+        if not db_{{plns.end2.name}}:
+            raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} not found")
+    {%if plns.end2.multiplicity.min == 1 %}
+    else:
+        raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} ID is required")
+    {% endif -%}
+                {% endif -%}
+            {%- endif -%}
+        {% endif %}
+    {% endfor %}
+    {% endfor %}
+    {% if ns.end_name_multiple %}
+    {% for x in ns.end_name_multiple %}
+    {# x[5] = min multiplicity, x[3] = relationship name #}
+    {% if x[5] > 0 %}
+    if not {{ class.name | lower}}_data.{{x[3]}} or len({{ class.name | lower}}_data.{{x[3]}}) < {{x[5]}}:
+        raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+    {% endif %}
+    {# Validate that all related entities exist BEFORE creating the main entity #}
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for id in {{ class.name | lower}}_data.{{x[3]}}:
+            # Entity already validated before creation
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == id).first()
+            if not db_{{x[1] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
+    {% endfor %}
+    {% endif %}
+    {% if ns.assoc_links %}
+    {# Validate the targets of the association class links before creating the main entity.
+       The link payloads are read with getattr because the Create model only exposes the
+       navigable ends of the association. #}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_payload = getattr({{ class.name | lower}}_data, '{{x[3]}}', None)
+    {% if x[6] > 1 %}
+    {% if x[5] > 0 %}
+    if not {{x[3]}}_payload or len({{x[3]}}_payload) < {{x[5]}}:
+        raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+    {% endif %}
+    if {{x[3]}}_payload:
+        for link in {{x[3]}}_payload:
+            {{x[3]}}_target = link_target(link)
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
+            if not db_{{x[1] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+    {% else %}
+    {# To-one end through an association class: the link is optional at creation
+       time (it can be established later from the other side or via the
+       association-class endpoint), otherwise neither entity could be created
+       first. #}
+    if {{x[3]}}_payload is not None:
+        {{x[3]}}_target = link_target({{x[3]}}_payload)
+        db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
+        if not db_{{x[1] | lower}}:
+            raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+
+    {# Collect all constructor arguments. A surrogate `id` is server-owned
+       (autoincrement PK) and is absent from the Create schema, so it must never
+       be read off the payload. A PK the user declared (is_id) — including one
+       named `id` — is client-supplied and is read like any other field. #}
+    {% set ns_args = namespace(args=[]) %}
+    {% for parent in all_parents %}
+    {% for attrparent in parent.attributes %}
+    {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
+    {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
+    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.value') %}
+    {% else %}
+    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name) %}
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+    {% for attribute in class.attributes %}
+    {% if not (attribute.name == 'id' and not attribute.is_id) %}
+    {% if attribute.type.__class__.__name__ == 'Enumeration' %}
+    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.value') %}
+    {% else %}
+    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name) %}
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+    {% if ns.end_name_one %}
+    {% for x in ns.end_name_one -%}
+    {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+    {% if has_fk %}
+    {% do ns_args.args.append(x[2] ~ '_id=' ~ class.name|lower ~ '_data.' ~ x[2]) %}
+    {% endif -%}
+    {% endfor %}
+    {% endif %}
+    {# Include parent FKs for inherited classes #}
+    {% for parent in all_parents %}
+    {% for association in parent.associations %}
+        {% if association.ends|length == 2 %}
+            {% set plns = namespace(end1=None, end2=None) %}
+            {% set ends_list = association.ends | list %}
+            {% if ends_list[0].type.name == ends_list[1].type.name %}
+                {% set plns.end1 = ends_list[1] %}
+                {% set plns.end2 = ends_list[0] %}
+            {% else %}
+                {% for end in association.ends %}
+                    {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                    {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                {% endfor %}
+            {% endif %}
+            {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
+                {% if parent_has_fk %}
+    {% do ns_args.args.append(plns.end2.name ~ '_id=' ~ class.name|lower ~ '_data.' ~ plns.end2.name) %}
+                {% endif -%}
+            {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
+                {% if parent_has_fk %}
+    {% do ns_args.args.append(plns.end2.name ~ '_id=' ~ class.name|lower ~ '_data.' ~ plns.end2.name) %}
+                {% endif -%}
+            {%- endif -%}
+        {% endif %}
+    {% endfor %}
+    {% endfor %}
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for arg in ns_args.args %}
+        {{ arg }}{% if not loop.last %},{% endif %}
+        {% endfor %}
+        )
+
+    database.add(db_{{ class.name | lower}})
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+
+    {# Set one-to-many relationships if provided #}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
+    if {{ class.name | lower }}_data.{{x[2]}}:
+        # Validate that all {{x[0]}} IDs exist
+        for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{x[0] | lower}}_id).first()
+            if not db_{{x[0] | lower}}:
+                raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
+
+        # Update the related entities with the new foreign key
+        database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+            {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.{{ pk }}{{"}"}}, synchronize_session=False
+        )
+        database.commit()
+    {% endfor %}
+    {% endif %}
+
+    {# Create the association class rows carrying the links of this entity #}
+    {% if ns.assoc_links %}
+    {% for x in ns.assoc_links %}
+    {% if x[6] > 1 %}
+    if {{x[3]}}_payload:
+        for link in {{x[3]}}_payload:
+            database.add({{x[4]}}(
+                {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
+                {{x[3]}}_id=link_target(link),
+                **link_attrs(link, {{ link_attr_names(x[4]) }})
+            ))
+        database.commit()
+    {% else %}
+    if {{x[3]}}_payload is not None:
+        database.add({{x[4]}}(
+            {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
+            {{x[3]}}_id=link_target({{x[3]}}_payload),
+            **link_attrs({{x[3]}}_payload, {{ link_attr_names(x[4]) }})
+        ))
+        database.commit()
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+    {% if ns.end_name_multiple and not nested_creations %}
+    {% for x in ns.end_name_multiple %}
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for id in {{ class.name | lower}}_data.{{x[3]}}:
+            # Entity already validated before creation
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == id).first()
+            # Create the association
+            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.{{ pk }}, {{ x[3] }}=db_{{ x[1]|lower }}.{{ x[1] | pk }})
+            database.execute(association)
+            database.commit()
+    {% endfor -%}
+    {% endif %}
+
+    {%if ns.end_name_multiple and nested_creations%}
+    {% for x in ns.end_name_multiple %}
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for x in {{ class.name | lower}}_data.{{x[3]}}:
+            {%for lk_class in classes%}
+            {% if lk_class.name == x[1] %}
+            if isinstance(x, int):
+                db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == x).first()
+                if db_{{x[1] | lower}} is None:
+                    raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {x} not found")
+            else:
+                db_{{x[1] | lower}} = {{x[1]}}(
+                    {%for attr in lk_class.attributes%}
+                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+                    {%endfor%}
+                )
+            database.add(db_{{x[1] | lower}})
+            database.commit()
+            # Create the association
+            association = {{x[4]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.{{ pk }}, {{ x[1]|lower }}_id=db_{{ x[1]|lower }}.{{ x[1] | pk }})
+            database.execute(association)
+            database.commit()
+            {% endif %}
+            {%endfor%}
+    {% endfor %}
+    {% endif %}
+
+    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    {# Return response with relationship IDs like GET endpoint #}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }
+    return response_data
+    {% else %}
+    return db_{{ class.name | lower}}
+    {% endif %}
+{% endif %}
+
+{% endif %}
+
+{% if "POST" in http_methods and not is_assoc_class %}
+@router.post("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
+async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create], database: Session = Depends(get_db)) -> dict:
+    """Create multiple {{ class.name }} entities at once"""
+    created_items = []
+    errors = []
+
+    for idx, item_data in enumerate(items):
+        try:
+            # Basic validation for each item
+            {% if ns.end_name_one %}
+            {% for x in ns.end_name_one %}
+            {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+            {% if has_fk and x[1] == 1 %}
+            if not item_data.{{x[2]}}:
+                raise ValueError("{{x[0]}} ID is required")
+            {% endif -%}
+            {% endfor -%}
+            {%- endif %}
+            {# Validate inherited mandatory relationships #}
+            {% for parent in all_parents %}
+            {% for association in parent.associations %}
+                {% if association.ends|length == 2 %}
+                    {% set plns = namespace(end1=None, end2=None) %}
+                    {% set ends_list = association.ends | list %}
+                    {% if ends_list[0].type.name == ends_list[1].type.name %}
+                        {% set plns.end1 = ends_list[1] %}
+                        {% set plns.end2 = ends_list[0] %}
+                    {% else %}
+                        {% for end in association.ends %}
+                            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                        {% endfor %}
+                    {% endif %}
+                    {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
+                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
+                        {% if parent_has_fk and plns.end2.multiplicity.min == 1 %}
+            if not item_data.{{plns.end2.name}}:
+                raise ValueError("{{plns.end2.type.name}} ID is required")
+                        {% endif -%}
+                    {%- endif -%}
+                {% endif %}
+            {% endfor %}
+            {% endfor %}
+
+            {# Collect all constructor arguments for bulk create #}
+            {% set ns_bulk_args = namespace(args=[]) %}
+            {% for parent in all_parents %}
+            {% for attrparent in parent.attributes %}
+            {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
+            {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
+            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.value') %}
+            {% else %}
+            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name) %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+            {% endfor %}
+            {% for attribute in class.attributes %}
+            {% if not (attribute.name == 'id' and not attribute.is_id) %}
+            {% if attribute.type.__class__.__name__ == 'Enumeration' %}
+            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.value') %}
+            {% else %}
+            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name) %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+            {% if ns.end_name_one %}
+            {% for x in ns.end_name_one -%}
+            {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+            {% if has_fk %}
+            {% do ns_bulk_args.args.append(x[2] ~ '_id=item_data.' ~ x[2]) %}
+            {% endif -%}
+            {% endfor %}
+            {% endif %}
+            {# Include parent FKs for inherited classes #}
+            {% for parent in all_parents %}
+            {% for association in parent.associations %}
+                {% if association.ends|length == 2 %}
+                    {% set plns = namespace(end1=None, end2=None) %}
+                    {% set ends_list = association.ends | list %}
+                    {% if ends_list[0].type.name == ends_list[1].type.name %}
+                        {% set plns.end1 = ends_list[1] %}
+                        {% set plns.end2 = ends_list[0] %}
+                    {% else %}
+                        {% for end in association.ends %}
+                            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                        {% endfor %}
+                    {% endif %}
+                    {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
+                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
+                        {% if parent_has_fk %}
+            {% do ns_bulk_args.args.append(plns.end2.name ~ '_id=item_data.' ~ plns.end2.name) %}
+                        {% endif -%}
+                    {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
+                        {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
+                        {% if parent_has_fk %}
+            {% do ns_bulk_args.args.append(plns.end2.name ~ '_id=item_data.' ~ plns.end2.name) %}
+                        {% endif -%}
+                    {%- endif -%}
+                {% endif %}
+            {% endfor %}
+            {% endfor %}
+            db_{{ class.name | lower}} = {{ class.name }}(
+                {% for arg in ns_bulk_args.args %}
+                {{ arg }}{% if not loop.last %},{% endif %}
+                {% endfor %}
+            )
+            database.add(db_{{ class.name | lower}})
+            database.flush()  # Get ID without committing
+            created_items.append(db_{{ class.name | lower}}.{{ pk }})
+        except Exception as e:
+            errors.append({"index": idx, "error": str(e)})
+
+    if errors:
+        database.rollback()
+        raise HTTPException(status_code=400, detail={"message": "Bulk creation failed", "errors": errors})
+
+    database.commit()
+    return {
+        "created_count": len(created_items),
+        "created_ids": created_items,
+        "message": f"Successfully created {len(created_items)} {{ class.name }} entities"
+    }
+
+
+@router.delete("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
+async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.name, 'int') }}], database: Session = Depends(get_db)) -> dict:
+    """Delete multiple {{ class.name }} entities at once"""
+    deleted_count = 0
+    not_found = []
+
+    for item_id in ids:
+        db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == item_id).first()
+        if db_{{ class.name | lower}}:
+            database.delete(db_{{ class.name | lower}})
+            deleted_count += 1
+        else:
+            not_found.append(item_id)
+
+    database.commit()
+
+    return {
+        "deleted_count": deleted_count,
+        "not_found": not_found,
+        "message": f"Successfully deleted {deleted_count} {{ class.name }} entities"
+    }
+{% endif %}
+
+{% if class.is_read_only == False %}
+{% if "PUT" in http_methods %}
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+@router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    """Update the attributes of the {{ class.name }} link identified by both foreign keys"""
+    db_{{ class.name | lower }} = database.query({{ class.name }}).filter(
+        ({{ class.name }}.{{ ac_ends[0].name }}_id == {{ ac_ends[0].name }}_id) &
+        ({{ class.name }}.{{ ac_ends[1].name }}_id == {{ ac_ends[1].name }}_id)
+    ).first()
+    if db_{{ class.name | lower }} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {% for attribute in assoc_classes[class.name].attributes %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %})
+    {% endfor %}
+    database.commit()
+    database.refresh(db_{{ class.name | lower }})
+    return db_{{ class.name | lower }}
+{% else %}
+@router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }}, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
+    if db_{{ class.name | lower }} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {# Update attributes of the model. The primary key is immutable whatever
+       its name (rewriting Room.number would orphan every FK row pointing at
+       it), and a surrogate `id` (named `id` but not declared is_id) is
+       server-owned and absent from the Create schema. -#}
+    {# Inherited attributes are part of the entity too (joined-table inheritance):
+       an Employee's last_name lives on Person and must be updatable here #}
+    {% for parent in all_parents %}
+    {% for attribute in parent.attributes %}
+    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+    {% for attribute in class.attributes %}
+    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    {% endif %}
+    {% endfor %}
+    {# Update foreign key relationships -#}
+    {% if ns.end_name_one %}
+    {% for x in ns.end_name_one -%}
+    {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+    {% if has_fk %}
+    if {{ class.name | lower}}_data.{{x[2]}} is not None:
+        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{ class.name | lower}}_data.{{x[2]}}).first()
+        if not db_{{x[2]}}:
+            raise HTTPException(status_code=400, detail="{{x[0]}} not found")
+        setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', {{ class.name | lower }}_data.{{x[2]}})
+    {% if x[1] == 0 %}
+    else:
+        setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', None)
+    {% endif -%}
+    {% endif -%}
+    {% endfor -%}
+    {% endif %}
+    {# Update one-to-many relationships -#}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
+    if {{ class.name | lower }}_data.{{x[2]}} is not None:
+        {# Diff the current members against the requested ones instead of nulling
+           every FK first: with a mandatory end ({{x[1]}}, min {{x[3]}}) that null-out
+           violated NOT NULL even when the same entities were re-selected. #}
+        requested_{{x[2]}} = set({{ class.name | lower }}_data.{{x[2]}})
+        current_{{x[2]}} = {
+            getattr(item, '{{ x[0] | pk }}')
+            for item in database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower }}.{{ pk }}).all()
+        }
+        {{x[2]}}_to_detach = current_{{x[2]}} - requested_{{x[2]}}
+        {% if x[3] > 0 %}
+        if {{x[2]}}_to_detach:
+            raise HTTPException(status_code=409, detail="{{x[0]}} " + ", ".join(str(item) for item in sorted({{x[2]}}_to_detach)) + " requires a {{x[1]}}: reassign it instead of removing it")
+        {% else %}
+        if {{x[2]}}_to_detach:
+            database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{x[2]}}_to_detach)).update(
+                {{"{"}}{{x[0]}}.{{x[1]}}_id: None{{"}"}}, synchronize_session=False
+            )
+        {% endif %}
+        {{x[2]}}_to_attach = requested_{{x[2]}} - current_{{x[2]}}
+        for {{x[0] | lower}}_id in {{x[2]}}_to_attach:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{x[0] | lower}}_id).first()
+            if not db_{{x[0] | lower}}:
+                raise HTTPException(status_code=400, detail="{{x[0]}} with id " + str({{x[0] | lower}}_id) + " not found")
+        if {{x[2]}}_to_attach:
+            database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{x[2]}}_to_attach)).update(
+                {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.{{ pk }}{{"}"}}, synchronize_session=False
+            )
+    {% endfor %}
+    {% endif %}
+    {# Reconcile the association class links -#}
+    {% if ns.assoc_links %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_payload = getattr({{ class.name | lower }}_data, '{{x[3]}}', None)
+    if {{x[3]}}_payload is not None:
+        {% if x[6] > 1 and x[5] > 0 %}
+        if len({{x[3]}}_payload) < {{x[5]}}:
+            raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+        {% endif %}
+        existing_{{x[3]}}_links = {getattr(link_row, '{{x[3]}}_id'): link_row for link_row in database.query({{x[4]}}).filter(
+            {{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower }}.{{ pk }}).all()}
+        incoming_{{x[3]}}_links = {}
+        for link in {% if x[6] > 1 %}{{x[3]}}_payload{% else %}[{{x[3]}}_payload]{% endif %}:
+            {{x[3]}}_target = link_target(link)
+            db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
+            if db_{{x[1]|lower}} is None:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+            incoming_{{x[3]}}_links[{{x[3]}}_target] = link
+
+        for {{x[3]}}_target, link_row in existing_{{x[3]}}_links.items():
+            if {{x[3]}}_target not in incoming_{{x[3]}}_links:
+                {% if x[7] > 0 %}
+                linked_{{x[3]}} = link_row.{{x[3]}}
+                if linked_{{x[3]}} is not None and len(linked_{{x[3]}}.{{ x[4] | lower }}s) - 1 < {{x[7]}}:
+                    raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{x[3]}}_target) + " requires at least {{x[7]}} {{x[2]}}")
+                {% endif %}
+                database.delete(link_row)
+
+        for {{x[3]}}_target, link in incoming_{{x[3]}}_links.items():
+            link_row = existing_{{x[3]}}_links.get({{x[3]}}_target)
+            if link_row is None:
+                database.add({{x[4]}}(
+                    {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
+                    {{x[3]}}_id={{x[3]}}_target,
+                    **link_attrs(link, {{ link_attr_names(x[4]) }})
+                ))
+            else:
+                for link_attr_name, link_attr_value in link_attrs(link, {{ link_attr_names(x[4]) }}).items():
+                    setattr(link_row, link_attr_name, link_attr_value)
+    {% endfor %}
+    {% endif %}
+    {% if ns.end_name_multiple  %}
+    {% for x in ns.end_name_multiple %}
+    {# An omitted list leaves the links untouched; a sent list is reconciled #}
+    if {{ class.name | lower }}_data.{{x[3]}} is not None:
+        {% if x[5] > 0 %}
+        if len({{ class.name | lower }}_data.{{x[3]}}) < {{x[5]}}:
+            raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+        {% endif %}
+        existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
+            {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}))]
+
+        {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}})
+        for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
+            {% if x[7] > 0 %}
+            db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
+            if db_{{x[1]|lower}} is not None and len(db_{{x[1]|lower}}.{{x[2]}}) - 1 < {{x[7]}}:
+                raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{x[1]|lower}}_id) + " requires at least {{x[7]}} {{x[2]}}")
+            {% endif %}
+            association = {{x[4]}}.delete().where(
+                ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
+            database.execute(association)
+
+        new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}) - set(existing_{{x[1]|lower}}_ids)
+        for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
+            db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[1]|lower}}_id).first()
+            if db_{{x[1]|lower}} is None:
+                raise HTTPException(status_code=404, detail="{{x[1]}} with ID " + str({{x[1]|lower}}_id) + " not found")
+            association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.{{ x[1] | pk }}, {{x[2]}}=db_{{ class.name | lower }}.{{ pk }})
+            database.execute(association)
+    {% endfor %}
+    {% endif %}
+    database.commit()
+    database.refresh(db_{{ class.name | lower }})
+
+    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    {# Return response with relationship IDs like GET endpoint #}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% for x in ns.assoc_links %}
+    {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.{{ x[0] | pk }}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
+    {% endfor %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.assoc_links %}
+        "{{x[3]}}_ids": [x[0] for x in {{x[3]}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }
+    return response_data
+    {% else %}
+    return db_{{ class.name | lower }}
+    {% endif %}
+{% endif %}
+{% endif %}
+
+
+{% if "DELETE" in http_methods %}
+{% if is_assoc_class %}
+{% set ac_ends = assoc_classes[class.name].ends %}
+@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, database: Session = Depends(get_db)):
+    """Delete the {{ class.name }} link identified by both foreign keys"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
+        ({{ class.name }}.{{ ac_ends[0].name }}_id == {{ ac_ends[0].name }}_id) &
+        ({{ class.name }}.{{ ac_ends[1].name }}_id == {{ ac_ends[1].name }}_id)
+    ).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    {# Lower-bound guards: each linked entity must keep the minimum number of links the other end requires #}
+    {% for end in class.association.ends %}
+    {% for other in class.association.ends if other != end %}
+    {% if other.multiplicity.min > 0 %}
+    linked_{{ end.name }} = db_{{ class.name | lower}}.{{ end.name }}
+    if linked_{{ end.name }} is not None and len(linked_{{ end.name }}.{{ class.name | lower }}s) - 1 < {{ other.multiplicity.min }}:
+        raise HTTPException(status_code=409, detail="Cannot delete this {{ class.name }}: {{ end.type.name }} " + str(getattr(linked_{{ end.name }}, '{{ end.type.name | pk }}')) + " requires at least {{ other.multiplicity.min }} {{ other.name }}")
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+    # Snapshot the columns before deleting: the live object may carry loaded
+    # back-references, which would make the JSON encoder recurse endlessly.
+    deleted_{{ class.name | lower}} = {
+        attr.key: getattr(db_{{ class.name | lower}}, attr.key)
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+    }
+    database.delete(db_{{ class.name | lower}})
+    database.commit()
+    return deleted_{{ class.name | lower}}
+{% else %}
+@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    {# Lower-bound guards: refuse the delete when a related entity would be left
+       with fewer instances of this class than its multiplicity requires. The ORM
+       cannot express a lower bound on the many side, so it is enforced here, like
+       the "At least N required" check of the create endpoint.
+       g = (other class, this end name, other end name, min, this max, other max, association class or None) #}
+    {% for g in ns.lower_bound_guards %}
+    {% if g[6] %}
+    for link in list(db_{{ class.name | lower}}.{{ g[6] | lower }}s):
+        related = link.{{ g[2] }}
+        if related is not None and len(related.{{ g[6] | lower }}s) - 1 < {{ g[3] }}:
+            raise HTTPException(status_code=409, detail="Cannot delete {{ class.name }} " + str({{ class.name | lower}}_id) + ": {{ g[0] }} " + str(getattr(related, '{{ g[0] | pk }}')) + " requires at least {{ g[3] }} {{ g[1] }}")
+    {% else %}
+    {# The relationship attribute is a collection or a scalar depending on the
+       mapped multiplicity; handle both rather than depend on the ORM's choice #}
+    related_{{ g[2] }} = db_{{ class.name | lower}}.{{ g[2] }}
+    for related in (list(related_{{ g[2] }}) if isinstance(related_{{ g[2] }}, list) else [item for item in [related_{{ g[2] }}] if item is not None]):
+        {% if g[4] > 1 %}
+        remaining = len(related.{{ g[1] }}) - 1
+        {% else %}
+        remaining = 0
+        {% endif %}
+        if remaining < {{ g[3] }}:
+            raise HTTPException(status_code=409, detail="Cannot delete {{ class.name }} " + str({{ class.name | lower}}_id) + ": {{ g[0] }} " + str(getattr(related, '{{ g[0] | pk }}')) + " requires at least {{ g[3] }} {{ g[1] }}")
+    {% endif %}
+    {% endfor %}
+    # Snapshot the columns before deleting: cascading the association-class
+    # links loads relationship collections whose back-references would make
+    # the JSON encoder recurse endlessly on the live object.
+    deleted_{{ class.name | lower}} = {
+        attr.key: getattr(db_{{ class.name | lower}}, attr.key)
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+    }
+    database.delete(db_{{ class.name | lower}})
+    database.commit()
+    return deleted_{{ class.name | lower}}
+{% endif %}
+{% endif %}
+
+{% if ns.end_name_multiple %}
+{# Add relationship-specific endpoints for N:M associations #}
+{% for x in ns.end_name_multiple %}
+{# Handle self-referential relationships by using different parameter names #}
+{% set related_param_name = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
+{% set related_path_param = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
+@router.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, database: Session = Depends(get_db)):
+    """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{ related_param_name }}).first()
+    if db_{{x[1]|lower}} is None:
+        raise HTTPException(status_code=404, detail="{{x[1]}} not found")
+
+    # Check if relationship already exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Relationship already exists")
+
+    # Create the association
+    association = {{x[4]}}.insert().values({{x[2]}}={{ class.name | lower}}_id, {{x[3]}}={{ related_param_name }})
+    database.execute(association)
+    database.commit()
+
+    return {"message": "{{x[1]}} added to {{x[3]}} successfully"}
+
+
+@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, database: Session = Depends(get_db)):
+    """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    # Check if relationship exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+    ).first()
+
+    if not existing:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+
+    {# Lower-bound guards on both sides of the link #}
+    {% if x[5] > 0 %}
+    if len(db_{{ class.name | lower}}.{{x[3]}}) - 1 < {{x[5]}}:
+        raise HTTPException(status_code=409, detail="{{ class.name }} " + str({{ class.name | lower}}_id) + " requires at least {{x[5]}} {{x[3]}}")
+    {% endif %}
+    {% if x[7] > 0 %}
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{ related_param_name }}).first()
+    if db_{{x[1]|lower}} is not None and len(db_{{x[1]|lower}}.{{x[2]}}) - 1 < {{x[7]}}:
+        raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{ related_param_name }}) + " requires at least {{x[7]}} {{x[2]}}")
+    {% endif %}
+
+    # Delete the association
+    association = {{x[4]}}.delete().where(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+    )
+    database.execute(association)
+    database.commit()
+
+    return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+
+
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
+    """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {{x[1]|lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
+
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[3]}}_count": len({{x[1]|lower}}_list),
+        "{{x[3]}}": {{x[1]|lower}}_list
+    }
+
+{% endfor %}
+{% endif %}
+{% if ns.assoc_links %}
+{# Add relationship-specific endpoints for the associations materialized by an association class #}
+{% for x in ns.assoc_links %}
+{# Handle self-referential relationships by using different parameter names #}
+{% set related_param_name = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
+@router.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_param_name }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, link: dict = Body(default=None), database: Session = Depends(get_db)):
+    """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship.
+
+    The request body carries the {{x[4]}} attributes ({% for attribute in assoc_classes[x[4]].attributes %}{{ attribute.name }}{% if not loop.last %}, {% endif %}{% endfor %}).
+    A `target` field in the body is ignored: the target is taken from the path.
+    """
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{ related_param_name }}).first()
+    if db_{{x[1]|lower}} is None:
+        raise HTTPException(status_code=404, detail="{{x[1]}} not found")
+
+    # Check if relationship already exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_id) &
+        ({{x[4]}}.{{x[3]}}_id == {{ related_param_name }})
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Relationship already exists")
+
+    # Create the association class row
+    database.add({{x[4]}}(
+        {{x[2]}}_id={{ class.name | lower}}_id,
+        {{x[3]}}_id={{ related_param_name }},
+        **link_attrs(link, {{ link_attr_names(x[4]) }})
+    ))
+    database.commit()
+
+    return {"message": "{{x[1]}} added to {{x[3]}} successfully"}
+
+
+@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_param_name }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, database: Session = Depends(get_db)):
+    """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    # Check if relationship exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_id) &
+        ({{x[4]}}.{{x[3]}}_id == {{ related_param_name }})
+    ).first()
+
+    if not existing:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+
+    {# Lower-bound guards on both sides of the link #}
+    {% if x[5] > 0 %}
+    if len(db_{{ class.name | lower}}.{{ x[4] | lower }}s) - 1 < {{x[5]}}:
+        raise HTTPException(status_code=409, detail="{{ class.name }} " + str({{ class.name | lower}}_id) + " requires at least {{x[5]}} {{x[3]}}")
+    {% endif %}
+    {% if x[7] > 0 %}
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{ related_param_name }}).first()
+    if db_{{x[1]|lower}} is not None and len(db_{{x[1]|lower}}.{{ x[4] | lower }}s) - 1 < {{x[7]}}:
+        raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{ related_param_name }}) + " requires at least {{x[7]}} {{x[2]}}")
+    {% endif %}
+
+    # Delete the association class row
+    database.delete(existing)
+    database.commit()
+
+    return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+
+
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
+    """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}, with their {{x[4]}} links"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {{x[3]}}_link_rows = database.query({{x[4]}}).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_(
+        [getattr(link_row, '{{x[3]}}_id') for link_row in {{x[3]}}_link_rows])).all()
+
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[3]}}_count": len({{x[1]|lower}}_list),
+        "{{x[3]}}": {{x[1]|lower}}_list,
+        "{{x[3]}}_links": {{x[3]}}_link_rows
+    }
+
+{% endfor %}
+{% endif %}
+
+{% if ns.one_to_many %}
+{% for x in ns.one_to_many %}
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[2]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, database: Session = Depends(get_db)):
+    """Get all {{x[0]}} entities related to this {{ class.name }} through {{x[2]}}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {{x[2]}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_id).all()
+
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[2]}}_count": len({{x[2]}}_list),
+        "{{x[2]}}": {{x[2]}}_list
+    }
+
+{% endfor %}
+{% endif %}
+
+{% endif %}
+
+{# Generate endpoints for class methods #}
+{% if class.methods %}
+############################################
+#   {{ class.name }} Method Endpoints
+############################################
+{% for method in class.methods %}
+{% set clean_name = method.name | clean_method_name %}
+{% set method_params = [] %}
+{% for param in method.parameters %}
+{% set param_type = 'Any' %}
+{% set needs_fk_access = true %}
+{% if param.type.name == 'str' %}{% set param_type = 'str' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'int' %}{% set param_type = 'int' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'float' %}{% set param_type = 'float' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'bool' %}{% set param_type = 'bool' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'date' %}{% set param_type = 'date' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'time' %}{% set param_type = 'time' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'any' %}{% set needs_fk_access = false %}
+{% else %}{% set param_type = param.type.name %}
+{% endif %}
+{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access)) %}
+{% endfor %}
+
+{% set method_code = "" %}
+{% if method.implementation_type.name == "BAL" %}
+{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
+{% elif method.implementation_type.name == "CODE" %}
+{% set method_code = method.code %}
+{% endif %}
+
+{# Normalize (expand tabs, dedent, compile-gate) the body so a method authored
+   with mixed indentation or invalid Python cannot break the generated app. #}
+{% set method_code = normalize_code(method_code, method.name) %}
+
+{# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
+{% set is_class_method = '(self' not in method_code and '(self,' not in method_code %}
+
+
+{% if "POST" in http_methods %}
+{% if is_class_method %}
+{# Class-level method - no entity ID required #}
+@router.post("/{{ class.name | lower }}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def {{ class.name | lower }}_{{ clean_name }}(
+    {% if method_params %}
+    params: dict = Body(default=None, embed=True),
+    {% endif %}
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ clean_name }} class method on {{ class.name }}.
+    This method operates on all {{ class.name }} entities or performs class-level operations.
+    {% if method_params %}
+
+    Parameters (pass as JSON body):
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    try:
+        # Capture stdout to include print outputs in the response
+        import io
+        import sys
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+
+        {% for imp in cross_router_calls(method_code, class.name) %}
+        from routers.{{ imp[0] }} import {{ imp[1] }}
+        {% endfor %}
+
+        {% if method_params %}
+        # Extract parameters from request body
+        params = params or {}
+        {% for param in method_params %}
+        {% if param[3] %}
+        {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %}), database)
+        {% else %}
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {% if param[1] == 'str' %}'{{ param[2] }}'{% else %}{{ param[2] }}{% endif %}{% endif %})
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        {% if method_code %}
+        # Execute the class method body
+        {% set method_lines = method_code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+
+        def _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %}):
+{{ method_body | indent(4, first=True) | indent(4, first=True) }}
+
+        result = _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
+
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = captured_output.getvalue()
+
+        # Handle result serialization
+        if hasattr(result, '__iter__') and not isinstance(result, (str, dict)):
+            # It's a list of entities
+            result_data = []
+            for item in result:
+                if hasattr(item, '__dict__'):
+                    item_dict = {k: v for k, v in item.__dict__.items() if not k.startswith('_')}
+                    result_data.append(item_dict)
+                else:
+                    result_data.append(str(item))
+            result = result_data
+        elif hasattr(result, '__dict__'):
+            result = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
+
+        return {
+            "class": "{{ class.name }}",
+            "method": "{{ clean_name }}",
+            "status": "executed",
+            "result": result,
+            "output": output if output else None
+        }
+        {% else %}
+        # Method body not defined in the model - be honest: 501, never a
+        # fake "executed" success the client cannot distinguish from real.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
+        {% endif %}
+    except HTTPException:
+        sys.stdout = sys.__stdout__
+        raise
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
+
+{% else %}
+{# Instance method - requires entity ID #}
+@router.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def execute_{{ class.name | lower }}_{{ clean_name }}(
+    {{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }},
+    params: dict = Body(default=None, embed=True),
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ clean_name }} method on a {{ class.name }} instance.
+    {% if method_params %}
+
+    Parameters:
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    # Retrieve the entity from the database
+    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
+    if _{{ class.name | lower }}_object is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    # Prepare method parameters
+    {% for param in method_params %}
+    {% if param[3] %}
+    {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %}), database)
+    {% else %}
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {% if param[1] == 'str' %}'{{ param[2] }}'{% else %}{{ param[2] }}{% endif %}{% endif %})
+    {% endif %}
+    {% endfor %}
+
+    # Execute the method
+    try:
+        # Capture stdout to include print outputs in the response
+        import io
+        import sys
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+
+        {% for imp in cross_router_calls(method_code, class.name) %}
+        from routers.{{ imp[0] }} import {{ imp[1] }}
+        {% endfor %}
+        {% if method_code %}
+        {% set method_lines = method_code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+        {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
+
+        async def wrapper(_{{ class.name | lower }}_object):
+{{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
+
+        result = await wrapper(_{{ class.name | lower }}_object)
+        # Commit DB
+        database.commit()
+        database.refresh(_{{ class.name | lower }}_object)
+
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = captured_output.getvalue()
+
+        return {
+            "{{ class.name | lower }}_id": {{ class.name | lower }}_id,
+            "method": "{{ clean_name }}",
+            "status": "executed",
+            "result": str(result) if result is not None else None,
+            "output": output if output else None
+        }
+        {% else %}
+        # Method body not defined in the model - be honest: 501, never a
+        # fake "executed" success the client cannot distinguish from real.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
+        {% endif %}
+    except HTTPException:
+        sys.stdout = sys.__stdout__
+        raise
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
+{% endif %}
+{% endif %}
+
+{% endfor %}
+{% endif %}

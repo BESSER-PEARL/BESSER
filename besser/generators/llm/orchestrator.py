@@ -2773,6 +2773,46 @@ class LLMOrchestrator:
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
 
+    # Keys worth keeping in the trace when a tool reports them. Chosen from a
+    # real post-mortem (2026-09-11): a run burned 11 of 80 turns on failed
+    # modify_file calls and the trace recorded only ``status: error`` with no
+    # reason, so the failures could not be diagnosed afterwards at all — the
+    # one error message recoverable came from the checkpoint, and compaction had
+    # already discarded the rest. Without these, "is the harness misbehaving?"
+    # is unanswerable from a finished run.
+    _TRACE_DIAG_TEXT = ("error", "note", "advice", "warning", "matched_by",
+                        "did_you_mean", "diagnostic_message")
+    _TRACE_DIAG_MAX_CHARS = 400
+
+    @classmethod
+    def _trace_diagnostics(cls, result: str) -> dict:
+        """Bounded diagnostic fields from a tool result, for the trace.
+
+        Deliberately truncated: a trace line must stay greppable, and
+        ``did_you_mean`` can carry a whole file excerpt. Never raises — a
+        malformed result must not break the run it is describing.
+        """
+        try:
+            obj = json.loads(result)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        if not isinstance(obj, dict):
+            return {}
+        diag: dict = {}
+        for key in cls._TRACE_DIAG_TEXT:
+            value = obj.get(key)
+            if value:
+                text = value if isinstance(value, str) else str(value)
+                if len(text) > cls._TRACE_DIAG_MAX_CHARS:
+                    text = text[:cls._TRACE_DIAG_MAX_CHARS] + "…[truncated]"
+                diag[key] = text
+        # Per-write diagnostics are a list; the COUNT is the useful signal,
+        # the bodies are already in the tool_result the model saw.
+        findings = obj.get("diagnostics")
+        if isinstance(findings, list) and findings:
+            diag["diagnostics_count"] = len(findings)
+        return diag
+
     # Tools whose effect is a WRITE to a specific path. Two of these on the
     # same path inside one turn must not run concurrently: each does
     # read -> transform -> write, so racing them silently drops the earlier
@@ -2795,6 +2835,12 @@ class LLMOrchestrator:
         return "id:" + str(getattr(block, "id", id(block)))
 
     def _execute_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
+        # Set before any block runs so every tool_call event in this turn can
+        # report it. A model that emits ONE call per turn needs ~4x the turns of
+        # one that batches, which makes MAX_TURNS mean wildly different things
+        # per model — invisible until this is recorded (see 2026-09-11: 80 turns,
+        # 80 calls, 18 files).
+        self._blocks_in_turn = len(tool_blocks)
         """
         Execute tool call blocks, in parallel where that is SAFE.
 
@@ -2947,6 +2993,11 @@ class LLMOrchestrator:
             success=success,
             status=execution.status,
             input=_sanitize_for_log(block.input),
+            # How many calls the model batched into this turn (1 = no batching).
+            blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
+            # WHY it failed, and which edit tier matched when it succeeded —
+            # see _trace_diagnostics for why this is not optional.
+            **self._trace_diagnostics(result),
         )
 
         return {

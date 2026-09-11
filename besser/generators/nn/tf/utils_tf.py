@@ -431,7 +431,11 @@ def _get_prev_out_var_for_simple_ops(in_var, modules_details):
 
 def _handle_interpolate(tensorop, modules_details, in_var):
     """Handle interpolate tensorop syntax."""
-    prev_out_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
+    # Priority: input_var → layers_of_tensors → in_var → last module
+    fallback_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     size  = getattr(tensorop, 'interpolate_size', None)
     scale = getattr(tensorop, 'interpolate_scale', None)
     mode  = getattr(tensorop, 'interpolate_mode', 'bilinear')
@@ -473,7 +477,11 @@ def _handle_interpolate(tensorop, modules_details, in_var):
 
 def _handle_pad(tensorop, modules_details, in_var):
     """Handle pad tensorop syntax."""
-    prev_out_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
+    # Priority: input_var → layers_of_tensors → in_var → last module
+    fallback_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     pad_amount = (tensorop.pad_amount if hasattr(tensorop, 'pad_amount')
                   and tensorop.pad_amount else [[0, 0]])
     mode = tensorop.pad_mode if hasattr(tensorop, 'pad_mode') else 'constant'
@@ -523,7 +531,11 @@ def _handle_pad(tensorop, modules_details, in_var):
 
 def _handle_dropout_syntax(tensorop, modules_details, in_var):
     """Handle dropout tensorop syntax."""
-    prev_out_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
+    # Priority: input_var → layers_of_tensors → in_var → last module
+    fallback_var = _get_prev_out_var_for_simple_ops(in_var, modules_details)
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     rate = tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
     training_aware = getattr(tensorop, 'dropout_training_aware', False)
 
@@ -541,6 +553,7 @@ def _handle_dropout_syntax(tensorop, modules_details, in_var):
 def _handle_reshape_syntax(tensorop, modules_details, in_var, prev_out_var,
                            params):
     """Handle reshape tensorop syntax."""
+    # prev_out_var already has priorities 1 & 2 from _handle_reshape_params
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.reshape({prev_out_var}, [{params}])"
@@ -747,6 +760,7 @@ def _infer_tensor_dimensionality(tensorop, modules_details):
 def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var,
                              params):
     """Handle transpose tensorop syntax."""
+    # prev_out_var already has priorities 1 & 2 from _handle_transpose_params
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
 
@@ -766,8 +780,11 @@ def _handle_transpose_syntax(tensorop, modules_details, in_var, prev_out_var,
 def _handle_permute_syntax(tensorop, modules_details, in_var, prev_out_var,
                            params):
     """Handle permute tensorop syntax."""
-    if prev_out_var is None and in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     return f"tf.transpose({prev_out_var}, perm=[{params}])"
 
 
@@ -780,6 +797,7 @@ def _handle_multiply_syntax(tensorop, modules_details, in_var, prev_out_var,
 def _handle_mean_syntax(tensorop, modules_details, in_var, prev_out_var,
                         params):
     """Handle mean tensorop syntax."""
+    # prev_out_var already has priorities 1 & 2 from _handle_simple_op_params
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     axis = tensorop.reduce_dim
@@ -909,8 +927,11 @@ def _handle_unsqueeze_syntax(tensorop, modules_details, in_var, prev_out_var,
 def _handle_zeros_like_syntax(tensorop, modules_details, in_var, prev_out_var,
                               params):
     """Handle zeros_like tensorop syntax."""
-    if prev_out_var is None and in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     return f"tf.zeros_like({prev_out_var})"
 
 
@@ -922,8 +943,11 @@ def _handle_split_syntax(tensorop, modules_details, in_var, prev_out_var,
     The outputs will be unpacked in the template based on
     the assignment.
     """
-    if prev_out_var is None and in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
 
     split_dim   = getattr(tensorop, 'split_dim', 0)
     split_sizes = getattr(tensorop, 'split_sizes', None)
@@ -966,6 +990,7 @@ def _handle_normalize_syntax(tensorop, modules_details, in_var, prev_out_var,
 def _handle_repeat_syntax(tensorop, modules_details, in_var, prev_out_var,
                           params):
     """Handle repeat tensorop syntax."""
+    # prev_out_var already has priorities 1 & 2 from _handle_repeat_params
     if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"tf.tile({prev_out_var}, [{params}])"
@@ -1054,11 +1079,11 @@ def _remap_subscript_for_conv(tensorop, modules_details, subscript_indices):
 def _handle_subscript_syntax(tensorop, modules_details, in_var, prev_out_var,
                              params):
     """Handle subscript tensorop syntax."""
-    if tensorop.input_var is not None:
-        source_var = tensorop.input_var
-    else:
-        # Fallback: use prev_out_var or in_var
-        source_var = in_var if in_var is not None else prev_out_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    source_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
 
     subscript_indices = tensorop.subscript_indices
     subscript_indices = _remap_subscript_for_conv(tensorop, modules_details,
@@ -1128,12 +1153,12 @@ def _handle_shape_dim_syntax(tensorop, modules_details, in_var, prev_out_var,
 def _handle_identity_syntax(tensorop, modules_details, in_var, prev_out_var,
                             params):
     """Handle identity operation to preserve variable assignments."""
-    # Identity just assigns the input variable to the output variable
-    # Return the input variable directly (e.g., "x_1") so the template
-    # generates: output_var = x_1
-    if prev_out_var is None and in_var is not None:
-        return in_var
-    return prev_out_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    result = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
+    return result
 
 
 def _handle_default_syntax(tensorop, modules_details, in_var, prev_out_var,

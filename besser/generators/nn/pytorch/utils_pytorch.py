@@ -359,7 +359,8 @@ class SetupLayerSyntax:
 def _handle_reshape_pytorch(tensorop, modules_details, in_var, prev_out_var,
                             params):
     """Handle reshape tensorop syntax."""
-    if in_var is not None:
+    # prev_out_var already has priorities 1 & 2 from _handle_reshape_params
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"{prev_out_var}.reshape({params})"
 
@@ -375,10 +376,14 @@ def _handle_split_pytorch(tensorop, modules_details, in_var, prev_out_var,
     torch.split(tensor, size, dim) splits into chunks of SIZE
     (different semantics).
     """
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
+
     split_sizes = tensorop.split_sizes
     split_dim = tensorop.split_dim
-    if in_var is not None:
-        prev_out_var = in_var
 
     # Use torch.chunk for integer split_sizes (number of chunks)
     # This matches TF's tf.split(num_or_size_splits=N) behavior
@@ -401,7 +406,8 @@ def _handle_concatenate_pytorch(tensorop, modules_details, in_var,
 def _handle_transpose_pytorch(tensorop, modules_details, in_var, prev_out_var,
                               params):
     """Handle transpose tensorop syntax."""
-    if in_var is not None:
+    # prev_out_var already has priorities 1 & 2 from _handle_transpose_params
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"{prev_out_var}.transpose({params})"
 
@@ -409,8 +415,11 @@ def _handle_transpose_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_permute_pytorch(tensorop, modules_details, in_var, prev_out_var,
                             params):
     """Handle permute tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     return f"{prev_out_var}.permute({params})"
 
 
@@ -423,7 +432,7 @@ def _handle_multiply_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_mean_pytorch(tensorop, modules_details, in_var, prev_out_var,
                          params):
     """Handle mean tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     dim = tensorop.reduce_dim
     return f"{prev_out_var}.mean(dim={dim})"
@@ -432,7 +441,7 @@ def _handle_mean_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_max_pytorch(tensorop, modules_details, in_var, prev_out_var,
                         params):
     """Handle max tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     if tensorop.reduce_dim is not None:
         dim = tensorop.reduce_dim
@@ -448,15 +457,18 @@ def _handle_max_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_zeros_like_pytorch(tensorop, modules_details, in_var,
                                prev_out_var, params):
     """Handle zeros_like tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     return f"torch.zeros_like({prev_out_var})"
 
 
 def _handle_squeeze_pytorch(tensorop, modules_details, in_var, prev_out_var,
                             params):
     """Handle squeeze tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     if tensorop.reduce_dim is not None:
         dim = tensorop.reduce_dim
@@ -468,7 +480,7 @@ def _handle_squeeze_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_unsqueeze_pytorch(tensorop, modules_details, in_var, prev_out_var,
                               params):
     """Handle unsqueeze tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     dim = tensorop.reduce_dim
     return f"{prev_out_var}.unsqueeze({dim})"
@@ -477,7 +489,7 @@ def _handle_unsqueeze_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_normalize_pytorch(tensorop, modules_details, in_var, prev_out_var,
                               params):
     """Handle normalize tensorop syntax."""
-    if in_var is not None:
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     dim = tensorop.reduce_dim
     return f"F.normalize({prev_out_var}, dim={dim})"
@@ -486,7 +498,8 @@ def _handle_normalize_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_repeat_pytorch(tensorop, modules_details, in_var, prev_out_var,
                            params):
     """Handle repeat tensorop syntax."""
-    if in_var is not None:
+    # prev_out_var already has priorities 1 & 2 from _handle_repeat_params
+    if prev_out_var is None and in_var is not None:
         prev_out_var = in_var
     return f"{prev_out_var}.repeat({params})"
 
@@ -494,8 +507,11 @@ def _handle_repeat_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_pad_pytorch(tensorop, modules_details, in_var, prev_out_var,
                         params):
     """Handle pad tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
 
     pad_amount = tensorop.pad_amount
     pad_mode = (
@@ -532,8 +548,11 @@ def _handle_pad_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_dropout_pytorch(tensorop, modules_details, in_var, prev_out_var,
                             params):
     """Handle dropout tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
     dropout_rate = (
         tensorop.dropout_rate if hasattr(tensorop, 'dropout_rate') else 0.5
     )
@@ -557,9 +576,11 @@ def _handle_dropout_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_interpolate_pytorch(tensorop, modules_details, in_var,
                                 prev_out_var, params):
     """Handle interpolate tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
-
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
 
     size  = getattr(tensorop, 'interpolate_size', None)
     scale = getattr(tensorop, 'interpolate_scale', None)
@@ -634,8 +655,11 @@ def _handle_binop_floor_divide_pytorch(tensorop, modules_details, in_var, prev_o
 def _handle_subscript_pytorch(tensorop, modules_details, in_var,
                               prev_out_var, params):
     """Handle subscript tensorop syntax."""
-    if in_var is not None:
-        prev_out_var = in_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    prev_out_var = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
 
     # Build subscript string from structured list
     def build_subscript_string(indices):
@@ -667,23 +691,36 @@ def _handle_subscript_pytorch(tensorop, modules_details, in_var,
 def _handle_shape_dim_pytorch(tensorop, modules_details, in_var, prev_out_var,
                               params):
     """Handle shape_dim tensorop syntax."""
-    tensors = tensorop.layers_of_tensors
-    if isinstance(tensors[0], str):
-        if tensors[0] == 'INPUT':
-            source_var = 'x'
-        else:
-            if (f"{tensors[0]}_layer" in modules_details
-                or f"{tensors[0]}_op" in modules_details):
-                source_tensors = utils.get_layers_output_for_tensorops(
-                    tensors, modules_details
-                )
-                source_var = source_tensors[0]
-            else:
-                source_var = tensors[0]
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    if tensorop.input_var:
+        source_var = tensorop.input_var
     else:
-        # Scalar value - render as int if whole number
-        scalar = tensors[0]
-        source_var = str(int(scalar)) if scalar.is_integer() else str(scalar)
+        fallback_var = in_var if in_var is not None else prev_out_var
+        source_var_from_priority = utils._override_prev_out_var_if_needed(
+            tensorop, modules_details, fallback_var
+        )
+
+        if source_var_from_priority and source_var_from_priority != fallback_var:
+            source_var = source_var_from_priority
+        else:
+            # Fallback to existing logic
+            tensors = tensorop.layers_of_tensors
+            if isinstance(tensors[0], str):
+                if tensors[0] == 'INPUT':
+                    source_var = 'x'
+                else:
+                    if (f"{tensors[0]}_layer" in modules_details
+                        or f"{tensors[0]}_op" in modules_details):
+                        source_tensors = utils.get_layers_output_for_tensorops(
+                            tensors, modules_details
+                        )
+                        source_var = source_tensors[0]
+                    else:
+                        source_var = tensors[0]
+            else:
+                # Scalar value - render as int if whole number
+                scalar = tensors[0]
+                source_var = str(int(scalar)) if scalar.is_integer() else str(scalar)
 
     dim_index = tensorop.reduce_dim
     return f"{source_var}.size({dim_index})"
@@ -698,11 +735,12 @@ def _handle_default_pytorch(tensorop, modules_details, in_var, prev_out_var,
 def _handle_identity_pytorch(tensorop, modules_details, in_var, prev_out_var,
                              params):
     """Handle identity operation (variable assignment like residual = x)."""
-    # For identity, just return the input variable
-    # The input variable is determined by get_input_var
-    if in_var is not None:
-        return in_var
-    return prev_out_var
+    # Priority: input_var → layers_of_tensors → in_var → prev_out_var
+    fallback_var = in_var if in_var is not None else prev_out_var
+    result = utils._override_prev_out_var_if_needed(
+        tensorop, modules_details, fallback_var
+    )
+    return result
 
 
 # Dispatch table for PyTorch tensorop handlers

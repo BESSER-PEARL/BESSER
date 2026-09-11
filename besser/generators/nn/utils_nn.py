@@ -1354,12 +1354,21 @@ def _get_initial_prev_out_var(modules_details, tensorop,
 def _override_prev_out_var_if_needed(tensorop, modules_details,
                                      current_prev_out_var):
     """Override prev_out_var: check input_var first,
-    then layers_of_tensors."""
-    # Check input_var first (takes precedence)
+    then layers_of_tensors.
+
+    Priority order:
+    1. tensorop.input_var attribute (takes precedence)
+    2. tensorop.layers_of_tensors[0] attribute (fallback)
+    3. current_prev_out_var (last fallback)
+
+    This function is used by both TensorFlow and PyTorch generators
+    to resolve the input variable for single-input TensorOps.
+    """
+    # Priority 1: Check input_var first (takes precedence)
     if hasattr(tensorop, 'input_var') and tensorop.input_var is not None:
         return tensorop.input_var
 
-    # Fall back to layers_of_tensors if input_var not set
+    # Priority 2: Fall back to layers_of_tensors if input_var not set
     if (hasattr(tensorop, 'layers_of_tensors') and
         tensorop.layers_of_tensors and
         isinstance(tensorop.layers_of_tensors[0], str)):
@@ -1368,6 +1377,7 @@ def _override_prev_out_var_if_needed(tensorop, modules_details,
             source_layer, modules_details, tensorop
         )
 
+    # Priority 3: Use current_prev_out_var as last fallback
     return current_prev_out_var
 
 

@@ -3,8 +3,9 @@ Version 7.16.0
 
 Minor release: **a substantially better Java generator, and a round of fixes to
 the generated web app driven by running a full acceptance suite against it**.
-The Java work was contributed by palfner-sse (BESSER #595, #596) and reviewed
-and completed by the BESSER team. The rest came out of driving the
+The Java work was contributed by `Klausmp <https://github.com/Klausmp>`_ and
+`palfner-sse <https://github.com/palfner-sse>`_ (BESSER #595, #596) and
+reviewed and completed by the BESSER team. The rest came out of driving the
 `Agentic-Low-Code-Benchmark <https://github.com/BESSER-PEARL/Agentic-Low-Code-Benchmark>`_
 hotel-booking suite through the generated interface, which surfaced a set of
 defects that only appear once an application is actually used.

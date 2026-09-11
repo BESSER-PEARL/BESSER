@@ -208,10 +208,14 @@ async def validate_diagram(input_data: DiagramInput):
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)
         validation_errors.extend(str(e).splitlines())
-    except Exception as e:
+    except Exception:
+        # Anything reaching here is a bug rather than a problem with the diagram,
+        # and its message describes our internals - a missing key, a repr, a path
+        # - none of which helps the person drawing the diagram. The traceback goes
+        # to the log, the caller gets a sentence. The OCL check below and the
+        # @handle_endpoint_errors decorator already behave this way.
         logger.exception("Unexpected error during diagram conversion/validation")
-        error_msg = str(e).strip()
-        validation_errors.append(error_msg if error_msg else "An unexpected error occurred during validation.")
+        validation_errors.append("An unexpected error occurred during validation.")
 
     # Step 2: If BUML model created successfully AND it's a diagram with OCL support
     ocl_results = None

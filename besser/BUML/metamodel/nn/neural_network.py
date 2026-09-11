@@ -4377,6 +4377,7 @@ class NN(BehaviorImplementation):
                 if (
                     self._is_multi_output_module(prev_module)
                     and md.input_var is None
+                    and md.name_module_input is None
                 ):
                     # Layer needs explicit input specification
                     errors.append(

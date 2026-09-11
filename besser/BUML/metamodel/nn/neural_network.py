@@ -4439,7 +4439,7 @@ class NN(BehaviorImplementation):
         first = self.modules[0]
         if self.input_var is not None:
             first_input_var = getattr(first, 'input_var', None)
-            if first_input_var != self.input_var:
+            if first_input_var is not None and first_input_var != self.input_var:
                 errors.append(
                     f"NN '{self.name}': first module '{first.name}' has "
                     f"input_var '{first_input_var}' which differs from NN's "
@@ -4455,7 +4455,7 @@ class NN(BehaviorImplementation):
                 last_output_var = getattr(last, "output_vars", None)
                 if last_output_var:
                     last_output_var = ", ".join(last_output_var)
-            if last_output_var != self.return_vars:
+            if last_output_var is not None and last_output_var != self.return_vars:
                 errors.append(
                     f"NN '{self.name}': last module '{last.name}' has "
                     f"output_var '{last_output_var}' which differs from NN's "

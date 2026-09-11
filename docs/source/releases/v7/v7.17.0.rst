@@ -1,4 +1,4 @@
-Version 7.14.0
+Version 7.17.0
 ==============
 
 Minor release: **Extended neural network metamodel**. The NN metamodel

@@ -52,6 +52,9 @@
         {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
         {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %})
     {%- else -%}
-{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %})
+{#- uselist is spelled out because these relationships are assigned after the class
+    body: SQLAlchemy never sees the Mapped_["X"] annotation and would otherwise infer
+    a collection from the foreign-key direction, turning a 0..1 end into a list. #}
+{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %})
     {%- endif -%}
 {%- endmacro %}

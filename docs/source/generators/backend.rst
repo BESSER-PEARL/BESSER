@@ -33,13 +33,15 @@ entities using their identifiers. The default setting is False, which restricts 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
 This method will generate a modular project (rather than one large file) so each concern lives in its own module:
 
-   + ``main_api.py``: Slim FastAPI app setup (middleware, exception handlers, system endpoints) that wires in the per-entity routers below. Kept under this filename so ``uvicorn main_api:app`` keeps working.
-   + ``database.py``: Shared SQLAlchemy engine/session setup and the ``get_db`` dependency, used by ``main_api.py`` and every router.
-   + ``bal_stdlib.py``: BESSER Action Language standard-library helpers used by generated method endpoints.
-   + ``routers/<entity>.py``: One ``APIRouter`` per class in your model, containing all of that entity's CRUD, relationship, and method endpoints.
+   + ``main_api.py``: The slim FastAPI application entry point (app setup, middleware, exception handlers, system endpoints, and one ``include_router`` per resource). It keeps its historical filename and module-level ``app`` object, so ``uvicorn main_api:app`` works unchanged.
+   + ``routers/<class>.py``: One router module per class in the model, containing all of that class's CRUD, relationship and method endpoints.
+   + ``database.py``: The shared engine/session setup and the ``get_db`` dependency. The database defaults to ``sqlite:///./data/<model>.db`` and can be overridden with the ``DATABASE_URL`` environment variable (shared with ``sql_alchemy.py``, so the ORM and the API always point at the same database).
+   + ``bal_stdlib.py``: The B-UML Action Language standard-library helpers plus the association-class link helpers, shared by the routers.
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
-   + ``database.db``: A SqlLite database file.
+   + ``requirements.txt``: The dependencies of the generated application.
+
+Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
 
 
 .. image:: ../img/backend_generator_schema.png

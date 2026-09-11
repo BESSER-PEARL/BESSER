@@ -831,11 +831,32 @@ class GuiSerializationMixin:
             {
                 "entity": getattr(domain, "name", None),
                 "endpoint": endpoint,
+                "row_key_fields": self._row_key_fields(domain),
                 "label_field": label_field_value,
                 "data_field": data_field_value,
                 "filter": str(data_filter) if data_filter else None,
             }
         )
+
+    @staticmethod
+    def _row_key_fields(domain) -> Optional[List[str]]:
+        """The row fields that address one entity in the generated REST API.
+
+        An association class is keyed by the foreign keys of its two ends
+        (``/<class>/{<end>_id}/{<end>_id}/``, ends in name order — the same
+        order the backend generator uses); any other class by its declared
+        ``is_id`` attribute, falling back to the surrogate ``id``.
+        """
+        if domain is None:
+            return None
+        if isinstance(domain, AssociationClass):
+            ends = sorted(domain.association.ends, key=lambda end: end.name)
+            return [f"{end.name}_id" for end in ends]
+        attributes = list(domain.all_attributes()) if hasattr(domain, "all_attributes") else list(
+            getattr(domain, "attributes", None) or []
+        )
+        id_attr = next((attr.name for attr in sort_by_timestamp(attributes) if getattr(attr, "is_id", False)), None)
+        return [id_attr or "id"]
 
     def _serialize_chart_series(self, series_list) -> Optional[List[Dict[str, Any]]]:
         """Serialize chart series with their data bindings."""
@@ -1229,14 +1250,27 @@ class GuiSerializationMixin:
     def _select_display_field(attributes: List[Any]) -> str:
         """Pick the attribute shown for a related record in lookup selects.
 
-        Preference order: an attribute literally named ``name``, then the first
-        string attribute that is not the id, then the first non-id attribute,
-        then the first attribute.
+        The label has to let someone tell two records apart, so an attribute the
+        model marks as a business identifier wins, and an ``email`` outranks a
+        ``name``: two people called Jane are indistinguishable in a dropdown,
+        two email addresses are not.
+
+        Preference order: an attribute marked ``is_external_id``, then one named
+        ``email``, then one named ``name``, then the first string attribute that
+        is not the id, then the first non-id attribute, then the first attribute.
         """
         if not attributes:
             return ""
-        if any(attr.name == "name" for attr in attributes):
-            return "name"
+        external_id = next(
+            (attr for attr in attributes
+             if getattr(attr, "is_external_id", False) and not getattr(attr, "is_id", False)),
+            None,
+        )
+        if external_id is not None:
+            return external_id.name
+        for preferred in ("email", "name"):
+            if any(attr.name == preferred for attr in attributes):
+                return preferred
         string_attr = next(
             (attr for attr in attributes
              if not getattr(attr, "is_id", False) and attr.name != "id"

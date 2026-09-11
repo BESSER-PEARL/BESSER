@@ -23,9 +23,11 @@ class BackendGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
         docker_image (bool, optional): Flag to indicate if Docker image generation is required. Defaults to False.
         docker_config_path (str, optional): The path to the docker configuration file to auto upload the image. Defaults to None.
+        port (int, optional): Port embedded in the generated ``uvicorn.run`` call. Takes precedence over the
+                                docker configuration's ``docker_port``. Defaults to None (docker config, else 8000).
     """
 
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None):
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -36,6 +38,7 @@ class BackendGenerator(GeneratorInterface):
         self.nested_creations = nested_creations
         self.docker_image = docker_image
         self.docker_config_path = docker_config_path
+        self.port = port
         self.config = self.load_config()
 
     def load_config(self):
@@ -80,7 +83,8 @@ class BackendGenerator(GeneratorInterface):
             os.makedirs(backend_folder_path, exist_ok=True)
             print(f"Backend folder created at {backend_folder_path}")
 
-        docker_port = self.config["docker_port"] if self.config else 8000  # Use default port if config not provided
+        # An explicitly requested port wins over the docker configuration; 8000 is the fallback.
+        docker_port = self.port or (self.config["docker_port"] if self.config else 8000)
 
         # requirements.txt is shared boilerplate with the standalone REST API
         # generator; reuse it instead of duplicating the dependency list here.

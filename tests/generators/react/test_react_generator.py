@@ -3,10 +3,11 @@ import os
 import pytest
 from besser.BUML.metamodel.structural import (
     AssociationClass, Class, DomainModel, Property, StringType, IntegerType, FloatType,
-    BinaryAssociation, Multiplicity
+    BinaryAssociation, Multiplicity, Enumeration, EnumerationLiteral, BooleanType
 )
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text, DataBinding
 from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, Table
+import besser.generators.react
 from besser.generators.react import ReactGenerator
 
 
@@ -466,3 +467,134 @@ def test_table_component_is_model_independent(assoc_class_models, plain_nm_model
         if page_file.endswith(".tsx"):
             with open(os.path.join(plain_pages_dir, page_file), "r", encoding="utf-8") as f:
                 assert "association_class" not in f.read()
+
+
+# ---------------------------------------------------------------------------
+# Row keys: how the generated table addresses one row in the REST API
+# ---------------------------------------------------------------------------
+
+def _row_key_fields_by_entity(generator):
+    """Map each table binding's entity to its serialized row_key_fields."""
+    payload = json.loads(generator._build_generation_context()["components_json"])
+    found = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "row_key_fields" in node and "entity" in node:
+                found[node["entity"]] = node["row_key_fields"]
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return found
+
+
+def test_data_binding_row_key_fields(assoc_class_models):
+    """A table addresses rows by the declared primary key, and an association
+    class by both foreign keys in the backend's route order - never by
+    guessing the first column of the row."""
+    domain_model, _ = assoc_class_models
+    classes = {cls.name: cls for cls in domain_model.get_classes()}
+    tables = {
+        Table(name="BookingTable", title="Bookings", action_buttons=True,
+              data_binding=DataBinding(name="booking_binding", domain_concept=classes["Booking"])),
+        Table(name="RoomTable", title="Rooms", action_buttons=True,
+              data_binding=DataBinding(name="room_binding", domain_concept=classes["Room"])),
+        Table(name="ReservedRoomTable", title="Links", action_buttons=True,
+              data_binding=DataBinding(name="link_binding", domain_concept=classes["ReservedRoom"])),
+    }
+    screen = Screen(name="Admin", description="Admin screen", view_elements=tables, is_main_page=True)
+    gui_model = GUIModel(
+        name="BookingApp", package="com.test.booking", versionCode="1", versionName="1.0",
+        modules={Module(name="AdminModule", screens={screen})}, description="Booking GUI",
+    )
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+
+    assert _row_key_fields_by_entity(generator) == {
+        "Booking": ["id"],                          # surrogate key
+        "Room": ["number"],                         # declared is_id attribute
+        "ReservedRoom": ["bookings_id", "rooms_id"],  # /reservedroom/{bookings_id}/{rooms_id}/
+    }
+
+
+# ---------------------------------------------------------------------------
+# Attribute defaults: preselected in the create form
+# ---------------------------------------------------------------------------
+
+def test_form_columns_carry_attribute_defaults_and_the_form_preselects_them(tmp_path):
+    """An enumeration attribute with a model default (booking_status =
+    pending_payment) must reach the form column as defaultValue, and the
+    generated table must initialize a new record with it - an empty "" was
+    posted before, which the backend rejects for an enumeration."""
+    status = Enumeration(name="BookingStatus", literals={
+        EnumerationLiteral(name="pending_payment"), EnumerationLiteral(name="confirmed"),
+    })
+    booking = Class(name="Booking", attributes={
+        Property(name="reference", type=StringType),
+        Property(name="booking_status", type=status, default_value="pending_payment"),
+        Property(name="paid", type=BooleanType, default_value=False),
+    })
+    domain_model = DomainModel(name="DefaultsModel", types={booking, status})
+    table = Table(name="BookingTable", title="Bookings", action_buttons=True,
+                  data_binding=DataBinding(name="booking_binding", domain_concept=booking))
+    screen = Screen(name="Bookings", description="Bookings", view_elements={table}, is_main_page=True)
+    gui_model = GUIModel(name="DefaultsApp", package="com.test.defaults", versionCode="1", versionName="1.0",
+                         modules={Module(name="M", screens={screen})}, description="Defaults GUI")
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model, output_dir=str(tmp_path))
+
+    columns = {col["field"]: col for col in _form_columns(generator)}
+    assert columns["booking_status"]["type"] == "enum"
+    assert columns["booking_status"]["defaultValue"] == "pending_payment"
+    assert columns["paid"]["defaultValue"] is False
+
+    generator.generate()
+    with open(os.path.join(str(tmp_path), "src", "components", "table", "TableComponent.tsx"), encoding="utf-8") as f:
+        component = f.read()
+    assert "defaultValue: (col as any).defaultValue ?? (col as any).default_value" in component
+    assert "Preselect the model's default" in component
+    # An enum left unselected is omitted from the payload instead of sent as ""
+    assert "col.type === 'enum' && (value === undefined || value === null || value === '')" in component
+
+
+def test_lookup_options_identify_a_record_rather_than_describe_it():
+    """A dropdown label has to tell two records apart. A business identifier wins,
+    and an email beats a name: two guests called Jane look identical in a select."""
+    from besser.generators.react.serialization import GuiSerializationMixin
+
+    def prop(name, type_=StringType, **kwargs):
+        return Property(name=name, type=type_, **kwargs)
+
+    person = [prop("id", IntegerType, is_id=True), prop("name"), prop("email"), prop("phone_number")]
+    assert GuiSerializationMixin._select_display_field(person) == "email"
+
+    # An attribute the model marks as the business key outranks both.
+    tagged = [prop("id", IntegerType, is_id=True), prop("name"), prop("email"),
+              prop("passport", is_external_id=True)]
+    assert GuiSerializationMixin._select_display_field(tagged) == "passport"
+
+    # Without an email, a name is still the friendliest label available.
+    room = [prop("number", IntegerType, is_id=True), prop("name"), prop("description")]
+    assert GuiSerializationMixin._select_display_field(room) == "name"
+
+    # With neither, fall back to the first non-id string attribute.
+    plain = [prop("number", IntegerType, is_id=True), prop("description")]
+    assert GuiSerializationMixin._select_display_field(plain) == "description"
+
+
+def test_a_method_that_declines_is_not_reported_as_a_success():
+    """A method that guards itself reports a refusal by returning false. Telling
+    the user the operation completed successfully says the opposite of what
+    happened, so the confirmation is withheld and the popup names the outcome."""
+    component = os.path.join(
+        os.path.dirname(besser.generators.react.__file__),
+        "templates", "src", "components", "MethodButton.tsx.j2",
+    )
+    with open(component, encoding="utf-8") as f:
+        code = f.read()
+
+    assert "const wasDeclined = /^false$/i.test(String(formattedResult).trim());" in code
+    assert "if (!wasDeclined) {" in code
+    assert 'declined ? "Not applied" : "Method Result"' in code

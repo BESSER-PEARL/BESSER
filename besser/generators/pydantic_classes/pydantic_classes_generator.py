@@ -85,7 +85,11 @@ class PydanticGenerator(GeneratorInterface):
             assoc_link_meta.append({
                 "link_class": link_class,
                 "attributes": [
-                    {"name": attr.name, "type_name": attr.type.name}
+                    {
+                        "name": attr.name,
+                        "type_name": attr.type.name,
+                        "optional": attr.is_optional,
+                    }
                     for attr in sort_by_timestamp(cls.attributes)
                 ],
             })

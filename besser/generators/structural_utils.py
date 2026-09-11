@@ -42,6 +42,32 @@ def get_foreign_keys(model: DomainModel) -> Dict[str, List[str]]:
     return fkeys
 
 
+# Model type name -> python type used for primary keys and the foreign keys
+# that reference them. Anything not listed keeps the historical integer
+# surrogate. Shared by the SQLAlchemy and backend generators so a ForeignKey
+# annotation and its path parameter can never disagree about the PK's type.
+_PK_PY_TYPES = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float"}
+
+
+def get_pk_py_types(model: DomainModel) -> Dict[str, str]:
+    """Class name -> python type of its primary key (default 'int').
+
+    The PK selection mirrors the SQLAlchemy generator: the ``is_id``
+    attribute, else one literally named ``id``. Classes with neither get the
+    integer surrogate and are simply absent from the mapping (callers use
+    ``.get(name, 'int')``).
+    """
+    pk_types: Dict[str, str] = {}
+    for cls in model.get_classes():
+        id_attr = next((a for a in cls.attributes if a.is_id), None)
+        if id_attr is None:
+            id_attr = next((a for a in cls.attributes if a.name == "id"), None)
+        if id_attr is not None:
+            type_name = (getattr(id_attr.type, "name", "") or "").lower()
+            pk_types[cls.name] = _PK_PY_TYPES.get(type_name, "int")
+    return pk_types
+
+
 def normalize_method_code(code, method_name="method"):
     """Normalize user-written method code so it can be embedded in generated files.
 

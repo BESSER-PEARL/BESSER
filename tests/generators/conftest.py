@@ -253,3 +253,68 @@ def library_model_with_inheritance():
         generalizations={gen_History_BookType, gen_Horror_BookType, gen_Science_BookType},
     )
     return model
+
+
+@pytest.fixture
+def custom_role_name_model():
+    """Library-Book where the Book end is named 'ownedBooks' and the Library end 'owner'."""
+    library = Class(name="Library")
+    book = Class(name="Book")
+    library.attributes = {Property(name="name", type=StringType)}
+    book.attributes = {Property(name="title", type=StringType)}
+    assoc = BinaryAssociation(
+        name="Owns",
+        ends={
+            Property(name="ownedBooks", type=book, multiplicity=Multiplicity(0, 9999), is_navigable=True),
+            Property(name="owner", type=library, multiplicity=Multiplicity(1, 1), is_navigable=True),
+        },
+    )
+    return DomainModel(name="Custom_Role_Model", types={library, book}, associations={assoc}, generalizations={})
+
+
+@pytest.fixture
+def non_navigable_assoc_model():
+    """Library-Book where the back-reference end (library) is not navigable."""
+    library = Class(name="Library")
+    book = Class(name="Book")
+    library.attributes = {Property(name="name", type=StringType)}
+    book.attributes = {Property(name="title", type=StringType)}
+    assoc = BinaryAssociation(
+        name="Has",
+        ends={
+            Property(name="books", type=book, multiplicity=Multiplicity(0, 9999), is_navigable=True),
+            Property(name="library", type=library, multiplicity=Multiplicity(1, 1), is_navigable=False),
+        },
+    )
+    return DomainModel(name="NonNav_Model", types={library, book}, associations={assoc}, generalizations={})
+
+
+@pytest.fixture
+def self_assoc_non_navigable_model():
+    """Employee self-association where the 'reports' end is not navigable."""
+    employee = Class(name="Employee")
+    employee.attributes = {Property(name="name", type=StringType)}
+    assoc = BinaryAssociation(
+        name="Manages",
+        ends={
+            Property(name="manager", type=employee, multiplicity=Multiplicity(0, 1), is_navigable=True),
+            Property(name="reports", type=employee, multiplicity=Multiplicity(0, 9999), is_navigable=False),
+        },
+    )
+    return DomainModel(name="SelfAssoc_NonNav_Model", types={employee}, associations={assoc}, generalizations={})
+
+
+@pytest.fixture
+def no_attrib_list_assoc_model():
+    """Container with no attributes but a one-to-many List association to Item."""
+    container = Class(name="Container")
+    item = Class(name="Item")
+    item.attributes = {Property(name="label", type=StringType)}
+    assoc = BinaryAssociation(
+        name="Contains",
+        ends={
+            Property(name="items", type=item, multiplicity=Multiplicity(0, 9999), is_navigable=True),
+            Property(name="container", type=container, multiplicity=Multiplicity(1, 1), is_navigable=True),
+        },
+    )
+    return DomainModel(name="NoAttrib_Model", types={container, item}, associations={assoc}, generalizations={})

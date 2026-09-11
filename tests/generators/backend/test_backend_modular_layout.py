@@ -24,6 +24,9 @@ import os
 
 import pytest
 
+from besser.BUML.metamodel.structural import (
+    Class, DomainModel, Generalization, IntegerType, Property, StringType,
+)
 from besser.generators.backend import BackendGenerator
 from besser.generators.backend.api_generator import cross_router_calls
 
@@ -99,6 +102,31 @@ def test_generated_files_parse_as_valid_python(model_fixture, tmp_path, request)
             ast.parse(source, filename=path)
         except SyntaxError as exc:  # pragma: no cover - failure path
             pytest.fail(f"{path} failed to parse: {exc}")
+
+
+def test_search_endpoint_covers_inherited_attributes(tmp_path):
+    """A subclass without own attributes keeps its /search/ route, built from
+    the attributes it inherits (joined-table inheritance exposes the parent's
+    columns on the subclass). Losing the route would make GET /guest/search/
+    fall through to /guest/{id}/ as a confusing 422."""
+    person = Class(name="Person", attributes={
+        Property(name="id", type=IntegerType, is_id=True),
+        Property(name="name", type=StringType),
+    })
+    guest = Class(name="Guest", attributes=set())
+    model = DomainModel(
+        name="SearchModel",
+        types={person, guest},
+        generalizations={Generalization(general=person, specific=guest)},
+    )
+    output_dir = str(tmp_path / "output")
+    BackendGenerator(model=model, output_dir=output_dir).generate()
+
+    with open(os.path.join(output_dir, "routers", "guest.py"), encoding="utf-8") as f:
+        guest_code = f.read()
+    assert '@router.get("/guest/search/"' in guest_code
+    assert "name: str = None" in guest_code
+    assert 'Guest.name.ilike' in guest_code
 
 
 # ---------------------------------------------------------------------------

@@ -1,16 +1,16 @@
 """End-to-end tests for the per-file BackendGenerator on association classes and custom PKs.
 
-Mirrors ``tests/generators/rest_api/test_rest_api_assoc_class.py`` (which exercises the
-monolithic ``RESTAPIGenerator``) but against our modular ``BackendGenerator``
-(``main_api.py`` + ``routers/<class>.py`` + ``database.py`` + ``bal_stdlib.py``). The goal
-is output *parity*: the per-file generator must satisfy the same association-class contract
-(link create with ``{target, <attrs>}``, GET link ids + detailed links, PUT reconciliation,
-the relationship add/get/remove endpoints, association-class CRUD through both FKs) while
-the plain N:M path keeps using its secondary table.
+Successor of ``tests/generators/rest_api/test_rest_api_assoc_class.py``, which exercised
+the retired monolithic ``RESTAPIGenerator`` backend template against the same Trip/Seat
+model. The modular ``BackendGenerator`` (``main_api.py`` + ``routers/<class>.py`` +
+``database.py`` + ``bal_stdlib.py``) must satisfy the identical association-class contract:
+link create with ``{target, <attrs>}``, GET link ids + detailed links, PUT reconciliation,
+the relationship add/get/remove endpoints, association-class CRUD through both FKs — while
+the plain N:M path keeps using its secondary table. Error responses must carry the
+endpoint's actual message in ``detail`` (the generated frontend reads that field), and the
+primary key — whatever its name — must be immutable through PUT.
 
-The generated backend is loaded with ``importlib`` and driven through an ASGI transport,
-same as the rest_api test. The Trip/Seat model is imported from that test so both
-generators are checked against the *identical* model.
+The generated backend is loaded with ``importlib`` and driven through an ASGI transport.
 """
 
 import asyncio
@@ -175,7 +175,21 @@ def test_create_with_association_class_links(app):
 def test_create_rejects_unknown_link_target(app):
     response = create_trip(app, 2, seats=[{"target": 999, "price": 1.0}])
     assert response.status_code == 404
-    assert "Seat with ID 999" in response.text
+    # `detail` must carry the endpoint's actual message — the generated
+    # frontend reads response.data.detail for its error banner, so a generic
+    # "HTTP 404 error occurred" here is a regression even when `message` is
+    # correct (checking response.text alone would not catch it).
+    assert response.json()["detail"] == "Seat with ID 999 not found"
+
+
+def test_error_detail_carries_the_actual_message(app):
+    """Every 4xx must expose the endpoint's real message in `detail`."""
+    response = request(app, "GET", "/seat/2101/")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Seat not found"
+    response = request(app, "DELETE", "/trip/9999/")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Trip not found"
 
 
 def test_entity_with_non_id_primary_key(app):
@@ -184,6 +198,33 @@ def test_entity_with_non_id_primary_key(app):
     assert response.status_code == 200, response.text
     assert response.json()["seat"]["label"] == "aisle"
     assert request(app, "GET", "/seat/2100/").status_code == 404
+
+
+def test_put_never_rewrites_the_primary_key(app):
+    """PUT updates attributes but keeps the PK — whatever its name.
+
+    Rewriting Seat.code through PUT would orphan every Reservation row whose
+    FK points at the old value; the PK guard must use the class's real
+    primary key, not a hardcoded 'id'.
+    """
+    assert create_seat(app, 71, label="window").status_code == 200
+    assert create_trip(app, 17, seats=[{"target": 71, "price": 10.0}]).status_code == 200
+
+    response = request(app, "PUT", "/seat/71/", json={"code": 7100, "label": "renamed"})
+    assert response.status_code == 200, response.text
+    # The attribute update applied, the PK did not move
+    assert request(app, "GET", "/seat/71/").json()["seat"]["label"] == "renamed"
+    assert request(app, "GET", "/seat/7100/").status_code == 404
+    # ...and the association-class row still points at the seat
+    assert request(app, "GET", "/reservation/71/17/").json()["price"] == 10.0
+
+    # Same guarantee for a PK literally named `id` (Trip)
+    response = request(app, "PUT", "/trip/17/",
+                       json={"id": 888, "reference": "kept",
+                             "seats": [{"target": 71, "price": 10.0}], "tags": []})
+    assert response.status_code == 200, response.text
+    assert request(app, "GET", "/trip/17/").json()["seats_ids"] == [71]
+    assert request(app, "GET", "/trip/888/").status_code == 404
 
 
 def test_get_returns_link_ids_and_detailed_links(app):
@@ -261,3 +302,51 @@ def test_plain_many_to_many_still_works(app):
     listed = request(app, "GET", "/trip/8/tags/")
     assert listed.status_code == 200, listed.text
     assert listed.json()["tags_count"] == 2
+
+
+def test_delete_entity_cascades_its_association_class_links(app):
+    """Deleting an entity deletes the association-class rows that link it.
+
+    The link's FK is part of its composite primary key, so without the
+    delete-orphan cascade SQLAlchemy tried to null it out and the request
+    crashed; the other end of the link must survive untouched.
+    """
+    assert create_seat(app, 91, label="cascade").status_code == 200
+    assert create_trip(app, 19, seats=[{"target": 91, "price": 15.0}]).status_code == 200
+    assert request(app, "GET", "/reservation/91/19/").status_code == 200
+
+    response = request(app, "DELETE", "/trip/19/")
+    assert response.status_code == 200, response.text
+    # The response is the deleted row's columns (never the live ORM object,
+    # whose loaded back-references would recurse in the JSON encoder)
+    assert response.json()["id"] == 19
+    assert "seats" not in response.json()
+
+    assert request(app, "GET", "/trip/19/").status_code == 404
+    assert request(app, "GET", "/reservation/91/19/").status_code == 404
+    assert request(app, "GET", "/seat/91/").status_code == 200
+
+
+def test_delete_other_end_cascades_links_too(app):
+    """The cascade applies from both ends of the association class."""
+    assert create_seat(app, 92).status_code == 200
+    assert create_trip(app, 20, seats=[{"target": 92, "price": 1.0}]).status_code == 200
+
+    response = request(app, "DELETE", "/seat/92/")
+    assert response.status_code == 200, response.text
+    assert response.json()["code"] == 92
+    assert request(app, "GET", "/reservation/92/20/").status_code == 404
+    assert request(app, "GET", "/trip/20/").json()["seats_ids"] == []
+
+
+def test_delete_association_class_row_returns_its_columns(app):
+    assert create_seat(app, 93).status_code == 200
+    assert create_trip(app, 21, seats=[{"target": 93, "price": 7.5}]).status_code == 200
+
+    response = request(app, "DELETE", "/reservation/93/21/")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"seats_id": 93, "trips_id": 21, "price": 7.5}
+    assert request(app, "GET", "/reservation/93/21/").status_code == 404
+    # Both linked entities are untouched
+    assert request(app, "GET", "/seat/93/").status_code == 200
+    assert request(app, "GET", "/trip/21/").status_code == 200

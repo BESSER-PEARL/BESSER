@@ -81,22 +81,27 @@ class RESTAPIGenerator(GeneratorInterface):
             return str(name).strip()
 
         if self.backend:
-            # The full FastAPI backend is produced by the modular per-file
-            # BackendGenerator (a slim main_api.py + routers/<class>.py +
-            # database.py + bal_stdlib.py), which is the single source of truth
-            # for backend generation. It reaches full parity with — and has
-            # replaced — the retired monolithic main_api.py template, so the
-            # association-class / OCL / method-normalization logic lives in one
-            # place and can never drift between two generators again. Imported
-            # lazily to avoid a circular import (BackendGenerator reuses
-            # RESTAPIGenerator.generate_requirements()).
-            from besser.generators.backend import BackendGenerator
-            BackendGenerator(
+            # The FastAPI application layer is produced by the modular per-file
+            # renderer shared with BackendGenerator (a slim main_api.py +
+            # routers/<class>.py + database.py + bal_stdlib.py) — the single
+            # source of truth that replaced the retired monolithic main_api.py
+            # template, so the association-class / OCL / method-normalization
+            # logic can never drift between two generators again. Only the API
+            # layer is rendered here: sql_alchemy.py and pydantic_classes.py
+            # remain the caller's responsibility (as they always were for
+            # backend=True), so this generator never overwrites files it does
+            # not own. BackendGenerator is the orchestrator that adds them.
+            # Imported lazily to avoid a circular import (BackendGenerator
+            # reuses RESTAPIGenerator.generate_requirements()).
+            from besser.generators.backend.api_generator import generate_modular_api
+            api_output_dir = os.path.dirname(self.build_generation_path(file_name="main_api.py"))
+            generate_modular_api(
                 model=self.model,
                 http_methods=self.http_methods,
                 nested_creations=self.nested_creations,
-                output_dir=self.output_dir,
-            ).generate()
+                port=self.port,
+                output_dir=api_output_dir,
+            )
 
         else:
             pydantic_model = PydanticGenerator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)

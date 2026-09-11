@@ -6,9 +6,30 @@ This used to be a single ~1,600-line ``main_api.py`` produced by
 ``RESTAPIGenerator`` (backend=True mode). That monolith is now split into a
 slim ``main_api.py`` (app setup + router includes, still importable as
 ``main_api:app`` for uvicorn/Docker/deployment tooling that expects that
-filename) plus one router module per B-UML class. The split is purely
-structural: every endpoint, validation rule and code path is unchanged from
-the previous monolith, just relocated.
+filename) plus one router module per B-UML class.
+
+The split is structural, but a few deliberate behavior fixes ride along
+(each also noted where it is implemented):
+
+- ``/search/`` endpoints now actually expose their filter parameters (the
+  old type check never matched converter-produced attributes) and cover
+  inherited attributes; a class hierarchy with no searchable attribute gets
+  no ``/search/`` route at all.
+- Path parameters and FK payload fields use the declared type of the
+  target's primary key instead of a hardcoded ``int``.
+- A modeled method without an implementation returns ``501`` instead of a
+  fake ``{"result": null}`` success, and an ``HTTPException`` raised inside
+  a method body keeps its status instead of being swallowed into a 500.
+- A surrogate ``id`` (named ``id`` but not declared ``is_id``) is
+  server-owned: excluded from create/update payload reads. The primary key
+  — whatever its name — is immutable through PUT.
+- ``/health`` actually executes ``SELECT 1`` instead of hardcoding
+  ``"connected"``.
+
+Everything else — the association-class link contract, OCL enforcement,
+real-PK routing, method-code normalization and the error-response shape
+(``detail`` carries the endpoint's actual message) — is unchanged from the
+monolith, just relocated.
 """
 
 import os
@@ -20,7 +41,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators.action_language.RESTGenerator import bal_to_rest
-from besser.generators.structural_utils import get_foreign_keys, normalize_method_code
+from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types, normalize_method_code
 from besser.utilities.utils import sort_by_timestamp
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -181,16 +202,9 @@ def generate_modular_api(
     fkeys: Dict[str, List[str]] = get_foreign_keys(model)
     # Class name -> python type of its primary key (default 'int'). Path
     # params and FK payload fields must use the model's declared id type —
-    # a `guest_id: int` param for a String PK 404s on every real id.
-    _pk_map = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float"}
-    pk_types: Dict[str, str] = {}
-    for cls in classes:
-        id_attr = next((a for a in cls.attributes if a.is_id), None)
-        if id_attr is None:
-            id_attr = next((a for a in cls.attributes if a.name == "id"), None)
-        if id_attr is not None:
-            type_name = (getattr(id_attr.type, "name", "") or "").lower()
-            pk_types[cls.name] = _pk_map.get(type_name, "int")
+    # a `guest_id: int` param for a String PK 404s on every real id. Shared
+    # with the SQLAlchemy generator so FK columns and path params agree.
+    pk_types: Dict[str, str] = get_pk_py_types(model)
 
     # Association-class support: which classes ARE association classes, and
     # which plain associations are materialized by one. Shared shape with the

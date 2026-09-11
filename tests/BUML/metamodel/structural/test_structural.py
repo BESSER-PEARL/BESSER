@@ -925,3 +925,34 @@ def test_class_rename_avoids_role_name_collision():
     # ``leaders`` does not collide with ``leader``; the rename should apply.
     assert members_end2.name == "leaders"
     assert leader_end2.name == "leader"
+
+
+def test_method_sharing_a_name_with_an_attribute_is_reported():
+    """A method cannot share its name with a feature of the same class.
+
+    Generated code reaches both through that one name, so one wins and the other
+    becomes unreachable - a body reading self.check_out - self.check_in then
+    subtracts two methods instead of two dates. The diagram is where that has to
+    be caught.
+    """
+    booking = Class(
+        name="Booking",
+        attributes={Property(name="check_in", type=StringType)},
+        methods={Method(name="check_in")},
+    )
+    domain_model = DomainModel(name="TestModel", types={booking})
+
+    result = domain_model.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("check_in" in e and "Booking" in e for e in result["errors"])
+
+
+def test_a_method_named_differently_from_every_attribute_is_accepted():
+    booking = Class(
+        name="Booking",
+        attributes={Property(name="check_in", type=StringType)},
+        methods={Method(name="register_arrival")},
+    )
+    domain_model = DomainModel(name="TestModel", types={booking})
+
+    assert domain_model.validate(raise_exception=False)["success"] is True

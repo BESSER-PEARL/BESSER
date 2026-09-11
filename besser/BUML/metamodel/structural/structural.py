@@ -2406,6 +2406,7 @@ class DomainModel(Model):
         self._validate_constraints(errors)
         self._validate_circular_inheritance(errors)
         self._validate_attribute_shadowing(errors)
+        self._validate_member_name_collisions(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2516,6 +2517,24 @@ class DomainModel(Model):
                     errors.append(
                         f"Class '{cls.name}' defines attribute '{attr.name}' "
                         f"which already exists in a parent class."
+                    )
+
+    def _validate_member_name_collisions(self, errors: list[str]):
+        """Validate that a method does not share its name with a feature of the class.
+
+        Generated code reaches both through the same name, so one of them wins
+        and the other becomes unreachable: a body reading ``self.check_out -
+        self.check_in`` subtracts two methods instead of two dates.
+        """
+        for cls in self.get_classes():
+            feature_names = {attr.name for attr in cls.all_attributes()}
+            feature_names |= {end.name for end in cls.association_ends()}
+            for method in cls.methods:
+                if method.name in feature_names:
+                    errors.append(
+                        f"Class '{cls.name}' defines method '{method.name}' with the name "
+                        f"of one of its attributes or association ends. A generated object "
+                        f"can only carry one of them under that name."
                     )
 
     def __repr__(self):

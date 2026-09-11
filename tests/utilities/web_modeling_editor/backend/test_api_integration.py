@@ -1695,3 +1695,31 @@ class TestFeedbackEndpoint:
         """Missing required fields returns 422."""
         response = client.post("/besser_api/feedback", json={})
         assert response.status_code == 422
+
+
+def test_validation_does_not_return_internal_error_text(monkeypatch):
+    """A bug in conversion must not describe our internals to the caller.
+
+    The validation errors a diagram earns are meant to be read by the person who
+    drew it. An unexpected exception is a different thing: its message carries a
+    repr, a key, a path, and returning it verbatim hands that to anyone who can
+    post a diagram.
+    """
+    from besser.utilities.web_modeling_editor.backend.routers import validation_router
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("/srv/besser/internal.py line 42: secret_token='abc123'")
+
+    monkeypatch.setattr(validation_router, "process_class_diagram", explode)
+
+    response = client.post("/besser_api/validate-diagram", json={
+        "title": "Diagram",
+        "model": {"type": "ClassDiagram", "elements": {}, "relationships": {}},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["isValid"] is False
+    assert body["errors"] == ["An unexpected error occurred during validation."]
+    assert "secret_token" not in response.text
+    assert "internal.py" not in response.text

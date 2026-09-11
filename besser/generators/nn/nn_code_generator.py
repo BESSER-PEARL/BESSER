@@ -5,17 +5,16 @@ networks based on the B-UML model.
 """
 
 import os
-from pyexpat import model
 import re
 from collections.abc import Callable
 
+from jinja2 import Environment, FileSystemLoader
+
 from besser.BUML.metamodel.nn import NN
+from besser.BUML.metamodel.nn.neural_network import GRULayer, LSTMLayer, SimpleRNNLayer
 from besser.generators import GeneratorInterface
 from besser.generators.nn.pytorch.utils_pytorch import (
     SetupLayerSyntax as SetupLayerTorch,
-)
-from besser.BUML.metamodel.nn.neural_network import (
-    GRULayer, LSTMLayer, SimpleRNNLayer
 )
 from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_name
 from besser.generators.nn.tf.utils_tf import SetupLayerSyntax as SetupLayerTF
@@ -25,7 +24,6 @@ from besser.generators.nn.utils_nn import (
     handle_tensorop,
     renumber_tensorop_variables,
 )
-from jinja2 import Environment, FileSystemLoader
 
 
 class NNCodeGenerator(GeneratorInterface):
@@ -502,10 +500,7 @@ class NNCodeGenerator(GeneratorInterface):
                 continue
             # Detect exit via new block (safety fallback)
             elif inside_forward and (
-                line.startswith('    def ')
-                or line.startswith('def ')
-                or line.startswith('class ')
-                or line.startswith('if __name__')
+                line.startswith(('    def ', 'def ', 'class ', 'if __name__'))
             ):
                 inside_forward = False
 

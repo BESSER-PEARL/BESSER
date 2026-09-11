@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from besser.BUML.metamodel.nn import NN
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     nn_model_to_json,

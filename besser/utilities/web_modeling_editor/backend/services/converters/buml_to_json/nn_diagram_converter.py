@@ -832,7 +832,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
         if isinstance(node, (ast.List, ast.Tuple)):
             for e in node.elts:
                 if isinstance(e, ast.Starred):
-                    raise ValueError(
+                    raise TypeError(
                         "Iterable unpacking (*expr) is not supported "
                         "in NN BUML literals."
                     )
@@ -860,7 +860,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
             # class — reject every attribute-based call (``foo.bar(…)``)
             # except in the statement-level ``obj.add_*`` dispatcher below.
             if not isinstance(node.func, ast.Name):
-                raise ValueError(
+                raise TypeError(
                     "Only calls to whitelisted NN metamodel classes are "
                     "allowed in expressions; got "
                     f"{ast.dump(node.func, annotate_fields=False)!r}"
@@ -903,7 +903,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
             # effects).
             for target in stmt.targets:
                 if not isinstance(target, ast.Name):
-                    raise ValueError(
+                    raise TypeError(
                         "Only simple-name assignment targets are allowed "
                         "in NN BUML."
                     )

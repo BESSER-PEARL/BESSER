@@ -5,7 +5,6 @@ This module defines the neural network metamodel.
 from __future__ import annotations
 
 import keyword
-from pyexpat import errors
 import re
 from typing import Self
 
@@ -4148,9 +4147,11 @@ class NN(BehaviorImplementation):
 
         # Propagate NN's input_var into first module
         first = self.modules[0]
-        if self.input_var is not None:
-            if hasattr(first, 'input_var') and first.input_var is None:
-                first.input_var = self.input_var
+        if (
+            self.input_var is not None
+            and hasattr(first, 'input_var') and first.input_var is None
+        ):
+            first.input_var = self.input_var
 
         # Propagate NN's return_vars into last module
         last = self.modules[-1]
@@ -4244,10 +4245,7 @@ class NN(BehaviorImplementation):
             return True
 
         # Split tensorop returns multiple outputs
-        if isinstance(module, TensorOp) and module.tns_type == 'split':
-            return True
-
-        return False
+        return isinstance(module, TensorOp) and module.tns_type == 'split'
 
     def _get_previous_module(self, current_module):
         """Get the module that appears immediately before current_module in self.modules."""
@@ -4376,14 +4374,16 @@ class NN(BehaviorImplementation):
             if isinstance(md, Layer):
                 # Check if previous module returns multiple outputs
                 prev_module = self._get_previous_module(md)
-                if self._is_multi_output_module(prev_module):
+                if (
+                    self._is_multi_output_module(prev_module)
+                    and md.input_var is None
+                ):
                     # Layer needs explicit input specification
-                    if md.input_var is None:
-                        errors.append(
-                            f"Layer '{md.name}': input_var is required when "
-                            f"previous module '{prev_module.name}' returns "
-                            f"multiple outputs"
-                        )
+                    errors.append(
+                        f"Layer '{md.name}': input_var is required when "
+                        f"previous module '{prev_module.name}' returns "
+                        f"multiple outputs"
+                    )
 
     def _module_names(self) -> set:
         """Names of every module declared in this NN (layers, 
@@ -4574,7 +4574,7 @@ class NN(BehaviorImplementation):
             if isinstance(value, str):
                 try:
                     return eval(value, {"__builtins__": {}})
-                except Exception:
+                except (ValueError, TypeError, SyntaxError):
                     errors.append(
                         f"{label} {param_name} must be a valid numeric value, "
                         f"got '{value}'."
@@ -4900,12 +4900,14 @@ class NN(BehaviorImplementation):
                             errors.append(
                                 f"{label} Padding values must be >= 0"
                             )
-                if tns.pad_value is not None:
-                    if not isinstance(tns.pad_value, (int, float)):
-                        errors.append(
-                            f"{label} pad_value must be numeric (int or "
-                            f"float), got {type(tns.pad_value).__name__}"
-                        )
+                if (
+                    tns.pad_value is not None
+                    and not isinstance(tns.pad_value, (int, float))
+                ):
+                    errors.append(
+                        f"{label} pad_value must be numeric (int or "
+                        f"float), got {type(tns.pad_value).__name__}"
+                    )
                 if tns.dropout_rate is not None:
                     if not isinstance(tns.dropout_rate, (int, float)):
                         errors.append(

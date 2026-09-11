@@ -6,6 +6,7 @@ import json
 import pathlib
 
 import pytest
+
 from besser.BUML.metamodel.nn import (
     NN,
     Conv2D,

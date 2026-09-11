@@ -3,7 +3,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
-from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types
+from besser.generators.structural_utils import get_foreign_keys, normalize_method_code, get_pk_py_types
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -230,6 +230,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
+        env.globals.update(normalize_code=normalize_method_code)
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(

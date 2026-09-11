@@ -148,6 +148,17 @@ class {{ class.name }}(
         "concrete": True,
     }
     {%- endif %}
+{#- The methods the class declares belong on the class: a body that calls another
+    method of the same object (self.calculate_price()) only resolves if they do.
+    A method named after a column is skipped rather than emitted - defining both
+    would leave the column unreadable, so self.check_out - self.check_in would
+    subtract two methods instead of two dates. #}
+    {%- set column_names = class.all_attributes() | map(attribute='name') | list
+                         + class.association_ends() | map(attribute='name') | list %}
+    {%- for method in class.methods if method.code and method.name not in column_names %}
+
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
+    {%- endfor %}
 {% endfor %}
 
 {#- Association Classes #}

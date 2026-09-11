@@ -518,3 +518,52 @@ def test_optional_single_ended_association_maps_to_a_scalar(tmpdir):
     assert billed.invoice.id == 10
     assert unbilled.invoice is None
     session.close()
+
+
+def test_class_methods_are_emitted_on_the_entity(tmpdir):
+    """A method body that calls another method of the same object only resolves
+    if the methods live on the class, not only inside the endpoints that expose
+    them. A method named after a column is skipped: defining both would leave the
+    column unreadable."""
+    from besser.BUML.metamodel.structural import (
+        Class, DateType, DomainModel, FloatType, IntegerType, Method, Property,
+    )
+
+    booking = Class(
+        name="Booking",
+        attributes={
+            Property(name="id", type=IntegerType, is_id=True),
+            Property(name="price", type=FloatType),
+            Property(name="check_in", type=DateType),
+        },
+        methods={
+            Method(name="total", code="def total(self):\n    return self.price * 2\n"),
+            Method(name="bill", code="def bill(self):\n    return self.total()\n"),
+            # Shares its name with the column above.
+            Method(name="check_in", code="def check_in(self):\n    return True\n"),
+        },
+    )
+    model = DomainModel(name="BookingModel", types={booking})
+
+    output_dir = tmpdir.mkdir("methods")
+    SQLAlchemyGenerator(model=model, output_dir=str(output_dir)).generate(dbms="sqlite")
+    with open(os.path.join(str(output_dir), "sql_alchemy.py"), encoding="utf-8") as f:
+        code = f.read()
+
+    assert "    def total(self):" in code
+    assert "    def bill(self):" in code
+    assert "    def check_in(self):" not in code
+
+    module = _load_generated_module(os.path.join(str(output_dir), "sql_alchemy.py"), "methods_module")
+    engine = create_engine("sqlite:///:memory:")
+    module.Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    session.add(module.Booking(id=1, price=10.0, check_in=datetime.date(2026, 10, 1)))
+    session.commit()
+
+    stored = session.query(module.Booking).one()
+    # The one calling the other is the point of putting them on the class.
+    assert stored.bill() == 20.0
+    # The column kept its name.
+    assert stored.check_in == datetime.date(2026, 10, 1)
+    session.close()

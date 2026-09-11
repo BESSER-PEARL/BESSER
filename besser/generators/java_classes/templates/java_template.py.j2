@@ -1,4 +1,3 @@
-// This is a template example to list the name of the classes
 {% if package_name %}
 package {{ package_name }};
 {% endif %}
@@ -77,15 +76,11 @@ public class {{ class_obj.name }} {{ extends }}{
             {% set class2_name = ns.end2.type.name %}
             {# Generate field for end2 (the other class) if navigable - supports bidirectional associations #}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
-                {% if ns.end1.multiplicity.min != 1 and ns.end2.multiplicity.min == 1 or
-                    ns.end1.multiplicity.min == 1 and ns.end2.multiplicity.min == 1 or
-                    ns.end1.multiplicity.min != 1 and ns.end2.multiplicity.min != 1 %}
     private List<{{ class2_name }}> {{ ns.end2.name }};
-                    {% do assocs.append('List<'+class2_name+'>') %}
-                    {% do assocs.append(ns.end2.name) %}
-                    {% do assocs_card_over_1.append(class2_name) %}
-                    {% do assocs_card_over_1.append(ns.end2.name) %}
-                {% endif %}
+                {% do assocs.append('List<'+class2_name+'>') %}
+                {% do assocs.append(ns.end2.name) %}
+                {% do assocs_card_over_1.append(class2_name) %}
+                {% do assocs_card_over_1.append(ns.end2.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
     private List<{{ class2_name }}> {{ ns.end2.name }};
                 {% do assocs.append('List<'+class2_name+'>') %}
@@ -107,27 +102,16 @@ public class {{ class_obj.name }} {{ extends }}{
     {% endif %}
 {% endfor %}
 
-    public {{ class_obj.name }} (
-{%- for i in range(attribs|length) -%}
-    {%- if i == attribs|length - 1 -%}
-    {{ attribs[i]}}
-    {%- else -%}
-        {%- if i % 2 == 0 -%}
-    {{ attribs[i]}} {% else -%}
-    {{ attribs[i] }}, {% endif -%}
-    {%- endif -%}
-{%- endfor -%}
-{%- if inheritance|length > 1 -%}
-    {%- for i in range(parent_attribs|length) -%}
-        {%- if i == parent_attribs|length - 1 -%}
-    {{ parent_attribs[i]}}
-        {%- else -%}
-            {%- if i % 2 == 0 -%}
-    , {{ parent_attribs[i]}} {% else -%}
-    {{ parent_attribs[i] }}{% endif -%}
-        {%- endif -%}
-    {%- endfor -%}
-{% endif %}) {
+{% set params = [] %}
+{% for i in range(0, attribs|length, 2) %}
+    {% do params.append(attribs[i] + ' ' + attribs[i+1]) %}
+{% endfor %}
+{% if inheritance|length > 1 %}
+    {% for i in range(0, parent_attribs|length, 2) %}
+        {% do params.append(parent_attribs[i] + ' ' + parent_attribs[i+1]) %}
+    {% endfor %}
+{% endif %}
+    public {{ class_obj.name }} ({{ params | join(', ') }}) {
 {% if inheritance|length > 1 %}
         super(
     {%- for i in range(parent_attribs|length) %}
@@ -152,31 +136,19 @@ public class {{ class_obj.name }} {{ extends }}{
     }
 
 {% if assocs_card_over_1 != [] %}
-    public {{ class_obj.name }} (
-{%- for i in range(attribs|length) -%}
-    {%- if i == attribs|length - 1 -%}
-    {{ attribs[i]}}
-    {%- else -%}
-        {%- if i % 2 == 0 -%}
-    {{ attribs[i]}} {% else -%}
-    {{ attribs[i] }}, {% endif -%}
-    {%- endif -%}
-{%- endfor -%}
-{%- if inheritance|length > 1 -%}
-    {%- for i in range(parent_attribs|length) -%}
-        {%- if i == parent_attribs|length - 1 -%}
-    {{ parent_attribs[i]}}
-        {%- else -%}
-            {%- if i % 2 == 0 -%}
-    , {{ parent_attribs[i]}} {% else -%}
-    {{ parent_attribs[i] }}{% endif -%}
-        {%- endif -%}
-    {%- endfor -%}
+{% set params2 = [] %}
+{% for i in range(0, attribs|length, 2) %}
+    {% do params2.append(attribs[i] + ' ' + attribs[i+1]) %}
+{% endfor %}
+{% if inheritance|length > 1 %}
+    {% for i in range(0, parent_attribs|length, 2) %}
+        {% do params2.append(parent_attribs[i] + ' ' + parent_attribs[i+1]) %}
+    {% endfor %}
 {% endif %}
-{%- for i in range(0, assocs_card_over_1|length, 2) -%}
-    {{ ", " if i > 0 or attribs|length > 0 or inheritance|length > 1 else "" }}ArrayList<{{ assocs_card_over_1[i] }}> {{ assocs_card_over_1[i+1] }}
-{%- endfor -%}
-) {
+{% for i in range(0, assocs_card_over_1|length, 2) %}
+    {% do params2.append('List<' + assocs_card_over_1[i] + '> ' + assocs_card_over_1[i+1]) %}
+{% endfor %}
+    public {{ class_obj.name }} ({{ params2 | join(', ') }}) {
 {% if inheritance|length > 1 %}
         super(
     {%- for i in range(parent_attribs|length) %}
@@ -202,25 +174,27 @@ public class {{ class_obj.name }} {{ extends }}{
 {%- endif %}
 
 {% for i in range(0, attribs|length, 2) %}
+{% set fname = attribs[i+1][0]|upper ~ attribs[i+1][1:] %}
 
-    public {{ attribs[i] }} get{{ attribs[i+1].capitalize() }}() {
+    public {{ attribs[i] }} get{{ fname }}() {
         return this.{{ attribs[i+1] }};
     }
 
-    public void set{{ attribs[i+1].capitalize() }}({{ attribs[i] }} {{ attribs[i+1] }}) {
+    public void set{{ fname }}({{ attribs[i] }} {{ attribs[i+1] }}) {
         this.{{ attribs[i+1] }} = {{ attribs[i+1] }};
     }
 {% endfor %}
 {% for i in range(0, assocs|length, 2) %}
+{% set aname = assocs[i+1][0]|upper ~ assocs[i+1][1:] %}
 
     {% if assocs[i][:4] == "List" %}
     {% set element_type = assocs[i][5:-1] %}
-    public {{ assocs[i] }} get{{ assocs[i+1].capitalize() }}() {
+    public {{ assocs[i] }} get{{ aname }}() {
         return this.{{ assocs[i+1] }};
     }
 
     {% if assocs[i+1] in self_assoc_names %}
-    public void addTo{{ assocs[i+1].capitalize() }}({{ element_type }} {{ element_type|lower }}) {
+    public void addTo{{ aname }}({{ element_type }} {{ element_type|lower }}) {
         this.{{ assocs[i+1] }}.add({{ element_type|lower }});
     }
     {% else %}
@@ -229,11 +203,11 @@ public class {{ class_obj.name }} {{ extends }}{
     }
     {% endif %}
     {% else %}
-    public {{ assocs[i] }} get{{ assocs[i+1].capitalize() }}() {
+    public {{ assocs[i] }} get{{ aname }}() {
         return this.{{ assocs[i+1] }};
     }
 
-    public void set{{ assocs[i+1].capitalize() }}({{ assocs[i] }} {{ assocs[i+1] }}) {
+    public void set{{ aname }}({{ assocs[i] }} {{ assocs[i+1] }}) {
         this.{{ assocs[i+1] }} = {{ assocs[i+1] }};
     }
     {% endif %}
@@ -243,7 +217,7 @@ public class {{ class_obj.name }} {{ extends }}{
     {% if assocs[i][:4] == "List" %}
         {% set element_type = assocs[i][5:-1] %}
         {% if assocs[i+1] in self_assoc_names %}
-            {% do generated_assoc_methods.append('addTo' + assocs[i+1].capitalize()) %}
+            {% do generated_assoc_methods.append('addTo' ~ assocs[i+1][0]|upper ~ assocs[i+1][1:]) %}
         {% else %}
             {% do generated_assoc_methods.append('add' + element_type) %}
         {% endif %}
@@ -253,14 +227,12 @@ public class {{ class_obj.name }} {{ extends }}{
     {% if method.name not in generated_assoc_methods %}
         {% set ns = namespace(return_type="void") %}
         {% if method.type %}
-            {% set jf = java_fields.get_field(method.type.name) | trim %}
-            {% set ns.return_type = method.type.name if jf == "None" else jf %}
+            {% set ns.return_type = java_fields.get_field(method.type.name) | trim %}
         {% endif %}
 
     {{ method.visibility }} {{ ns.return_type }} {{ method.name }}(
         {%- for param in method.parameters -%}
-            {%- set jf_param = java_fields.get_field(param.type.name) | trim -%}
-            {{ param.type.name if jf_param == "None" else jf_param }} {{ param.name }}{% if not loop.last %}, {% endif %}
+            {{ java_fields.get_field(param.type.name) | trim }} {{ param.name }}{% if not loop.last %}, {% endif %}
         {%- endfor -%}
     ) {
     }

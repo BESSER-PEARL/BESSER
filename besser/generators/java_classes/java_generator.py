@@ -6,8 +6,9 @@ from besser.generators import GeneratorInterface
 
 class JavaGenerator(GeneratorInterface):
 
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    def __init__(self, model: DomainModel, output_dir: str = None, package_name: str = None):
         super().__init__(model, output_dir)
+        self.package_name = package_name
 
     def generate(self):
         templates_path = os.path.join(os.path.dirname(
@@ -15,13 +16,7 @@ class JavaGenerator(GeneratorInterface):
         env = Environment(loader=FileSystemLoader(
             templates_path), trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
 
-        if self.output_dir is not None:
-            if 'tmp' in self.output_dir or 'AppData' in self.output_dir:
-                package_name = None
-            else:
-                package_name = self.output_dir
-        else:
-            package_name = None
+        package_name = self.package_name
 
         for enum_obj in self.model.get_enumerations():
             file_path = self.build_generation_path(file_name=enum_obj.name + ".java")

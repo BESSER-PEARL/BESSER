@@ -1,4 +1,3 @@
-// This is a template example to list the name of the classes
 {% if package_name %}
 package {{ package_name }};
 {% endif %}
@@ -51,17 +50,19 @@ public class {{ class_obj.name }} {{ extends }}{
         {% set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
         {% if is_self_assoc %}
             {% for end in ends_list %}
-                {% if end.multiplicity.max > 1 %}
+                {% if end.is_navigable %}
+                    {% if end.multiplicity.max > 1 %}
     private List<{{ end.type.name }}> {{ end.name }};
-                    {% do assocs.append('List<'+end.type.name+'>') %}
-                    {% do assocs.append(end.name) %}
-                    {% do assocs_card_over_1.append(end.type.name) %}
-                    {% do assocs_card_over_1.append(end.name) %}
-                    {% do self_assoc_names.append(end.name) %}
-                {% else %}
+                        {% do assocs.append('List<'+end.type.name+'>') %}
+                        {% do assocs.append(end.name) %}
+                        {% do assocs_card_over_1.append(end.type.name) %}
+                        {% do assocs_card_over_1.append(end.name) %}
+                        {% do self_assoc_names.append(end.name) %}
+                    {% else %}
     private {{ end.type.name }} {{ end.name }};
-                    {% do assocs.append(end.type.name) %}
-                    {% do assocs.append(end.name) %}
+                        {% do assocs.append(end.type.name) %}
+                        {% do assocs.append(end.name) %}
+                    {% endif %}
                 {% endif %}
             {% endfor %}
             {% do processed_associations.append(association.name) %}
@@ -73,55 +74,44 @@ public class {{ class_obj.name }} {{ extends }}{
             {% endfor %}
             {% set class1_name = ns.end1.type.name %}
             {% set class2_name = ns.end2.type.name %}
-            {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1%}
-                {% if ns.end1.multiplicity.min != 1 and ns.end2.multiplicity.min == 1 or
-                    ns.end1.multiplicity.min == 1 and ns.end2.multiplicity.min == 1 or
-                    ns.end1.multiplicity.min != 1 and ns.end2.multiplicity.min != 1 %}
-    private List<{{ class2_name }}> {{ class2_name.lower() }}s;
-                    {% do assocs.append('List<'+class2_name+'>') %}
-                    {% do assocs.append(class2_name.lower() + 's') %}
-                    {% do assocs_card_over_1.append(class2_name) %}
-                    {% do assocs_card_over_1.append(class2_name.lower() + 's') %}
-                    {% do processed_associations.append(association.name) %}
-                {% endif %}
-            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
-    private List<{{ class2_name }}> {{ class2_name.lower() }}s;
+            {# Generate field for end2 (the other class) if navigable - supports bidirectional associations #}
+            {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
+    private List<{{ class2_name }}> {{ ns.end2.name }};
                 {% do assocs.append('List<'+class2_name+'>') %}
-                {% do assocs.append(class2_name.lower() + 's') %}
+                {% do assocs.append(ns.end2.name) %}
                 {% do assocs_card_over_1.append(class2_name) %}
-                {% do assocs_card_over_1.append(class2_name.lower() + 's') %}
-                {% do processed_associations.append(association.name) %}
-            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-    private {{ class2_name }} {{ class2_name.lower() }};
+                {% do assocs_card_over_1.append(ns.end2.name) %}
+            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
+    private List<{{ class2_name }}> {{ ns.end2.name }};
+                {% do assocs.append('List<'+class2_name+'>') %}
+                {% do assocs.append(ns.end2.name) %}
+                {% do assocs_card_over_1.append(class2_name) %}
+                {% do assocs_card_over_1.append(ns.end2.name) %}
+            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and ns.end2.is_navigable %}
+    private {{ class2_name }} {{ ns.end2.name }};
                 {% do assocs.append(class2_name) %}
-                {% do assocs.append(class2_name.lower()) %}
-                {% do processed_associations.append(association.name) %}
+                {% do assocs.append(ns.end2.name) %}
+            {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 and ns.end2.is_navigable %}
+                {# Bidirectional: many-to-one association, generate back-reference to the one side #}
+    private {{ class2_name }} {{ ns.end2.name }};
+                {% do assocs.append(class2_name) %}
+                {% do assocs.append(ns.end2.name) %}
             {% endif %}
+            {# Don't mark as processed to support bidirectional associations - each class handles its own end #}
         {% endif %}
     {% endif %}
 {% endfor %}
 
-    public {{ class_obj.name }} (
-{%- for i in range(attribs|length) -%}
-    {%- if i == attribs|length - 1 -%}
-    {{ attribs[i]}}
-    {%- else -%}
-        {%- if i % 2 == 0 -%}
-    {{ attribs[i]}} {% else -%}
-    {{ attribs[i] }}, {% endif -%}
-    {%- endif -%}
-{%- endfor -%}
-{%- if inheritance|length > 1 -%}
-    {%- for i in range(parent_attribs|length) -%}
-        {%- if i == parent_attribs|length - 1 -%}
-    {{ parent_attribs[i]}}
-        {%- else -%}
-            {%- if i % 2 == 0 -%}
-    , {{ parent_attribs[i]}} {% else -%}
-    {{ parent_attribs[i] }}{% endif -%}
-        {%- endif -%}
-    {%- endfor -%}
-{% endif %}) {
+{% set params = [] %}
+{% for i in range(0, attribs|length, 2) %}
+    {% do params.append(attribs[i] + ' ' + attribs[i+1]) %}
+{% endfor %}
+{% if inheritance|length > 1 %}
+    {% for i in range(0, parent_attribs|length, 2) %}
+        {% do params.append(parent_attribs[i] + ' ' + parent_attribs[i+1]) %}
+    {% endfor %}
+{% endif %}
+    public {{ class_obj.name }} ({{ params | join(', ') }}) {
 {% if inheritance|length > 1 %}
         super(
     {%- for i in range(parent_attribs|length) %}
@@ -146,31 +136,19 @@ public class {{ class_obj.name }} {{ extends }}{
     }
 
 {% if assocs_card_over_1 != [] %}
-    public {{ class_obj.name }} (
-{%- for i in range(attribs|length) -%}
-    {%- if i == attribs|length - 1 -%}
-    {{ attribs[i]}}
-    {%- else -%}
-        {%- if i % 2 == 0 -%}
-    {{ attribs[i]}} {% else -%}
-    {{ attribs[i] }}, {% endif -%}
-    {%- endif -%}
-{%- endfor -%}
-{%- if inheritance|length > 1 -%}
-    {%- for i in range(parent_attribs|length) -%}
-        {%- if i == parent_attribs|length - 1 -%}
-    {{ parent_attribs[i]}}
-        {%- else -%}
-            {%- if i % 2 == 0 -%}
-    , {{ parent_attribs[i]}} {% else -%}
-    {{ parent_attribs[i] }}{% endif -%}
-        {%- endif -%}
-    {%- endfor -%}
+{% set params2 = [] %}
+{% for i in range(0, attribs|length, 2) %}
+    {% do params2.append(attribs[i] + ' ' + attribs[i+1]) %}
+{% endfor %}
+{% if inheritance|length > 1 %}
+    {% for i in range(0, parent_attribs|length, 2) %}
+        {% do params2.append(parent_attribs[i] + ' ' + parent_attribs[i+1]) %}
+    {% endfor %}
 {% endif %}
-{%- for i in range(0, assocs_card_over_1|length, 2) -%}
-    ,{{" "}}ArrayList<{{ assocs_card_over_1[i] }}> {{ assocs_card_over_1[i+1] }}
-{%- endfor -%}
-) {
+{% for i in range(0, assocs_card_over_1|length, 2) %}
+    {% do params2.append('List<' + assocs_card_over_1[i] + '> ' + assocs_card_over_1[i+1]) %}
+{% endfor %}
+    public {{ class_obj.name }} ({{ params2 | join(', ') }}) {
 {% if inheritance|length > 1 %}
         super(
     {%- for i in range(parent_attribs|length) %}
@@ -196,25 +174,27 @@ public class {{ class_obj.name }} {{ extends }}{
 {%- endif %}
 
 {% for i in range(0, attribs|length, 2) %}
+{% set fname = attribs[i+1][0]|upper ~ attribs[i+1][1:] %}
 
-    public {{ attribs[i] }} get{{ attribs[i+1].capitalize() }}() {
+    public {{ attribs[i] }} get{{ fname }}() {
         return this.{{ attribs[i+1] }};
     }
 
-    public void set{{ attribs[i+1].capitalize() }}({{ attribs[i] }} {{ attribs[i+1] }}) {
+    public void set{{ fname }}({{ attribs[i] }} {{ attribs[i+1] }}) {
         this.{{ attribs[i+1] }} = {{ attribs[i+1] }};
     }
 {% endfor %}
 {% for i in range(0, assocs|length, 2) %}
+{% set aname = assocs[i+1][0]|upper ~ assocs[i+1][1:] %}
 
     {% if assocs[i][:4] == "List" %}
     {% set element_type = assocs[i][5:-1] %}
-    public {{ assocs[i] }} get{{ assocs[i+1].capitalize() }}() {
+    public {{ assocs[i] }} get{{ aname }}() {
         return this.{{ assocs[i+1] }};
     }
 
     {% if assocs[i+1] in self_assoc_names %}
-    public void addTo{{ assocs[i+1].capitalize() }}({{ element_type }} {{ element_type|lower }}) {
+    public void addTo{{ aname }}({{ element_type }} {{ element_type|lower }}) {
         this.{{ assocs[i+1] }}.add({{ element_type|lower }});
     }
     {% else %}
@@ -223,12 +203,44 @@ public class {{ class_obj.name }} {{ extends }}{
     }
     {% endif %}
     {% else %}
-    public {{ assocs[i] }} get{{ assocs[i+1].capitalize() }}() {
+    public {{ assocs[i] }} get{{ aname }}() {
         return this.{{ assocs[i+1] }};
     }
 
-    public void set{{ assocs[i+1].capitalize() }}({{ assocs[i] }} {{ assocs[i+1] }}) {
+    public void set{{ aname }}({{ assocs[i] }} {{ assocs[i+1] }}) {
         this.{{ assocs[i+1] }} = {{ assocs[i+1] }};
+    }
+    {% endif %}
+{% endfor %}
+{% set generated_assoc_methods = [] %}
+{% for i in range(0, assocs|length, 2) %}
+    {% if assocs[i][:4] == "List" %}
+        {% set element_type = assocs[i][5:-1] %}
+        {% if assocs[i+1] in self_assoc_names %}
+            {% do generated_assoc_methods.append('addTo' ~ assocs[i+1][0]|upper ~ assocs[i+1][1:]) %}
+        {% else %}
+            {% do generated_assoc_methods.append('add' + element_type) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{# A stub has to compile whatever it returns. An empty body is only valid for
+   void, so anything else fails the whole file with "missing return statement";
+   throwing also keeps a missing implementation from passing for a real answer,
+   the way `return null` would. #}
+{% for method in class_obj.methods %}
+    {% if method.name not in generated_assoc_methods %}
+        {% set ns = namespace(return_type="void") %}
+        {% if method.type %}
+            {% set ns.return_type = java_fields.get_field(method.type.name) | trim %}
+        {% endif %}
+
+    {{ method.visibility }} {{ ns.return_type }} {{ method.name }}(
+        {%- for param in method.parameters -%}
+            {{ java_fields.get_field(param.type.name) | trim }} {{ param.name }}{% if not loop.last %}, {% endif %}
+        {%- endfor -%}
+    ) {
+        // TODO: implement {{ method.name }}
+        throw new UnsupportedOperationException("{{ method.name }} is not implemented");
     }
     {% endif %}
 {% endfor %}

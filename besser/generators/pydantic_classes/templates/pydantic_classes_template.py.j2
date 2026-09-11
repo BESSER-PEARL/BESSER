@@ -51,7 +51,8 @@ class {{ enum.name }}(Enum):
 class {{ link.link_class }}(BaseModel):
     target: int  # primary key of the linked entity
 {% for attr in link.attributes %}
-    {{ attr.name }}: {{ 'Any' if attr.type_name == 'any' else attr.type_name }}
+{% set link_attr_type = 'Any' if attr.type_name == 'any' else attr.type_name %}
+    {{ attr.name }}: {{ ('Optional[' ~ link_attr_type ~ '] = None') if attr.optional else link_attr_type }}
 {% endfor %}
 
 {% endfor %}

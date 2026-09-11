@@ -1250,14 +1250,27 @@ class GuiSerializationMixin:
     def _select_display_field(attributes: List[Any]) -> str:
         """Pick the attribute shown for a related record in lookup selects.
 
-        Preference order: an attribute literally named ``name``, then the first
-        string attribute that is not the id, then the first non-id attribute,
-        then the first attribute.
+        The label has to let someone tell two records apart, so an attribute the
+        model marks as a business identifier wins, and an ``email`` outranks a
+        ``name``: two people called Jane are indistinguishable in a dropdown,
+        two email addresses are not.
+
+        Preference order: an attribute marked ``is_external_id``, then one named
+        ``email``, then one named ``name``, then the first string attribute that
+        is not the id, then the first non-id attribute, then the first attribute.
         """
         if not attributes:
             return ""
-        if any(attr.name == "name" for attr in attributes):
-            return "name"
+        external_id = next(
+            (attr for attr in attributes
+             if getattr(attr, "is_external_id", False) and not getattr(attr, "is_id", False)),
+            None,
+        )
+        if external_id is not None:
+            return external_id.name
+        for preferred in ("email", "name"):
+            if any(attr.name == preferred for attr in attributes):
+                return preferred
         string_attr = next(
             (attr for attr in attributes
              if not getattr(attr, "is_id", False) and attr.name != "id"

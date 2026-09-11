@@ -1,0 +1,9 @@
+{% if package_name %}
+package {{ package_name }};
+{% endif %}
+public enum {{ enum_obj.name }} {
+{% for literal in enum_obj.literals %}
+    {{ literal.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+}

@@ -148,6 +148,17 @@ class {{ class.name }}(
         "concrete": True,
     }
     {%- endif %}
+{#- The methods the class declares belong on the class: a body that calls another
+    method of the same object (self.calculate_price()) only resolves if they do.
+    A method named after a column is skipped rather than emitted - defining both
+    would leave the column unreadable, so self.check_out - self.check_in would
+    subtract two methods instead of two dates. #}
+    {%- set column_names = class.all_attributes() | map(attribute='name') | list
+                         + class.association_ends() | map(attribute='name') | list %}
+    {%- for method in class.methods if method.code and method.name not in column_names %}
+
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
+    {%- endfor %}
 {% endfor %}
 
 {#- Association Classes #}
@@ -213,6 +224,18 @@ class {{ asso_class.name }}(Base):
     links (the FK is part of the link's composite primary key, so SQLAlchemy cannot
     null it out - without the cascade a delete fails with an AssertionError). #}
 {{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}", cascade="all, delete-orphan")
+    {%- endfor %}
+{#- The association ends are also reachable directly, under the names the model gives
+    them, so that method bodies and OCL constraints written against the diagram (for
+    example self.rooms) resolve. Writes go through the link rows above, so these are
+    read-only views over the same table. #}
+    {%- for end in asso_class.association.ends %}
+        {%- set other_end = (asso_class.association.ends | reject('equalto', end) | list)[0] %}
+        {%- if end.multiplicity.max > 1 %}
+{{ other_end.type.name }}.{{ end.name }}: Mapped_[List_["{{ end.type.name }}"]] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True)
+        {%- else %}
+{{ other_end.type.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True, uselist=False)
+        {%- endif %}
     {%- endfor %}
 {%- endfor %}
 

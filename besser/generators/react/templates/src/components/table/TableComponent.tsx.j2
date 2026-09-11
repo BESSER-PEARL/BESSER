@@ -33,6 +33,8 @@ interface TableColumn {
   targetField?: string;
   relationshipKey?: string;
   associationClass?: AssociationClassMeta;
+  // The model's default for the attribute (e.g. an enumeration literal); preselected for new records
+  defaultValue?: any;
 }
 
 interface TableOptions {
@@ -212,6 +214,7 @@ export const TableComponent: React.FC<Props> = ({
           entity: col.entity,
           options: col.options,
           required: col.required ?? false,
+          defaultValue: (col as any).defaultValue ?? (col as any).default_value,
           lookupField: col.column_type === "lookup" ? lookupField : undefined,
           targetField: col.column_type === "lookup" ? targetField : undefined,
           relationshipKey: relationshipKey,
@@ -597,6 +600,11 @@ export const TableComponent: React.FC<Props> = ({
           // For new records, initialize appropriately
           if (col.columnType === 'lookup' && col.type === 'list') {
             initialValues[col.field] = [];
+          } else if (col.columnType !== 'lookup' && col.defaultValue !== undefined && col.defaultValue !== null) {
+            // Preselect the model's default (e.g. booking_status = pending_payment)
+            initialValues[col.field] = (col.type === 'bool' || col.type === 'boolean')
+              ? (typeof col.defaultValue === 'boolean' ? col.defaultValue : String(col.defaultValue).toLowerCase() === 'true')
+              : String(col.defaultValue);
           } else {
             initialValues[col.field] = "";
           }
@@ -956,6 +964,11 @@ export const TableComponent: React.FC<Props> = ({
                       }
                     } else {
                       const value = formValues[col.field];
+                      if (col.type === 'enum' && (value === undefined || value === null || value === '')) {
+                        // No literal chosen: leave the field out so the backend applies the
+                        // attribute's default (or reports it missing) instead of rejecting ""
+                        return;
+                      }
                       if (col.type === 'list') {
                         // Convert comma-separated string to array
                         processedValues[col.field] = typeof value === 'string' 
@@ -1164,6 +1177,12 @@ export const TableComponent: React.FC<Props> = ({
                                       type="checkbox"
                                       checked={isChecked}
                                       onChange={() => {}} // Handled by parent div onClick
+                                      // The record this option stands for. Its label is a
+                                      // display attribute that need not be unique, so the
+                                      // key is what identifies the option to anything
+                                      // driving the form.
+                                      value={String(optionValue)}
+                                      data-option-id={String(optionValue)}
                                       style={{
                                         width: "16px",
                                         height: "16px",

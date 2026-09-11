@@ -1141,7 +1141,17 @@ class OpenAIProvider(LLMProvider):
         # endpoint stays unavailable past the retry budget. The switch is
         # sticky for this provider instance (i.e. for the run) so later
         # calls don't re-pay the retry tax against a dead primary.
-        self._fallback = fallback
+        # Ordered fallback chain. Accepts a single (base_url, token, model)
+        # tuple for back-compat, or a list of them to try in order. Each step
+        # carries its OWN endpoint and token, which is what makes it safe to
+        # mix a cloud alt model with a self-hosted one in the same chain.
+        if fallback is None:
+            self._fallback_chain: list = []
+        elif isinstance(fallback, tuple):
+            self._fallback_chain = [fallback]
+        else:
+            self._fallback_chain = list(fallback)
+        self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
 
@@ -1152,11 +1162,12 @@ class OpenAIProvider(LLMProvider):
         call), False when no fallback is configured or it is already
         active (caller should raise).
         """
-        if self._fallback is None or self._on_fallback:
+        if self._fallback_step >= len(self._fallback_chain):
             return False
         from openai import OpenAI
 
-        base_url, token, fb_model = self._fallback
+        base_url, token, fb_model = self._fallback_chain[self._fallback_step]
+        self._fallback_step += 1
         client_kwargs: dict[str, Any] = {
             "api_key": "fallback",
             "base_url": base_url,
@@ -1165,9 +1176,10 @@ class OpenAIProvider(LLMProvider):
         if token:
             client_kwargs["default_headers"] = {"Authorization": f"Bearer {token}"}
         logger.warning(
-            "Primary model %s unavailable after all retries (%s) — "
-            "switching to fallback model %s for the rest of this run",
-            self._model, error, fb_model,
+            "Model %s unavailable after all retries (%s) — switching to "
+            "fallback %d/%d: %s",
+            self._model, error, self._fallback_step,
+            len(self._fallback_chain), fb_model,
         )
         self._client = OpenAI(**client_kwargs)
         self._model = fb_model
@@ -1671,6 +1683,39 @@ def free_fallback_model() -> str:
     return config[2] if config else ""
 
 
+def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
+    """Ordered keyless-tier fallback chain for a run pinned to ``chosen``.
+
+    Order is deliberate: CLOUD alternatives first, the self-hosted box LAST.
+
+        1. every ``BESSER_FREE_LLM_ALT_MODELS`` entry, on the PRIMARY endpoint
+           and token (e.g. Laguna, which has no documented daily quota)
+        2. ``BESSER_FREE_LLM_FALLBACK_*`` — our own Ollama box
+
+    Why this order: the primary's usual failure is its 100-requests/day quota,
+    and another model on the same endpoint has its own quota, so step 1 usually
+    succeeds and stays fast. The self-hosted box is a single shared Tesla V100
+    that serves one request at a time and pays 60-75s to load a model cold, so
+    it belongs at the end — it is a true last resort, not a peer.
+
+    ``chosen`` is skipped wherever it appears: a run already pinned to a model
+    must never "fall back" to the model it is already using.
+    """
+    chain: list[tuple[str, str, str]] = []
+    try:
+        primary_base_url, primary_token, _ = _resolve_free_tier_config()
+    except ValueError:
+        primary_base_url, primary_token = "", ""
+    if primary_base_url:
+        for alt in free_alt_models():
+            if alt and alt != chosen:
+                chain.append((primary_base_url, primary_token, alt))
+    self_hosted = _resolve_free_fallback_config()
+    if self_hosted and self_hosted[2] != chosen:
+        chain.append(self_hosted)
+    return chain
+
+
 def free_alt_models() -> list[str]:
     """Extra keyless models served by the PRIMARY free endpoint, in order.
 
@@ -1837,9 +1882,11 @@ def create_llm_client(
             model=chosen,
             base_url=free_base_url,
             default_headers=headers,
-            # Alt models keep the primary's outage fallback: they sit on the
-            # same shared cloud endpoint and shed requests the same way.
-            fallback=_resolve_free_fallback_config(),
+            # Full chain: any OTHER alt model on this endpoint first, then the
+            # self-hosted box last. An alt sits on the same shared cloud
+            # endpoint and sheds requests the same way, so it needs the chain
+            # just as much as the primary does.
+            fallback=_resolve_free_fallback_chain(chosen),
             **kwargs,
         )
     elif provider == "anthropic":

@@ -154,7 +154,9 @@ def test_free_client_explicit_fallback_model_uses_fallback_endpoint(monkeypatch)
     # ...with NO outage fallback of its own: if the self-hosted box is down
     # the run fails with an honest error instead of silently switching the
     # user to the cloud model they opted out of.
-    assert client._fallback is None
+    # An explicit self-hosted choice gets NO chain: an outage there must
+    # surface honestly, never silently switch back to the cloud model.
+    assert client._fallback_chain == []
 
 
 def test_free_client_arbitrary_model_pins_primary(monkeypatch):
@@ -166,9 +168,11 @@ def test_free_client_arbitrary_model_pins_primary(monkeypatch):
     assert str(client._client.base_url).rstrip("/") == "https://cloud.example/v1"
     assert client._model == "meituan/LongCat-2.0:free"
     assert client._client.default_headers.get("Authorization") == "Bearer primary-token"
-    assert client._fallback == (
-        "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
-    )
+    # The fallback is an ordered CHAIN now. With no alt models configured it
+    # has exactly one step: the self-hosted box, with ITS endpoint and token.
+    assert client._fallback_chain == [
+        ("https://ollama.example/v1", "fallback-token", "qwen3.8:27b"),
+    ]
 
 
 def test_free_client_explicit_primary_behaves_like_default(monkeypatch):
@@ -178,9 +182,11 @@ def test_free_client_explicit_primary_behaves_like_default(monkeypatch):
     client = create_llm_client(provider="free", model="meituan/LongCat-2.0:free")
     assert str(client._client.base_url).rstrip("/") == "https://cloud.example/v1"
     assert client._model == "meituan/LongCat-2.0:free"
-    assert client._fallback == (
-        "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
-    )
+    # The fallback is an ordered CHAIN now. With no alt models configured it
+    # has exactly one step: the self-hosted box, with ITS endpoint and token.
+    assert client._fallback_chain == [
+        ("https://ollama.example/v1", "fallback-token", "qwen3.8:27b"),
+    ]
 
 
 # ---------------------------------------------------------------------
@@ -248,9 +254,11 @@ def test_free_client_alt_model_uses_primary_endpoint_and_token(monkeypatch):
     assert client._client.default_headers.get("Authorization") == "Bearer primary-token"
     # Same shared cloud endpoint as the primary, so it keeps the same outage
     # fallback (unlike an explicit fallback choice, which has none).
-    assert client._fallback == (
-        "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
-    )
+    # The fallback is an ordered CHAIN now. With no alt models configured it
+    # has exactly one step: the self-hosted box, with ITS endpoint and token.
+    assert client._fallback_chain == [
+        ("https://ollama.example/v1", "fallback-token", "qwen3.8:27b"),
+    ]
 
 
 def test_free_client_alt_model_not_offered_pins_primary(monkeypatch):

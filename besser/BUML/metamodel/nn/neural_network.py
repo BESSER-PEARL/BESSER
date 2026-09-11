@@ -50,8 +50,18 @@ class TensorOp(NamedElement):
             have multiple output components (e.g., RNN layers with
             separate output and hidden states) to generate correct
             variable references during code generation.
-        subscript_indices (list[dict]): A list of dictionaries
-            containing indices for subscript operations.
+        subscript_indices (list[dict]): A list of index or slice
+            descriptors, one per dimension being subscripted. Each
+            element is a dict with a required ``"type"`` key that is
+            either ``"index"`` or ``"slice"``. An ``"index"`` element
+            requires a ``"value"`` key (int) representing a single
+            position. A ``"slice"`` element accepts ``"start"``,
+            ``"stop"``, and ``"step"`` keys, each either an int or
+            ``None``. For example, the subscript ``[:, -1, :]``
+            would be represented as
+            ``[{"type": "slice", "start": None, "stop": None, "step": None},
+               {"type": "index", "value": -1},
+               {"type": "slice", "start": None, "stop": None, "step": None}]``
         repeat_dim (list[int | str]): Repetition counts for
             repeat operation. Each element specifies how many times to
             repeat along that dimension. Elements can be integers for
@@ -80,7 +90,7 @@ class TensorOp(NamedElement):
         split_dim (int): Dimension along which to split (supports
             negative indexing). Default: 0.
         split_sizes (int | list[int]): Number of equal chunks
-            (int) or size per chunk (list). Required.
+            (int) or size per chunk (list).
         permute_in (bool): Whether to permute input dimensions for
             spatial ops.
         permute_out (bool): Whether to permute output dimensions 

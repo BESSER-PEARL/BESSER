@@ -1330,8 +1330,13 @@ class TestProjectBuilder:
 class TestDomainModelBuilderAdvanced:
     """Additional domain model builder tests for edge cases."""
 
-    def test_empty_model_compiles(self, tmp_path):
-        """A model with no classes or associations generates syntactically valid code."""
+    def test_empty_model_roundtrips(self, tmp_path):
+        """A model with no classes or associations generates code that compiles AND runs.
+
+        Empty collections must be emitted as ``set()``, not ``{}`` (a dict literal):
+        a dict breaks the metamodel's set-typed setters on re-import (``{} | set``),
+        so an empty domain model previously crashed on round-trip.
+        """
         model = DomainModel(name="EmptyModel", types=set(), associations=set())
         file_path = str(tmp_path / "empty.py")
         domain_model_to_code(model, file_path)
@@ -1339,11 +1344,15 @@ class TestDomainModelBuilderAdvanced:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
 
-        # Generated code must at least compile
+        # Empty collections are set(), never the dict literal {}.
+        assert "types=set()" in code and "types={}" not in code
+        assert "associations=set()" in code and "generalizations=set()" in code
+
+        # Compiles AND execs (the {} bug used to make exec crash).
         compile(code, file_path, "exec")
-        # Note: exec() currently fails because the builder emits types={}
-        # (a dict literal) instead of set() for empty type collections.
-        # This is a known limitation of the builder.
+        namespace: dict = {}
+        exec(code, namespace)
+        assert namespace["domain_model"].name == "EmptyModel"
 
     def test_single_class_model(self, tmp_path):
         """A model with a single class (no associations) roundtrips correctly."""

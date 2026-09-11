@@ -534,7 +534,9 @@ def domain_model_to_code(
         enum_names = ', '.join(safe_class_name(enum.name) for enum in sort(model.get_enumerations()))
         types_str = (f"{class_names}, {enum_names}" if class_names and enum_names else
                     class_names or enum_names)
-        f.write(f"    types={{{types_str}}},\n")
+        # Empty collections must be an empty set(), not {} (which is a dict and
+        # breaks the metamodel's set-typed setters on re-import).
+        f.write(f"    types={{{types_str}}},\n" if types_str else "    types=set(),\n")
 
         # Include both regular associations and those used in association classes
         all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] +
@@ -542,7 +544,7 @@ def domain_model_to_code(
         if all_assoc_names:
             f.write(f"    associations={{{all_assoc_names}}},\n")
         else:
-            f.write("    associations={},\n")
+            f.write("    associations=set(),\n")
 
         if hasattr(model, 'constraints') and model.constraints:
             constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
@@ -550,7 +552,7 @@ def domain_model_to_code(
         if model.generalizations:
             f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}},\n")
         else:
-            f.write("    generalizations={},\n")
+            f.write("    generalizations=set(),\n")
 
         # Add metadata if it exists
         if domain_metadata_var:

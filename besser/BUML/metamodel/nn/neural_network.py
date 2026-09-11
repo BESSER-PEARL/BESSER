@@ -4221,7 +4221,7 @@ class NN(BehaviorImplementation):
         self._validate_config_values(errors)
         self._validate_data_values(errors)
         self._validate_module_names(errors, warnings)
-        self._validate_input_output_var_chain(errors)
+        self._validate_input_var_chain(errors)
         cycle_detected = self._validate_sub_nn_acyclic(errors)
         if not cycle_detected:
             self._validate_sub_nns_recursive(errors, warnings, _visited, validate_graph_structure)
@@ -4435,7 +4435,7 @@ class NN(BehaviorImplementation):
                 f"declare a 'name_module_input' (it is the entry point)."
             )
 
-    def _validate_input_output_var_chain(self, errors: list):
+    def _validate_input_var_chain(self, errors: list):
         """Validate input_var and output_var consistency
         across the NN."""
         if not self.modules:
@@ -4450,23 +4450,6 @@ class NN(BehaviorImplementation):
                     f"NN '{self.name}': first module '{first.name}' has "
                     f"input_var '{first_input_var}' which differs from NN's "
                     f"input_var '{self.input_var}'. They must be the same."
-                )
-
-        # Check last module's output_var against NN's return_vars
-        last = self.modules[-1]
-        last_output_var = getattr(last, 'output_var', None)
-        if self.return_vars is not None:
-            last_output_var = getattr(last, 'output_var', None)
-            if last_output_var is None:
-                last_output_var = getattr(last, "output_vars", None)
-                if last_output_var:
-                    last_output_var = ", ".join(last_output_var)
-            if last_output_var is not None and last_output_var != self.return_vars:
-                errors.append(
-                    f"NN '{self.name}': last module '{last.name}' has "
-                    f"output_var '{last_output_var}' which differs from NN's "
-                    f"return_vars '{self.return_vars}'. "
-                    "They must be the same."
                 )
 
     def _validate_sub_nn_acyclic(self, errors: list) -> bool:

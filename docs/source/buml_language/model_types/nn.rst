@@ -248,11 +248,9 @@ The NN metamodel performs validation when ``NN.validate()`` is called:
   ``transpose_dim`` for ``transpose``, ``pad_amount`` for ``pad``).
   Missing required parameters are collected as errors.
 - **Variable chain consistency**: if ``NN.input_var`` is set, the first
-  module's ``input_var`` must match it; if ``NN.return_vars`` is set,
-  the last module's ``output_var`` must match it. Call
-  ``NN.resolve_var_chain()`` before generation to propagate these values
-  automatically when the modules have no explicit ``input_var`` /
-  ``output_var`` set.
+  module's ``input_var`` must match it. ``NN.resolve_var_chain()`` is called
+  before generation to propagate these values automatically when the modules
+  have no explicit ``input_var`` and ``output_var`` set.
 
 .. code-block:: python
 

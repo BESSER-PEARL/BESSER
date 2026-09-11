@@ -483,10 +483,15 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
         "name": "task_list",
         "description": (
             "Your work checklist for this run. action='list' shows every item "
-            "with its status; action='done' marks item `id` complete; "
+            "with its status; action='done' marks items complete — pass "
+            "`ids=[1,2,3]` for SEVERAL AT ONCE, or `id` for one; "
             "action='add' appends a new item you discovered (pass `text`). "
-            "Mark each checklist item done as you complete it — the run does "
-            "not finish while items are open."
+            "Mark items done as you complete them — the run does not finish "
+            "while items are open. Batch them: one task per call wastes a turn "
+            "each, and you have a limited number of turns. Some items are "
+            "checked before they are accepted; if one is refused, do the work "
+            "and try again — after a few refusals it is recorded as blocked "
+            "and you should move on rather than retry it."
         ),
         "input_schema": {
             "type": "object",
@@ -498,7 +503,18 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                 },
                 "id": {
                     "type": "integer",
-                    "description": "Item id to mark done (required for action='done')",
+                    "description": (
+                        "A single item id to mark done. Prefer `ids` when you "
+                        "have finished more than one."
+                    ),
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": (
+                        "Item ids to mark done in ONE call, e.g. [1,2,3]. "
+                        "Use this instead of one call per item."
+                    ),
                 },
                 "text": {
                     "type": "string",

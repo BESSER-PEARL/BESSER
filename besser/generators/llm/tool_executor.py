@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 ToolExecutionStatus = Literal["ok", "error", "skipped"]
 
 
+# A task whose verifier keeps refusing is retried at most this many times.
+# Unbounded retries livelocked a live run for 62 consecutive turns until the
+# turn cap killed it, with 87% of its time budget unused (2026-09-11).
+_MAX_TASK_VERIFY_ATTEMPTS = 3
+
+
 @dataclass(frozen=True)
 class ToolExecutionResult:
     """Typed result used by the harness around the model-facing JSON payload.
@@ -349,7 +355,8 @@ class ToolExecutor:
             if text:
                 self._tasks.append(
                     {"id": len(self._tasks) + 1, "text": text,
-                     "done": False, "verify": verify}
+                     "done": False, "verify": verify,
+                     "attempts": 0, "blocked": False}
                 )
 
     def task_snapshot(self) -> list[dict]:
@@ -360,7 +367,9 @@ class ToolExecutor:
         :meth:`restore_tasks` when resuming.
         """
         return [
-            {"id": t["id"], "text": t["text"], "done": bool(t["done"])}
+            {"id": t["id"], "text": t["text"], "done": bool(t["done"]),
+             "attempts": int(t.get("attempts") or 0),
+             "blocked": bool(t.get("blocked"))}
             for t in self._tasks
         ]
 
@@ -393,12 +402,55 @@ class ToolExecutor:
                 "text": text,
                 "done": item.get("done") is True,
                 "verify": verifiers.get(text),
+                "attempts": int(item.get("attempts") or 0),
+                "blocked": item.get("blocked") is True,
             })
         self._tasks = restored
 
     def open_tasks(self) -> list[dict]:
-        """Checklist items not yet marked done."""
-        return [t for t in self._tasks if not t["done"]]
+        """Checklist items still to do.
+
+        A BLOCKED item is excluded: its verifier has refused
+        ``_MAX_TASK_VERIFY_ATTEMPTS`` times, so leaving it open would keep the
+        run going until the turn cap for work that cannot be signed off. It is
+        reported through :meth:`blocked_tasks` instead.
+        """
+        return [t for t in self._tasks if not t["done"] and not t.get("blocked")]
+
+    def blocked_tasks(self) -> list[dict]:
+        """Items whose verifier refused too many times, with their text."""
+        return [t for t in self._tasks if t.get("blocked")]
+
+    @staticmethod
+    def _requested_task_ids(args: dict) -> tuple[list[int], list]:
+        """Ids from ``ids=[...]`` or a single ``id=N``; also the unusable ones.
+
+        Accepting a LIST is the point: marking items done one per turn made
+        bookkeeping 40% of all turns across a 10-run batch (83% in the worst
+        run), because every turn pays a full prompt prefill.
+        """
+        raw = args.get("ids")
+        if raw is None:
+            single = args.get("id")
+            raw = [] if single is None else [single]
+        elif not isinstance(raw, (list, tuple)):
+            raw = [raw]
+        ids: list[int] = []
+        bad: list = []
+        for value in raw:
+            if isinstance(value, bool):      # bool is an int subclass; not an id
+                bad.append(value)
+                continue
+            try:
+                ids.append(int(value))
+            except (TypeError, ValueError):
+                bad.append(value)
+        seen, unique = set(), []
+        for i in ids:                        # keep order, drop repeats
+            if i not in seen:
+                seen.add(i)
+                unique.append(i)
+        return unique, bad
 
     def _task_list(self, args: dict) -> dict:
         action = args.get("action")
@@ -412,32 +464,114 @@ class ToolExecutor:
                 "open": len(self.open_tasks()),
             }
         if action == "done":
-            task_id = args.get("id")
-            for t in self._tasks:
-                if t["id"] == task_id:
-                    verify = t.get("verify")
-                    if verify is not None:
-                        try:
-                            verified = bool(verify())
-                        except Exception:
-                            verified = True  # never wedge the run on a broken check
-                        if not verified:
-                            return {"error": (
-                                f"Task {task_id} is NOT done — the check for it "
-                                f"still fails: {t['text']} Do the work first, "
-                                "then mark it done."
-                            )}
-                    t["done"] = True
-                    remaining = self.open_tasks()
-                    return {
-                        "status": "done",
-                        "id": task_id,
-                        "open_remaining": len(remaining),
-                        "open_items": [
-                            {"id": r["id"], "text": r["text"]} for r in remaining
-                        ],
-                    }
-            return {"error": f"No task with id {task_id}. Use action='list' to see ids."}
+            ids, bad = self._requested_task_ids(args)
+            if not ids:
+                return {"error": (
+                    "action='done' requires `id` (an integer) or `ids` "
+                    "(a list of integers). Use action='list' to see ids."
+                    + (f" Not integers: {bad}." if bad else "")
+                )}
+
+            done: list[int] = []
+            refused: list[dict] = []
+            blocked: list[dict] = []
+            unknown: list[int] = []
+            by_id = {t["id"]: t for t in self._tasks}
+
+            for task_id in ids:
+                t = by_id.get(task_id)
+                if t is None:
+                    unknown.append(task_id)
+                    continue
+                if t["done"] or t.get("blocked"):
+                    done.append(task_id)
+                    continue
+                verify = t.get("verify")
+                if verify is not None:
+                    try:
+                        verified = bool(verify())
+                    except Exception:
+                        verified = True  # never wedge the run on a broken check
+                    if not verified:
+                        # A check that never passes used to be retried forever:
+                        # the refusal said "do the work first, then mark it
+                        # done", the model obliged, the check failed again. One
+                        # live run spent 62 CONSECUTIVE turns in that loop and
+                        # died on the turn cap with 87% of its time budget
+                        # unused (2026-09-11). Bound the retries instead.
+                        t["attempts"] = int(t.get("attempts") or 0) + 1
+                        if t["attempts"] >= _MAX_TASK_VERIFY_ATTEMPTS:
+                            # NOT marked done: the verifier exists because a
+                            # model once marked "build the frontend" complete
+                            # without writing a file. Record it as blocked so
+                            # the run can finish and the reason is reported.
+                            t["blocked"] = True
+                            blocked.append({"id": task_id, "text": t["text"]})
+                        else:
+                            refused.append({
+                                "id": task_id,
+                                "attempts": t["attempts"],
+                                "remaining_attempts":
+                                    _MAX_TASK_VERIFY_ATTEMPTS - t["attempts"],
+                                "reason": f"its check still fails: {t['text']}",
+                            })
+                        continue
+                t["done"] = True
+                done.append(task_id)
+
+            remaining = self.open_tasks()
+            result: dict = {
+                "status": "done" if done else "refused",
+                "done_ids": done,
+                "open_remaining": len(remaining),
+                "open_items": [{"id": r["id"], "text": r["text"]} for r in remaining],
+            }
+            if len(ids) == 1:
+                result["id"] = ids[0]
+            if refused:
+                result["refused"] = refused
+                result["advice"] = (
+                    "Do the work for the refused items, then mark them done. "
+                    "You may pass several ids at once: ids=[1,2,3]."
+                )
+            if blocked:
+                result["blocked"] = blocked
+                result["advice"] = (
+                    f"These items failed their check {_MAX_TASK_VERIFY_ATTEMPTS} "
+                    "times and are now recorded as BLOCKED. Do NOT call task_list "
+                    "for them again - move on to the remaining work."
+                )
+            if unknown:
+                result["unknown_ids"] = unknown
+
+            if not done:
+                # ``_result_status`` classifies a tool outcome as an error ONLY
+                # when the payload carries an "error" key. A call where nothing
+                # was accepted is a failed operation, and the loop guards,
+                # tracing and the "don't re-attempt" memory all depend on
+                # seeing it as one -- without this, batching silently turned
+                # every refusal into a reported success.
+                parts = []
+                for item in refused:
+                    parts.append(
+                        f"Task {item['id']} is NOT done - {item['reason']} "
+                        f"(attempt {item['attempts']} of "
+                        f"{_MAX_TASK_VERIFY_ATTEMPTS}). Do the work first, "
+                        "then mark it done."
+                    )
+                for item in blocked:
+                    parts.append(
+                        f"Task {item['id']} is NOT done and is now BLOCKED "
+                        f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks: "
+                        f"{item['text']}"
+                    )
+                for task_id in unknown:
+                    parts.append(
+                        f"No task with id {task_id}. Use action='list' to see ids."
+                    )
+                if parts:
+                    result["error"] = " ".join(parts)
+            return result
         if action == "add":
             text = (args.get("text") or "").strip()
             if not text:

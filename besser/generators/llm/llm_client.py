@@ -1671,16 +1671,66 @@ def free_fallback_model() -> str:
     return config[2] if config else ""
 
 
+def free_alt_models() -> list[str]:
+    """Extra keyless models served by the PRIMARY free endpoint, in order.
+
+    Read from ``BESSER_FREE_LLM_ALT_MODELS`` (comma-separated list of model
+    ids). These share the primary endpoint's base URL **and** its token — that
+    pairing is precisely why they are a separate list from the fallback, which
+    lives on a DIFFERENT host with its own credentials. Sending the primary's
+    bearer to the fallback host (or vice versa) would 401, so an id that
+    collides with the primary or the fallback model is dropped here and served
+    by its own properly-paired branch instead.
+
+    Why this exists: the upstream aggregator meters each free model
+    SEPARATELY, per model rather than per account. Our primary
+    (``meituan/LongCat-2.0:free``) is capped at 100 requests/day, after which
+    the keyless tier degrades badly; ``poolside/laguna-s-2.1-free`` publishes
+    no daily quota at all ("free while capacity lasts"). Offering such a model
+    as an alt gives the keyless tier an unmetered option without touching the
+    default. Empty by default — a deploy that does not set the var behaves
+    exactly as before.
+    """
+    raw = os.environ.get("BESSER_FREE_LLM_ALT_MODELS", "")
+    if not raw.strip():
+        return []
+    # Ids already owned by another endpoint/token pair must not be re-served
+    # from the primary's credentials.
+    taken = {m for m in (free_tier_model(), free_fallback_model()) if m}
+    models: list[str] = []
+    for part in raw.split(","):
+        model = part.strip()
+        if model and model not in taken:
+            taken.add(model)
+            models.append(model)
+    return models
+
+
+def free_alt_choice(requested: str | None) -> str:
+    """The alt model ``requested`` names, or ``""`` when it names none.
+
+    Counterpart of ``is_free_fallback_choice`` for the models that share the
+    PRIMARY endpoint. Returns the id itself (not a bool) because the caller
+    needs the resolved model name — the factory to build the client, the
+    runner to label the run card with the model actually serving it.
+    """
+    req = (requested or "").strip()
+    if not req:
+        return ""
+    return req if req in free_alt_models() else ""
+
+
 def is_free_fallback_choice(requested: str | None) -> bool:
     """True when ``requested`` explicitly names the free tier's fallback model.
 
     This is the single rule deciding whether a free-tier request is served
     by the fallback endpoint instead of the primary (see the free branch in
-    ``create_llm_client``). The allowlist is exactly the two server-configured
-    models: the primary and, when configured, the fallback. Any other value —
-    including empty — is not a fallback choice, and requesting the primary
-    explicitly behaves identically to the default. The runner reuses this
-    predicate so the start-event model name matches what the factory builds.
+    ``create_llm_client``). The allowlist is exactly the server-configured
+    models: the primary, any ``free_alt_models()`` on the primary endpoint,
+    and, when configured, the fallback. Any other value — including empty —
+    is not a fallback choice, and requesting the primary explicitly behaves
+    identically to the default. The runner reuses this predicate so the
+    start-event model name matches what the factory builds.
     """
     req = (requested or "").strip()
     if not req or req == free_tier_model():
@@ -1708,9 +1758,11 @@ def create_llm_client(
         api_key: API key. If not provided, resolved from environment variables.
             Ignored for the ``"free"`` provider.
         model: Model identifier. Defaults to provider-specific default. For the
-            ``"free"`` provider only the server's fallback model may be chosen
-            explicitly (served from the fallback endpoint, with no outage
-            fallback of its own); any other value is ignored and the client is
+            ``"free"`` provider only the server's own allowlist may be chosen
+            explicitly: the fallback model (served from the fallback endpoint,
+            with no outage fallback of its own) or one of
+            ``free_alt_models()`` (served from the primary endpoint with the
+            primary's token); any other value is ignored and the client is
             pinned to the server's primary model.
         base_url: Custom API base URL. Ignored for the ``"free"`` provider,
             which reads its endpoint from server env.
@@ -1750,12 +1802,13 @@ def create_llm_client(
         # request. The bearer header is the real gate; the api_key is a
         # placeholder the endpoint ignores.
         #
-        # The only client-steerable choice is between the two server-configured
-        # models: a request may explicitly name the FALLBACK model, in which
-        # case the client is built directly against the fallback endpoint.
+        # The only client-steerable choice is between the server-configured
+        # models, and each one is built against ITS OWN endpoint+token pair:
+        #   * the FALLBACK model  -> fallback base URL + fallback token
+        #   * a free_alt_models() -> primary base URL + primary token
         # Any other requested value is ignored and the run pins to the primary,
         # so the server's credentials can never be pointed at an arbitrary
-        # model or host.
+        # model or host — nor at the wrong one of our own two endpoints.
         if is_free_fallback_choice(model):
             fb_base_url, fb_token, fb_model = _resolve_free_fallback_config()
             fb_headers = (
@@ -1773,12 +1826,19 @@ def create_llm_client(
                 **kwargs,
             )
         free_base_url, token, free_model = _resolve_free_tier_config()
+        # An alt model rides the primary endpoint's credentials unchanged —
+        # same base URL, same bearer — which is what makes serving it from the
+        # server's token safe. Resolve the primary config FIRST so an
+        # unconfigured free tier still fails fast with the clear message.
+        chosen = free_alt_choice(model) or free_model
         headers = {"Authorization": f"Bearer {token}"} if token else None
         return OpenAIProvider(
             api_key="free",
-            model=free_model,
+            model=chosen,
             base_url=free_base_url,
             default_headers=headers,
+            # Alt models keep the primary's outage fallback: they sit on the
+            # same shared cloud endpoint and shed requests the same way.
             fallback=_resolve_free_fallback_config(),
             **kwargs,
         )

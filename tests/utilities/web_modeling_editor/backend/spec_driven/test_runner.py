@@ -312,8 +312,9 @@ class TestHappyPath:
 
 class TestFreeTierStartEventModel:
     """The start event's llmModel must name the model the run is actually
-    served by: the primary by default, the fallback only when the request
-    explicitly picked it — mirroring create_llm_client's allowlist."""
+    served by: the primary by default, the fallback or an alt model only when
+    the request explicitly picked it — mirroring create_llm_client's
+    allowlist."""
 
     def _configure_free_env(self, monkeypatch):
         monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
@@ -322,6 +323,7 @@ class TestFreeTierStartEventModel:
             "BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1"
         )
         monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+        monkeypatch.delenv("BESSER_FREE_LLM_ALT_MODELS", raising=False)
 
     def _start_event(self, request) -> dict:
         frames = asyncio.run(_collect_frames(SmartGenerationRunner(request)))
@@ -352,6 +354,23 @@ class TestFreeTierStartEventModel:
         self._configure_free_env(monkeypatch)
         monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", raising=False)
         request = _build_request(provider="free", llm_model="qwen3.8:27b")
+        assert self._start_event(request)["llmModel"] == "meituan/LongCat-2.0:free"
+
+    def test_explicit_alt_choice_reported_truthfully(
+        self, stub_orchestrator, monkeypatch
+    ):
+        # An alt model (same endpoint as the primary, e.g. the unmetered
+        # Laguna) must show up on the run card, not be masked as the primary.
+        self._configure_free_env(monkeypatch)
+        monkeypatch.setenv("BESSER_FREE_LLM_ALT_MODELS", "poolside/laguna-s-2.1-free")
+        request = _build_request(provider="free", llm_model="poolside/laguna-s-2.1-free")
+        assert self._start_event(request)["llmModel"] == "poolside/laguna-s-2.1-free"
+
+    def test_alt_choice_not_configured_reported_as_primary(
+        self, stub_orchestrator, monkeypatch
+    ):
+        self._configure_free_env(monkeypatch)
+        request = _build_request(provider="free", llm_model="poolside/laguna-s-2.1-free")
         assert self._start_event(request)["llmModel"] == "meituan/LongCat-2.0:free"
 
 

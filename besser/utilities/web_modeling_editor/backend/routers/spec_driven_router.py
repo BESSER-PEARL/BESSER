@@ -95,6 +95,7 @@ from besser.utilities.buml_code_builder import (
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 from besser.generators.llm.llm_client import (
+    free_alt_models,
     free_fallback_model,
     free_tier_available,
     free_tier_model,
@@ -359,14 +360,24 @@ async def stream_smart_run_events(
 def _free_tier_model_choices() -> list[dict]:
     """The free-tier models a request may explicitly pick between.
 
-    Exactly the server-configured allowlist: the primary (default) and, when
-    a distinct fallback endpoint is configured, the fallback's model. Empty
-    when the free tier itself is not configured.
+    Exactly the server-configured allowlist, in preference order: the primary
+    (default), any extra models sharing the primary endpoint
+    (``BESSER_FREE_LLM_ALT_MODELS`` — e.g. ``poolside/laguna-s-2.1-free``,
+    which unlike the primary advertises no daily request quota), and, when a
+    distinct fallback endpoint is configured, the fallback's model. Empty when
+    the free tier itself is not configured.
+
+    The list is deliberately flat: the frontend renders it verbatim, so adding
+    a free model is a server-env change with no frontend deploy. What the ids
+    do NOT carry is which endpoint serves them — that pairing lives in
+    ``create_llm_client``, where an alt id resolves to the primary base
+    URL + token and the fallback id to its own.
     """
     if not free_tier_available():
         return []
     primary = free_tier_model()
     choices = [{"id": primary, "default": True}]
+    choices.extend({"id": alt, "default": False} for alt in free_alt_models())
     fallback = free_fallback_model()
     if fallback and fallback != primary:
         choices.append({"id": fallback, "default": False})
@@ -428,8 +439,8 @@ async def smart_gen_config():
             "model": free_tier_model() or None,
             # The model ids a free-tier request may explicitly choose between.
             # The server honors exactly these ids (anything else pins to the
-            # default) — at most two entries: the primary (default) and, when
-            # a fallback endpoint is configured, the fallback's model.
+            # default): the primary (default), any alt models on the primary
+            # endpoint, and the fallback endpoint's model when configured.
             "models": _free_tier_model_choices(),
         },
     }

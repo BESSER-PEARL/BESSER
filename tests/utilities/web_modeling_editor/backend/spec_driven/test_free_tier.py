@@ -16,6 +16,8 @@ import pytest
 from besser.generators.llm.llm_client import (
     _get_pricing,
     create_llm_client,
+    free_alt_choice,
+    free_alt_models,
     free_fallback_model,
     free_tier_available,
     free_tier_model,
@@ -118,6 +120,9 @@ def _configure_free_tier_with_fallback(monkeypatch):
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_TOKEN", "fallback-token")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+    # Keep the two-model baseline deterministic even if the host running the
+    # tests has alt models configured.
+    monkeypatch.delenv("BESSER_FREE_LLM_ALT_MODELS", raising=False)
 
 
 def test_is_free_fallback_choice_matrix(monkeypatch):
@@ -176,3 +181,90 @@ def test_free_client_explicit_primary_behaves_like_default(monkeypatch):
     assert client._fallback == (
         "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
     )
+
+
+# ---------------------------------------------------------------------
+# Alt free models — extra ids on the PRIMARY endpoint
+#
+# The provider meters each free model separately, so an alt such as
+# poolside/laguna-s-2.1-free (no stated daily quota) is the only keyless option
+# left once the primary's 100/day is spent. The hazard these tests pin down is
+# the endpoint/token PAIRING: an alt must ride the primary's base URL + token,
+# never the fallback's (different host, different credentials).
+# ---------------------------------------------------------------------
+
+_LAGUNA = "poolside/laguna-s-2.1-free"
+
+
+def _configure_free_tier_with_alt(monkeypatch, alts=_LAGUNA):
+    _configure_free_tier_with_fallback(monkeypatch)
+    monkeypatch.setenv("BESSER_FREE_LLM_ALT_MODELS", alts)
+
+
+def test_free_alt_models_empty_by_default(monkeypatch):
+    # A deploy that never sets the var behaves exactly as before.
+    _configure_free_tier_with_fallback(monkeypatch)
+    assert free_alt_models() == []
+    assert free_alt_choice(_LAGUNA) == ""
+
+
+def test_free_alt_models_parses_list(monkeypatch):
+    _configure_free_tier_with_alt(
+        monkeypatch, f" {_LAGUNA} , inclusionai/ling-3.0-flash-sante:free ,,"
+    )
+    assert free_alt_models() == [_LAGUNA, "inclusionai/ling-3.0-flash-sante:free"]
+
+
+def test_free_alt_models_drops_primary_and_fallback_ids(monkeypatch):
+    # Both ids are already owned by a specific endpoint+token pair; re-serving
+    # them as alts would send the primary's bearer to the fallback host.
+    _configure_free_tier_with_alt(
+        monkeypatch, f"meituan/LongCat-2.0:free,qwen3.8:27b,{_LAGUNA},{_LAGUNA}"
+    )
+    assert free_alt_models() == [_LAGUNA]
+    # The fallback id still routes to the fallback, not to the primary.
+    assert is_free_fallback_choice("qwen3.8:27b") is True
+    assert free_alt_choice("qwen3.8:27b") == ""
+
+
+def test_free_alt_choice_matrix(monkeypatch):
+    _configure_free_tier_with_alt(monkeypatch)
+    assert free_alt_choice(_LAGUNA) == _LAGUNA
+    assert free_alt_choice(f"  {_LAGUNA}  ") == _LAGUNA
+    assert free_alt_choice(None) == ""
+    assert free_alt_choice("") == ""
+    assert free_alt_choice("meituan/LongCat-2.0:free") == ""
+    assert free_alt_choice("gpt-4o") == ""
+    # An alt is never mistaken for the fallback choice.
+    assert is_free_fallback_choice(_LAGUNA) is False
+
+
+def test_free_client_alt_model_uses_primary_endpoint_and_token(monkeypatch):
+    # The pairing assertion: alt model, PRIMARY base URL, PRIMARY bearer.
+    _configure_free_tier_with_alt(monkeypatch)
+    client = create_llm_client(provider="free", model=_LAGUNA)
+    assert str(client._client.base_url).rstrip("/") == "https://cloud.example/v1"
+    assert client._model == _LAGUNA
+    assert client._client.default_headers.get("Authorization") == "Bearer primary-token"
+    # Same shared cloud endpoint as the primary, so it keeps the same outage
+    # fallback (unlike an explicit fallback choice, which has none).
+    assert client._fallback == (
+        "https://ollama.example/v1", "fallback-token", "qwen3.8:27b",
+    )
+
+
+def test_free_client_alt_model_not_offered_pins_primary(monkeypatch):
+    # An id that is a valid alt on ANOTHER deploy is still just an unknown id
+    # here: it must pin to the primary, never be forwarded blindly.
+    _configure_free_tier_with_fallback(monkeypatch)
+    client = create_llm_client(provider="free", model=_LAGUNA)
+    assert client._model == "meituan/LongCat-2.0:free"
+
+
+def test_free_client_alt_model_still_fails_fast_when_unconfigured(monkeypatch):
+    # Naming an alt must not bypass the "free tier not available" guard.
+    monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
+    monkeypatch.setenv("BESSER_FREE_LLM_ALT_MODELS", _LAGUNA)
+    with pytest.raises(ValueError, match="free tier is not available"):
+        create_llm_client(provider="free", model=_LAGUNA)

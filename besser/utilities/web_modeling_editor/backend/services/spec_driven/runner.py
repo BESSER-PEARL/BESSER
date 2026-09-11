@@ -44,6 +44,7 @@ from besser.generators.llm.errors import (
 from besser.generators.llm.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
+    free_alt_choice,
     free_tier_model,
     is_free_fallback_choice,
 )
@@ -719,14 +720,19 @@ class SmartGenerationRunner:
         self._started_at = time.monotonic()
         if self.request.provider == "free":
             # Free tier is pinned to the server's hosted model — unless the
-            # request explicitly named the server's FALLBACK model, the one
-            # other id the factory honors. Mirror the factory's decision
-            # (``is_free_fallback_choice``) so the run card header shows the
-            # model the run is actually served by.
+            # request explicitly named one of the other ids the factory
+            # honors: the server's FALLBACK model, or an alt model on the
+            # primary endpoint. Mirror the factory's decision, in the same
+            # order, so the run card header shows the model the run is
+            # actually served by.
             if is_free_fallback_choice(self.request.llm_model):
                 llm_model = (self.request.llm_model or "").strip()
             else:
-                llm_model = free_tier_model() or "free"
+                llm_model = (
+                    free_alt_choice(self.request.llm_model)
+                    or free_tier_model()
+                    or "free"
+                )
         elif self.request.provider == "sponsored":
             from besser.generators.llm.llm_client import sponsored_tier_model
             llm_model = self.request.llm_model or sponsored_tier_model() or "sponsored"

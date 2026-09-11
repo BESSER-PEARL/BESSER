@@ -80,6 +80,7 @@ def test_config_endpoint_free_models_with_fallback(monkeypatch):
     monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+    monkeypatch.delenv("BESSER_FREE_LLM_ALT_MODELS", raising=False)
 
     payload = _get_config().json()
     free_tier = payload["free_tier"]
@@ -96,6 +97,7 @@ def test_config_endpoint_free_models_without_fallback(monkeypatch):
     monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
     monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", raising=False)
     monkeypatch.delenv("BESSER_FREE_LLM_FALLBACK_MODEL", raising=False)
+    monkeypatch.delenv("BESSER_FREE_LLM_ALT_MODELS", raising=False)
 
     free_tier = _get_config().json()["free_tier"]
     assert free_tier["models"] == [
@@ -103,12 +105,38 @@ def test_config_endpoint_free_models_without_fallback(monkeypatch):
     ]
 
 
+def test_config_endpoint_advertises_alt_free_models(monkeypatch):
+    """Alt models on the primary endpoint are advertised between the primary
+    and the fallback, all non-default — so the picker (which renders this list
+    verbatim) gains the option with no frontend change, and the default stays
+    the primary."""
+    monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+    monkeypatch.setenv("BESSER_FREE_LLM_ALT_MODELS", "poolside/laguna-s-2.1-free")
+
+    free_tier = _get_config().json()["free_tier"]
+    assert free_tier["model"] == "meituan/LongCat-2.0:free"
+    assert free_tier["models"] == [
+        {"id": "meituan/LongCat-2.0:free", "default": True},
+        {"id": "poolside/laguna-s-2.1-free", "default": False},
+        {"id": "qwen3.8:27b", "default": False},
+    ]
+    # Exactly one default, and it is still the primary.
+    assert [m["id"] for m in free_tier["models"] if m["default"]] == [
+        "meituan/LongCat-2.0:free",
+    ]
+
+
 def test_config_endpoint_free_models_empty_when_unconfigured(monkeypatch):
     monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
     monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
-    # A fallback alone does not make the tier (or its choices) available.
+    # Neither a fallback nor an alt list alone makes the tier (or its choices)
+    # available — both need the primary endpoint to exist.
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3.8:27b")
+    monkeypatch.setenv("BESSER_FREE_LLM_ALT_MODELS", "poolside/laguna-s-2.1-free")
 
     free_tier = _get_config().json()["free_tier"]
     assert free_tier["available"] is False

@@ -7,6 +7,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text, DataBinding
 from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, Table
+import besser.generators.react
 from besser.generators.react import ReactGenerator
 
 
@@ -581,3 +582,19 @@ def test_lookup_options_identify_a_record_rather_than_describe_it():
     # With neither, fall back to the first non-id string attribute.
     plain = [prop("number", IntegerType, is_id=True), prop("description")]
     assert GuiSerializationMixin._select_display_field(plain) == "description"
+
+
+def test_a_method_that_declines_is_not_reported_as_a_success():
+    """A method that guards itself reports a refusal by returning false. Telling
+    the user the operation completed successfully says the opposite of what
+    happened, so the confirmation is withheld and the popup names the outcome."""
+    component = os.path.join(
+        os.path.dirname(besser.generators.react.__file__),
+        "templates", "src", "components", "MethodButton.tsx.j2",
+    )
+    with open(component, encoding="utf-8") as f:
+        code = f.read()
+
+    assert "const wasDeclined = /^false$/i.test(String(formattedResult).trim());" in code
+    assert "if (!wasDeclined) {" in code
+    assert 'declined ? "Not applied" : "Method Result"' in code

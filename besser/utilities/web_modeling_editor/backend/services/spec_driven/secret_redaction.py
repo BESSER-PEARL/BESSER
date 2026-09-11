@@ -68,8 +68,26 @@ def _is_placeholder(value: str) -> bool:
     )
 
 
-def redact_text(value: str) -> tuple[str, int]:
-    """Return ``value`` with credential material replaced and a match count."""
+def redact_text(value: str, *, env_style: bool = True) -> tuple[str, int]:
+    """Return ``value`` with credential material replaced and a match count.
+
+    ``env_style`` controls the NAME-based assignment heuristic, which belongs to
+    ``.env`` files only. Applying it to source code corrupts the file, because
+    it matches on the variable NAME and replaces the whole value with a bare
+    ``[REDACTED]`` - legal text in a .env, but a list containing an undefined
+    name in Python. Observed across a 10-app batch on 2026-09-11:
+
+        SECRET_KEY = [REDACTED]                    # NameError at import
+        ACCESS_TOKEN_EXPIRE_MINUTES = [REDACTED]   # an INTEGER, not a secret
+        token_data = [REDACTED]                    # a local variable
+
+    The last two are not credentials at all - their names merely contain
+    "TOKEN". Any generated app with auth was left unable to import.
+
+    With ``env_style=False`` only the provider-token pattern runs. That one is
+    safe in source: it matches the token itself, not the surrounding quotes, so
+    ``"sk-ant-..."`` becomes ``"[REDACTED]"`` and the file still parses.
+    """
     findings = 0
 
     def _assignment_replacement(match: re.Match[str]) -> str:
@@ -79,7 +97,13 @@ def redact_text(value: str) -> tuple[str, int]:
         findings += 1
         return match.group(1) + REDACTED_SECRET
 
-    redacted = _SECRET_ENV_ASSIGNMENT_RE.sub(_assignment_replacement, value)
+    # The name-based assignment heuristic runs for .env-family content ONLY.
+    # In source code it matches on the variable NAME and swaps the whole value
+    # for a bare [REDACTED], which does not parse as Python.
+    redacted = value
+    if env_style:
+        redacted = _SECRET_ENV_ASSIGNMENT_RE.sub(_assignment_replacement, redacted)
+    # Always safe: this matches the token itself, never the quotes around it.
     redacted, token_count = _SECRET_VALUE_TOKEN_RE.subn(REDACTED_SECRET, redacted)
     return redacted, findings + token_count
 
@@ -166,13 +190,15 @@ def scrub_secret_files(
             except (OSError, UnicodeDecodeError, ValueError):
                 continue
 
-            safe_content, file_findings = redact_text(content)
+            # File kind is decided BEFORE redacting: the name-based assignment
+            # heuristic is a .env rule and destroys source code (see redact_text).
+            lowered = name.lower()
+            is_env = lowered.startswith(".env")
+            safe_content, file_findings = redact_text(content, env_style=is_env)
             if not file_findings:
                 continue
 
             relative = os.path.relpath(full_path, root_path).replace("\\", "/")
-            lowered = name.lower()
-            is_env = lowered.startswith(".env")
             is_safe_template = any(lowered.endswith(suffix) for suffix in _ENV_SAFE_SUFFIXES)
             if is_env and not is_safe_template:
                 try:

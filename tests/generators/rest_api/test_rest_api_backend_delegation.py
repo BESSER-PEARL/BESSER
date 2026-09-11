@@ -48,3 +48,37 @@ def test_backend_generator_honors_the_port_argument(library_book_author_model, t
     ).generate()
     with open(os.path.join(output_dir, "main_api.py"), encoding="utf-8") as f:
         assert "port=9002" in f.read()
+
+
+def test_optional_link_attribute_is_optional_in_the_payload(tmp_path):
+    """The form that submits an association-class link leaves an optional
+    attribute blank, so demanding it in the payload rejects a request the UI
+    considers complete."""
+    from besser.BUML.metamodel.structural import (
+        AssociationClass, BinaryAssociation, Class, DomainModel, FloatType,
+        IntegerType, Multiplicity, Property,
+    )
+    from besser.generators.pydantic_classes import PydanticGenerator
+
+    trip = Class(name="Trip", attributes={Property(name="id", type=IntegerType, is_id=True)})
+    seat = Class(name="Seat", attributes={Property(name="code", type=IntegerType, is_id=True)})
+    trip_seat = BinaryAssociation(name="trip_seat", ends={
+        Property(name="trips", type=trip, multiplicity=Multiplicity(0, "*")),
+        Property(name="seats", type=seat, multiplicity=Multiplicity(0, "*")),
+    })
+    reservation = AssociationClass(
+        name="Reservation",
+        attributes={
+            Property(name="price", type=FloatType),
+            Property(name="surcharge", type=FloatType, is_optional=True),
+        },
+        association=trip_seat,
+    )
+    model = DomainModel(name="TripModel", types={trip, seat, reservation}, associations={trip_seat})
+
+    PydanticGenerator(model=model, output_dir=str(tmp_path), backend=True).generate()
+    code = (tmp_path / "pydantic_classes.py").read_text(encoding="utf-8")
+
+    assert "class ReservationLinkCreate(BaseModel):" in code
+    assert "    surcharge: Optional[float] = None" in code
+    assert "    price: float\n" in code

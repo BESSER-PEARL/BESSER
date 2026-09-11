@@ -233,3 +233,68 @@ def test_binary_associations_do_not_emit_nary_warning(tmpdir):
 
     _path, code = _generate(model, tmpdir, subdir="binary_no_warning")
     assert "WARNING: n-ary association" not in code
+
+
+# ----------------------------------------------------------------------
+# 6. The generated module binds BOTH the aliased and plain typing names.
+#
+# Every typing/sqlalchemy import is aliased with a trailing underscore so a
+# modelled class called List or Optional cannot shadow it. That is correct for
+# generated code, but this file is routinely edited afterwards by an LLM, which
+# writes ordinary Python. A nullable FK column genuinely wants
+# ``Mapped_[Optional[int]]``, and with only the aliases bound that raised
+# "undefined name 'Optional'" and the app would not import at all — observed in
+# a generated app on 2026-09-11.
+# ----------------------------------------------------------------------
+
+
+def _optional_fk_model() -> DomainModel:
+    """Team/Player with an OPTIONAL team end, which emits a nullable FK."""
+    from besser.BUML.metamodel.structural import BinaryAssociation, IntegerType
+
+    team = Class(name="Team")
+    team.attributes = {
+        Property(name="id", type=IntegerType, is_id=True),
+        Property(name="name", type=StringType),
+    }
+    player = Class(name="Player")
+    player.attributes = {
+        Property(name="id", type=IntegerType, is_id=True),
+        Property(name="name", type=StringType),
+    }
+    assoc = BinaryAssociation(name="team_players", ends={
+        Property(name="team", type=team, multiplicity=Multiplicity(0, 1)),
+        Property(name="players", type=player, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(name="Squad", types={team, player}, associations={assoc})
+
+
+def test_generated_module_binds_plain_and_aliased_typing_names(tmp_path):
+    SQLAlchemyGenerator(model=_optional_fk_model(), output_dir=str(tmp_path)).generate()
+    src = (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8")
+    line = next(l for l in src.splitlines() if l.startswith("from typing import"))
+    for name in ("List", "Optional", "List as List_", "Optional as Optional_"):
+        assert name in line, f"{name!r} not bound: {line!r}"
+
+
+def test_a_bare_Optional_annotation_still_imports(tmp_path):
+    """Simulates the LLM's edit: annotate the nullable FK as Optional[int].
+
+    Before this fix that produced an undefined name and the backend could not
+    be imported, so the whole generated app was dead on arrival.
+    """
+    import re
+
+    SQLAlchemyGenerator(model=_optional_fk_model(), output_dir=str(tmp_path)).generate()
+    path = tmp_path / "sql_alchemy.py"
+    src = path.read_text(encoding="utf-8")
+    edited, n = re.subn(
+        r"Mapped_\[int\] = mapped_column\(ForeignKey_",
+        "Mapped_[Optional[int]] = mapped_column(ForeignKey_",
+        src, count=1,
+    )
+    assert n == 1, "expected a nullable foreign-key column to rewrite"
+
+    namespace: dict = {}
+    exec(compile(edited, str(path), "exec"), namespace)   # must not NameError
+    assert "Team" in namespace and "Player" in namespace

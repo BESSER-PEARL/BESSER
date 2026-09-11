@@ -1,7 +1,14 @@
 {% import "helpers.py.j2" as helper -%}
 import enum
 import os
-from typing import List as List_, Optional as Optional_
+# Both spellings are bound on purpose. Generated code uses the trailing-
+# underscore aliases so a modelled class named List or Optional cannot
+# shadow them. The PLAIN names are imported too because this file is
+# routinely edited afterwards by an LLM, which writes ordinary Python:
+# a nullable FK column correctly wants Mapped_[Optional[int]], and with
+# only the aliases bound that raised "undefined name 'Optional'" and the
+# app would not import (observed in a generated app, 2026-09-11).
+from typing import List, Optional, List as List_, Optional as Optional_
 from sqlalchemy import (
     create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
     Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,

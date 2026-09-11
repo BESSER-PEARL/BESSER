@@ -276,20 +276,52 @@ class TestHarnessUpgrades:
         assert effective_threshold("devstral:24b") == 16_000
         assert effective_threshold("mistral-small-latest") == 16_000
 
-    def test_effective_threshold_does_not_clamp_misattributed_models(self):
+    def test_effective_threshold_does_not_clamp_on_a_misattribution(self):
         """Regression for the read/compact/re-read spiral of 2026-09-10.
 
         A window stated too LOW is far worse than one left unknown: it made
         every few file reads trigger a lossy compaction, the model re-read what
         it lost, and a run burned 40 turns of read_file until the runtime cap.
 
-        - qwen3.8:27b is served by Command Code, not by the ollama box the 32k
-          figure was measured on; its native window is 262k.
-        - "mistral" as a bare marker also matched mistral-large (256k).
+        The rule is NOT "never clamp" - it is "clamp only on evidence from the
+        deployment we actually call". Two corrections, both from 2026-09-11:
+
+        - A bare "mistral" marker matched ``mistral-large-latest`` (256k),
+          clamping a frontier cloud model to a 16k threshold. Still wrong; this
+          test pins that it stays unclamped.
+        - The qwen row WAS justified, just with a stale number. The model is
+          served from our own Ollama box (ollama.besser-pearl.org, NOT Command
+          Code as first concluded), and measurement there showed prefill is the
+          binding cost and >64k prompts get truncated. It is clamped again, now
+          at 60k - see test_self_hosted_qwen_is_clamped_to_fit_its_prefill_budget.
         """
         from besser.generators.llm.compaction import effective_threshold
-        assert effective_threshold("qwen3.8:27b") == STANDALONE_THRESHOLD
         assert effective_threshold("mistral-large-latest") == STANDALONE_THRESHOLD
+        # Evidence-based clamp, not a guess: strictly tighter than the default,
+        # and never so tight that a couple of file reads trip compaction.
+        qwen = effective_threshold("qwen3-coder:30b", reserve=32_768)
+        assert 8_000 <= qwen < STANDALONE_THRESHOLD
+
+    def test_self_hosted_qwen_is_clamped_to_fit_its_prefill_budget(self):
+        """The local Ollama box advertises 131k but cannot usefully serve it.
+
+        Measured 2026-09-11: prefill runs ~950 tok/s, so context size translates
+        directly into per-turn latency, and a >64k prompt came back truncated.
+        The clamp must keep history + max output inside 60k.
+        """
+        from besser.generators.llm.compaction import effective_threshold
+        reserve = 32_768          # the scaffolded/from-scratch output budget
+        for tag in ("qwen3-coder:30b", "qwen3.8:27b"):
+            threshold = effective_threshold(tag, reserve=reserve)
+            assert threshold + reserve <= 60_000, tag
+            assert threshold >= 8_000, tag
+
+    def test_cloud_models_keep_the_full_threshold(self):
+        """The local clamp must not leak onto cloud-served models."""
+        from besser.generators.llm.compaction import effective_threshold
+        for tag in ("meituan/LongCat-2.0:free", "claude-sonnet-4-6",
+                    "mistral-large-latest", "gpt-5.6-terra"):
+            assert effective_threshold(tag, reserve=32_768) == STANDALONE_THRESHOLD, tag
 
     def test_clamped_threshold_never_goes_below_a_workable_size(self):
         """Whatever the reserve, we never hand back a threshold that cannot

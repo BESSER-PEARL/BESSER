@@ -24,3 +24,8 @@ class GenerationError(BesserError):
 class ConfigurationError(BesserError):
     """Raised when configuration is invalid."""
     pass
+
+
+class CodeValidationError(BesserError):
+    """Raised when a CustomCodeAction fails structural or semantic validation."""
+    pass

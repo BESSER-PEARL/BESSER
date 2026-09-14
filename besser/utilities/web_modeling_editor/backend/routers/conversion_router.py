@@ -877,8 +877,11 @@ async def transform_agent_model_json(input_data: DiagramInput):
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
+        resolved_agent = getattr(agent_module, "agent", agent_model)
+        # gui_models is now serialized by agent_model_to_code, so the
+        # exec'd module's agent already carries it.
         generator_instance = generator_class(
-            getattr(agent_module, "agent", agent_model),
+            resolved_agent,
             config=config,
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,

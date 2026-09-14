@@ -382,7 +382,9 @@ def generate_agent_files(
             # containing only the raw agent_model.py.
             generator_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
 
-            # Use the BAFGenerator with the agent model from the module
+            # Use the BAFGenerator with the agent model from the module.
+            # gui_models is now serialized by agent_model_to_code, so the
+            # exec'd module's agent already carries it.
             if hasattr(agent_module, 'agent'):
                 generator = generator_class(
                     agent_module.agent,

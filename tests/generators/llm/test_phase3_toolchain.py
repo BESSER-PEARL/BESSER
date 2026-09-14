@@ -120,6 +120,11 @@ def _build_orchestrator(tmp_path) -> LLMOrchestrator:
         output_dir=str(tmp_path),
         enable_tracing=False,
         enable_checkpointing=False,
+        # Explicit: these tests exist to exercise the tsc/cargo/kotlinc path,
+        # which is opt-in as of 2026-09-14 (it shells out to whatever compiler
+        # the host happens to have). Relying on the default would make this
+        # file silently stop testing anything if the default moved again.
+        enable_toolchain_validation=True,
     )
 
 

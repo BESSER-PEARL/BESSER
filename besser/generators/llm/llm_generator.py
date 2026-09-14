@@ -82,6 +82,13 @@ class LLMGenerator(GeneratorInterface):
         max_cost_usd: Maximum estimated cost in USD before stopping (default: 5.0).
         max_runtime_seconds: Maximum wall-clock time in seconds (default: 1200 = 20 min).
         base_url: Custom API base URL (for gateways/proxies).
+        allow_shell_tools: Give the LLM ``run_command`` / ``install_dependencies``,
+            which execute arbitrary shell commands in the output directory.
+            **Off by default** — opt in only for a workspace you would run
+            untrusted code in. The hosted deployment keeps this off.
+        enable_toolchain_validation: Let validation shell out to ``tsc`` /
+            ``cargo`` / ``kotlinc`` when they are installed. Off by default;
+            slower and dependent on what the host happens to have.
     """
 
     def __init__(
@@ -103,6 +110,8 @@ class LLMGenerator(GeneratorInterface):
         max_runtime_seconds: int = 1200,
         base_url: str | None = None,
         primary_kind: str | None = None,
+        allow_shell_tools: bool = False,
+        enable_toolchain_validation: bool = False,
     ):
         # ``model`` (DomainModel) is optional now — smart generation
         # can also be driven from a state machine, agent, GUI, object,
@@ -131,6 +140,13 @@ class LLMGenerator(GeneratorInterface):
         self.state_machines = state_machines
         self.quantum_circuit = quantum_circuit
         self.primary_kind = primary_kind
+        # Both OFF unless the caller asks. run_command /
+        # install_dependencies execute arbitrary shell commands in the
+        # workspace; the hosted deployment withholds them and a library
+        # run used to enable them silently because this argument was
+        # never threaded through to the orchestrator (2026-09-14).
+        self.allow_shell_tools = allow_shell_tools
+        self.enable_toolchain_validation = enable_toolchain_validation
         self.max_turns = max_turns
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
@@ -174,6 +190,8 @@ class LLMGenerator(GeneratorInterface):
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
             primary_kind=self.primary_kind,
+            allow_shell_tools=self.allow_shell_tools,
+            enable_toolchain_validation=self.enable_toolchain_validation,
         )
         result = self._orchestrator.run(self.instructions)
 

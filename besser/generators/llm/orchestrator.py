@@ -630,8 +630,17 @@ class LLMOrchestrator:
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
-        enable_toolchain_validation: bool = True,
-        allow_shell_tools: bool = True,
+        # Both default OFF, matching what the hosted deployment already asks
+        # for. They used to default ON, and LLMGenerator never passed either
+        # one - so every library run silently enabled run_command /
+        # install_dependencies, the exact capability the hosted gate exists to
+        # withhold, and shelled out to tsc/cargo/kotlinc when present. A
+        # library whose default is "may run arbitrary shell commands" has it
+        # backwards; the 20-run experiment on 2026-09-11/12 produced its apps
+        # with shell tools OFF, so the permissive default was buying nothing.
+        # Opt in explicitly when you want them.
+        enable_toolchain_validation: bool = False,
+        allow_shell_tools: bool = False,
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,

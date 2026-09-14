@@ -80,11 +80,31 @@ def test_orchestrator_disables_shell_tools(tmp_path):
     assert orch.allow_shell_tools is False
 
 
-def test_orchestrator_default_keeps_shell_tools(tmp_path):
+def test_orchestrator_default_drops_shell_tools(tmp_path):
+    """The default is OFF as of 2026-09-14.
+
+    It used to be ON, and LLMGenerator never passed the argument, so every
+    library run silently got run_command / install_dependencies — the exact
+    capability the hosted gate exists to withhold. Opting in is now explicit.
+    """
     orch = LLMOrchestrator(
         llm_client=_MockClient(),
         domain_model=_simple_model(),
         output_dir=str(tmp_path),
+    )
+    names = {t["name"] for t in orch.tools}
+    assert "run_command" not in names
+    assert "install_dependencies" not in names
+
+
+def test_orchestrator_grants_shell_tools_when_asked(tmp_path):
+    """The other direction: this is a default change, not a removal. The flag
+    must still thread into the live tool list."""
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(),
+        domain_model=_simple_model(),
+        output_dir=str(tmp_path),
+        allow_shell_tools=True,
     )
     names = {t["name"] for t in orch.tools}
     assert "run_command" in names

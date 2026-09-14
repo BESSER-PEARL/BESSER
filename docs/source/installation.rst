@@ -3,11 +3,11 @@ Installation
 
 Basic Installation
 --------------------------------
-BESSER is tested on Python **3.10**, **3.11**, and **3.12**. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_, 
+BESSER requires Python **3.11** or later, and is tested on **3.11** and **3.12**. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_,
 `conda <https://docs.conda.io/en/latest/>`_).
 
 .. warning::
-   Python 3.13 is **not** supported yet because some dependencies have not released compatible wheels. Please use Python 3.10 or 3.12 for now.
+   Python 3.13 is not tested yet because some dependencies have not released compatible wheels. Please use Python 3.11 or 3.12 for now.
 
 The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
 
@@ -37,15 +37,36 @@ including tests and examples.
 
 **Step 2: Create a virtual environment**
 
-Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. 
-This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
+Create a virtual environment, activate it, and install BESSER in editable mode.
+Installing with ``pip install -e .`` (rather than only the requirements file) is
+what makes *besser* importable from anywhere, including in IDEs like VSCode that
+do not set ``PYTHONPATH`` for you.
+
+On Windows:
 
 .. code-block:: console
 
     $ python -m venv venv
     $ venv\Scripts\activate
-    $ source venv/bin/activate  # Linux / macOS
-    $ pip install -r requirements.txt
+    $ pip install -e .
+
+On Linux / macOS:
+
+.. code-block:: console
+
+    $ python -m venv venv
+    $ source venv/bin/activate
+    $ pip install -e .
+
+.. note::
+   To run the web modeling editor's backend as well, install its extra
+   dependencies (FastAPI and friends are not in the root requirements file)::
+
+      $ pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+
+   Optional extras are also available: ``pip install besser[nn]`` for the
+   neural-network generators and ``pip install besser[agents]`` for the agent
+   personalization features.
 
 .. note::
   

@@ -68,8 +68,10 @@ wheels.
 
 **Fix**
 
-Use **Python 3.10** or **3.12** instead.  You can manage multiple Python
-versions with `pyenv <https://github.com/pyenv/pyenv>`_ (Linux/macOS) or
+Use **Python 3.11** or **3.12** instead — these are the versions CI tests, and
+``setup.cfg`` declares ``python_requires = >=3.11``, so anything older will not
+install either.  You can manage multiple Python versions with
+`pyenv <https://github.com/pyenv/pyenv>`_ (Linux/macOS) or
 the `Python Launcher for Windows <https://docs.python.org/3/using/windows.html#launcher>`_.
 
 
@@ -345,6 +347,12 @@ Old containers, images, and volumes accumulate over time.
 
 Code Generators
 ---------------
+
+.. note::
+   Problems with a :doc:`Spec-Driven Agent <spec_driven_agent/index>` *run* —
+   ``INVALID_KEY``, a cost or runtime cap, a stuck-looking run, a mid-run model
+   switch, or output that finished with unfixed blockers — have their own table
+   in :doc:`spec_driven_agent/usage`.
 
 Generated code has import errors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

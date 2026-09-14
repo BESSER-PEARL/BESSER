@@ -75,154 +75,44 @@ workflow under the *Agent* diagram type:
   multi-language output, configuration variants, and per-profile
   **personalization mappings** that bundle one agent variant per mapped user.
 
-The *Deploy chatbot* action reuses the same pipeline to push a standalone,
-Streamlit-based agent to a GitHub repository with a ready-to-use Render
-blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
+The editor's *Publish to Render* action reuses the same pipeline to push a
+standalone, Streamlit-based agent to a GitHub repository with a ready-to-use
+Render blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
 
-AI Assistant & Vibe-Driven Generation
+AI Assistant & Spec-Driven Generation
 -------------------------------------
 
 The editor ships with an AI assistant (a floating widget and a workspace
-drawer) backed by the :doc:`modeling agent <generators/baf>`. Through it you
+drawer) backed by a modeling agent. Through it you
 can create and modify diagrams in natural language, ask questions about your
 model, and trigger code generation — including the
-:doc:`Vibe-Driven (LLM-Augmented) Generator <generators/vibe_driven>`.
+:doc:`Spec-Driven Agent <spec_driven_agent/index>`.
 
 When you ask for a customised codebase ("a FastAPI backend for this model with
 JWT auth and Docker", "build this in Rust"), the assistant routes the request to
-the Vibe-Driven Generator. When a free tier is configured it is the **default** —
-the assistant runs on it with no API-key prompt. Bringing your own commercial API
-key (BYOK) is **optional**, offered for higher-fidelity results; whenever a run
-would spend your own key, the assistant always asks for explicit confirmation
-first — a run never spends your key silently.
+the Spec-Driven Agent, which generates a deterministic scaffold, lets an LLM
+customise it, then validates and repairs the result. When a free tier is
+configured it is the **default** — the assistant runs on it with no API-key
+prompt. Bringing your own commercial API key (BYOK) is **optional**, offered for
+higher-fidelity results; whenever a run would spend your own key, the assistant
+always asks for explicit confirmation first — a run never spends your key
+silently.
 
 The run streams over `Server-Sent Events
 <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events>`_ so the
 assistant can show the phase timeline, the LLM's tool calls, and a live
-cost/runtime meter as it works.
+cost/runtime meter as it works. The run is owned by the server rather than the
+browser connection, so closing the tab does not immediately kill it: you can
+reattach and keep watching. A run that stays unattended past the server's grace
+period is then cancelled, so an abandoned tab cannot burn a full budget.
 
-**Endpoints** (all under the ``/besser_api`` prefix):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 15 50
-
-   * - Endpoint
-     - Method
-     - Purpose
-   * - ``/smart-generate``
-     - POST
-     - Start a run; streams SSE, returns a download URL on completion.
-   * - ``/smart-preview``
-     - POST
-     - Pre-flight plan (primary model + target generator). No API key, no
-       LLM call.
-   * - ``/smart-gen/config``
-     - GET
-     - Feature flags and provider default models.
-   * - ``/resume-smart-gen/{run_id}``
-     - POST
-     - Resume an interrupted run from its checkpoint (streams SSE).
-   * - ``/cancel-smart-gen/{run_id}``
-     - POST
-     - Cancel an in-flight run.
-   * - ``/download-smart/{run_id}``
-     - GET
-     - Download the generated ZIP/file (re-fetchable within a TTL).
-
-**Request body of** ``POST /smart-generate``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 22 50
-
-   * - Field
-     - Type
-     - Notes
-   * - ``project``
-     - ProjectInput
-     - The full project payload (same shape as ``/generate-output-from-project``).
-   * - ``instructions``
-     - string
-     - Natural-language description of what to build (1–8000 chars).
-   * - ``api_key``
-     - string (secret)
-     - BYOK. Sent only in the body, never logged or persisted.
-   * - ``provider``
-     - ``anthropic`` | ``openai``
-     - Which provider the key is for. Default ``anthropic``.
-   * - ``llm_model``
-     - string (optional)
-     - Model override; falls back to the provider default.
-   * - ``max_cost_usd``
-     - float
-     - Soft spend cap, clamped to the server hard cap (default 1.0, max 2.0).
-   * - ``max_runtime_seconds``
-     - int
-     - Soft runtime cap, clamped to the server hard cap (default 600, max 900).
-
-**SSE event types** emitted by ``/smart-generate``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 80
-
-   * - Event
-     - Meaning
-   * - ``start``
-     - Run accepted; carries ``runId``, provider, model, and caps.
-   * - ``phase``
-     - Pipeline advanced to a phase: ``select``, ``generate``, ``gap``,
-       ``customize``, ``validate``.
-   * - ``phase_update``
-     - Extra detail for the current phase (e.g. the gap task list).
-   * - ``text``
-     - A streaming text delta from the LLM.
-   * - ``tool_call``
-     - The LLM invoked a tool (read/write/modify a file, run a generator).
-   * - ``cost``
-     - Periodic cost / runtime / turn-count tick.
-   * - ``done``
-     - Success. Carries ``downloadUrl``, ``fileName``, and the run recipe.
-   * - ``error``
-     - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
-       ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` are
-       non-terminal warnings emitted just before ``done``.
-
-**Example** — start a run with ``curl`` and read the stream::
-
-   curl -N -X POST https://<host>/besser_api/smart-generate \
-     -H 'Content-Type: application/json' \
-     -H 'Accept: text/event-stream' \
-     -d '{
-       "project": { "...": "full ProjectInput payload" },
-       "instructions": "FastAPI backend with JWT auth and a Dockerfile",
-       "api_key": "sk-...",
-       "provider": "openai",
-       "llm_model": "gpt-4o",
-       "max_cost_usd": 1.0,
-       "max_runtime_seconds": 600
-     }'
-
-The response is a Server-Sent Events stream::
-
-   event: start
-   data: {"event":"start","runId":"a1b2c3","provider":"openai","llmModel":"gpt-4o","maxCost":1.0,"maxRuntime":600}
-
-   event: phase
-   data: {"event":"phase","phase":"generate","message":"Running the FastAPI generator…"}
-
-   event: tool_call
-   data: {"event":"tool_call","turn":1,"tool":"write_file","status":"done","summary":"auth.py"}
-
-   event: cost
-   data: {"event":"cost","usd":0.07,"turns":3,"elapsedSeconds":24.1}
-
-   event: done
-   data: {"event":"done","runId":"a1b2c3","downloadUrl":"/besser_api/download-smart/a1b2c3","fileName":"besser-smartgen.zip","isZip":true}
-
-Then issue a ``GET`` to the ``downloadUrl`` to retrieve the ZIP — it is
-re-fetchable within the run's TTL.
+.. seealso::
+   The agent's own documentation is the
+   :doc:`Spec-Driven Agent <spec_driven_agent/index>` section:
+   :doc:`how it works <spec_driven_agent/how_it_works>`,
+   the :doc:`REST + SSE contract <spec_driven_agent/api>` behind this panel,
+   :doc:`providers and the free tier <spec_driven_agent/models>`, and
+   :doc:`durable runs <spec_driven_agent/runs>`.
 
 Building a web app (review-then-generate)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -308,9 +198,11 @@ JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close th
 round-trip through executable BUML ``.py`` files.
 
 .. note::
-   The frontend BPMN editor is being integrated into the
-   `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
-   repository; check there for the latest availability.
+   The frontend BPMN editor ships in the
+   `BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
+   repository, which this repo tracks as a submodule. It covers pools,
+   gateways, flows, start/intermediate/end events and call activities, and
+   supports importing BPMN 2.0 XML.
 
 Backend API Reference
 ---------------------

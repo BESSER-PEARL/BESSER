@@ -2,7 +2,7 @@
   <img src="./docs/source/_static/besser_logo_light.png" alt="BESSER platform" width="500"/>
 </div>
 
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
 [![PyPI version](https://img.shields.io/pypi/v/besser?logo=pypi&logoColor=white)](https://pypi.org/project/besser/)
 [![PyPI - Downloads](https://static.pepy.tech/badge/besser)](https://pypi.org/project/besser/)
 [![Documentation Status](https://readthedocs.org/projects/besser/badge/?version=latest)](https://besser.readthedocs.io/en/latest/)
@@ -15,7 +15,7 @@ BESSER is a [low-modeling](https://modeling-languages.com/welcome-to-the-low-mod
 The BESSER low-code platform is built on top of [B-UML](https://besser.readthedocs.io/en/latest/buml_language.html) our Python-based personal interpretation of a "Universal Modeling Language" (yes, heavily inspired and a simplified version of the better known UML, the Unified Modeling Language).
 With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django web apps or database structures compatible with SQLAlchemy.
 
-Beyond the deterministic generators, BESSER also offers a [Vibe-Driven (LLM-augmented) generator](https://besser.readthedocs.io/en/latest/generators/vibe_driven.html) (experimental): it produces a model-faithful scaffold deterministically and then lets an LLM customise it from a natural-language request — adding features the templates don't cover (auth, Docker, tests) or targeting stacks with no built-in generator. It runs bring-your-own-key, so your API key is never stored.
+Beyond the deterministic generators, BESSER also offers the [Spec-Driven Agent](https://besser.readthedocs.io/en/latest/spec_driven_agent/index.html) (experimental), where generation is *hybrid* rather than a single template pass. It runs in three phases: a deterministic generator produces a model-faithful scaffold, an LLM then customises that scaffold to satisfy a natural-language request — adding features the templates don't cover (auth, Docker, tests) or targeting stacks with no built-in generator — and finally the result is validated, with blocker-level issues driving a bounded auto-fix loop. Where a free tier is configured it runs with no API key at all; bringing your own key is optional, and a key you do supply is never stored.
 
 This repository contains the backend foundation for the ecosystem: the
 metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER-Web-Modeling-Editor](https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor) repository and is included here only as a submodule (at `besser/utilities/web_modeling_editor/frontend`) for local deployments.
@@ -27,7 +27,7 @@ metamodel, code generators, notations, utilities, and services that drive the we
 
 ## Basic Installation
 
-BESSER works with Python 3.10+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
+BESSER requires Python 3.11+ (CI tests 3.11 and 3.12). We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
 
 The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
 

@@ -3,6 +3,9 @@ React Generator
 
 The React Generator produces a modern React frontend application from your GUI model. 
 It is used internally by the :doc:`full_web_app` generator to create the frontend.
+It is also one of the :doc:`Spec-Driven Agent's <../spec_driven_agent/index>`
+generator tools, so an agentic run can produce this frontend and then customise
+it further.
 
 Overview
 --------
@@ -126,12 +129,27 @@ Generated Structure
    │   ├── components/
    │   │   ├── table/
    │   │   │   └── TableComponent.tsx
-   │   │   ├── MethodButton.tsx
-   │   │   └── Renderer.tsx
+   │   │   ├── charts/
+   │   │   ├── runtime/
+   │   │   │   ├── TableBlock.tsx
+   │   │   │   ├── ChartBlock.tsx
+   │   │   │   ├── DataListBlock.tsx
+   │   │   │   ├── MetricCardBlock.tsx
+   │   │   │   └── MapBlock.tsx
+   │   │   ├── InputComponents.tsx
+   │   │   └── MethodButton.tsx
    │   ├── contexts/
    │   │   └── TableContext.tsx
-   │   └── pages/
-   │       └── Home.tsx
+   │   ├── pages/
+   │   │   └── <PageName>.tsx
+   │   ├── App.tsx
+   │   └── index.tsx
    ├── public/
+   ├── index.html
+   ├── vite.config.ts
    ├── package.json
    └── tsconfig.json
+
+One ``.tsx`` file is written per page in the GUI model, named after that page
+(PascalCase), and ``App.tsx`` wires them into the router. ``MapBlock.tsx`` is
+only emitted when the model contains a ``Map`` component.

@@ -174,10 +174,10 @@ The output structure for Smart Data Models will be:
 .. code-block::
 
     output/
-    ├── ADOPTERS.yaml
-    ├── notes.yaml
     ├── NRCellCU/
     │   ├── schema.json
+    │   ├── ADOPTERS.yaml
+    │   ├── notes.yaml
     │   └── examples/
     │       ├── example.json
     │       ├── example-normalized.json
@@ -229,16 +229,16 @@ The output structure for Smart Data Models will be:
 Each class directory contains:
 
 - **schema.json**: The JSON Schema for the class.
+- **ADOPTERS.yaml**: A file listing adopters of that data model.
+- **notes.yaml**: A file containing notes about that data model.
 - **examples/**: A folder with example files in various formats:
   - `example.json`: A key-value representation of the schema.
   - `example-normalized.json`: An NGSI v2 normalized example.
   - `example.jsonld`: A JSON-LD example with context.
   - `example-normalized.jsonld`: An NGSI-LD normalized example.
 
-Additionally, the root directory includes:
-
-- **ADOPTERS.yaml**: A file listing adopters of the data model.
-- **notes.yaml**: A file containing notes about the data model.
+Note that ``ADOPTERS.yaml`` and ``notes.yaml`` are written **per class**, inside each
+class directory — nothing is written to the output root in ``smart_data`` mode.
 
 Generator Parameters
 --------------------
@@ -246,6 +246,6 @@ Generator Parameters
 The ``JSONSchemaGenerator`` constructor accepts the following parameters:
 
 - ``model`` (DomainModel): An instance of the DomainModel class representing the B-UML model.
-- ``output_dir`` (str, optional): The output directory where the generated code will be saved. Defaults to ``<<current_directory>>/output``.
+- ``output_dir`` (str, optional): The output directory where the generated code will be saved. Defaults to ``<<current_directory>>/output`` in ``regular`` mode. In ``smart_data`` mode it is **required** — the per-class directories are created from it directly, so leaving it unset raises a ``TypeError``.
 - ``mode`` (str, optional): The generation mode, either ``'regular'`` or ``'smart_data'``. Defaults to ``'regular'``.
 

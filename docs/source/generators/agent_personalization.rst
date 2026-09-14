@@ -76,7 +76,7 @@ The full list of allowed values is defined in
 
 - ``agentLanguage``: ``original``, ``english``, ``french``, ``german``,
   ``spanish``, ``luxembourgish``, ``portuguese``
-- ``agentStyle``: ``original``, ``formal``, ``informal``
+- ``agentStyle``: ``original``, ``formal``, ``informal``, ``friendly``, ``technical``
 - ``languageComplexity``: ``original``, ``simple``, ``medium``, ``complex``
 - ``sentenceLength``: ``original``, ``concise``, ``verbose``
 - ``font``: ``sans``, ``serif``, ``monospace``, ``neutral``, ``grotesque``, ``condensed``
@@ -90,7 +90,7 @@ The full list of allowed values is defined in
   (legacy spelling, still accepted), ``replicate``, ``ollama``,
   ``mistral``, ``deepseek``, ``google``, ``meta``, ``anthropic``,
   ``qwen``, ``xai``, ``groq``, ``together``, ``openrouter``
-- ``openaiModels``: ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``
+- ``openaiModels``: ``gpt-5.5``, ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``
 - ``ollamaModels``: ``llama3``, ``llama3.1``, ``mistral``, ``qwen2.5``, ``gemma3``, ``phi4``, ``gemma3n:e2b``
 - ``mistralModels``: ``mistral-small-latest``, ``mistral-large-latest``, ``open-mistral-nemo``
 - ``deepseekModels``: ``deepseek-chat``, ``deepseek-reasoner``
@@ -192,7 +192,7 @@ and asks it to return a valid configuration JSON. The output is parsed by
 ``normalize_recommended_agent_config`` before being returned to the caller.
 
 The LLM backend requires an OpenAI API key. The model name is caller-selectable
-(``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``).
+(``gpt-5.5``, ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``).
 
 
 Variants

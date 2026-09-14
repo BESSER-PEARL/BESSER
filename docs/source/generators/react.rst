@@ -50,6 +50,51 @@ Visualization components including:
 - Pie charts
 - Data binding to backend entities
 
+MapBlock
+^^^^^^^^
+
+Interactive multi-layer map powered by `Leaflet <https://leafletjs.com/>`_ (used
+directly, no wrapper library) with OpenStreetMap tiles (no API key required).
+Each ``MapLayer`` on the metamodel ``Map`` component produces one rendered layer
+in the generated output.  Popup labels come from database rows and are always
+HTML-escaped.  Supported layer types:
+
+- **points** — ``L.marker`` + popup per row (lat/lng columns required).
+- **geojson** — ``L.geoJSON`` (geometry column required).
+- **choropleth** — ``L.geoJSON`` with a value-driven fill colour + auto legend
+  (geometry + value columns required; degrades to plain GeoJSON with a console
+  warning when the value column is absent).
+- **heatmap** — ``leaflet.heat`` heat layer (lat/lng columns required; weight
+  column optional).
+
+The generated ``MapBlock.tsx`` loops over the ``layers`` prop and dispatches to the
+correct per-type renderer.  Each renderer is preceded by a section-comment banner
+(``// ===== POINTS LAYER =====``, etc.) and extension blocks are left as commented
+examples, so the output is self-documenting.  See :ref:`maps` for the full guide.
+
+The following npm packages are automatically added to the generated ``package.json``
+when the GUI model contains at least one ``Map`` component:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 18 52
+
+   * - Package
+     - Version
+     - Purpose
+   * - ``leaflet``
+     - ``^1.9.4``
+     - Core Leaflet mapping library (BSD-2-Clause), used directly.
+   * - ``leaflet.heat``
+     - ``^0.2.0``
+     - Heat-map plugin (used when any layer is ``heatmap`` type).
+   * - ``@types/leaflet``
+     - ``^1.9.12``
+     - TypeScript type definitions for Leaflet.
+   * - ``@types/leaflet.heat``
+     - ``^0.2.4``
+     - TypeScript type definitions for leaflet.heat.
+
 Usage
 -----
 

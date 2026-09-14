@@ -1,10 +1,12 @@
 {% import "helpers.py.j2" as helper -%}
 import enum
+import os
 from typing import List as List_, Optional as Optional_
 from sqlalchemy import (
-    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_, 
-    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_, 
-    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_, Enum
+    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
+    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
+    Interval as Interval_, PickleType as PickleType_, Enum
 )
 {%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
@@ -12,10 +14,24 @@ from sqlalchemy.ext.declarative import AbstractConcreteBase
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
 )
-from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
+from uuid import uuid4 as _uuid4
+
+
+def _new_str_id() -> str:
+    """Server-side surrogate for string primary keys named ``id``.
+
+    A string PK has no autoincrement; without a default every INSERT dies
+    on NOT NULL (the id is in nobody's hands: create schemas rightly
+    exclude the server-owned ``id``, so the server must mint it).
+    """
+    return _uuid4().hex
 
 class Base(DeclarativeBase):
     pass
+{%- for association in associations|sort(attribute='name') if association.ends|length > 2 %}
+# WARNING: n-ary association '{{ association.name }}' is not supported by this generator — model it manually.
+{%- endfor %}
 
 {% if enumerations %}# Definitions of Enumerations{% endif %}
 {%- for enum in enumerations %}
@@ -72,7 +88,7 @@ class {{ class.name }}(
     {%- endif -%}
     {%- for parent in sort(class.parents()) %}
     {%- if parent.name not in concrete_parents %}
-    id: Mapped_[int] = mapped_column(ForeignKey_("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
+    id: Mapped_[{{ pk_types.get(parent.name, 'int') }}] = mapped_column(ForeignKey_("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endif %}
     {%- endfor %}
     {%- if (class.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0) 
@@ -108,7 +124,7 @@ class {{ class.name }}(
             {%- endfor %}
             {#- Foreign Key #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
-    {{end.name}}_id: Mapped_[int] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
+    {{end.name}}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
             {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
@@ -132,6 +148,17 @@ class {{ class.name }}(
         "concrete": True,
     }
     {%- endif %}
+{#- The methods the class declares belong on the class: a body that calls another
+    method of the same object (self.calculate_price()) only resolves if they do.
+    A method named after a column is skipped rather than emitted - defining both
+    would leave the column unreadable, so self.check_out - self.check_in would
+    subtract two methods instead of two dates. #}
+    {%- set column_names = class.all_attributes() | map(attribute='name') | list
+                         + class.association_ends() | map(attribute='name') | list %}
+    {%- for method in class.methods if method.code and method.name not in column_names %}
+
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
+    {%- endfor %}
 {% endfor %}
 
 {#- Association Classes #}
@@ -143,7 +170,7 @@ class {{ asso_class.name }}(Base):
     {%- for other_end in asso_class.association.ends if other_end != end %}
         {%- set ns.other_end_max = other_end.multiplicity.max %}
     {%- endfor %}
-    {{ end.name }}_id: Mapped_[str] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
+    {{ end.name }}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
     {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {%- for attribute in sort(asso_class.attributes) %}
@@ -193,26 +220,45 @@ class {{ asso_class.name }}(Base):
 #--- Relationships for association class {{ asso_class.name }}
     {%- for end in asso_class.association.ends %}
 {{ asso_class.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
-{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
+{#- The link rows are owned by the linked entities: deleting one must delete its
+    links (the FK is part of the link's composite primary key, so SQLAlchemy cannot
+    null it out - without the cascade a delete fails with an AssertionError). #}
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}", cascade="all, delete-orphan")
+    {%- endfor %}
+{#- The association ends are also reachable directly, under the names the model gives
+    them, so that method bodies and OCL constraints written against the diagram (for
+    example self.rooms) resolve. Writes go through the link rows above, so these are
+    read-only views over the same table. #}
+    {%- for end in asso_class.association.ends %}
+        {%- set other_end = (asso_class.association.ends | reject('equalto', end) | list)[0] %}
+        {%- if end.multiplicity.max > 1 %}
+{{ other_end.type.name }}.{{ end.name }}: Mapped_[List_["{{ end.type.name }}"]] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True)
+        {%- else %}
+{{ other_end.type.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True, uselist=False)
+        {%- endif %}
     {%- endfor %}
 {%- endfor %}
 
-# Database connection
+# Database connection (override the default with the DATABASE_URL environment variable)
 {%- if dbms == "sqlite" %}
-DATABASE_URL = "sqlite:///{{model_name}}.db"  # SQLite connection
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/{{model_name}}.db")  # SQLite connection
 {%- elif dbms == "postgresql" %}
-DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name"  # PostgreSQL connection
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://username:password@localhost:5432/db_name")  # PostgreSQL connection
 {%- elif dbms == "mysql" or dbms == "mariadb" %}
-DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://username:password@localhost:3306/db_name")  # MySQL or MariaDB connection
 {%- elif dbms == "mssql" %}
-DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
+DATABASE_URL = os.getenv("DATABASE_URL", "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server")  # MSSQL connection
 {%- elif dbms == "oracle" %}
-DATABASE_URL = "oracle+oracledb://username:password@localhost:1521/?service_name=your_service"
+DATABASE_URL = os.getenv("DATABASE_URL", "oracle+oracledb://username:password@localhost:1521/?service_name=your_service")
 {% else %}
     {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")
 {% endif %}
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL)
 
-# Create tables in the database
-Base.metadata.create_all(engine, checkfirst=True)
+if __name__ == "__main__":
+    # Create tables in the database only when this module is executed directly,
+    # so importing it never touches the database as a side effect.
+    if DATABASE_URL.startswith("sqlite"):
+        os.makedirs("data", exist_ok=True)  # folder for the default SQLite database
+    Base.metadata.create_all(engine, checkfirst=True)

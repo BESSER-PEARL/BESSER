@@ -46,6 +46,8 @@ def _build_reasoning_agent() -> Agent:
         llm_prompt="Answer only using the docs corpus.",
         k=6,
         num_previous_messages=3,
+        use_hybrid_rag=True,
+        bm25_weight=0.7,
     )
     initial = agent.new_state("initial", initial=True)
     initial.set_body(Body("initial_body", actions=[RAGReply("docs_rag", prompt="Use only cited docs.")]))
@@ -102,6 +104,9 @@ def test_agent_roundtrip_preserves_multi_llm_and_reasoning(tmp_path):
     assert rags["docs_rag"].llm_prompt == "Answer only using the docs corpus."
     assert rags["docs_rag"].k == 6
     assert rags["docs_rag"].num_previous_messages == 3
+    # Hybrid retrieval settings survive BUML -> JSON -> BUML
+    assert rags["docs_rag"].use_hybrid_rag is True
+    assert rags["docs_rag"].bm25_weight == 0.7
 
     # RAGReply action prompt survives the converters.
     initial_state = next(s for s in restored.states if s.name == "initial")

@@ -34,10 +34,25 @@ def load_project_data(json_path: Path) -> Dict[str, Any]:
     raise ValueError("Expected a JSON object with a 'project' key or top-level project payload.")
 
 
-def _get_diagram(diagrams: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
+def _get_diagram(
+    diagrams: Dict[str, Any], key: str, current_indices: Optional[Dict[str, int]] = None
+) -> Optional[Dict[str, Any]]:
+    """The active diagram of a type.
+
+    A project holds a list per diagram type and names the active one in
+    ``currentDiagramIndices``. Older exports stored a single diagram per type
+    directly, so both shapes are accepted.
+    """
     diagram = diagrams.get(key)
     if diagram is None:
         return None
+    if isinstance(diagram, list):
+        if not diagram:
+            return None
+        index = (current_indices or {}).get(key, 0)
+        if not 0 <= index < len(diagram):
+            index = 0
+        diagram = diagram[index]
     if isinstance(diagram, dict):
         return diagram
     try:
@@ -49,9 +64,10 @@ def _get_diagram(diagrams: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]
 def generate_web_app(json_path: Path, output_dir: Path, include_agent: bool = True, verbose: bool = False) -> Path:
     project = load_project_data(json_path)
     diagrams = project.get("diagrams", {}) if isinstance(project, dict) else {}
+    current_indices = project.get("currentDiagramIndices", {}) if isinstance(project, dict) else {}
 
-    class_diagram = _get_diagram(diagrams, "ClassDiagram")
-    gui_diagram = _get_diagram(diagrams, "GUINoCodeDiagram")
+    class_diagram = _get_diagram(diagrams, "ClassDiagram", current_indices)
+    gui_diagram = _get_diagram(diagrams, "GUINoCodeDiagram", current_indices)
 
     if not class_diagram or not gui_diagram:
         available = ", ".join(sorted(diagrams.keys())) if diagrams else "none"
@@ -69,7 +85,7 @@ def generate_web_app(json_path: Path, output_dir: Path, include_agent: bool = Tr
 
     agent_model = None
     if include_agent:
-        agent_diagram = _get_diagram(diagrams, "AgentDiagram")
+        agent_diagram = _get_diagram(diagrams, "AgentDiagram", current_indices)
         if agent_diagram:
             if verbose:
                 logger.info("Detected AgentDiagram. Generating agent output.")

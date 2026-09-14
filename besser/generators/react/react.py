@@ -86,6 +86,11 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
 
     def _should_generate_file(self, rel_path: str, used_component_types: set) -> bool:
         """Determine if a file should be generated based on component usage."""
+        # MapBlock (and its leaflet deps in package.json.j2) only ship when the
+        # GUI model actually contains a Map component.
+        if os.path.basename(rel_path) == "MapBlock.tsx":
+            return "Map" in used_component_types
+
         if "charts" + os.sep not in rel_path and "table" + os.sep not in rel_path:
             return True
 

@@ -3,38 +3,48 @@ Backend example
 
 This example showcases the BESSER backend generator's capability to produce essential components for a backend service, based on the Library example B-UML model.
 
-The generator creates three primary files, which together form the backbone of the backend system, here's a snippet from the generated files:
+The generator creates a modular backend — a slim ``main_api.py`` entry point, one router module
+per class under ``routers/``, the shared ``database.py`` session setup, plus the ORM and
+validation models. Here's a snippet from the generated files:
 
-``main_api.py``:Contains the REST API endpoints that define how the server responds to client requests:
+``main_api.py``: The FastAPI application entry point that wires in one router per class:
 
 .. code-block:: python
-   
-   ############################################
-   #   Initialize the database
-   ############################################
 
-   SQLALCHEMY_DATABASE_URL = "sqlite:///./Library model.db"
-   engine = create_engine(
-       SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-   )
-   SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-   Base.metadata.create_all(bind=engine)
+   app = FastAPI(title="Library model API", ...)
 
-   app = FastAPI()
-
-   # Initialize database session
-   def get_db():
-       database = SessionLocal()
-       yield database
-       database.close()
    ############################################
-   #   Library functions
+   #   Routers
    ############################################
 
-   @app.get("/book/", response_model=None)
-  def get_all_book(database: Session = Depends(get_db)) -> list[Book]:
-    book_list = database.query(Book).all()
-    return book_list
+   app.include_router(library_router.router)
+   app.include_router(book_router.router)
+   app.include_router(author_router.router)
+
+``routers/book.py``: All of the ``Book`` endpoints live in their own router module:
+
+.. code-block:: python
+
+   from database import get_db
+
+   router = APIRouter()
+
+   @router.get("/book/", response_model=None, tags=["Book"])
+   def get_all_book(detailed: bool = False, database: Session = Depends(get_db)) -> list:
+       book_list = database.query(Book).all()
+       return book_list
+
+``database.py``: The shared engine and session setup (the SQLite file defaults to
+``data/Library model.db`` and can be overridden with the ``DATABASE_URL`` environment variable):
+
+.. code-block:: python
+
+   def init_db():
+       SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/Library model.db")
+       ...
+       SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+       Base.metadata.create_all(bind=engine)
+       return SessionLocal
 
 
 ``sql_alchemy.py``:  This file includes the SQLAlchemy ORM models that map Python classes to database tables:

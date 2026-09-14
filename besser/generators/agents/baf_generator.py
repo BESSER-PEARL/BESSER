@@ -19,7 +19,8 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import process_gui_diagram
+# process_gui_diagram is imported lazily inside generate() to break a circular dependency:
+# baf_generator → services.converters → config.generators → baf_generator
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +402,7 @@ class BAFGenerator(GeneratorInterface):
                 guis_dir = os.path.join(self.build_generation_dir(), "guis")
                 os.makedirs(guis_dir, exist_ok=True)
                 open(os.path.join(guis_dir, "__init__.py"), "w").close()
+                from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import process_gui_diagram  # noqa: PLC0415
                 for gui_action in unique_gui_actions:
                     gui_var = safe_var_name(gui_action.gui_id)
                     gui_model_data = gui_models.get(gui_action.gui_id)

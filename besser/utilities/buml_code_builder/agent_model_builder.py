@@ -4,6 +4,7 @@ Agent Model Builder
 This module generates Python code for BUML agent models.
 """
 
+import json
 import os
 from re import search
 from besser.BUML.metamodel.state_machine.agent import (
@@ -68,6 +69,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "ReceiveMessageEvent, WildcardEvent, DummyEvent, GUIEvent\n"
         )
         f.write("from besser.BUML.metamodel.structural import Metadata\n")
+        f.write("import json\n")
         f.write("import operator\n\n")
 
         # Create agent with metadata if it exists
@@ -754,5 +756,13 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
 
 
                 f.write("\n")
+
+        # Serialize gui_models so the round-trip works without hand-patching.
+        # Agent.gui_models is a dict[str, dict] (gui_id → raw GrapesJS JSON).
+        gui_models = getattr(model, 'gui_models', None) or {}
+        if gui_models:
+            gui_models_json = json.dumps(gui_models)
+            f.write(f"# GUI models (raw GrapesJS dicts keyed by gui_id)\n")
+            f.write(f"{model_var_name}.gui_models = json.loads({repr(gui_models_json)})\n\n")
 
     print(f"Agent model saved to {file_path}")

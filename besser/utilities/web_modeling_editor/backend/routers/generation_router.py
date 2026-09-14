@@ -382,12 +382,10 @@ def generate_agent_files(
             # containing only the raw agent_model.py.
             generator_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
 
-            # Use the BAFGenerator with the agent model from the module
+            # Use the BAFGenerator with the agent model from the module.
+            # gui_models is now serialized by agent_model_to_code, so the
+            # exec'd module's agent already carries it.
             if hasattr(agent_module, 'agent'):
-                # gui_models is not serialized to the .py file; copy it from the
-                # original agent (populated by process_agent_diagram) so the BAF
-                # generator can emit the guis/ folder.
-                agent_module.agent.gui_models = getattr(agent_model, 'gui_models', {}) or {}
                 generator = generator_class(
                     agent_module.agent,
                     output_dir=generator_output_dir,

@@ -878,7 +878,8 @@ async def transform_agent_model_json(input_data: DiagramInput):
         generator_class = generator_info.generator_class
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
         resolved_agent = getattr(agent_module, "agent", agent_model)
-        resolved_agent.gui_models = getattr(agent_model, 'gui_models', {}) or {}
+        # gui_models is now serialized by agent_model_to_code, so the
+        # exec'd module's agent already carries it.
         generator_instance = generator_class(
             resolved_agent,
             config=config,

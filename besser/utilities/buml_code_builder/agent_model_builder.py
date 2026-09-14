@@ -764,7 +764,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         gui_models = getattr(model, 'gui_models', None) or {}
         if gui_models:
             gui_models_json = json.dumps(gui_models)
-            f.write(f"# GUI models (raw GrapesJS dicts keyed by gui_id)\n")
+            f.write("# GUI models (raw GrapesJS dicts keyed by gui_id)\n")
             f.write(f"{model_var_name}.gui_models = json.loads({repr(gui_models_json)})\n\n")
 
     print(f"Agent model saved to {file_path}")

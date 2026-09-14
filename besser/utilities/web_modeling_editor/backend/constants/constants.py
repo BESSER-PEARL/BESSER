@@ -66,14 +66,22 @@ def _env_path(name: str) -> str | None:
 # ceiling everywhere. (The DEFAULT below stays $1 — the cap is the max a user
 # can opt into, not what a normal run spends.)
 LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
-LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 900)
+# 40 minutes. The deployed stack already set this via env while the code said
+# 900s, so the source disagreed with what the UI advertised ("up to 40 min").
+# Same reasoning as the cost cap above: one honest ceiling everywhere.
+LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 2400)
 LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 120)
+# Defaults a client gets when it sends no explicit number, and what the BYOK
+# dialog pre-fills. $1/10min was too tight to finish a real application: a
+# 2026-09-14 run spent its whole budget reading and was cancelled two seconds
+# after its first productive turn. $5/20min gives a run room to finish while
+# staying well inside the ceilings a user can opt into.
 LLM_DEFAULT_MAX_COST_USD = min(
-    _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 1.0),
+    _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 5.0),
     LLM_MAX_COST_USD_HARD_CAP,
 )
 LLM_DEFAULT_MAX_RUNTIME_SECONDS = min(
-    _env_int("BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS", 600),
+    _env_int("BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS", 1200),
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
 )
 LLM_DEFAULT_MAX_TURNS = min(
@@ -162,7 +170,12 @@ AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
 
 # Generator defaults
-DEFAULT_SQL_DIALECT = "standard"
+# "standard" was not a dialect anything accepts: SQLGenerator passes this
+# straight through as SQLAlchemyGenerator's `dbms`, whose VALID_DBMS is
+# {sqlite, postgresql, mysql, mssql, mariadb, oracle}. Every /generate-output
+# for `sql` WITHOUT an explicit config.dialect therefore raised
+# "Invalid DBMS" (2026-09-14). sqlite matches SQLGenerator's own default.
+DEFAULT_SQL_DIALECT = "sqlite"
 DEFAULT_DBMS = "sqlite"
 DEFAULT_JSONSCHEMA_MODE = "regular"
 DEFAULT_QISKIT_BACKEND = "aer_simulator"

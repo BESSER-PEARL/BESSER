@@ -7,7 +7,6 @@ and relays the WebSocket connection between the frontend and the running agent.
 """
 
 import asyncio
-import importlib.util
 import json
 import logging
 import os
@@ -179,6 +178,48 @@ class SessionFilesResponse(BaseModel):
     directories: List[str] = Field(default_factory=list)
 
 
+class AgentSimulationLimitsResponse(BaseModel):
+    memoryMb: Optional[int] = None
+    cpuCores: Optional[float] = None
+    diskMb: Optional[int] = None
+    sessionLifetimeSeconds: Optional[int] = None
+    editorQuotaEnabled: bool = False
+
+
+def _parse_optional_int(env_var: str) -> Optional[int]:
+    val = os.environ.get(env_var, "").strip()
+    try:
+        return int(val) if val else None
+    except ValueError:
+        return None
+
+
+def _parse_optional_float(env_var: str) -> Optional[float]:
+    val = os.environ.get(env_var, "").strip()
+    try:
+        return float(val) if val else None
+    except ValueError:
+        return None
+
+
+@router.get("/limits", response_model=AgentSimulationLimitsResponse)
+async def get_simulation_limits(
+    x_github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Return the configured resource limits and quota settings for agent simulation."""
+    _enforce_agent_simulator_auth(x_github_session)
+    return AgentSimulationLimitsResponse(
+        memoryMb=_parse_optional_int("AGENT_SIMULATOR_MEMORY_MB"),
+        cpuCores=_parse_optional_float("AGENT_SIMULATOR_CPU_CORES"),
+        diskMb=_parse_optional_int("AGENT_SIMULATOR_DISK_MB"),
+        sessionLifetimeSeconds=_parse_optional_int("AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS"),
+        editorQuotaEnabled=(
+            os.environ.get("AGENT_SIMULATOR_QUOTA_ENABLED", "false")
+            .strip().lower() in {"1", "true", "yes", "on"}
+        ),
+    )
+
+
 async def _generate_agent_code_and_config(
     diagram_data: dict,
     config: dict,
@@ -223,27 +264,27 @@ async def _generate_agent_code_and_config(
     agent_model = process_agent_diagram({**diagram_data, "config": config or {}})
 
     with tempfile.TemporaryDirectory(prefix=f"{AGENT_TEMP_DIR_PREFIX}simulation_") as temp_dir:
-        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
-        agent_model_to_code(agent_model, agent_file)
-
-        # Belt-and-suspenders: re-validate every CustomCodeAction on the in-memory
-        # agent model before exec_module() runs in the backend process.
-        # The primary validation gate is in agent_diagram_processor.py; this guard
-        # catches any code path that bypasses JSON parsing (e.g. direct API calls).
+        # Validate every CustomCodeAction and every Tool.code on the in-memory model
+        # BEFORE any code is exec'd.  The validator is a best-effort lint; the real
+        # isolation boundary is the sandbox.  Tool.code is emitted verbatim by the
+        # builder and was previously unvalidated here.
         for _state in getattr(agent_model, "states", []):
-            _body = getattr(_state, "body", None)
-            if _body:
+            for _body in filter(None, [getattr(_state, "body", None), getattr(_state, "fallback_body", None)]):
                 for _action in getattr(_body, "actions", []):
                     if isinstance(_action, CustomCodeAction):
                         validate_custom_code_action(_action.code, simulation=True)
+        for _tool in getattr(agent_model, "tools", []) or []:
+            if getattr(_tool, "code", None):
+                validate_custom_code_action(_tool.code, simulation=True)
 
-        spec = importlib.util.spec_from_file_location("_simulation_agent_model", agent_file)
-        if spec is None or spec.loader is None:
-            raise GenerationError("Failed to prepare dynamic import for generated agent model")
-        agent_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent_module)
-        the_agent = getattr(agent_module, "agent", agent_model)
-        the_agent.gui_models = getattr(agent_model, "gui_models", {}) or {}
+        # Do NOT exec the generated model file in the backend process: exec'ing
+        # user-controlled code (including Tool.code) inside the backend container
+        # would expose .env secrets, OAuth tokens and Docker access.  The in-memory
+        # agent_model from process_agent_diagram is complete and is used directly.
+        # Code execution of untrusted content happens only inside the simulator sandbox.
+        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
+        agent_model_to_code(agent_model, agent_file)
+        the_agent = agent_model
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class

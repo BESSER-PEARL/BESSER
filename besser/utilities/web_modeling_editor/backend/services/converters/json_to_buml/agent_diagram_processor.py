@@ -787,6 +787,13 @@ def process_agent_diagram(json_data):
                         "event": normalized_event,
                         "conditions": custom_conditions if isinstance(custom_conditions, list) else [],
                     }
+                    # Carry GUIEvent.message_id through so GUIEvent round-trips correctly.
+                    _gui_mid = (
+                        custom_block.get("guiEventGuiId")
+                        or relationship.get("guiEventGuiId")
+                    )
+                    if _gui_mid:
+                        transition_payload["guiEventGuiId"] = _gui_mid
                 else:
                     condition_name = (
                         predefined_block.get("predefinedType")

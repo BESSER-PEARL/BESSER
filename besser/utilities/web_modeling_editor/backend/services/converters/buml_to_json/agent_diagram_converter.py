@@ -1459,14 +1459,31 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     elif isinstance(arg, ast.List):
                                         values = [elt.value for elt in arg.elts if isinstance(elt, ast.Constant)]
                                         transition_payload = ", ".join(_reverse_mime.get(v, v) for v in values)
+                            elif chain_attr == "when_form_submitted":
+                                condition_name = "when_form_submitted"
+                                form_id = None
+                                for kw in call_chain.keywords:
+                                    if kw.arg == "form_id" and isinstance(kw.value, ast.Constant):
+                                        form_id = kw.value.value
+                                if form_id is None and call_chain.args:
+                                    arg0 = call_chain.args[0]
+                                    if isinstance(arg0, ast.Constant):
+                                        form_id = arg0.value
+                                transition_payload = form_id or ""
                             elif chain_attr == "when_event":
                                 condition_name = "custom_transition"
                                 selected_event = "None"
+                                gui_event_message_id = None
                                 if call_chain.args:
                                     event_arg = call_chain.args[0]
                                     if isinstance(event_arg, ast.Call) and isinstance(event_arg.func, ast.Name):
                                         event_name = event_arg.func.id
                                         selected_event = event_name
+                                        # Extract GUIEvent(message_id=...) keyword arg
+                                        if event_name == "GUIEvent":
+                                            for kw in event_arg.keywords:
+                                                if kw.arg == "message_id" and isinstance(kw.value, ast.Constant):
+                                                    gui_event_message_id = kw.value.value
                                     elif isinstance(event_arg, ast.Name):
                                         event_name = event_arg.id
                                         selected_event = event_name
@@ -1475,6 +1492,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     "event": selected_event,
                                     "conditions": custom_conditions,
                                 }
+                                if gui_event_message_id is not None:
+                                    transition_payload["guiEventGuiId"] = gui_event_message_id
                             elif chain_attr == "when_condition":
                                 condition_name = "custom_transition"
                                 if call_chain.args and isinstance(call_chain.args[0], ast.Name):
@@ -1519,6 +1538,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             elif transition_type == "predefined" and condition_name == "when_file_received":
                                 predefined_block["fileType"] = transition_payload if isinstance(transition_payload, str) else ""
                                 predefined_block.pop("conditionValue", None)
+                            elif transition_type == "predefined" and condition_name == "when_form_submitted":
+                                predefined_block["formGuiId"] = transition_payload if isinstance(transition_payload, str) else ""
+                                predefined_block.pop("conditionValue", None)
                             custom_block = {
                                 "event": (event_name or "None") if transition_type == "custom" else "None",
                                 "condition": (
@@ -1527,6 +1549,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     else []
                                 ),
                             }
+                            # Preserve GUIEvent.message_id so the round-trip is lossless.
+                            if transition_type == "custom" and isinstance(transition_payload, dict):
+                                _mid = transition_payload.get("guiEventGuiId")
+                                if _mid:
+                                    custom_block["guiEventGuiId"] = _mid
 
                             relationships[rel_id] = {
                                 "id": rel_id,

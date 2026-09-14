@@ -68,7 +68,8 @@ from baf.utils.web_crawl import crawl_website
 {% endif %}
 
 # Configure the logging module
-logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+logger = logging.getLogger(__name__)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 {% if personalization_mapping is defined and personalization_mapping %}
@@ -724,7 +725,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% endif %}
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', reply_text)
+    session.set({{ action.store_in_session | string | tojson }}, reply_text)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(reply_text)
@@ -828,7 +829,7 @@ def {{ body_name }}(session: Session):
     message = {{ llm_ns.name }}.predict(message={{ input_ns.expr }}, session=session)
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', message)
+    session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(message)
@@ -857,7 +858,7 @@ def {{ body_name }}(session: Session):
     message = {{ llm_ns.name }}.chat(session=session)
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', message)
+    session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(message)
@@ -913,7 +914,7 @@ def {{ body_name }}(session: Session):
     {% endif %}
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', rag_message)
+    session.set({{ action.store_in_session | string | tojson }}, rag_message)
     {% endif %}
     {% if action.send_reply is not false %}
     platform.reply_rag(session, rag_message)
@@ -958,7 +959,7 @@ def {{ body_name }}(session: Session):
     {% endif %}
     message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', message)
+    session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(message)
@@ -1116,7 +1117,7 @@ def {{ fallback_name }}(session: Session):
     message = {{ llm_ns.name }}.predict(message={{ input_ns.expr }}, session=session)
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', message)
+    session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(message)
@@ -1145,7 +1146,7 @@ def {{ fallback_name }}(session: Session):
     message = {{ llm_ns.name }}.chat(session=session)
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', message)
+    session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(message)
@@ -1201,7 +1202,7 @@ def {{ fallback_name }}(session: Session):
     {% endif %}
     {% endif %}
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', rag_message)
+    session.set({{ action.store_in_session | string | tojson }}, rag_message)
     {% endif %}
     {% if action.send_reply is not false %}
     platform.reply_rag(session, rag_message)
@@ -1246,7 +1247,7 @@ def {{ fallback_name }}(session: Session):
     {% endif %}
     message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
     {% if action.store_in_session %}
-    session.set('{{ action.store_in_session }}', message)
+    session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
     {% if action.send_reply is not false %}
     session.reply(message)
@@ -1359,14 +1360,14 @@ def {{ fallback_name }}(session: Session):
 {% elif transition_conditions|length == 1 and primary_condition and transition.event and is_class(primary_condition, 'FileTypeMatcher') %}
 {{ state_name }}.when_file_received({% if primary_condition.allowed_types %}{% if is_type(primary_condition.allowed_types, 'list') %}[{% for t in primary_condition.allowed_types %}'{{ t }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% else %}'{{ primary_condition.allowed_types }}'{% endif %}{% endif %}).go_to({{ dest_name }})
 {% elif transition_conditions|length == 1 and primary_condition and transition.event and is_class(primary_condition, 'FormSubmitMatcher') %}
-{{ state_name }}.when_form_submitted({% if primary_condition.form_id %}form_id='{{ primary_condition.form_id }}'{% endif %}).go_to({{ dest_name }})
+{{ state_name }}.when_form_submitted({% if primary_condition.form_id %}form_id={{ primary_condition.form_id | string | tojson }}{% endif %}).go_to({{ dest_name }})
 {% elif transition_conditions|length == 1 and primary_condition and (not transition.event) and is_class(primary_condition, 'Auto')%}
 {{ state_name }}.go_to({{ dest_name }})
 {% set auto_ns.found = True %}
 {% else %}
 {% if transition.event %}
 {% if is_class(transition.event, 'GUIEvent') and transition.event.message_id %}
-{% set event_ns = namespace(chain=state_name ~ ".when_event(GUIEvent(message_id='" ~ transition.event.message_id ~ "'))") %}
+{% set event_ns = namespace(chain=state_name ~ ".when_event(GUIEvent(message_id=" ~ (transition.event.message_id | string | tojson) ~ "))") %}
 {% else %}
 {% set event_ns = namespace(chain=state_name ~ '.when_event(' ~ transition.event.__class__.__name__ ~ '())') %}
 {% endif %}

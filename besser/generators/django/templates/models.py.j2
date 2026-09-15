@@ -151,7 +151,10 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {%- set param_str = param_str ~ ': ' ~ param.type.name %}
         {%- endif %}
         {%- if param.default_value is defined and param.default_value is not none %}
-            {%- set param_str = param_str ~ ' = ' ~ param.default_value %}
+            {#- Emitted through python_default so a modelled default is always a
+                literal: this string lands in executable source. #}
+            {%- set param_str = param_str ~ ' = ' ~ (param.default_value | python_default(
+                param.type.name if param.type else '', owner=method.name ~ '(' ~ param.name ~ ')')) %}
         {%- endif %}
         {%- set _ = param_list.append(param_str) %}
     {%- endfor %}

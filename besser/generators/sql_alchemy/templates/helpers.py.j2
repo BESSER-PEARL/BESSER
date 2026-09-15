@@ -31,7 +31,20 @@
         {%- else %}, default=dt_datetime.now{% if _audit_norm == 'updatedat' %}, onupdate=dt_datetime.now{% endif %}
         {%- endif %}
     {%- endif %}
-    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
+    {#- default_value arrives unvalidated from request JSON and is written into
+        a module that SQLGenerator EXECUTES. It must be emitted as a LITERAL,
+        never interpolated raw: the old `else` branch wrote the value unquoted
+        (default={{ value }}) and the str branch sat inside a quote the value
+        could close, so `__import__("os").system(...)` in a defaultValue ran as
+        the backend user. python_default/enum_default coerce to the declared
+        type and repr() the result, raising at generation time on anything that
+        is not expressible as a literal (2026-09-14). #}
+    {%- if attribute.default_value is not none %}, default=
+        {%- if attribute.type.__class__.__name__ == 'Enumeration' -%}
+            {{ enum_default(attribute.default_value, attribute.type.name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}
+        {%- else -%}
+            {{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}
+        {%- endif %}{% endif %})
     {%- endfor %}
 {%- endmacro %}
 

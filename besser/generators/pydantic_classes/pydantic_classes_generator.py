@@ -3,6 +3,7 @@ import re
 import unicodedata
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
+from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
 from besser.generators.pk_types import pk_python_types
 from besser.generators.structural_utils import get_foreign_keys
@@ -57,6 +58,7 @@ class PydanticGenerator(GeneratorInterface):
             extensions=['jinja2.ext.do']
         )
         env.filters["ascii_identifier"] = ascii_identifier
+        register_default_literals(env)
         template = env.get_template('pydantic_classes_template.py.j2')
 
         # Use DomainModel's built-in method to sort classes by inheritance (parents before children)

@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, MetaData
 from sqlalchemy.orm import sessionmaker, declarative_base
 import datetime
+import re
 
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 

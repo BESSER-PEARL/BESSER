@@ -1,0 +1,79 @@
+name: Claude review
+
+# Automated reviewer (pilot). Runs the team's `besser-review` skill — private,
+# maintained in BESSER-PEARL/besser-ops — on every non-draft PR into master or
+# development. It posts comments only: inline for Blockers/Majors, one summary
+# comment that is updated in place on later pushes. It never approves, never
+# requests changes, never edits code.
+#
+# Secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN  Claude auth. Pilot: a maintainer's `claude setup-token`.
+#                            Later: an Anthropic Console key via `anthropic_api_key`.
+#   BESSER_OPS_DEPLOY_KEY    read-only deploy key on besser-ops, to fetch the skill.
+#
+# PRs from forks and from Dependabot never receive secrets, so they are skipped.
+# Maintainers can still review those by mentioning @claude (separate workflow).
+
+on:
+  pull_request:
+    branches: [master, development]
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.rst'
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0 # the skill diffs base...head with three dots
+
+      - name: Fetch the internal review skill from besser-ops
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: BESSER-PEARL/besser-ops
+          ssh-key: ${{ secrets.BESSER_OPS_DEPLOY_KEY }}
+          path: .besser-ops-tmp
+          sparse-checkout: .claude/skills/besser-review
+
+      - name: Install the skill outside the workspace
+        # The action resets the workspace's .claude/ from the base branch before
+        # Claude starts, so anything placed there would be wiped. The runner's
+        # home directory is not touched.
+        run: |
+          mkdir -p ~/.claude/skills
+          cp -r .besser-ops-tmp/.claude/skills/besser-review ~/.claude/skills/
+          rm -rf .besser-ops-tmp
+          test -f ~/.claude/skills/besser-review/SKILL.md
+
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          use_sticky_comment: true
+          prompt: |
+            Use the `besser-review` skill (load it with the Skill tool, or invoke /besser-review)
+            to review PR #${{ github.event.pull_request.number }} of ${{ github.repository }}
+            in CI mode. Follow the skill's "CI mode" section exactly: never ask a question,
+            post one inline comment per Blocker and Major, and one summary comment.
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Skill,Agent,Task,Read,Grep,Glob,LS,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*),mcp__github_inline_comment__create_inline_comment"

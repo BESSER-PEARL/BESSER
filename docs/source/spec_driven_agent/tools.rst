@@ -96,11 +96,10 @@ Shell tools
    ``pip install --dry-run``) is gated behind the same flag, since resolving an
    sdist can execute its build backend.
 
-   They are intended for trusted local or CLI runs, and a
-   :doc:`Python library run <usage>` is treated as one:
-   ``LLMOrchestrator(allow_shell_tools=...)`` defaults to ``True``, so a
-   library run *can* execute shell commands on your machine unless you pass
-   ``False``.
+   ``LLMOrchestrator(allow_shell_tools=...)`` defaults to ``False`` on every
+   path, including a :doc:`Python library run <usage>`. Pass ``True`` to opt
+   in. The gate is enforced at dispatch, so naming a shell tool that was never
+   advertised is refused too — hiding a capability is not withholding it.
 
 .. note::
    Adding a tool is a two-line change in

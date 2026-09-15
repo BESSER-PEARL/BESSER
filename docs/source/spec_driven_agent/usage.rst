@@ -72,13 +72,19 @@ to do:
    ``LLMOrchestrator`` directly if you want the repair loop. See
    :doc:`validation`.
 
-.. warning::
-   A library run is a **trusted local run**, and the orchestrator's defaults
-   reflect that: ``allow_shell_tools`` defaults to ``True``, so the LLM can
-   call ``run_command`` / ``install_dependencies`` on your machine. The hosted
-   backend overrides this with ``BESSER_LLM_ENABLE_SHELL_TOOLS`` (off by
-   default). Construct ``LLMOrchestrator`` with ``allow_shell_tools=False`` if
-   you do not want that. See :doc:`tools`.
+.. note::
+   ``allow_shell_tools`` and ``enable_toolchain_validation`` both default to
+   ``False``, on every path — library, CLI and hosted alike. A library run does
+   **not** get ``run_command`` / ``install_dependencies`` unless you ask for
+   them, and the refusal is enforced when the tool is called, not merely by
+   leaving it out of the advertised list. Opt in deliberately, and only where
+   running model-authored commands on that machine is acceptable::
+
+       LLMGenerator(model=model, instructions=...,
+                    allow_shell_tools=True, enable_toolchain_validation=True)
+
+   The hosted backend keeps both off via ``BESSER_LLM_ENABLE_SHELL_TOOLS``.
+   See :doc:`tools`.
 
 Troubleshooting a run
 ---------------------

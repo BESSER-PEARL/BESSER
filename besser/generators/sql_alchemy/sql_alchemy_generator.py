@@ -1,7 +1,7 @@
 import os
 from jinja2 import Environment, FileSystemLoader
 
-from besser.generators.default_literals import enum_default, python_default
+from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
@@ -236,8 +236,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         # default_value reaches the metamodel unvalidated from request JSON and
         # used to be interpolated raw into the generated module — which
         # SQLGenerator then EXECUTES. These emit literals, never expressions.
-        env.filters["python_default"] = python_default
-        env.globals.update(enum_default=enum_default)
+        register_default_literals(env)
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(

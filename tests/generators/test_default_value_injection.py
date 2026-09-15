@@ -138,3 +138,47 @@ def test_generated_enum_default_survives(tmp_path):
     code = _generate(SQLAlchemyGenerator, model, tmp_path)
     assert "default=Status.OPEN" in code
 
+
+# --------------------------------------------------------------------------- #
+# Association classes render their attributes through a SECOND loop
+# --------------------------------------------------------------------------- #
+def _assoc_model(default):
+    """Student --Enrolment--> Course, with a defaulted attribute on the
+    association class itself."""
+    from besser.BUML.metamodel.structural import (
+        AssociationClass, BinaryAssociation, Multiplicity,
+    )
+    INT = PrimitiveDataType("int")
+    student = Class(name="Student", attributes={Property(name="id", type=INT, is_id=True)})
+    course = Class(name="Course", attributes={Property(name="id", type=INT, is_id=True)})
+    assoc = BinaryAssociation(name="enrolment", ends={
+        Property(name="student", type=student, multiplicity=Multiplicity(1, 1)),
+        Property(name="course", type=course, multiplicity=Multiplicity(1, 1)),
+    })
+    grade = Property(name="grade", type=INT)
+    grade.default_value = default
+    enrolment = AssociationClass(name="Enrolment", attributes={grade}, association=assoc)
+    return DomainModel(
+        name="M", types={student, course, enrolment}, associations={assoc},
+    )
+
+
+def test_association_class_defaults_are_not_a_second_sink(tmp_path):
+    """The regression this case exists for.
+
+    ``sql_alchemy_template.py.j2`` renders association-class attributes in its
+    own loop rather than through ``helpers.py.j2``'s macro. Hardening the macro
+    left that copy interpolating raw, so an AssociationClass attribute still
+    emitted ``default=__import__("os").getcwd()`` into a module SQLGenerator
+    executes — the fix covered one call site and not the other.
+    """
+    from besser.generators.sql_alchemy import SQLAlchemyGenerator
+    with pytest.raises(InvalidDefaultValueError, match="Enrolment.grade"):
+        _generate(SQLAlchemyGenerator, _assoc_model(PAYLOAD), tmp_path)
+
+
+def test_a_legitimate_association_class_default_still_renders(tmp_path):
+    from besser.generators.sql_alchemy import SQLAlchemyGenerator
+    code = _generate(SQLAlchemyGenerator, _assoc_model("5"), tmp_path)
+    assert "default=5" in code
+    assert not re.search(r"=\s*__import__", code)

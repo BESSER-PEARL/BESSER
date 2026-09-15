@@ -1,13 +1,14 @@
-# `besser.generators.llm` — Vibe-Driven (LLM-Augmented) Generator
+# `besser.generators.llm` — the Spec-Driven Agent
 
-The smart / vibe-driven generator. It produces a deterministic, model-faithful
-scaffold and then drives an LLM to customise it from a natural-language
-request. The model stays the source of truth: the LLM edits a correct baseline
-rather than writing from a blank page.
+The hybrid generator. It produces a deterministic, model-faithful scaffold and
+then drives an LLM to customise it from a natural-language request. The model
+stays the source of truth: the LLM edits a correct baseline rather than writing
+from a blank page.
 
-> **User & API docs** are published:
-> - Generator overview: `docs/source/generators/vibe_driven.rst`
-> - HTTP / SSE contract: `docs/source/web_editor.rst` (AI Assistant & Vibe-Driven Generation)
+> **User & API docs** are published under `docs/source/spec_driven_agent/`:
+> - How it works: `docs/source/spec_driven_agent/how_it_works.rst`
+> - HTTP / SSE contract: `docs/source/spec_driven_agent/api.rst`
+> - Validation and severities: `docs/source/spec_driven_agent/validation.rst`
 >
 > This README is the **developer** entry point to the package.
 
@@ -21,7 +22,11 @@ select → generate → gap → customize → validate
 2. **generate** — run it to produce the baseline scaffold.
 3. **gap** — a cheap planning LLM call (`gpt-4o-mini`) computes the task list, or decides the scaffold suffices (Phase 2 skipped).
 4. **customize** — the main LLM loop edits files through a constrained tool surface.
-5. **validate** — optional toolchain/compile pass; **disabled in production** (cost/latency), enabled by the bench.
+5. **validate** — Phase 3 always runs, and its blockers drive a bounded auto-fix loop.
+   What is off by default is only the part that *shells out* to a compiler
+   (`tsc` / `cargo` / `kotlinc`): `enable_toolchain_validation=False`. The
+   in-process checks — ruff, pyflakes, the data contract, the frontend
+   contract — run regardless.
 
 ## Module map
 

@@ -197,7 +197,17 @@ class {{ asso_class.name }}(Base):
     {%- if is_pk %}, primary_key=True{% endif %}
     {%- if unique_needed %}, unique=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
-    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
+    {#- Same sink as helpers.py.j2: default_value is unvalidated request JSON and
+        SQLGenerator EXECUTES this module. This association-class copy of the
+        attribute loop was missed when the regular-class macro was hardened, so
+        the raw interpolation survived here and an AssociationClass attribute
+        still ran arbitrary code (2026-09-15). #}
+    {%- if attribute.default_value is not none %}, default=
+        {%- if attribute.type.__class__.__name__ == 'Enumeration' -%}
+            {{ enum_default(attribute.default_value, attribute.type.name, members=attribute.type.literals, owner=asso_class.name ~ '.' ~ attribute.name) }}
+        {%- else -%}
+            {{ attribute.default_value | python_default(attribute.type.name, owner=asso_class.name ~ '.' ~ attribute.name) }}
+        {%- endif %}{% endif %})
     {%- endfor %}
 {% endfor %}
 

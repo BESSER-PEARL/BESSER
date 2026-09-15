@@ -40,6 +40,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
+from besser.generators.default_literals import register_default_literals
 from besser.generators.action_language.RESTGenerator import bal_to_rest
 from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types, normalize_method_code
 from besser.utilities.utils import sort_by_timestamp
@@ -178,6 +179,10 @@ def _make_env() -> Environment:
     env.filters['clean_method_name'] = clean_method_name
     env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
                        normalize_code=normalize_method_code)
+    # Method-parameter defaults are unvalidated request JSON rendered into a
+    # FastAPI app that /besser_api/deploy-app runs. Same sink the SQLAlchemy
+    # template had: emit literals, never expressions.
+    register_default_literals(env)
     return env
 
 

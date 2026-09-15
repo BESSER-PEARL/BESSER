@@ -94,7 +94,7 @@ Request body
      - Soft spend cap, clamped to the server hard cap (default 1.0, max 5.0).
    * - ``max_runtime_seconds``
      - int
-     - Soft runtime cap, clamped to the server hard cap (default 600, max 900).
+     - Soft runtime cap, clamped to the server hard cap (default 1200, max 2400).
    * - ``max_turns``
      - int
      - Soft cap on LLM turns, clamped to the server hard cap (default 80,

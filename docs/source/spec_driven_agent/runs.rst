@@ -18,11 +18,11 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - Default
      - Hard limit
    * - ``max_cost_usd``
-     - 1.0
+     - 5.0
      - 5.0
    * - ``max_runtime_seconds``
-     - 600
-     - 900
+     - 1200
+     - 2400
    * - ``max_turns``
      - 80
      - 120

@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import tomllib
 from typing import Any
 
 
+logger = logging.getLogger(__name__)
+
 MAX_WRITE_DIAGNOSTICS = 10
+
+
+_WARNED_PYFLAKES_MISSING = False
 
 
 def _finding(
@@ -56,9 +62,25 @@ def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
     # incremental construction and the full Ruff pass handles it later.
     try:
         from pyflakes.checker import Checker
+    except ImportError:
+        # pyflakes ships in the backend requirements but a library caller may
+        # not have it. Say so once: without it the same-turn undefined-name
+        # check does nothing, and a silent [] is indistinguishable from a
+        # clean file — which is how generated code that NameErrors on import
+        # gets written back as "no diagnostics".
+        global _WARNED_PYFLAKES_MISSING
+        if not _WARNED_PYFLAKES_MISSING:
+            _WARNED_PYFLAKES_MISSING = True
+            logger.warning(
+                "pyflakes is not installed - same-turn undefined-name checks on "
+                "written files are SKIPPED. Install pyflakes to enable them."
+            )
+        return []
 
+    try:
         messages = Checker(tree, filename=rel_path).messages
     except Exception:
+        logger.debug("pyflakes failed on %s", rel_path, exc_info=True)
         return []
 
     findings: list[dict[str, Any]] = []

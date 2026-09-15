@@ -33,9 +33,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from besser.generators.llm.compaction import (
-    COMPACT_TOKEN_THRESHOLD,
-    COMPACT_PRESERVE_RECENT,
     COMPACT_RESERVE_TOKENS,
+    # Re-exported on purpose: callers and tests import the threshold from
+    # here as well as from compaction, and assert the two agree so the
+    # orchestrator's budget cannot drift from the compactor's.
+    COMPACT_TOKEN_THRESHOLD,  # noqa: F401
     _estimate_tokens,
     effective_threshold,
     maybe_compact,
@@ -43,6 +45,7 @@ from besser.generators.llm.compaction import (
 )
 from besser.generators.llm.history_eviction import evict_stale_file_bodies
 from besser.generators.llm.checkpoint import (
+    CHECKPOINT_FILENAME,
     CHECKPOINT_SCHEMA_VERSION,
     Checkpoint,
     compute_fingerprint,
@@ -74,15 +77,11 @@ from besser.generators.llm.stack_metadata import (
     stack_label,
 )
 from besser.generators.llm.tool_executor import ToolExecutor, _safe_subprocess_env
-from besser.generators.llm.tools import get_all_tools, get_all_tools_including_generators
 from besser.generators.llm.tracing import (
     EVENT_CHECKPOINT,
-    EVENT_COMPACTION,
     EVENT_COST_UPDATE,
-    EVENT_ERROR,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
-    EVENT_ROLLBACK,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
@@ -96,14 +95,48 @@ from besser.generators.llm.tracing import (
 
 logger = logging.getLogger(__name__)
 
+
+def _check_did_not_run(tool: str, reason: str) -> str:
+    """A validation note saying a check was SKIPPED, not that it passed.
+
+    Every collector used to return ``[]`` when its tool timed out or failed
+    to start, which is indistinguishable from a clean result — the run then
+    reported "0 blockers" having verified nothing. The wording deliberately
+    carries no rule code so ``_classify_issue`` keeps it a warning: we can't
+    prove the code is broken, only that we did not look.
+    """
+    return (
+        f"validation: {tool} did not run ({reason}) - its checks were SKIPPED, "
+        f"so this result does not cover them"
+    )
+
 # Snapshot directory name (inside output_dir)
 _SNAPSHOT_DIR = ".besser_snapshot"
+
+# Where a rollback parks the current tree while it restores. Living inside
+# output_dir keeps the move on one filesystem, so it is a rename, not a copy.
+_ROLLBACK_DISCARD_DIR = ".besser_rollback_discard"
+
+# Run bookkeeping that a rollback must NOT revert. The snapshot is taken
+# after Phase 1, so restoring it over these would rewind the append-only
+# trace to its Phase-1 state and resurrect a stale checkpoint — the trace
+# records what actually happened, including the rollback itself, and the
+# checkpoint must keep describing the latest turn or a later resume replays
+# work that is already on disk.
+_ROLLBACK_PRESERVED = {
+    TRACE_FILENAME,
+    CHECKPOINT_FILENAME,
+    ".besser_recipe.json",
+    _SNAPSHOT_DIR,
+    _ROLLBACK_DISCARD_DIR,
+}
 
 # Dependency / build directories excluded from the recipe's output_files
 # manifest (mirrors the web runner's zip exclusions).
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
     ".next", ".gradle", "venv", ".venv", _SNAPSHOT_DIR,
+    _ROLLBACK_DISCARD_DIR,
 }
 
 
@@ -697,6 +730,10 @@ class LLMOrchestrator:
             nn_model=nn_model,
             protect_scaffold=_is_free_local_model(_model_name),
             per_write_diagnostics=per_write_diagnostics,
+            # The executor enforces this too. Hiding the tools from the
+            # advertised list is not a gate: the model can name a tool it was
+            # never offered, and the dispatch table used to run it anyway.
+            allow_shell=allow_shell_tools,
         )
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
@@ -3461,7 +3498,11 @@ class LLMOrchestrator:
                     "Rolling back to keep Phase 2 work.",
                     len(blockers_before), len(blockers_after),
                 )
-                self._restore_snapshot()
+                if not self._restore_snapshot():
+                    logger.error(
+                        "Phase 3: Rollback did not complete — the workspace is "
+                        "the post-fix state, not the Phase 2 state."
+                    )
                 self._validation_issues = self._collect_validation_issues()
                 for issue in self._validation_issues:
                     logger.warning("  Unfixed [%s]: %s", issue.severity, issue.message)
@@ -3543,12 +3584,11 @@ class LLMOrchestrator:
         if not blockers:
             return
 
+        # Only the toolchain half is needed: it drives the re-run reminder
+        # below. Every blocker, toolchain or not, is listed in the prompt.
         toolchain_blockers = [
             i for i in blockers
             if i.message.startswith(("tsc [", "cargo [", "kotlinc ["))
-        ]
-        other_blockers = [
-            i for i in blockers if i not in toolchain_blockers
         ]
 
         prompt_parts: list[str] = []
@@ -3904,8 +3944,8 @@ class LLMOrchestrator:
                             )
                             if result.returncode != 0:
                                 # Extract the meaningful error
-                                err_lines = [l for l in result.stderr.strip().split("\n")
-                                             if l.strip() and "WARNING" not in l]
+                                err_lines = [line for line in result.stderr.strip().split("\n")
+                                             if line.strip() and "WARNING" not in line]
                                 if err_lines:
                                     err = "\n".join(err_lines[-3:])
                                     raw_issues.append(f"Dependency conflict in {rel}:\n{err}")
@@ -4106,9 +4146,15 @@ class LLMOrchestrator:
         try:
             from besser.generators.llm.contract_checks import build_data_contract, lint_file
             contract = build_data_contract(self.domain_model)
-        except Exception:
-            return []
+        except Exception as exc:
+            # Returning [] here reported "no data-contract violations" when the
+            # truth was that the contract could not be built and nothing was
+            # checked. Say which it is.
+            logger.warning("Data-contract check could not run: %s", exc, exc_info=True)
+            return [_check_did_not_run("the data-contract check", str(exc)[:200])]
         if contract is None:
+            # A legitimately empty contract (no domain model / no classes):
+            # nothing to check, not a failure.
             return []
 
         issues: list[str] = []
@@ -4308,8 +4354,18 @@ class LLMOrchestrator:
                 capture_output=True, text=True, timeout=30,
                 env=_safe_subprocess_env(),
             )
-        except (subprocess.TimeoutExpired, OSError):
-            return []
+        except subprocess.TimeoutExpired:
+            return [_check_did_not_run("ruff", "timed out after 30s")]
+        except OSError as exc:
+            return [_check_did_not_run("ruff", f"could not be launched: {exc}")]
+
+        # --exit-zero means findings alone never set a non-zero status, so a
+        # non-zero code here is ruff itself failing (unreadable config, a
+        # panic). Without this the run reported clean having checked nothing.
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().splitlines()
+            reason = detail[-1][:200] if detail else f"exit code {result.returncode}"
+            return [_check_did_not_run("ruff", reason)]
 
         lines = (result.stdout or "").strip().splitlines()
         if not lines:
@@ -4361,14 +4417,31 @@ class LLMOrchestrator:
                     cwd=project_dir,
                     env=_safe_subprocess_env(),
                 )
-            except (subprocess.TimeoutExpired, OSError):
+            except subprocess.TimeoutExpired:
+                issues.append(_check_did_not_run(f"tsc [{rel}]", "timed out after 60s"))
+                continue
+            except OSError as exc:
+                issues.append(
+                    _check_did_not_run(f"tsc [{rel}]", f"could not be launched: {exc}")
+                )
                 continue
 
             # tsc emits errors on stdout (not stderr) in the classic
             # ``file(line,col): error TSxxxx: message`` format.
             output = (result.stdout or "").strip().splitlines()
             err_lines = [ln.strip() for ln in output if ln.strip() and "error" in ln.lower()]
+            if not err_lines and result.returncode == 0:
+                continue
             if not err_lines:
+                # Non-zero exit with nothing parseable — a missing typescript
+                # install, a broken tsconfig. Reporting clean here is how a
+                # frontend that does not compile passes validation.
+                detail = (
+                    (result.stderr or "").strip().splitlines()
+                    + (result.stdout or "").strip().splitlines()
+                )
+                tail = detail[-1][:200] if detail else f"exit code {result.returncode}"
+                issues.append(f"tsc [{rel}]: {tail}")
                 continue
             for line in err_lines[:10]:
                 issues.append(f"tsc [{rel}]: {line}")
@@ -4442,7 +4515,13 @@ class LLMOrchestrator:
                     cwd=crate_dir,
                     env=cargo_env,
                 )
-            except (subprocess.TimeoutExpired, OSError):
+            except subprocess.TimeoutExpired:
+                issues.append(_check_did_not_run(f"cargo [{rel}]", "timed out after 180s"))
+                continue
+            except OSError as exc:
+                issues.append(
+                    _check_did_not_run(f"cargo [{rel}]", f"could not be launched: {exc}")
+                )
                 continue
 
             # cargo emits diagnostics on stderr in short format like:
@@ -4604,9 +4683,10 @@ class LLMOrchestrator:
             if os.path.exists(snapshot_path):
                 shutil.rmtree(snapshot_path)
 
-            # Copy all files except the snapshot dir itself
+            # Copy everything except the snapshot dir and the run bookkeeping
+            # a rollback must never revert (see _ROLLBACK_PRESERVED).
             for item in os.listdir(self.output_dir):
-                if item == _SNAPSHOT_DIR:
+                if item in _ROLLBACK_PRESERVED:
                     continue
                 src = os.path.join(self.output_dir, item)
                 dst = os.path.join(snapshot_path, item)
@@ -4620,25 +4700,41 @@ class LLMOrchestrator:
         except Exception as e:
             logger.warning("Failed to create snapshot: %s", e)
 
-    def _restore_snapshot(self) -> None:
-        """Restore output directory from snapshot."""
+    def _restore_snapshot(self) -> bool:
+        """Restore the output directory from the post-Phase-1 snapshot.
+
+        Returns True only if the workspace now holds the snapshot's content.
+
+        This used to delete the whole output directory and *then* copy the
+        snapshot back, swallowing any failure with a warning. A copy that
+        died partway — a full disk, a locked file, a path Windows refuses —
+        left the run with a half-erased workspace and no way back, and the
+        run carried on and packaged that as the deliverable. So the current
+        tree is *moved* aside first and only discarded once the restore has
+        actually succeeded; if anything fails, it is moved back.
+        """
         snapshot_path = os.path.join(self.output_dir, _SNAPSHOT_DIR)
         if not os.path.isdir(snapshot_path):
             logger.warning("No snapshot to restore from")
-            return
+            return False
 
+        discard_path = os.path.join(self.output_dir, _ROLLBACK_DISCARD_DIR)
+        moved: list[tuple[str, str]] = []
         try:
-            # Remove everything except the snapshot
-            for item in os.listdir(self.output_dir):
-                if item == _SNAPSHOT_DIR:
-                    continue
-                item_path = os.path.join(self.output_dir, item)
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
+            if os.path.exists(discard_path):
+                shutil.rmtree(discard_path)
+            os.makedirs(discard_path, exist_ok=True)
 
-            # Copy snapshot contents back
+            # Park the current tree instead of deleting it. Same filesystem,
+            # so os.replace is a rename and costs nothing.
+            for item in os.listdir(self.output_dir):
+                if item in _ROLLBACK_PRESERVED:
+                    continue
+                src = os.path.join(self.output_dir, item)
+                dst = os.path.join(discard_path, item)
+                os.replace(src, dst)
+                moved.append((src, dst))
+
             for item in os.listdir(snapshot_path):
                 src = os.path.join(snapshot_path, item)
                 dst = os.path.join(self.output_dir, item)
@@ -4646,10 +4742,31 @@ class LLMOrchestrator:
                     shutil.copytree(src, dst)
                 else:
                     shutil.copy2(src, dst)
-
-            logger.info("Restored from snapshot")
         except Exception as e:
-            logger.warning("Failed to restore from snapshot: %s", e)
+            logger.error("Rollback failed, reverting to the pre-rollback tree: %s", e)
+            try:
+                # Undo the partial restore, then put the parked tree back.
+                for _src, dst in moved:
+                    landed = os.path.join(self.output_dir, os.path.basename(dst))
+                    if os.path.isdir(landed):
+                        shutil.rmtree(landed, ignore_errors=True)
+                    elif os.path.isfile(landed):
+                        os.remove(landed)
+                for src, dst in moved:
+                    os.replace(dst, src)
+                shutil.rmtree(discard_path, ignore_errors=True)
+            except Exception as revert_exc:
+                # Both directions failed. Say so loudly and leave the parked
+                # copy in place — it is the only intact tree left.
+                logger.error(
+                    "Could not revert the rollback either; the Phase 2 output "
+                    "is preserved under %s: %s", _ROLLBACK_DISCARD_DIR, revert_exc,
+                )
+            return False
+
+        shutil.rmtree(discard_path, ignore_errors=True)
+        logger.info("Restored from snapshot")
+        return True
 
     def _remove_snapshot(self) -> None:
         """Clean up the snapshot directory."""
@@ -4691,7 +4808,7 @@ class LLMOrchestrator:
         # Check if we already tried to fix this exact error.
         # Extract the actual error line (last meaningful line), not the
         # traceback boilerplate which looks similar across different errors.
-        lines = [l.strip() for l in error_message.strip().splitlines() if l.strip()]
+        lines = [ln.strip() for ln in error_message.strip().splitlines() if ln.strip()]
         error_line = ""
         for line in reversed(lines):
             # Skip traceback frame lines and empty lines

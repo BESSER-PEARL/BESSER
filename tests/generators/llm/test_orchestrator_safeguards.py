@@ -506,9 +506,15 @@ class TestRuffAndTscValidation:
             raise subprocess.TimeoutExpired(cmd="ruff", timeout=30)
 
         monkeypatch.setattr(subprocess, "run", _raise_timeout)
-        # Timeout must not propagate — Phase 3 validation is advisory,
-        # not a blocker.
-        assert orchestrator._collect_ruff_issues() == []
+        # The timeout must not propagate — Phase 3 validation is advisory, not
+        # a blocker. But it must not read as a clean workspace either: this
+        # used to assert ``== []``, which is exactly what the Phase 3 verdict
+        # renders as "0 blockers" when in fact nothing was checked.
+        issues = orchestrator._collect_ruff_issues()
+        assert len(issues) == 1
+        assert "did not run" in issues[0] and "SKIPPED" in issues[0]
+        from besser.generators.llm.orchestrator import _classify_issue
+        assert _classify_issue(issues[0]).severity == "warning"
 
     def test_tsc_returns_empty_when_binary_missing(
         self, simple_model, tmp_path, monkeypatch

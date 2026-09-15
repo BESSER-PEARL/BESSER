@@ -128,6 +128,9 @@ _EXCLUDED_OUTPUT_DIRS = {
     # build-output / dependency directories
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
     ".next", ".gradle", "venv", ".venv", ".besser_snapshot", ".pytest_cache",
+    # A rollback that could not complete parks the pre-rollback tree here
+    # rather than deleting it; it is recovery state, not deliverable output.
+    ".besser_rollback_discard",
     # runtime / build artifact files (never belong in source or a push)
     "*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log",
 }

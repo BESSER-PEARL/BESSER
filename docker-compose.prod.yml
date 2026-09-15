@@ -10,13 +10,14 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
-      # Scan-only: _locate_run_temp_dir and the sweeper read this, nothing
-      # writes it. BESSER_LLM_RUN_STORE_PATH is deliberately NOT set here --
-      # run_manager opens that SQLite at import time, and pointing it at the
-      # read-only mount crash-looped the backend. Separate stores are correct
-      # anyway: both containers mark runs `interrupted` on restart, so sharing
-      # one would let a backend restart clobber the worker's live runs.
-      - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
+      # NOTE: the backend deliberately does NOT set
+      # BESSER_LLM_RUN_WORKSPACE_ROOT. It looked harmless -- the root is only
+      # scanned -- but runner.py mkdtemps INTO that root, so pointing it at the
+      # read-only mount made every backend path that opens a run workspace die
+      # EROFS. It also cannot usefully resolve worker runs: SMART_RUN_REGISTRY
+      # is in-memory and restored once at boot, so manifests the worker writes
+      # later are never seen. push-to-github for worker runs needs a registry
+      # rescan, not a mount.
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
@@ -69,7 +70,7 @@ services:
     image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
     container_name: besser-wme-smartgen
     ports:
-      - "9001:9000"
+      - "127.0.0.1:9001:9000"
     working_dir: /app/besser
     environment:
       - PYTHONPATH=/app
@@ -116,6 +117,7 @@ services:
       - BESSER_SPONSORED_LLM_MODEL=${BESSER_SPONSORED_LLM_MODEL:-}
     volumes:
       - smartgen_workspace:/workspace
+      - ./telemetry-logs:/app/telemetry
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     # NOT on besser_network: generation has no reason to reach the backend, the

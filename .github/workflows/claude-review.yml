@@ -24,6 +24,9 @@ on:
   pull_request:
     branches: [master, development]
     types: [opened, synchronize, ready_for_review, reopened]
+    # Docs-only PRs are skipped. If this job ever becomes a *required* check,
+    # replace paths-ignore with an in-job filter (or a "skip" job that reports
+    # success), otherwise docs-only PRs would be stuck pending forever.
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
@@ -69,7 +72,7 @@ jobs:
           test -f ~/.claude/skills/besser-review/SKILL.md
 
       - name: Review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@56cf60fde42f7b19c3abfd5c9c48b69a1288461f # v1.0.222
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -79,7 +82,11 @@ jobs:
             Use the `besser-review` skill (load it with the Skill tool, or invoke /besser-review)
             to review PR #${{ github.event.pull_request.number }} of ${{ github.repository }}
             in CI mode. Follow the skill's "CI mode" section exactly: never ask a question,
-            post one inline comment per Blocker and Major, and one summary comment.
+            post one inline comment per Blocker and Major, and give the full report as your
+            final response (the action writes it into this PR's sticky comment).
+          # Read-only git/gh plus the inline-comment tool. No `gh api` / `gh pr comment`:
+          # the summary goes through the action's own sticky comment, so the agent
+          # never needs a general-purpose GitHub write tool.
           claude_args: |
             --max-turns 60
-            --allowedTools "Skill,Agent,Task,Read,Grep,Glob,LS,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Skill,Agent,Task,Read,Grep,Glob,LS,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"

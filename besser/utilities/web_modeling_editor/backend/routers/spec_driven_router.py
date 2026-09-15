@@ -97,6 +97,7 @@ from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODE
 from besser.generators.llm.llm_client import (
     free_alt_models,
     free_fallback_model,
+    free_pilot_model,
     free_tier_available,
     free_tier_model,
 )
@@ -442,6 +443,11 @@ async def smart_gen_config():
             # default): the primary (default), any alt models on the primary
             # endpoint, and the fallback endpoint's model when configured.
             "models": _free_tier_model_choices(),
+            # The model a facilitated pilot session (?pilot=<label>) should
+            # pre-select. Null when unset, so ordinary visitors and pilots get
+            # the same default. Server-side so swapping it is an env edit, not
+            # a frontend release -- the client never hardcodes a model id.
+            "pilot_model": free_pilot_model() or None,
         },
     }
 

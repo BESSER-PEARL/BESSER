@@ -1738,6 +1738,29 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
     return chain
 
 
+def free_pilot_model() -> str:
+    """The keyless model a PILOT session should default to, or ``""``.
+
+    Read from ``BESSER_FREE_LLM_PILOT_MODEL``. Facilitated pilot participants
+    arrive through ``?pilot=<label>`` and are a small, known population we are
+    deliberately spending on, so they can start on a stronger model than the
+    anonymous public default without changing what everyone else gets.
+
+    Server-side on purpose: the client must not hardcode a model id. Which
+    model is "the good one" has already changed several times, and swapping it
+    should be an env edit and a container restart, not a frontend release.
+
+    Returns ``""`` when unset (pilots then get the ordinary default), or when
+    the configured id is not one the server actually offers -- advertising a
+    default we would refuse to honour is worse than having none.
+    """
+    model = os.environ.get("BESSER_FREE_LLM_PILOT_MODEL", "").strip()
+    if not model:
+        return ""
+    offered = {free_tier_model(), free_fallback_model(), *free_alt_models()}
+    return model if model in offered else ""
+
+
 def free_alt_models() -> list[str]:
     """Extra keyless models served by the PRIMARY free endpoint, in order.
 

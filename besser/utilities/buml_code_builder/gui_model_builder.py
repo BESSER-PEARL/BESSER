@@ -1237,19 +1237,19 @@ def _write_map_layer(f, layer_var, layer_comp, created_vars):
                 escaped_domain = _escape_string(domain_name)
                 escaped_field = _escape_string(field_name)
                 # domain_model may be absent entirely when the GUI model is
-                # emitted standalone — resolve it via globals() so the generated
-                # code degrades to a no-op instead of raising NameError.
+                # emitted standalone, so the assignment is guarded: the
+                # NameError is swallowed and the binding is left unset.
+                # One call, guarded the way domain_model_builder guards its
+                # own cross-model references. The previous inline form used
+                # globals(), an if, a generator expression and _-prefixed
+                # names -- all refused by the safe BUML loader, so this
+                # binding could be exported and never re-imported.
+                f.write("try:\n")
                 f.write(
-                    "_dm_ref = globals().get('domain_model')\n"
+                    f"    {layer_var}.{attr_name} = bind_domain_field(domain_model, \"{escaped_domain}\", \"{escaped_field}\")\n"
                 )
-                f.write("if _dm_ref is not None:\n")
-                f.write(f"    _dc = _dm_ref.get_class_by_name(\"{escaped_domain}\")\n")
-                f.write("    if _dc:\n")
-                f.write(
-                    f"        {layer_var}.{attr_name} = next(\n"
-                    f"            (a for a in _dc.attributes if a.name == \"{escaped_field}\"), None\n"
-                    f"        )\n"
-                )
+                f.write("except NameError:\n")
+                f.write("    pass\n")
 
 
 def _write_map(f, var_name, map_comp, created_vars):

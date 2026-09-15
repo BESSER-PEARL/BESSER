@@ -10,8 +10,13 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
+      # Scan-only: _locate_run_temp_dir and the sweeper read this, nothing
+      # writes it. BESSER_LLM_RUN_STORE_PATH is deliberately NOT set here --
+      # run_manager opens that SQLite at import time, and pointing it at the
+      # read-only mount crash-looped the backend. Separate stores are correct
+      # anyway: both containers mark runs `interrupted` on restart, so sharing
+      # one would let a backend restart clobber the worker's live runs.
       - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
-      - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}

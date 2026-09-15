@@ -114,3 +114,32 @@ def safe_class_name(name):
         return f"{name}_"
     else:
         return name
+
+
+def bind_domain_field(domain_model, class_name: str, field_name: str):
+    """Return the ``Property`` named *field_name* on *class_name*, or ``None``.
+
+    Emitted GUI code calls this instead of inlining the lookup. The inline
+    version used ``globals().get('domain_model')``, an ``if``, a generator
+    expression and ``_``-prefixed names -- every one of which the safe BUML
+    loader refuses -- so a GUI model with a domain-bound DataBinding could be
+    exported and never re-imported. One call is ``Call`` + ``Name`` +
+    ``Constant``, which the loader already allows, and it puts the lookup in
+    code we control rather than in generated source.
+
+    Returns ``None`` rather than raising when the model, class or field is
+    absent: a GUI model is often exported without its domain model, and the
+    binding is meant to degrade to "unbound", not to break the import.
+    """
+    if domain_model is None:
+        return None
+    try:
+        owner = domain_model.get_class_by_name(class_name)
+    except Exception:
+        return None
+    if owner is None:
+        return None
+    for attribute in getattr(owner, "attributes", ()) or ():
+        if getattr(attribute, "name", None) == field_name:
+            return attribute
+    return None

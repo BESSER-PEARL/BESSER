@@ -3,6 +3,7 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
+from besser.utilities.buml_code_builder.common import bind_domain_field
 import json
 import logging
 import re
@@ -176,6 +177,10 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "list": list,
         "tuple": tuple,
         "dict": dict,
+        # Emitted GUI code calls this to resolve a domain-bound DataBinding.
+        # It replaces an inline globals()/if/generator-expression block that the
+        # safe loader refused, which made such models un-importable.
+        "bind_domain_field": bind_domain_field,
     }
     # Strip import lines -- all required types are in allowed_names already.
     # Handle multi-line imports (e.g. from ... import (\n    ...\n))

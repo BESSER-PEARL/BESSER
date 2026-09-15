@@ -12,9 +12,15 @@ What we save
 
 * The original request (``instructions``, ``primary_kind``, ``run_id``).
 * The message list that's been accumulating in Phase 2. This is the
-  heaviest payload — it's full conversation history including tool
-  results — so we serialize it with ``default=str`` to swallow any
-  non-JSON content blocks and never raise.
+  heaviest payload — full conversation history including tool results.
+  Assistant content arrives as provider SDK block objects, which are
+  converted to their JSON wire shape by :func:`_to_wire` before the
+  dump. That conversion is load-bearing: ``default=str`` used to
+  stringify a ``tool_use`` block into its ``repr()``, which destroyed
+  the block's ``id`` while the ``tool_result`` in the next message kept
+  referencing it. Every resume from a checkpoint saved mid-tool-turn
+  then sent the provider a ``tool_result`` with no matching
+  ``tool_use`` and was rejected with a 400.
 * Running costs, turn counter, compaction counter, tool-call log,
   validation issues, selected generator, inventory.
 * A project fingerprint (hash of primary-model names + instruction
@@ -152,6 +158,47 @@ def compute_fingerprint(
     return digest[:32]
 
 
+
+def _to_wire(obj: Any) -> Any:
+    """Convert provider SDK content blocks into their JSON wire shape.
+
+    The orchestrator stores ``response["content"]`` verbatim in the
+    message list, so a checkpoint holds whatever objects the provider
+    SDK returned (``TextBlock`` / ``ToolUseBlock`` / thinking blocks —
+    pydantic models on Anthropic, plain objects elsewhere). Those are
+    not JSON-serializable, and stringifying them loses the ``id`` that
+    ties a ``tool_use`` to the ``tool_result`` that follows it.
+
+    Falls back to ``str`` only for genuinely opaque values, which keeps
+    :func:`save_checkpoint` from ever raising.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _to_wire(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_wire(v) for v in obj]
+
+    # Anthropic/OpenAI SDK blocks are pydantic models.
+    dump = getattr(obj, "model_dump", None) or getattr(obj, "dict", None)
+    if callable(dump):
+        try:
+            return {k: _to_wire(v) for k, v in dump().items() if v is not None}
+        except Exception:
+            pass
+    if callable(getattr(obj, "to_dict", None)):
+        try:
+            return {k: _to_wire(v) for k, v in obj.to_dict().items() if v is not None}
+        except Exception:
+            pass
+    # Plain objects that still look like a block (our test doubles, and
+    # any provider shim that isn't pydantic).
+    attrs = getattr(obj, "__dict__", None)
+    if attrs and "type" in attrs:
+        return {k: _to_wire(v) for k, v in attrs.items()
+                if not k.startswith("_") and v is not None}
+    return str(obj)
+
 def save_checkpoint(
     output_dir: str,
     checkpoint: Checkpoint,
@@ -167,12 +214,11 @@ def save_checkpoint(
     try:
         os.makedirs(output_dir, exist_ok=True)
         with open(tmp_path, "w", encoding="utf-8") as fh:
-            # default=str swallows non-JSON blocks (TextBlock /
-            # ToolUseBlock objects from the Anthropic SDK). They round-
-            # trip as strings which is lossy, but the messages list is
-            # structured in a way that the orchestrator can still
-            # consume strings in assistant-content slots.
-            json.dump(checkpoint.to_dict(), fh, default=str, indent=2)
+            # _to_wire turns SDK blocks into the dicts the provider APIs
+            # accept, preserving tool_use ids so the tool_results that
+            # follow them still resolve on resume. default=str stays only
+            # as a last resort so a checkpoint write never raises.
+            json.dump(_to_wire(checkpoint.to_dict()), fh, default=str, indent=2)
         os.replace(tmp_path, final_path)
         return final_path
     except Exception as exc:

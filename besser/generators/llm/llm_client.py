@@ -129,14 +129,36 @@ _FREE_LOCAL_MODEL_MARKERS = (
 
 
 def _is_free_local_model(model_lower: str) -> bool:
-    """True for self-hosted / open-weight models that cost the platform $0.
+    """True for models that cost the platform $0 — self-hosted, or free tiers.
 
-    The ``name:size`` tag syntax (e.g. ``qwen3-coder:30b``) is the strongest
-    signal — no paid cloud model id from OpenAI/Anthropic/Mistral uses a colon.
-    The family allow-list backstops tagless ids.
+    Getting this wrong is expensive in both directions: a false positive prices
+    a paid model at $0 and SILENTLY DISABLES the cost cap, while a false
+    negative bills a self-hosted run that is actually free.
+
+    The family allow-list alone used to decide this, which was right when
+    open-weight implied self-hosted. It stopped being right when the gateway
+    started reselling those same families: ``Qwen/Qwen3.8-Max`` and
+    ``deepseek/deepseek-v4-pro`` are billed cloud models whose ids contain
+    ``qwen`` / ``deepseek``, so every call was priced at $0 and ``max_cost_usd``
+    could never trip.
+
+    So the decision keys on how the model is IDENTIFIED, not on its family:
+
+    1. an explicit free marker (``:free`` / ``-free``) -- always free;
+    2. an Ollama ``name:tag`` id with no vendor namespace -- self-hosted;
+    3. a vendor-namespaced id (``vendor/model``) -- a gateway model, billed;
+    4. otherwise fall back to the family list, which still covers tagless
+       self-hosted ids.
     """
-    if ":" in model_lower:
+    if model_lower.endswith(":free") or model_lower.endswith("-free"):
         return True
+    has_namespace = "/" in model_lower
+    if ":" in model_lower and not has_namespace:
+        return True
+    if has_namespace:
+        # Served by the gateway, so somebody is being billed for it. Fall
+        # through to the paid pricing path rather than assuming $0.
+        return False
     return any(marker in model_lower for marker in _FREE_LOCAL_MODEL_MARKERS)
 
 

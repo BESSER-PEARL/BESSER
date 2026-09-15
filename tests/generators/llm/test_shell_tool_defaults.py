@@ -59,11 +59,18 @@ def test_the_generator_actually_passes_the_flags_on():
 
 
 @pytest.mark.parametrize("flag", ["allow_shell_tools", "enable_toolchain_validation"])
-def test_an_explicit_opt_in_is_preserved(flag, tmp_path):
+def test_an_explicit_opt_in_is_preserved(flag, tmp_path, monkeypatch):
     """Turning them on must still work -- this is a default change, not a removal."""
+    import besser.generators.llm.llm_generator as mod
     from besser.BUML.metamodel.structural import (
         Class, DomainModel, IntegerType, Property,
     )
+
+    # The provider SDKs are optional extras and CI does not install them, so
+    # building a real client here would make this assert nothing on CI. The
+    # flags are stored before the client is created; stub it out.
+    monkeypatch.setattr(mod, "create_llm_client", lambda *a, **kw: object())
+
     cls = Class(name="Thing", attributes={Property(name="id", type=IntegerType, is_id=True)})
     model = DomainModel(name="M", types={cls})
 

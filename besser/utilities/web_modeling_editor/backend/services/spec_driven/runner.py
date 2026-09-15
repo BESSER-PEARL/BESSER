@@ -257,45 +257,9 @@ class SmartRunRegistry:
         for name in names:
             if not name.startswith(LLM_TEMP_DIR_PREFIX):
                 continue
-            temp_dir = os.path.realpath(os.path.join(root, name))
-            manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
-            try:
-                if (
-                    not os.path.isfile(manifest_path)
-                    or os.path.getsize(manifest_path) > _MAX_DOWNLOAD_MANIFEST_BYTES
-                ):
-                    continue
-                with open(manifest_path, "r", encoding="utf-8") as handle:
-                    data = json.load(handle)
-                run_id = str(data.get("runId") or "")
-                if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-                    continue
-                if not name.startswith(f"{LLM_TEMP_DIR_PREFIX}{run_id}_"):
-                    continue
-                created_at = float(data["createdAt"])
-                if max(0.0, now - created_at) > max(1, ttl_seconds):
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    continue
-                relative_path = str(data["relativePath"])
-                file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
-                if (
-                    os.path.commonpath([temp_dir, file_path]) != temp_dir
-                    or not os.path.isfile(file_path)
-                ):
-                    continue
-                restored[run_id] = SmartRunEntry(
-                    file_path=file_path,
-                    file_name=str(data["fileName"]),
-                    is_zip=bool(data["isZip"]),
-                    temp_dir=temp_dir,
-                    created_at=created_at,
-                )
-            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-                logger.warning(
-                    "Ignoring invalid download metadata at %s",
-                    manifest_path,
-                    exc_info=True,
-                )
+            entry = self._entry_from_workspace(root, name, now, ttl_seconds)
+            if entry is not None:
+                restored[entry[0]] = entry[1]
 
         async with self._lock:
             self._entries.update(restored)
@@ -306,15 +270,106 @@ class SmartRunRegistry:
             )
         return len(restored)
 
+    def _entry_from_workspace(
+        self,
+        root: str,
+        name: str,
+        now: float,
+        ttl_seconds: int,
+    ) -> Optional[tuple[str, "SmartRunEntry"]]:
+        """Parse one run workspace into a registry entry.
+
+        Shared by ``restore_persisted`` (boot-time sweep of everything) and
+        ``get`` (targeted lookup for a single run). Returns ``None`` for
+        anything unusable -- no manifest, expired, or a manifest that does not
+        agree with its own directory name.
+
+        Pure disk IO: the caller takes the lock.
+        """
+        temp_dir = os.path.realpath(os.path.join(root, name))
+        manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
+        try:
+            if (
+                not os.path.isfile(manifest_path)
+                or os.path.getsize(manifest_path) > _MAX_DOWNLOAD_MANIFEST_BYTES
+            ):
+                return None
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            run_id = str(data.get("runId") or "")
+            if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+                return None
+            if not name.startswith(f"{LLM_TEMP_DIR_PREFIX}{run_id}_"):
+                return None
+            created_at = float(data["createdAt"])
+            if max(0.0, now - created_at) > max(1, ttl_seconds):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None
+            relative_path = str(data["relativePath"])
+            file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
+            if (
+                os.path.commonpath([temp_dir, file_path]) != temp_dir
+                or not os.path.isfile(file_path)
+            ):
+                return None
+            return run_id, SmartRunEntry(
+                file_path=file_path,
+                file_name=str(data["fileName"]),
+                is_zip=bool(data["isZip"]),
+                temp_dir=temp_dir,
+                created_at=created_at,
+            )
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            logger.warning(
+                "Ignoring invalid download metadata at %s",
+                manifest_path,
+                exc_info=True,
+            )
+            return None
+
     async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
         async with self._lock:
             return self._entries.pop(run_id, None)
 
     async def get(self, run_id: str) -> Optional[SmartRunEntry]:
         """Non-destructive lookup — the entry stays re-downloadable
-        until the TTL sweep removes it."""
+        until the TTL sweep removes it.
+
+        On a miss, rescan the shared workspace for this one run before giving
+        up. ``restore_persisted`` only runs at boot, and since generation moved
+        to its own container the process that WRITES a run is no longer the one
+        that serves push-to-github / import-github-run — so every worker run
+        lands after this process's one-shot scan and would otherwise 404.
+        """
         async with self._lock:
-            return self._entries.get(run_id)
+            entry = self._entries.get(run_id)
+        if entry is not None:
+            return entry
+
+        if not re.fullmatch(r"[a-f0-9]{32}", run_id or ""):
+            return None
+
+        # Targeted: only directories belonging to this run, not a full sweep.
+        root = _run_workspace_root()
+        now = time.time()
+        prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
+        try:
+            names = [n for n in os.listdir(root) if n.startswith(prefix)]
+        except OSError:
+            return None
+
+        for name in names:
+            found = self._entry_from_workspace(
+                root, name, now, LLM_DOWNLOAD_TTL_SECONDS
+            )
+            if found is None:
+                continue
+            found_id, found_entry = found
+            async with self._lock:
+                # Another coroutine may have rehydrated it meanwhile.
+                self._entries.setdefault(found_id, found_entry)
+                return self._entries.get(run_id)
+        return None
 
     async def periodic_sweep(
         self,

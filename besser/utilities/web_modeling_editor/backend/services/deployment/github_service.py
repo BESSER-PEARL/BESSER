@@ -291,9 +291,43 @@ class GitHubService:
 
         directory = Path(directory_path)
 
-        # Get all files recursively
-        all_files = list(directory.rglob("*"))
-        all_files = [f for f in all_files if f.is_file()]
+        # Get all files recursively.
+        #
+        # `is_file()` FOLLOWS symlinks, and the tree being pushed is a
+        # generation workspace -- written by the Spec-Driven worker, which runs
+        # model-authored code. A symlink dropped in there (`ln -s
+        # /proc/self/environ leak.txt`) would be read through and its target
+        # committed to the user's public repository. The backend doing the push
+        # holds the full secret set, so that is an exfiltration path, and the
+        # read-only mount does not close it: `:ro` blocks writes, not traversal.
+        #
+        # So: skip symlinks outright, and re-check every survivor resolves back
+        # inside the directory (guards hardlink/`..` surprises too), using the
+        # same commonpath containment the rest of the codebase uses.
+        directory = directory.resolve()
+        all_files = []
+        skipped_unsafe = 0
+        for candidate in directory.rglob("*"):
+            if candidate.is_symlink():
+                skipped_unsafe += 1
+                continue
+            if not candidate.is_file():
+                continue
+            try:
+                resolved = candidate.resolve()
+                if os.path.commonpath([str(directory), str(resolved)]) != str(directory):
+                    skipped_unsafe += 1
+                    continue
+            except (OSError, ValueError):
+                skipped_unsafe += 1
+                continue
+            all_files.append(candidate)
+
+        if skipped_unsafe:
+            logger.warning(
+                "Skipped %d symlinked/out-of-tree entr%s while pushing %s",
+                skipped_unsafe, "y" if skipped_unsafe == 1 else "ies", directory,
+            )
 
         results["total_files"] = len(all_files)
 

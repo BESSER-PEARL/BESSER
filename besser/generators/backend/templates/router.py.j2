@@ -1313,7 +1313,8 @@ async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 {% elif param.type.name == 'any' %}{% set needs_fk_access = false %}
 {% else %}{% set param_type = param.type.name %}
 {% endif %}
-{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access)) %}
+{# param[4] is the MODELLED type. param[1] is the rendered annotation ('Any', or an FK class name), which is not what python_default keys on. #}
+{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access, param.type.name)) %}
 {% endfor %}
 
 {% set method_code = "" %}
@@ -1348,7 +1349,7 @@ async def {{ class.name | lower }}_{{ clean_name }}(
 
     Parameters (pass as JSON body):
     {% for param in method_params %}
-    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] | docstring_default(param[4], owner=class.name ~ '.' ~ param[0]) }}){% endif %}
     {% endfor %}
     {% endif %}
     """
@@ -1368,9 +1369,9 @@ async def {{ class.name | lower }}_{{ clean_name }}(
         params = params or {}
         {% for param in method_params %}
         {% if param[3] %}
-        {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[1], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
+        {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
         {% else %}
-        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[1], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
         {% endif %}
         {% endfor %}
         {% endif %}
@@ -1440,7 +1441,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
 
     Parameters:
     {% for param in method_params %}
-    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] | docstring_default(param[4], owner=class.name ~ '.' ~ param[0]) }}){% endif %}
     {% endfor %}
     {% endif %}
     """
@@ -1452,9 +1453,9 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     # Prepare method parameters
     {% for param in method_params %}
     {% if param[3] %}
-    {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[1], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
+    {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
     {% else %}
-    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[1], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
     {% endif %}
     {% endfor %}
 

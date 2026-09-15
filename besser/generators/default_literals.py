@@ -114,6 +114,29 @@ def enum_default(raw: Any, enum_name: str, *, members: Any = None,
     return f"{enum_name}.{member}"
 
 
+def docstring_default(raw: Any, type_name: str, *, owner: str = "") -> str:
+    """Render a modelled default for display inside a triple-quoted docstring.
+
+    ``python_default`` is not enough here. It returns a Python literal, and the
+    repr of a string containing a triple-double-quote still *contains* that
+    sequence -- which closes the surrounding docstring and drops whatever
+    follows into the function body at statement indentation.
+
+    Observed on ``backend/templates/router.py.j2``, whose generated routers are
+    executed by ``/besser_api/deploy-app``: the value line was hardened while
+    the two docstring lines a few rows above still interpolated raw. That was
+    the third site of the same sink found in this branch.
+
+    So: coerce through ``python_default`` first (which rejects anything not
+    expressible as a literal of the declared type), then make the result
+    docstring-safe -- no double quote survives to form the closing sequence,
+    and no newline reaches column 0.
+    """
+    literal = python_default(raw, type_name, owner=owner)
+    flattened = " ".join(literal.splitlines())
+    return flattened.replace('"', "'")
+
+
 def register_default_literals(env) -> None:
     """Expose ``python_default`` / ``enum_default`` to a Jinja environment.
 
@@ -122,4 +145,6 @@ def register_default_literals(env) -> None:
     the sink by interpolating ``default_value`` directly.
     """
     env.filters["python_default"] = python_default
-    env.globals.update(python_default=python_default, enum_default=enum_default)
+    env.filters["docstring_default"] = docstring_default
+    env.globals.update(python_default=python_default, enum_default=enum_default,
+                       docstring_default=docstring_default)

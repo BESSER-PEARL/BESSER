@@ -13,6 +13,12 @@ name: Claude review
 #
 # PRs from forks and from Dependabot never receive secrets, so they are skipped.
 # Maintainers can still review those by mentioning @claude (separate workflow).
+#
+# GitHub auth: the workflow's own GITHUB_TOKEN (comments appear as
+# github-actions[bot]). The Claude GitHub App would give a nicer claude[bot]
+# identity, but it refuses to run until this file exists with identical content
+# on the default branch (master). Switch to app auth — drop `github_token`, add
+# `id-token: write` — once this workflow has been promoted to master.
 
 on:
   pull_request:
@@ -39,7 +45,6 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-      id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -67,6 +72,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           track_progress: true
           use_sticky_comment: true
           prompt: |

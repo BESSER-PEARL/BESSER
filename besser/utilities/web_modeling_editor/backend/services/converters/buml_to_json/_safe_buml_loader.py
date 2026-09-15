@@ -76,11 +76,29 @@ _ALLOWED_NODE_TYPES: Set[type] = {
     ast.USub,
     ast.UAdd,
     ast.Not,
+    # ``try: <assignments> except NameError: pass`` — the ONE control-flow
+    # shape our own builders emit. domain_model_builder writes it around a
+    # method's ``state_machine`` / ``quantum_circuit`` assignment, because the
+    # ``sm`` / ``qc`` variable only exists when the model was exported as part
+    # of a project. Without these three types the loader rejected files BESSER
+    # itself had just written, so export -> re-import was broken for every
+    # state-machine and quantum method (2026-09-15).
+    #
+    # It adds branching, not reach: the try body is validated by exactly the
+    # same rules as any other statement, and _validate_try_shape below pins
+    # the handler to ``except NameError: pass`` so no user-supplied code can
+    # ride in through the handler.
+    ast.Try,
+    ast.ExceptHandler,
+    ast.Pass,
 }
 
 # Inside ``UnaryOp`` we only allow the operators needed for signed numeric
 # literals (``-1``, ``+1``) and the occasional boolean negation flag.
 _ALLOWED_UNARY_OPS: Set[type] = {ast.USub, ast.UAdd, ast.Not}
+
+# Resolvable in the sandbox only so `except NameError:` works.
+_EXCEPTION_NAMES: Set[str] = {"NameError"}
 
 # ``BinOp`` is strictly limited to string/numeric addition because BUML code
 # occasionally concatenates identifier parts (e.g. ``prefix + name``). All
@@ -92,6 +110,35 @@ def _is_dunder(name: str) -> bool:
     """Return True for names starting with ``_`` (includes dunders)."""
     return name.startswith("_")
 
+
+
+def _validate_try_shape(node: ast.Try) -> None:
+    """Permit only ``try: ... except NameError: pass``.
+
+    Anything else — a bare ``except``, a different exception, a handler with a
+    real body, ``else``/``finally`` — is refused. The handler is the part an
+    attacker would want (it runs on failure and is easy to overlook), so it is
+    pinned to a literal ``pass`` rather than validated like ordinary code.
+    """
+    if node.orelse or node.finalbody:
+        raise SafeBumlLoaderError(
+            "try/except with else or finally is not allowed in BUML"
+        )
+    if not node.handlers:
+        raise SafeBumlLoaderError("try without except is not allowed in BUML")
+    for handler in node.handlers:
+        if handler.type is None:
+            raise SafeBumlLoaderError("bare except is not allowed in BUML")
+        if not (isinstance(handler.type, ast.Name) and handler.type.id == "NameError"):
+            raise SafeBumlLoaderError(
+                "only 'except NameError' is allowed in BUML"
+            )
+        if handler.name is not None:
+            raise SafeBumlLoaderError("'except NameError as e' is not allowed in BUML")
+        if len(handler.body) != 1 or not isinstance(handler.body[0], ast.Pass):
+            raise SafeBumlLoaderError(
+                "the NameError handler must contain exactly 'pass'"
+            )
 
 def _attribute_root_name(node: ast.AST) -> str | None:
     """
@@ -112,6 +159,7 @@ def _validate_node(
     allowed_names: Mapping[str, Any],
     declared_vars: Set[str],
     depth: int = 0,
+    in_nameerror_guard: bool = False,
 ) -> None:
     """
     Recursively validate ``node``. Raises ``SafeBumlLoaderError`` on anything
@@ -155,7 +203,8 @@ def _validate_node(
         # calls when ``os`` is not in the allowed dict.
         root = _attribute_root_name(node)
         if root is not None:
-            if root not in allowed_names and root not in declared_vars:
+            if (root not in allowed_names and root not in declared_vars
+                    and not in_nameerror_guard):
                 raise SafeBumlLoaderError(
                     f"Attribute access on unknown name: {root!r}"
                 )
@@ -164,7 +213,14 @@ def _validate_node(
         # Store-context names are fine (we collect them separately); only
         # Load-context references need to resolve to something we allow.
         if isinstance(node.ctx, ast.Load):
-            if node.id not in allowed_names and node.id not in declared_vars:
+            # Inside `try: ... except NameError: pass` an unresolved name is
+            # the POINT — that is how a standalone domain-model export tolerates
+            # a missing `sm` / `qc`. Tolerating it here costs nothing: the name
+            # is resolved at runtime against the same controlled namespace, so
+            # it either hits an allowed object or raises NameError and is
+            # swallowed by the handler this guard already pinned to `pass`.
+            if (node.id not in allowed_names and node.id not in declared_vars
+                    and not in_nameerror_guard):
                 raise SafeBumlLoaderError(
                     f"Reference to unknown name: {node.id!r}"
                 )
@@ -172,6 +228,17 @@ def _validate_node(
                 raise SafeBumlLoaderError(
                     f"Reference to underscore/dunder name is forbidden: {node.id!r}"
                 )
+            if node.id in _EXCEPTION_NAMES:
+                # Legal only in the handler's `except <type>:` slot, which is
+                # validated by _validate_try_shape and skipped by the walk.
+                # Binding it to a value has no use in BUML and would hand out
+                # a class object to introspect from.
+                raise SafeBumlLoaderError(
+                    f"{node.id!r} may only appear as an except clause type"
+                )
+
+    if isinstance(node, ast.Try):
+        _validate_try_shape(node)
 
     if isinstance(node, ast.Call):
         func = node.func
@@ -192,8 +259,14 @@ def _validate_node(
 
     # Recurse into children. Use ``iter_child_nodes`` so we cover all
     # AST-significant children without hitting string fields.
+    guarded = in_nameerror_guard or isinstance(node, ast.Try)
     for child in ast.iter_child_nodes(node):
-        _validate_node(child, allowed_names, declared_vars, depth + 1)
+        # The handler's exception type is already pinned to `NameError` by
+        # _validate_try_shape; re-walking it would trip the _EXCEPTION_NAMES
+        # rule that stops it being used as a value anywhere else.
+        if isinstance(node, ast.ExceptHandler) and child is node.type:
+            continue
+        _validate_node(child, allowed_names, declared_vars, depth + 1, guarded)
 
 
 def _collect_assigned_names(module: ast.Module) -> Set[str]:
@@ -295,7 +368,7 @@ def safe_load_buml(
     for stmt in tree.body:
         if _is_main_guard(stmt):
             continue
-        if not isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr)):
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Try)):
             raise SafeBumlLoaderError(
                 f"Top-level statement not allowed: {type(stmt).__name__}"
             )
@@ -320,9 +393,15 @@ def safe_load_buml(
 
     code = compile(tree, filename="<buml>", mode="exec")
 
-    # Execute with an empty ``__builtins__`` so user content cannot reach
+    # Execute with a near-empty ``__builtins__`` so user content cannot reach
     # any built-in helpers; everything it needs must be in ``allowed_names``.
-    globals_ns: Dict[str, Any] = {"__builtins__": {}}
+    #
+    # The single exception is the ``NameError`` class, which the ``except
+    # NameError:`` guard our own builders emit has to be able to resolve. It is
+    # an exception type, not a callable that reaches anything: the validator
+    # already pins that handler to a literal ``pass``, and nothing else in the
+    # allowlist can call it usefully.
+    globals_ns: Dict[str, Any] = {"__builtins__": {"NameError": NameError}}
     globals_ns.update(allowed_names)
     locals_ns: Dict[str, Any] = {}
     exec(code, globals_ns, locals_ns)  # noqa: S102 - AST pre-validated above

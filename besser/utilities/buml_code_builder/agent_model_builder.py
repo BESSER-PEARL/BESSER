@@ -14,7 +14,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     WebSocketReplyFile, WebSocketReplyImage, WebSocketReplyDataframe, WebSocketReplyPlotly,
 )
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
-from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, safe_var_name
 
 
 def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "agent"):
@@ -291,7 +291,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         # Write bodies for states
         for state in model.states:
             state_var = state_var_names[state.name]
-            f.write(f"# {state.name} state\n")
+            f.write(f"# {_comment_safe(state.name)} state\n")
             # Write body function if it exists
             if state.body and hasattr(state.body, 'actions') and state.body.actions:
                 # Check if this is a custom code body (singleton, emitted before Body creation)

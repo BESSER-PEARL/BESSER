@@ -273,7 +273,7 @@ def test_abandoned_real_runner_shape_keeps_partial_download():
     asyncio.run(exercise())
 
 
-def test_resume_starts_a_fresh_event_sequence():
+def test_resume_keeps_the_sequence_monotonic():
     async def exercise() -> None:
         store = SqliteRunEventStore(":memory:")
         manager = DurableRunManager(store)
@@ -295,8 +295,13 @@ def test_resume_starts_a_fresh_event_sequence():
         await manager.wait(run_id)
         replay = store.events_after(run_id, 0)
 
-        assert [event.sequence for event in replay] == [1, 2]
+        # The previous attempt's frames are gone, so a terminal event from
+        # the old attempt can never be replayed ahead of the new one...
         assert [event.event_type for event in replay] == ["start", "done"]
+        # ...but the numbering CONTINUES from the old high-water mark. It used
+        # to restart at 1, which put every frame of the resumed attempt below
+        # the cursor a reconnecting client still held.
+        assert [event.sequence for event in replay] == [3, 4]
         assert manager.get_run(run_id).status == "succeeded"
         store.close()
 
@@ -522,3 +527,38 @@ def test_one_of_two_subscribers_leaving_does_not_start_abandonment():
         store.close()
 
     asyncio.run(exercise())
+
+
+def test_a_client_reconnecting_across_a_resume_is_not_left_blank():
+    """The regression this contract exists for.
+
+    A client that was streaming the first attempt holds ``Last-Event-ID: 2``.
+    When the run is resumed it reconnects with ``?after=2``. While the sequence
+    restarted at 1, that query matched nothing — the card sat empty while the
+    status endpoint reported a healthy subscriber and a rising lastSequence.
+    """
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "3" * 32
+
+        async def first_source():
+            yield _start(run_id)
+            yield format_sse(ErrorEvent(code="CANCELLED", message="stopped"))
+
+        async def resumed_source():
+            yield _start(run_id)
+            yield _done(run_id)
+
+        await manager.start(run_id, first_source())
+        await manager.wait(run_id)
+        stale_cursor = manager.get_run(run_id).last_sequence
+        assert stale_cursor == 2
+
+        await manager.start(run_id, resumed_source(), resume=True)
+        await manager.wait(run_id)
+
+        # What the reconnecting client actually asks for.
+        delivered = store.events_after(run_id, stale_cursor)
+        assert delivered, "the resumed attempt's frames must be visible to a stale cursor"
+        assert [event.event_type for event in delivered] == ["start", "done"]

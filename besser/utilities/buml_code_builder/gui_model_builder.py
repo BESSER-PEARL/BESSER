@@ -7,7 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.buml_code_builder.common import safe_class_name, _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, safe_class_name, _escape_python_string
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewContainer,
     Button,
@@ -262,7 +262,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
 
         # Process each module
         for module_idx, module in enumerate(sorted(model.modules, key=lambda m: m.name)):
-            f.write(f"# Module: {module.name}\n")
+            f.write(f"# Module: {_comment_safe(module.name)}\n")
 
             # Process each screen in the module
             for screen_idx, screen in enumerate(sorted(module.screens, key=lambda s: s.name)):

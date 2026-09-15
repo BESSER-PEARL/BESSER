@@ -2,7 +2,7 @@
 Quantum Model Builder: Generates Python code for BESSER QuantumCircuit models.
 """
 
-from besser.utilities.buml_code_builder.common import _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, HadamardGate, PauliXGate, PauliYGate, PauliZGate,
     SGate, TGate, SwapGate, RXGate, RYGate, RZGate, PhaseGate,
@@ -41,7 +41,7 @@ def quantum_model_to_code(model: QuantumCircuit, file_path: str, model_var_name:
 
 def _write_circuit(f, model: QuantumCircuit, var_name: str):
     """Helper to write a circuit definition."""
-    f.write(f"# Quantum Circuit: {model.name}\n")
+    f.write(f"# Quantum Circuit: {_comment_safe(model.name)}\n")
     total_qubits = sum(reg.size for reg in model.qregs)
     f.write(f"{var_name} = QuantumCircuit(name='{_escape_python_string(model.name)}', qubits={total_qubits})\n\n")
 

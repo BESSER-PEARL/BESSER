@@ -1537,7 +1537,19 @@ class SmartGenerationRunner:
             effective_runtime_cap = getattr(
                 orchestrator, "max_runtime_seconds", self.request.max_runtime_seconds
             )
+            # A cap breach detected HERE is measured on the runner's total
+            # elapsed/spend (Phase 1 + 2 + 3 + packaging), not on Phase 2 alone.
+            # It has to feed the `incomplete` verdict below, which otherwise
+            # keys only on the orchestrator's Phase 2 state: a run whose Phase 2
+            # finished cleanly but whose WALL CLOCK blew the cap was reported as
+            # `incomplete: False` while this very block told the user "Output
+            # may be incomplete" (observed live 2026-09-15, run 932f1367).
+            _cap_breach: Optional[str] = None
             if final_cost > effective_cost_cap:
+                _cap_breach = (
+                    f"The run reached its cost cap (${final_cost:.4f} > "
+                    f"${effective_cost_cap}) and was stopped before it finished."
+                )
                 yield format_sse(ErrorEvent(
                     code="COST_CAP",
                     message=(
@@ -1547,6 +1559,10 @@ class SmartGenerationRunner:
                     ),
                 ))
             if elapsed > effective_runtime_cap:
+                _cap_breach = (
+                    f"The run reached its {effective_runtime_cap}s time cap "
+                    f"(took {elapsed:.0f}s) and was stopped before it finished."
+                )
                 yield format_sse(ErrorEvent(
                     code="TIMEOUT",
                     message=(
@@ -1584,7 +1600,12 @@ class SmartGenerationRunner:
             # True) — we surface its honest, target-specific message instead
             # of the generic compile/boot wording. None on every other run.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
-            incomplete = (not exited_cleanly) or bool(_unfixed_blockers) or bool(_late_err)
+            incomplete = (
+                (not exited_cleanly)
+                or bool(_unfixed_blockers)
+                or bool(_late_err)
+                or bool(_cap_breach)
+            )
             incomplete_reason_msg: Optional[str] = None
             if incomplete and exited_cleanly and _unfixed_blockers:
                 if _fix_msg:
@@ -1655,6 +1676,12 @@ class SmartGenerationRunner:
 
             # A late internal error that still produced output (salvaged
             # above) is surfaced as an incomplete result, not a hard failure.
+            if _cap_breach and incomplete_reason_msg is None:
+                # No ErrorEvent here: the COST_CAP / TIMEOUT frame above already
+                # told the client. This only supplies the reason the done event
+                # was previously missing.
+                incomplete_reason_msg = _cap_breach
+
             if _late_err and incomplete_reason_msg is None:
                 incomplete_reason_msg = _late_err
                 yield format_sse(ErrorEvent(

@@ -104,6 +104,11 @@ services:
       # allowlist silently dropped a model from the UI once the config
       # endpoint moved to this container.
       - BESSER_FREE_LLM_ALT_MODELS=${BESSER_FREE_LLM_ALT_MODELS:-}
+      # The model a ?pilot= session pre-selects. Config is served by THIS
+      # container, so a var the allowlist omits reads as unset and the
+      # feature silently does nothing -- which is how ALT_MODELS and the
+      # telemetry vars were lost before it.
+      - BESSER_FREE_LLM_PILOT_MODEL=${BESSER_FREE_LLM_PILOT_MODEL:-}
       # Run telemetry is recorded by whoever runs the generation, which is
       # this container. The ADMIN token is deliberately NOT here: the report
       # endpoint it guards stays on the backend.

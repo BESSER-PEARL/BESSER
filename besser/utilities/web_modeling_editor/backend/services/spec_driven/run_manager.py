@@ -267,17 +267,7 @@ class SqliteRunEventStore:
             else:
                 # A resume is a new attempt under the same capability ID.
                 # Old terminal frames must not be replayed before the resumed
-                # attempt's events, so the stored events are cleared atomically.
-                #
-                # ``last_sequence`` is deliberately NOT reset. It is a
-                # high-water mark, and a client reconnecting across the resume
-                # still holds the previous attempt's cursor (``?after=N``, or
-                # Last-Event-ID). Restarting the numbering at 0 meant every
-                # frame of the new attempt was numbered below that cursor, so
-                # the client was served nothing while status happily reported a
-                # subscriber and a rising lastSequence — a live-looking,
-                # permanently blank stream. Keeping the counter monotonic means
-                # a stale cursor resolves on the very next frame.
+                # attempt's events, so reset the event stream atomically.
                 self._conn.execute(
                     "DELETE FROM spec_run_events WHERE run_id = ?", (run_id,)
                 )
@@ -288,7 +278,7 @@ class SqliteRunEventStore:
                            terminal_event = NULL, error = NULL,
                            subscriber_count = 0, disconnected_at = NULL,
                            abandonment_requested_at = NULL,
-                           resume_available = 0
+                           resume_available = 0, last_sequence = 0
                      WHERE run_id = ?
                     """,
                     (now, run_id),
@@ -800,6 +790,25 @@ class DurableRunManager:
         if not joined:
             return
         cursor = max(0, after_sequence)
+
+        # A resume clears the event table and restarts numbering at 1, but a
+        # client reconnecting across that resume still holds the PREVIOUS
+        # attempt's cursor (``?after=N``, or Last-Event-ID). Every frame of the
+        # new attempt is then numbered at or below N, so ``events_after``
+        # matched nothing and the client sat on a live-looking but permanently
+        # blank stream while status reported a healthy subscriber.
+        #
+        # Sequences never skip, so a cursor ahead of the run's high-water mark
+        # cannot belong to this attempt. Treat it as stale and replay from the
+        # start rather than stranding the client.
+        current = self.store.get_run(run_id)
+        if current is not None and cursor > current.last_sequence:
+            logger.info(
+                "Run %s: cursor %d is ahead of last_sequence %d (stale cursor "
+                "from a previous attempt) - replaying from the beginning",
+                run_id, cursor, current.last_sequence,
+            )
+            cursor = 0
         condition = self._conditions.get(run_id)
         if condition is None:
             # Replaying a record from a previous process needs no in-memory

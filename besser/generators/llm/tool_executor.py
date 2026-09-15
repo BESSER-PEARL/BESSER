@@ -24,6 +24,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from besser.BUML.metamodel.structural import DomainModel
+# The canonical set, shared with get_tools_for() so the advertised list and the
+# dispatch gate can never disagree about which tools are shell tools.
+from besser.generators.llm.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.generators.llm.edit_apply import (
     find_similar_lines,
     replace_most_similar_chunk,
@@ -250,8 +253,10 @@ class ToolExecutor:
         nn_model: Any = None,
         protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
+        allow_shell: bool = False,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
+        self.allow_shell = allow_shell
         self.domain_model = domain_model
         self.gui_model = gui_model
         self.agent_model = agent_model
@@ -664,6 +669,26 @@ class ToolExecutor:
         is deliberately unchanged; only the harness gains an explicit
         ``ok | error | skipped`` status.
         """
+        # The shell gate is enforced HERE, not only in the advertised tool list.
+        # `get_tools_for(allow_shell=False)` removes these two from what the
+        # model is offered, but nothing stopped a model from naming one anyway:
+        # the handler table always held them and dispatch did no membership
+        # check. On an OpenAI-compatible endpoint the tool name comes verbatim
+        # out of the model's own output, and the Phase-3 fix prompt names
+        # `run_command` unconditionally. Filtering the menu is not a gate;
+        # refusing the call is (2026-09-14).
+        if tool_name in _SHELL_TOOL_NAMES and not self.allow_shell:
+            logger.warning(
+                "Refused %s: shell tools are disabled for this run", tool_name,
+            )
+            return ToolExecutionResult("error", {
+                "error": (
+                    f"{tool_name} is not available in this run. Shell access is "
+                    "disabled. Use the file tools (write_file / modify_file) "
+                    "instead — do not try to run commands."
+                ),
+            })
+
         handler = self._handlers.get(tool_name)
         if not handler:
             payload = {"error": f"Unknown tool: {tool_name}"}

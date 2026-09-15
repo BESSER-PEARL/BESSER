@@ -32,6 +32,21 @@ def executor(tmp_path, simple_model):
     return ToolExecutor(workspace=str(tmp_path), domain_model=simple_model)
 
 
+@pytest.fixture
+def shell_executor(tmp_path, simple_model):
+    """An executor that opted into the shell tools.
+
+    Since 2026-09-14 ``allow_shell`` defaults to False and ``execute_typed``
+    refuses run_command / install_dependencies outright, so the tests that
+    exercise the shell implementations must ask for it explicitly. Using the
+    plain ``executor`` fixture here would make them pass on the refusal
+    instead of on the behaviour under test.
+    """
+    return ToolExecutor(
+        workspace=str(tmp_path), domain_model=simple_model, allow_shell=True
+    )
+
+
 def _call(executor, tool, args=None):
     """Execute a tool and return parsed JSON result."""
     return json.loads(executor.execute(tool, args or {}))
@@ -222,39 +237,39 @@ class TestPathNormalization:
 
 class TestExecutionTools:
 
-    def test_run_command_success(self, executor):
-        result = _call(executor, "run_command", {"command": "python -c \"print('hello')\" "})
+    def test_run_command_success(self, shell_executor):
+        result = _call(shell_executor, "run_command", {"command": "python -c \"print('hello')\" "})
         assert result["success"] is True
         assert "hello" in result["stdout"]
 
-    def test_run_command_failure(self, executor):
-        result = _call(executor, "run_command", {"command": "python -c \"raise ValueError('boom')\" "})
+    def test_run_command_failure(self, shell_executor):
+        result = _call(shell_executor, "run_command", {"command": "python -c \"raise ValueError('boom')\" "})
         assert result["success"] is False
         assert "boom" in result["stderr"]
 
-    def test_run_command_in_subdir(self, executor):
-        _call(executor, "write_file", {"path": "subdir/test.py", "content": "print('sub')"})
-        result = _call(executor, "run_command", {"command": "python test.py", "working_dir": "subdir"})
+    def test_run_command_in_subdir(self, shell_executor):
+        _call(shell_executor, "write_file", {"path": "subdir/test.py", "content": "print('sub')"})
+        result = _call(shell_executor, "run_command", {"command": "python test.py", "working_dir": "subdir"})
         assert result["success"] is True
         assert "sub" in result["stdout"]
 
-    def test_run_command_timeout(self, executor):
+    def test_run_command_timeout(self, shell_executor):
         """Commands that exceed timeout return an error."""
         import besser.generators.llm.tool_executor as mod
         old_timeout = mod.COMMAND_TIMEOUT
         mod.COMMAND_TIMEOUT = 1  # 1 second
         try:
-            result = _call(executor, "run_command", {"command": "python -c \"import time; time.sleep(10)\" "})
+            result = _call(shell_executor, "run_command", {"command": "python -c \"import time; time.sleep(10)\" "})
             assert "error" in result and "timed out" in result["error"]
         finally:
             mod.COMMAND_TIMEOUT = old_timeout
 
-    def test_install_dependencies_no_files(self, executor):
-        result = _call(executor, "install_dependencies", {})
+    def test_install_dependencies_no_files(self, shell_executor):
+        result = _call(shell_executor, "install_dependencies", {})
         assert "error" in result
 
-    def test_install_dependencies_custom_command(self, executor):
-        result = _call(executor, "install_dependencies", {"command": "python --version"})
+    def test_install_dependencies_custom_command(self, shell_executor):
+        result = _call(shell_executor, "install_dependencies", {"command": "python --version"})
         assert result["exit_code"] == 0
 
 

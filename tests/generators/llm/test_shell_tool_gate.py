@@ -146,3 +146,74 @@ def test_hosted_constant_defaults_off(monkeypatch):
     from besser.utilities.web_modeling_editor.backend.constants import constants
     importlib.reload(constants)
     assert constants.LLM_ENABLE_SHELL_TOOLS is False
+
+
+# ---------------------------------------------------------------------------
+# The gate must refuse the CALL, not merely hide the tool.
+#
+# Every test above this block asserts a tool is absent from the advertised
+# list. None asserted that executing it is refused — and it was not: the
+# handler table always held run_command/install_dependencies and
+# execute_typed did no membership check, so a model that named a tool it was
+# never offered got it. Verified live on 2026-09-14:
+#
+#     ToolExecutor(workspace=tmp).execute("run_command", {"command": "echo X"})
+#     -> {"exit_code": 0, "stdout": "X\n", "success": true}
+#
+# That matters because on an OpenAI-compatible endpoint the tool name is taken
+# verbatim from the model's own output, and the Phase-3 fix prompt names
+# run_command unconditionally.
+# ---------------------------------------------------------------------------
+
+import tempfile
+
+import pytest
+
+from besser.generators.llm.tool_executor import ToolExecutor
+
+
+@pytest.fixture
+def workspace():
+    return tempfile.mkdtemp()
+
+
+@pytest.mark.parametrize("tool", ["run_command", "install_dependencies"])
+def test_executing_a_shell_tool_is_refused_by_default(tool, workspace):
+    ex = ToolExecutor(workspace=workspace)
+    result = ex.execute_typed(tool, {"command": "echo MARKER", "packages": ["x"]})
+    assert result.status == "error"
+    assert "not available" in result.payload["error"]
+    assert "MARKER" not in str(result.payload), "the command must not have run"
+
+
+@pytest.mark.parametrize("tool", ["run_command", "install_dependencies"])
+def test_the_refusal_does_not_depend_on_the_advertised_list(tool, workspace):
+    """A model can name a tool it was never offered — that is the whole point."""
+    ex = ToolExecutor(workspace=workspace)
+    assert tool not in {t["name"] for t in get_tools_for(allow_shell=False)}
+    assert ex.execute_typed(tool, {"command": "echo X"}).status == "error"
+
+
+def test_an_explicit_opt_in_still_executes(workspace):
+    ex = ToolExecutor(workspace=workspace, allow_shell=True)
+    result = ex.execute_typed("run_command", {"command": "echo ALLOWED"})
+    assert result.status == "ok"
+    assert "ALLOWED" in result.payload["stdout"]
+
+
+def test_non_shell_tools_are_untouched_by_the_gate(workspace):
+    ex = ToolExecutor(workspace=workspace)
+    assert ex.execute_typed("list_files", {}).status == "ok"
+
+
+def test_the_orchestrator_threads_its_flag_into_the_executor(tmp_path):
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=_simple_model(),
+        output_dir=str(tmp_path),
+    )
+    assert orch.executor.allow_shell is False
+    opted_in = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=_simple_model(),
+        output_dir=str(tmp_path), allow_shell_tools=True,
+    )
+    assert opted_in.executor.allow_shell is True

@@ -36,14 +36,11 @@ Usage::
 
 import logging
 import os
-from typing import Any
 
 from besser.generators import GeneratorInterface
 from besser.generators.llm.llm_client import (
-    ClaudeLLMClient,
     LLMProvider,
     create_llm_client,
-    _resolve_api_key,
 )
 from besser.generators.llm.orchestrator import LLMOrchestrator
 

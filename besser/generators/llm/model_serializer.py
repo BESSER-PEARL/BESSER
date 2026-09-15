@@ -15,10 +15,7 @@ from typing import Any
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
     AssociationClass,
-    Class,
     DomainModel,
-    Enumeration,
-    PrimitiveDataType,
 )
 
 
@@ -195,7 +192,7 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
     for enum in sorted(model.get_enumerations(), key=lambda e: e.name):
         enumerations.append({
             "name": enum.name,
-            "literals": [lit.name for lit in sorted(enum.literals, key=lambda l: l.name)],
+            "literals": [lit.name for lit in sorted(enum.literals, key=lambda lit_: lit_.name)],
         })
 
     # Associations

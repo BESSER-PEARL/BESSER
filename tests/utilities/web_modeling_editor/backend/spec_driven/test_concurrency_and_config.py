@@ -72,14 +72,10 @@ def test_config_endpoint_exposes_expected_fields():
     }
 
 
-def test_config_endpoint_hides_the_fallback_from_the_picker(monkeypatch):
-    """The fallback is a safety net, not a menu item.
-
-    It used to be advertised as a choosable model. That put the self-hosted box
-    in front of users, who could pick it directly -- and it serves ONE request
-    at a time, so any concurrency starves it (measured: a parallel batch drove
-    two runs to zero turns). It still runs automatically when the primary
-    endpoint fails; it is only hidden from the picker."""
+def test_config_endpoint_free_models_with_fallback(monkeypatch):
+    """When the free tier and its fallback are both configured, the config
+    advertises exactly the two choosable model ids — primary flagged as the
+    default, fallback not."""
     monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
     monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
@@ -92,13 +88,8 @@ def test_config_endpoint_hides_the_fallback_from_the_picker(monkeypatch):
     assert free_tier["model"] == "meituan/LongCat-2.0:free"
     assert free_tier["models"] == [
         {"id": "meituan/LongCat-2.0:free", "default": True},
+        {"id": "qwen3.8:27b", "default": False},
     ]
-    # Configured as the fallback, and still used as one -- just not offered.
-    assert "qwen3.8:27b" not in [m["id"] for m in free_tier["models"]]
-    from besser.generators.llm.llm_client import free_fallback_model
-    assert free_fallback_model() == "qwen3.8:27b", (
-        "hiding it from the picker must not disable the automatic fallback"
-    )
 
 
 def test_config_endpoint_free_models_without_fallback(monkeypatch):
@@ -115,10 +106,10 @@ def test_config_endpoint_free_models_without_fallback(monkeypatch):
 
 
 def test_config_endpoint_advertises_alt_free_models(monkeypatch):
-    """Alt models on the primary endpoint are advertised after the primary, all
-    non-default — so the picker (which renders this list verbatim) gains the
-    option with no frontend change, and the default stays the primary. The
-    fallback is not among them: it is a safety net, not a choice."""
+    """Alt models on the primary endpoint are advertised between the primary
+    and the fallback, all non-default — so the picker (which renders this list
+    verbatim) gains the option with no frontend change, and the default stays
+    the primary."""
     monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://cloud.example/v1")
     monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "meituan/LongCat-2.0:free")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
@@ -130,6 +121,7 @@ def test_config_endpoint_advertises_alt_free_models(monkeypatch):
     assert free_tier["models"] == [
         {"id": "meituan/LongCat-2.0:free", "default": True},
         {"id": "poolside/laguna-s-2.1-free", "default": False},
+        {"id": "qwen3.8:27b", "default": False},
     ]
     # Exactly one default, and it is still the primary.
     assert [m["id"] for m in free_tier["models"] if m["default"]] == [

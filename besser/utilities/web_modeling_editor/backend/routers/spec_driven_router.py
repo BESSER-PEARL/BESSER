@@ -96,6 +96,7 @@ from besser.generators.web_app.web_app_generator import agent_slug
 from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 from besser.generators.llm.llm_client import (
     free_alt_models,
+    free_fallback_model,
     free_tier_available,
     free_tier_model,
 )
@@ -377,13 +378,9 @@ def _free_tier_model_choices() -> list[dict]:
     primary = free_tier_model()
     choices = [{"id": primary, "default": True}]
     choices.extend({"id": alt, "default": False} for alt in free_alt_models())
-    # The fallback is deliberately NOT offered as a choice. It exists to absorb
-    # an upstream outage of the primary keyless model automatically -- it is a
-    # safety net, not a menu item. Listing it invited users to pick the
-    # self-hosted box directly, which serves one request at a time and starves
-    # under any concurrency (measured: a parallel batch drove two runs to zero
-    # turns). It still runs automatically when the primary fails; it is only
-    # hidden from the picker.
+    fallback = free_fallback_model()
+    if fallback and fallback != primary:
+        choices.append({"id": fallback, "default": False})
     return choices
 
 

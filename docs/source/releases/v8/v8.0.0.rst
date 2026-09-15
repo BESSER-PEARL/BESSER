@@ -1,0 +1,218 @@
+Version 8.0.0
+=============
+
+Major release: the **Spec-Driven Agent** — a hybrid generator that pairs BESSER's
+deterministic code generation with an LLM customization loop and a validation gate —
+becomes a first-class part of the platform, alongside a modular FastAPI backend
+generator, durable server-owned runs, a keyless free tier, GitHub round-tripping, and
+a broad security pass over generated code.
+
+Highlights
+----------
+
+- **Spec-Driven Agent**: deterministic scaffold → LLM customization → validation with a
+  bounded auto-fix loop. Not a wrapper around a chat model: the model starts from
+  generated, model-derived code and is checked against the model it came from.
+- **Validation over generated code**: a fourth validation layer, separate from the
+  three that apply to models. Findings are classified ``blocker`` / ``warning`` /
+  ``style``, and blockers drive the fix loop.
+- **Durable runs**: a run lives on the server, survives a dropped connection or a
+  browser refresh, and can be replayed or resumed.
+- **Three ways to pay for a run**: a keyless free tier, a sponsored tier, and BYOK
+  across Anthropic, OpenAI and Mistral.
+- **GitHub round-trip**: push a generated project to a repository, import it back, and
+  modify it incrementally.
+- **Modular FastAPI backend**: the backend generator emits a per-file, per-entity
+  project instead of a single module.
+- **Security**: shell tools are off by default, generated defaults can no longer carry
+  executable expressions, outbound base URLs are gated, and secrets are redacted at the
+  stream boundary.
+
+Breaking changes
+----------------
+
+**Agent shell tools are off by default**
+
+``LLMOrchestrator`` and ``LLMGenerator`` now take ``allow_shell_tools`` and
+``enable_toolchain_validation``, both defaulting to ``False``. Library and CLI callers
+that relied on the agent being able to run ``run_command`` / ``install_dependencies``
+to verify its own work must opt in explicitly::
+
+    LLMGenerator(model=model, allow_shell_tools=True, enable_toolchain_validation=True)
+
+The refusal is enforced at dispatch, not only by omitting the tools from the advertised
+list — a model that names a tool it was never offered is refused too. On the hosted
+editor the flag stays off: arbitrary shell on a shared BYOK host is remote code
+execution. ``BESSER_LLM_ENABLE_SHELL_TOOLS`` and ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``
+both default off and should stay that way.
+
+**A modelled default must be expressible as a literal**
+
+``default_value`` arrives unvalidated from the editor and used to be interpolated
+straight into generated source. It is now rendered through
+``besser.generators.default_literals``: the value is coerced to the attribute's declared
+type and emitted via ``repr()``. A default that is not expressible as a literal of its
+type — ``"abc"`` for an ``int``, or an expression such as ``__import__("os").getcwd()`` —
+now raises ``InvalidDefaultValueError`` at generation time instead of producing runnable
+source. Enumeration defaults must name a real member. This affects the SQLAlchemy,
+Pydantic, Python and Django generators.
+
+**DjangoGenerator reports failures**
+
+``DjangoGenerator.generate()`` used to catch every exception, print it, and return
+normally, so a generation that produced nothing looked like one that worked. Failures
+now propagate. It also refuses to delete a non-empty output directory that does not look
+like a previously generated project (no ``manage.py``), instead of removing it silently.
+
+**Backend generator output layout**
+
+``BackendGenerator`` emits a modular FastAPI project — one router module per entity plus
+shared configuration — rather than a single ``main.py``. Projects that patched the
+generated monolith need to be regenerated.
+
+**Spec-Driven REST paths**
+
+The agent's endpoints are ``/besser_api/spec-driven/*``. The earlier
+``smart-generate`` / ``vibe`` paths are gone.
+
+**Default SQL dialect**
+
+``DEFAULT_SQL_DIALECT`` is ``sqlite``. The previous default, ``standard``, was not a
+member of ``SQLAlchemyGenerator.VALID_DBMS``, so a request that omitted the dialect
+failed validation instead of generating.
+
+New features
+------------
+
+**Spec-Driven Agent** (``besser/generators/llm/``)
+
+A hybrid generator, documented at :doc:`/spec_driven_agent/index`. It runs in phases:
+
+- *Phase 1* generates a deterministic scaffold with the BESSER generator that fits the
+  request, so the model never starts from a blank directory. When no generator fits,
+  *Phase 0.5* emits stack metadata instead and the build starts from scratch.
+- *Phase 1.5* validates the scaffold before a single token is spent on customization.
+- *Phase 2* is the LLM customization loop, with a tool surface covering files, model
+  queries, the other BESSER generators, and a ``task_list`` checklist that gates the end
+  of the turn.
+- *Phase 3* validates the result and runs a bounded auto-fix loop — up to five rounds,
+  giving up after two without progress, rolling back to the pre-Phase-3 snapshot if the
+  fixes make blockers worse.
+
+Loop guards worth knowing: a turn cap, cost and runtime caps checked at turn boundaries,
+truncation recovery, per-file modify-loop detection, and parallel tool execution grouped
+by write path.
+
+**Validation over generated code**
+
+A layer distinct from model validation, with three severities:
+
+- ``blocker`` — Python syntax errors, unresolvable local imports, ruff ``F811`` /
+  ``F821`` / ``F822`` / ``F823``, dependency conflicts, a Dockerfile referencing a
+  missing file, data-contract violations, frontend-contract violations (a router that
+  renders blank on load, a submit handler wired to nothing, a web-app request that
+  produced no frontend at all), and ``tsc`` / ``cargo`` / ``kotlinc`` errors.
+- ``warning`` — endpoint-coherence findings, the per-entity acceptance matrix, and any
+  check that could not run.
+- ``style`` — cosmetic ruff rules.
+
+The model-derived **data contract** is checked three ways: as prompt rules, as a lint on
+every write, and as a Phase 3 gate. A check that times out, fails to launch, or errors
+now reports that it was *skipped* rather than returning nothing — "0 blockers" means the
+checks ran and found none.
+
+**Durable runs**
+
+A run is owned by the server: a SQLite event store with monotonic sequence numbers
+assigned before any subscriber sees a frame, replay via ``?after=`` or
+``Last-Event-ID``, an abandonment grace period, and ``interrupted`` marking on restart.
+Closing the tab no longer kills the run.
+
+- ``GET /besser_api/spec-driven/runs/{run_id}``
+- ``GET /besser_api/spec-driven/runs/{run_id}/events?after=N``
+
+**Free, sponsored and BYOK tiers**
+
+- A **keyless free tier** backed by a hosted open-weight model, with a cloud-first
+  fallback chain and self-hosted last. Daily-quota 429s fail fast to the fallback and the
+  reason is recorded.
+- A **sponsored tier** for demo and pilot use.
+- **BYOK** across Anthropic, OpenAI and Mistral, with a shared key dialog, an invalid
+  key surfaced as ``INVALID_KEY``, and per-run cost and runtime budgets.
+
+Run budgets default to **$5 and 20 minutes**, clamped by a hosted hard cap.
+
+**GitHub round-trip**
+
+Push a generated project to a repository (with the run's recipe alongside it), import an
+existing run back from GitHub, and modify it incrementally — the agent edits what is
+there rather than regenerating over it. Build output, databases and archives are
+excluded from what gets pushed.
+
+**Modular FastAPI backend generator**
+
+Per-entity router modules, typed primary keys threaded end to end, association-class
+support, method-code normalization, real search filters, and an honest health check.
+Server-owned fields (``id``, ``createdAt``, ``updatedAt``) are excluded from Create
+schemas so a client is never asked to supply them.
+
+**Telemetry and observability**
+
+Per-run summaries with input / output / cache-read token counts and a deterministic-vs-LLM
+authorship split; a per-turn trace (``.besser_trace.jsonl``) recording every phase, turn,
+tool call, cost update, compaction, snapshot, rollback and validation finding, including
+*why* a tool failed and whether the model batched its calls; an opt-in telemetry router.
+
+Improvements
+------------
+
+- **Context handling**: window-aware compaction thresholds, safe cut boundaries, file-op
+  memory, and opt-in lossless history eviction that stubs file bodies instead of
+  summarizing them away.
+- **Checkpoints**: written per turn and deleted only on a clean Phase 2 exit. Content
+  blocks are serialized to their provider wire shape, so a resume from a checkpoint saved
+  mid-tool-turn is accepted instead of rejected for an unmatched ``tool_result``.
+- **Rollback safety**: a Phase 3 rollback moves the current tree aside and discards it
+  only once the restore has succeeded, so a failed rollback leaves the workspace intact
+  rather than half-erased. The append-only trace and the checkpoint are never reverted.
+- **SQLAlchemy generator**: aliased and plain names are both bound, so a module the model
+  has edited still imports; string primary keys boot and round-trip; foreign keys use the
+  primary key type they reference.
+- **Pydantic generator**: boolean defaults emit ``True`` / ``False``; enumeration defaults
+  are no longer double-prefixed with the enum name.
+- **Editor**: Spec-Driven Agent run cards with a live activity strip, a clickable
+  determinism breakdown, one clock per run, server-supplied budget caps, and a 32,000
+  character assistant message limit.
+- **Docs**: the Spec-Driven Agent is a top-level documentation section covering how it
+  works, usage, tools, validation, runs, models, configuration and the API.
+
+Bug fixes
+---------
+
+- Secret redaction no longer corrupts generated source while scrubbing SSE frames.
+- Phase 3 Dockerfile auto-fixes now run on multi-service layouts.
+- The common generation path is no longer capped at half the available output budget.
+- The read / compact / re-read spiral on the fallback model is broken.
+- ``reasoning_effort='none'`` is sent so GPT-5.6-family reasoning models can use function
+  tools at all.
+- OpenAI streaming opts into usage chunks — run cost was previously frozen at zero.
+- The gap analyzer survives gateways that reject a forced ``tool_choice``.
+- The checklist can no longer plan demolition of the scaffold it was given.
+- Duplicate association-end names per class no longer crash the JSON → BUML converter.
+- ``UserDiagram`` is reachable from the modeling assistant's classifier.
+- Generated containers carry the CORS configuration they need to be called from a
+  browser.
+
+Upgrade notes
+-------------
+
+1. If you drive the agent from Python and relied on it verifying its own work, pass
+   ``allow_shell_tools=True`` and ``enable_toolchain_validation=True`` explicitly, and
+   only where running generated commands is acceptable.
+2. Check your models for default values that are not literals of their declared type.
+   Generation now fails on them with a message naming the attribute, rather than emitting
+   source that may not run — or, previously, may have run something unintended.
+3. Regenerate rather than patch: the FastAPI backend layout changed.
+4. If you call the agent over HTTP, move to the ``/besser_api/spec-driven/*`` paths.
+5. Install ``ruff`` in any image that runs the agent. Without it the Python
+   undefined-name checks are skipped, and the run will now say so.

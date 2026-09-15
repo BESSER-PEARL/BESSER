@@ -8,6 +8,7 @@ import sys
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
+from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
@@ -52,6 +53,7 @@ class DjangoGenerator(GeneratorInterface):
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
         self.env.globals.update(normalize_code=normalize_method_code)
+        register_default_literals(self.env)
         # Register custom Jinja2 tests once for all methods
         self.env.tests['is_Button'] = self.is_button
         self.env.tests['is_List'] = self.is_list
@@ -686,7 +688,28 @@ JAZZMIN_SETTINGS = {{
             # A leftover project from a previous (possibly crashed) run would
             # make `django-admin startproject` fail with "already exists":
             # remove it so regeneration into the same output_dir is idempotent.
+            #
+            # But only if it is OURS. `project_dir` is just
+            # ``<output_dir>/<project_name>``, so pointing the generator at a
+            # directory that already holds hand-written code under that name
+            # used to delete it without warning or confirmation. A generated
+            # project always has ``manage.py`` at its root; anything else is
+            # the user's, and we refuse rather than destroy it.
             if os.path.exists(project_dir):
+                if not os.path.isdir(project_dir):
+                    raise ValueError(
+                        f"Cannot generate the Django project: {project_dir!r} "
+                        f"already exists and is not a directory."
+                    )
+                looks_generated = os.path.isfile(os.path.join(project_dir, "manage.py"))
+                if not looks_generated and os.listdir(project_dir):
+                    raise ValueError(
+                        f"Refusing to overwrite {project_dir!r}: it already "
+                        f"exists, is not empty, and does not look like a "
+                        f"generated Django project (no manage.py). Move it "
+                        f"aside, choose a different output directory, or pick "
+                        f"a different project name."
+                    )
                 shutil.rmtree(project_dir)
 
             subprocess.run(['django-admin', 'startproject', self.project_name],
@@ -732,6 +755,12 @@ JAZZMIN_SETTINGS = {{
             print("✅ Django project generation completed successfully!")
 
         except subprocess.CalledProcessError as e:
+            # Re-raised, not just printed: swallowing this returned normally
+            # from a generation that produced nothing, so callers — including
+            # the web editor's /generate-output — packaged an empty or
+            # half-written project and reported success.
             print(f"❌ Error during project generation: {e}")
+            raise
         except Exception as e:
             print(f"❌ Unexpected error: {e}")
+            raise

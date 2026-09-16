@@ -631,7 +631,7 @@ class LLMOrchestrator:
     Uses snapshot/rollback if fixes make things worse.
     """
 
-    MAX_TURNS = 80
+    MAX_TURNS = 120
 
     # How many times the end_turn checklist gate sends the model back to
     # its open items before letting the run finish anyway.
@@ -944,7 +944,7 @@ class LLMOrchestrator:
     # How many output-token truncations one Phase 2 may recover from in
     # total. Two is enough to let the model shrink its turn; beyond that it is
     # not adapting, and resume is a better answer than burning the cost cap.
-    _MAX_TRUNCATION_RETRIES = 2
+    _MAX_TRUNCATION_RETRIES = 4
 
     def _auto_detect_primary_kind(self) -> str | None:
         """Pick the primary model kind from whatever is present.

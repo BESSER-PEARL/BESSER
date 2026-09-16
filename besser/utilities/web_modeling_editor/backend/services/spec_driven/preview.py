@@ -25,6 +25,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_DEFAULT_MAX_TURNS,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     AssembledModels,
 )
@@ -324,7 +327,10 @@ def _estimate_turns(
     extra_words = max(0, len(instructions.split()) - 20) // 15
     turns += extra_words
 
-    return min(int(turns), 80)   # matches LLMOrchestrator.MAX_TURNS
+    # Read the real budget instead of repeating it: this line used to be a
+    # hardcoded 80 whose comment claimed to match the orchestrator, so raising
+    # the budget would have silently made the estimate a lie.
+    return min(int(turns), LLM_DEFAULT_MAX_TURNS)
 
 
 def _estimate_cost_usd(turns: int, instructions: str) -> float:

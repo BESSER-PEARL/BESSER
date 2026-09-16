@@ -63,8 +63,7 @@ def _env_path(name: str) -> str | None:
 # Set to $5 to match the from-scratch ceiling below: the UI reads this hard
 # cap from /spec-driven/config, so a lower value here was DISHONEST — it showed
 # "$2" while a from-scratch run was already permitted up to $5. One honest
-# ceiling everywhere. (The DEFAULT below stays $1 — the cap is the max a user
-# can opt into, not what a normal run spends.)
+# ceiling everywhere.
 LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
 # 40 minutes. The deployed stack already set this via env while the code said
 # 900s, so the source disagreed with what the UI advertised ("up to 40 min").
@@ -91,7 +90,7 @@ LLM_DEFAULT_MAX_RUNTIME_SECONDS = min(
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
 )
 LLM_DEFAULT_MAX_TURNS = min(
-    _env_int("BESSER_LLM_DEFAULT_MAX_TURNS", 80),
+    _env_int("BESSER_LLM_DEFAULT_MAX_TURNS", 120),
     LLM_MAX_TURNS_HARD_CAP,
 )
 

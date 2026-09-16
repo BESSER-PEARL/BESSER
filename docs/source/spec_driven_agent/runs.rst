@@ -24,7 +24,7 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 1200
      - 2400
    * - ``max_turns``
-     - 80
+     - 120
      - 150
 
 When a run hits a cap it still returns whatever it has produced so far — the

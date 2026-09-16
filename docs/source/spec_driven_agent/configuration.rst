@@ -43,7 +43,7 @@ See :doc:`runs` for how the caps are enforced.
   (2400), ``BESSER_LLM_MAX_TURNS_HARD_CAP`` (150) -- Server-side ceilings a
   client request can never exceed.
 - ``BESSER_LLM_DEFAULT_MAX_COST_USD`` (5.0), ``BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS``
-  (1200), ``BESSER_LLM_DEFAULT_MAX_TURNS`` (80) -- Defaults when the request
+  (1200), ``BESSER_LLM_DEFAULT_MAX_TURNS`` (120) -- Defaults when the request
   omits a cap. Each is clamped to its hard cap.
 - ``BESSER_LLM_MAX_CONCURRENT_RUNS`` (10) -- Runs in flight before new requests
   get a ``429``. Starting or resuming a run that is already in flight answers

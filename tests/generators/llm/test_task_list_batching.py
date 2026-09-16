@@ -1,22 +1,14 @@
 """The checklist must not cost one turn per item, and must not livelock.
 
-Measured across a 10-run live batch on 2026-09-11 (agent modelling + qwen
-generation, one app per run):
+Measured across a 10-run live batch on 2026-09-11: 202 of 502 turns (40%) were
+task_list calls; the worst run spent 71 of 86 turns there, ~62 CONSECUTIVE.
+Two causes, both fixed here:
 
-    202 of 502 turns -- 40% -- were task_list calls.
-    Worst run: 71 of 86 turns (83%), of which ~62 were CONSECUTIVE.
-
-Two separate causes, both fixed here:
-
-1. ``action='done'`` took a single ``id``, so completing N items cost N turns.
-   Every turn pays a full prompt prefill, which is the binding cost on the
-   self-hosted box, so bookkeeping was outrunning the actual work (one run:
-   30 task_list calls against 12 write_file calls).
-
-2. A verifier that never passes was retried forever. The refusal told the model
-   "do the work first, then mark it done"; it obliged, the check failed again,
-   and nothing broke the cycle except the 80-turn cap. That run ended
-   INCOMPLETE having used 317s of its 2400s budget -- 13%.
+1. ``action='done'`` took a single ``id``, so completing N items cost N turns --
+   and every turn pays a full prompt prefill, the binding cost on the
+   self-hosted box.
+2. A verifier that never passes was retried forever; only the 80-turn cap broke
+   the cycle, ending that run INCOMPLETE on 317s of its 2400s budget.
 
 The verifier itself is deliberately kept: it exists because a model once marked
 "build the frontend" done without writing a single file. A blocked item is

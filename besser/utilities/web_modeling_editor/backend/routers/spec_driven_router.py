@@ -220,17 +220,12 @@ async def _stream_with_slot_release(
 # POST /besser_api/spec-driven/generate  (SSE stream)
 # ---------------------------------------------------------------------
 
-#: ``Idempotency-Key`` -> ``(run_id, created_at)``.
-#:
-#: Starting a run is a non-idempotent POST, so the client could not safely
-#: retry one that failed at the transport layer — and behind a TLS-inspecting
-#: proxy that is exactly the request that fails, leaving "Failed to fetch"
-#: with no run to reconnect to. A client-generated key makes the retry safe:
-#: the second attempt attaches to the run the first one started instead of
-#: spawning a duplicate.
-#:
-#: In-process and best-effort on purpose. A missed hit costs one duplicate
-#: run, not corruption, and the durable store remains the source of truth.
+#: ``Idempotency-Key`` -> ``(run_id, created_at)``. Starting a run is a
+#: non-idempotent POST, and behind a TLS-inspecting proxy that is exactly the
+#: request that fails ("Failed to fetch", no run to reconnect to). A
+#: client-generated key makes the retry attach to the run the first attempt
+#: started. In-process and best-effort on purpose: a missed hit costs one
+#: duplicate run, not corruption, and the durable store stays the source of truth.
 _IDEMPOTENCY_TTL_SECONDS = 900
 _idempotent_runs: dict[str, tuple[str, float]] = {}
 _idempotency_lock = asyncio.Lock()
@@ -383,24 +378,20 @@ async def poll_smart_run_events(
 ):
     """Polling transport for the durable event log — the proxy-safe fallback.
 
-    A TLS-intercepting corporate proxy (Netskope on LIST laptops) inspects the
+    A TLS-intercepting corporate proxy (Netskope on LIST laptops) buffers the
     response body before releasing it, which an SSE stream never finishes
-    producing. Two failure shapes follow: the initial POST's headers are held
-    so the fetch promise never settles ("Waiting for the first event…"
-    forever), or the proxy tears the connection down and the client sees
-    "Failed to fetch". The REST endpoints and the agent WebSocket are
-    unaffected, because both terminate.
+    producing: either the headers are held so the fetch never settles, or the
+    connection is torn down ("Failed to fetch"). REST and the agent WebSocket
+    are unaffected because both terminate.
 
-    So this endpoint returns the same events as a *short, terminating* JSON
-    response the proxy can buffer and release normally. Everything it needs
-    already exists — the durable store assigns sequence numbers before any
-    subscriber sees a frame, so polling and streaming share one cursor and one
-    replay semantic: pass the last sequence you saw as ``after``.
+    So this returns the same events as a *short, terminating* JSON response the
+    proxy can buffer normally. The durable store assigns sequence numbers before
+    any subscriber sees a frame, so polling and streaming share one cursor:
+    pass the last sequence you saw as ``after``.
 
-    ``events[].data`` is the decoded SSE payload, so a client can feed these
-    to the same reducer it feeds streamed events. ``hasMore`` tells the poller
-    to come straight back rather than waiting out its interval, and
-    ``status``/``terminalEvent`` tell it when to stop.
+    ``events[].data`` is the decoded SSE payload, so a client can feed these to
+    the same reducer it feeds streamed events. ``hasMore`` says to come straight
+    back, ``status``/``terminalEvent`` say when to stop.
     """
     record = DURABLE_RUN_MANAGER.get_run(run_id)
     if record is None:
@@ -554,10 +545,9 @@ async def smart_gen_config():
             # default): the primary (default), any alt models on the primary
             # endpoint, and the fallback endpoint's model when configured.
             "models": _free_tier_model_choices(),
-            # The model a facilitated pilot session (?pilot=<label>) should
-            # pre-select. Null when unset, so ordinary visitors and pilots get
-            # the same default. Server-side so swapping it is an env edit, not
-            # a frontend release -- the client never hardcodes a model id.
+            # The model a facilitated pilot session (?pilot=<label>) pre-selects.
+            # Null when unset. Server-side so swapping it is an env edit, not a
+            # frontend release -- the client never hardcodes a model id.
             "pilot_model": free_pilot_model() or None,
         },
     }

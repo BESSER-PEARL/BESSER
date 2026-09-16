@@ -99,11 +99,10 @@ logger = logging.getLogger(__name__)
 def _check_did_not_run(tool: str, reason: str) -> str:
     """A validation note saying a check was SKIPPED, not that it passed.
 
-    Every collector used to return ``[]`` when its tool timed out or failed
-    to start, which is indistinguishable from a clean result — the run then
-    reported "0 blockers" having verified nothing. The wording deliberately
-    carries no rule code so ``_classify_issue`` keeps it a warning: we can't
-    prove the code is broken, only that we did not look.
+    A collector returning ``[]`` on a timeout is indistinguishable from a clean
+    result, so the run reports "0 blockers" having verified nothing. The wording
+    carries no rule code on purpose, so ``_classify_issue`` keeps it a warning:
+    we can't prove the code is broken, only that we did not look.
     """
     return (
         f"validation: {tool} did not run ({reason}) - its checks were SKIPPED, "
@@ -117,12 +116,9 @@ _SNAPSHOT_DIR = ".besser_snapshot"
 # output_dir keeps the move on one filesystem, so it is a rename, not a copy.
 _ROLLBACK_DISCARD_DIR = ".besser_rollback_discard"
 
-# Run bookkeeping that a rollback must NOT revert. The snapshot is taken
-# after Phase 1, so restoring it over these would rewind the append-only
-# trace to its Phase-1 state and resurrect a stale checkpoint — the trace
-# records what actually happened, including the rollback itself, and the
-# checkpoint must keep describing the latest turn or a later resume replays
-# work that is already on disk.
+# Run bookkeeping that a rollback must NOT revert. The snapshot predates them,
+# so restoring it would rewind the append-only trace and resurrect a stale
+# checkpoint, making a later resume replay work already on disk.
 _ROLLBACK_PRESERVED = {
     TRACE_FILENAME,
     CHECKPOINT_FILENAME,
@@ -229,9 +225,7 @@ def _strip_missing_lockfile_copy(content: str) -> str:
         COPY package-lock.json ./
 
     The first loses just the lockfile argument; the second has nothing left to
-    copy, so the whole line goes. A COPY naming a file absent from the build
-    context fails the build before any command runs, so leaving it is never an
-    option.
+    copy, so the whole line goes.
     """
     out: list[str] = []
     for line in content.splitlines():
@@ -252,9 +246,8 @@ def _strip_missing_lockfile_copy(content: str) -> str:
 def _project_has_npm_lockfile(output_dir: str) -> bool:
     """True when the project contains an npm lockfile anywhere.
 
-    ``npm ci`` refuses to run without one, so its absence ANYWHERE in the
-    generated project means the command cannot succeed regardless of which
-    directory the Dockerfile builds from.
+    ``npm ci`` refuses to run without one, whatever directory the Dockerfile
+    builds from.
     """
     for root, dirs, files in os.walk(output_dir):
         dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
@@ -322,9 +315,8 @@ class ValidationIssue:
 # Ruff rule codes that are pure style: dead imports, unused vars, line length.
 # Anything else we treat as a warning (could be a real bug).
 _TOOL_DETAIL_MAX_CHARS = 160
-# Argument keys worth putting in the stream, per tool. Deliberately a allow
-# list: file CONTENT must never reach the event stream (size, and it can carry
-# whatever the model wrote), but the path, the target and the action are what
+# Argument keys worth putting in the stream, per tool. An allow list on purpose:
+# file CONTENT must never reach the event stream, but path/target/action are what
 # make a run readable afterwards.
 _TOOL_DETAIL_KEYS = (
     "path", "file_path", "filename", "target", "action", "id", "ids",
@@ -335,11 +327,10 @@ _TOOL_DETAIL_KEYS = (
 def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -> str:
     """One short line saying what this tool call was about.
 
-    Streamed alongside the tool name so a finished run can be read back from
-    the durable event store. ``blocks_in_turn`` is included because 1 means the
-    model batched nothing, and every turn costs a full prompt prefill - the
-    binding cost on the self-hosted box. Across a 10-run live batch every
-    single turn carried exactly one call, which is invisible without this.
+    Streamed alongside the tool name so a finished run can be read back from the
+    durable event store. ``blocks_in_turn`` is included because 1 means the model
+    batched nothing, and every turn costs a full prompt prefill - across a 10-run
+    live batch every single turn carried exactly one call.
     """
     parts: list[str] = []
     if isinstance(tool_input, dict):
@@ -383,27 +374,21 @@ _EXTERNAL_IMPORT_ROOTS = frozenset({
 def _unresolvable_local_imports(output_dir: str) -> list[str]:
     """Local imports that name a module the app does not ship where it is used.
 
-    Ruff cannot find these. ``from sql_alchemy import *`` makes it report
-    "unable to detect undefined names", which EXCUSES every name the module
-    needed instead of flagging it, so a missing MODULE is invisible to F821.
-    Live 2026-09-11: an app shipped ``backend/main_api.py`` importing
-    ``sql_alchemy`` and ``pydantic_classes`` with neither file present, and the
-    run reported "0 blockers / 23 total" and status=done. It could not start.
+    Ruff cannot find these: ``from sql_alchemy import *`` makes it report
+    "unable to detect undefined names", which EXCUSES every name instead of
+    flagging it, so a missing MODULE is invisible to F821. Live 2026-09-11: an
+    app imported ``sql_alchemy`` and ``pydantic_classes`` with neither file
+    present and still reported "0 blockers / 23 total", status=done.
 
-    Resolution rules, each one learned from a false positive while calibrating
-    this against apps known to work:
+    Resolution rules, each learned from a false positive against a working app:
 
     * A service runs with its OWN folder as cwd (``uvicorn main_api:app`` from
-      ``backend/``), so that folder is importable from everything beneath it:
-      ``backend/routers/player.py`` importing ``sql_alchemy`` is correct.
-      Resolving only against the file's own directory condemned six imports in
-      a working app.
-    * Any directory holding ``.py`` files is importable as a package - Python 3
-      implicit namespace packages mean ``from routers import post`` works with
-      no ``__init__.py``.
-    * The module existing in SOME OTHER directory does not count: a copy of
-      ``pydantic_classes.py`` under ``pydantic/`` is not reachable from
-      ``backend/``. Accepting that hid half of the live breakage.
+      ``backend/``), so that folder is importable from everything beneath it.
+      Resolving only against the file's own directory condemned six imports.
+    * Any directory holding ``.py`` files is importable - Python 3 implicit
+      namespace packages need no ``__init__.py``.
+    * The module existing in SOME OTHER directory does not count: a copy under
+      ``pydantic/`` is not reachable from ``backend/``.
     """
     try:
         py_files = [
@@ -471,13 +456,7 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
 
 _RUFF_STYLE_CODES = frozenset({
     "F401", "F841",               # genuinely cosmetic: unused import / variable
-    # F811 (redefinition) was grouped here as "unused / redefinition". It is
-    # NOT cosmetic: it means two things share a name and the later one silently
-    # wins. Every one of the four hits across a 10-app live batch was a real
-    # defect (2026-09-11) - a duplicated ORM model, a duplicated Create schema,
-    # a duplicated endpoint function that replaced the first, and an ORM model
-    # shadowed by a Pydantic model which was then used in db.query(). It is a
-    # blocker below.
+    # F811 (redefinition) is deliberately NOT here; see the blocker branch below.
     "E501",                       # line too long
     "W291", "W292", "W293", "W391",  # whitespace
     "E302", "E303", "E305", "E261", "E262", "E266",  # blank lines / comments
@@ -530,11 +509,10 @@ def _classify_issue(message: str) -> ValidationIssue:
         match = _RUFF_LINE_RE.search(text)
         if match and match.group(1) in _RUFF_STYLE_CODES:
             return ValidationIssue("style", text)
-        # F811 joins them: a redefinition is how a generated app ends up with
-        # the ORM `User` shadowed by the Pydantic `User` and then queried
-        # through the wrong one, or with a second endpoint function silently
-        # replacing the first. Observed in 2 of 10 live apps; ruff reports it
-        # already, it was simply filed as style.
+        # F811 joins them: a redefinition means the later name silently wins —
+        # the ORM `User` shadowed by the Pydantic `User` and then queried through
+        # the wrong one. All 4 hits across a 10-app live batch were real defects
+        # (2026-09-11).
         if match and match.group(1) in ("F811", "F821", "F822", "F823"):
             return ValidationIssue("blocker", text)
         return ValidationIssue("warning", text)
@@ -663,15 +641,10 @@ class LLMOrchestrator:
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
-        # Both default OFF, matching what the hosted deployment already asks
-        # for. They used to default ON, and LLMGenerator never passed either
-        # one - so every library run silently enabled run_command /
-        # install_dependencies, the exact capability the hosted gate exists to
-        # withhold, and shelled out to tsc/cargo/kotlinc when present. A
-        # library whose default is "may run arbitrary shell commands" has it
-        # backwards; the 20-run experiment on 2026-09-11/12 produced its apps
-        # with shell tools OFF, so the permissive default was buying nothing.
-        # Opt in explicitly when you want them.
+        # Both default OFF: they enable run_command / install_dependencies, the
+        # arbitrary-shell capability the hosted gate exists to withhold. Opt in
+        # explicitly. (The 20-run experiment on 2026-09-11/12 produced its apps
+        # with shell tools off, so the old permissive default bought nothing.)
         enable_toolchain_validation: bool = False,
         allow_shell_tools: bool = False,
         target_generator: str | None = None,
@@ -815,13 +788,10 @@ class LLMOrchestrator:
         # ``modify()`` run. The legacy recipe field name is retained for
         # compatibility; cost and runtime limits are never raised.
         self._adaptive_budget_applied: bool = False
-        # Output-truncation retries used in this Phase 2, as a PER-RUN total
-        # (deliberately not reset on a good turn: a model that truncates
+        # Output-truncation retries in this Phase 2, as a PER-RUN total.
+        # Deliberately not reset on a good turn: a model that truncates
         # repeatedly is not adapting, and an unbounded allowance would let it
-        # spend the cost cap rediscovering that). A truncated turn is
-        # recoverable - the model can emit less next turn - so it must not end
-        # the run on first occurrence; see the ``max_tokens``/``length`` branch
-        # in _run_customization_loop.
+        # spend the cost cap rediscovering that.
         self._truncation_retries: int = 0
         self._start_time: float | None = None
         # Stored as ValidationIssue objects so the recipe captures severity.
@@ -2480,18 +2450,10 @@ class LLMOrchestrator:
         changed here: a from-scratch run may need more budget, but it must
         stop at the explicit cap rather than silently spending more.
         """
-        # Previously this returned early for any scaffolded run, leaving the
-        # MOST COMMON path (deterministic generator -> LLM customisation) on
-        # the client default of 16_384 while pure from-scratch and modify runs
-        # both got FROM_SCRATCH_MAX_TOKENS. That asymmetry had no basis: a
-        # customisation turn writes whole NEW files the scaffold never emitted
-        # (React pages, auth modules), which is the same large-response case.
-        #
-        # Observed live 2026-09-10: a scaffolded run asked for a React frontend,
-        # overran 16_384 on its FIRST customisation turn, and Phase 2 exited
-        # with zero LLM writes. Raising this ceiling costs nothing unless the
-        # model actually emits the tokens, and the cost/runtime rails are
-        # untouched below.
+        # Scaffolded runs get the wider ceiling too: a customisation turn writes
+        # whole NEW files the scaffold never emitted (React pages, auth modules).
+        # Observed live 2026-09-10: a scaffolded run overran 16_384 on its FIRST
+        # customisation turn and Phase 2 exited with zero LLM writes.
 
         # Widen the per-call output-token limit: a from-scratch run
         # writes large files with no scaffold underneath them, which is
@@ -2997,13 +2959,10 @@ class LLMOrchestrator:
                     "adaptive_budget_applied=%s)",
                     turn + 1, current_max_tokens, self._adaptive_budget_applied,
                 )
-                # Recoverable: the model can simply emit less next turn.
-                # Ending Phase 2 here used to throw away the whole run on the
-                # FIRST truncation - observed live 2026-09-10, where a
-                # scaffolded run died on turn 1 with zero LLM writes. Feed the
-                # truncation back and let it try a smaller turn, bounded by
-                # _MAX_TRUNCATION_RETRIES. (Pattern from SWE-agent: the error
-                # is explained to the model rather than being fatal.)
+                # Recoverable: the model can simply emit less next turn. Ending
+                # Phase 2 on the FIRST truncation threw whole runs away (live
+                # 2026-09-10: died on turn 1 with zero LLM writes). Feed the
+                # truncation back, bounded by _MAX_TRUNCATION_RETRIES.
                 if self._truncation_retries < self._MAX_TRUNCATION_RETRIES:
                     self._truncation_retries += 1
                     messages.append({"role": "user", "content": [{
@@ -3042,13 +3001,10 @@ class LLMOrchestrator:
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
 
-    # Keys worth keeping in the trace when a tool reports them. Chosen from a
-    # real post-mortem (2026-09-11): a run burned 11 of 80 turns on failed
+    # Keys worth keeping in the trace when a tool reports them. From a real
+    # post-mortem (2026-09-11): a run burned 11 of 80 turns on failed
     # modify_file calls and the trace recorded only ``status: error`` with no
-    # reason, so the failures could not be diagnosed afterwards at all — the
-    # one error message recoverable came from the checkpoint, and compaction had
-    # already discarded the rest. Without these, "is the harness misbehaving?"
-    # is unanswerable from a finished run.
+    # reason, so the failures could not be diagnosed afterwards at all.
     _TRACE_DIAG_TEXT = ("error", "note", "advice", "warning", "matched_by",
                         "did_you_mean", "diagnostic_message")
     _TRACE_DIAG_MAX_CHARS = 400
@@ -3257,13 +3213,8 @@ class LLMOrchestrator:
             ]
 
         if self.on_progress:
-            # `detail` says WHAT the call was about, and how many calls the
-            # model batched into this turn. Without it a run cannot be
-            # diagnosed after the fact: the streamed events recorded only that
-            # `task_list` was called, 71 times in one live run, with no way to
-            # tell bookkeeping from a livelock (2026-09-11). The richer trace
-            # file has always carried this; the stream did not, and the stream
-            # is what the durable run store keeps.
+            # `detail` carries WHAT the call was about plus this turn's batch
+            # count; the durable run store keeps only the stream.
             self._emit_progress(
                 turn + 1, tool_name, "executing",
                 _tool_call_detail(tool_name, block.input,
@@ -3822,30 +3773,21 @@ class LLMOrchestrator:
                     except SyntaxError as e:
                         raw_issues.append(f"Syntax error in {rel} line {e.lineno}: {e.msg}")
 
-                # Check Dockerfiles.
-                #
-                # Matching only the exact name "Dockerfile" silently skipped
-                # every multi-service layout. A user's generated app had
-                # Dockerfile.frontend / Dockerfile.backend, so NONE of the
-                # checks below ran and `docker compose build` failed on
-                # `npm ci` with "can only install with an existing
-                # package-lock.json" - a 100% reproducible failure that the
-                # auto-fix right here was written to prevent (2026-09-11).
+                # Check Dockerfiles. Matching only the exact name "Dockerfile"
+                # skipped every multi-service layout: an app with
+                # Dockerfile.frontend / Dockerfile.backend ran none of the checks
+                # below and failed `docker compose build` on `npm ci`
+                # (2026-09-11).
                 if _is_dockerfile(fname):
                     try:
                         with open(fpath, "r", encoding="utf-8") as f:
                             content = f.read()
                         docker_dir = os.path.dirname(fpath)
-                        # npm ci without lock file -> should be npm install.
-                        #
-                        # The lockfile is searched across the WHOLE project, not
-                        # just beside the Dockerfile: a root Dockerfile.frontend
-                        # typically COPYs from a frontend/ subdirectory, so
-                        # looking only in docker_dir found nothing even when a
-                        # lockfile existed - and found nothing when it did not,
-                        # for the wrong reason. `npm ci` needs a lockfile
-                        # SOMEWHERE in the build context; if the project has
-                        # none at all it cannot work, whatever the layout.
+                        # npm ci without a lock file -> should be npm install.
+                        # Searched across the WHOLE project, not just beside the
+                        # Dockerfile: a root Dockerfile.frontend typically COPYs
+                        # from a frontend/ subdirectory, so docker_dir alone
+                        # missed lockfiles that existed.
                         if "npm ci" in content:
                             if not _project_has_npm_lockfile(self.output_dir):
                                 # Auto-fix this common mistake
@@ -3854,13 +3796,10 @@ class LLMOrchestrator:
                                     f.write(fixed)
                                 logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
                         # COPY of a package-lock.json that does not exist is a
-                        # HARD build failure ("failed to compute cache key ...
-                        # not found"), and the LLM cannot write a lockfile -
-                        # npm generates it by resolving the registry. Observed
-                        # live 2026-09-11: a user burned FIVE fix runs on this,
-                        # and the last one mis-diagnosed it entirely. Strip the
-                        # reference; package.json alone is enough for
-                        # `npm install`.
+                        # HARD build failure ("failed to compute cache key"), and
+                        # the LLM cannot write a lockfile - npm resolves it from
+                        # the registry. Strip the reference; package.json alone
+                        # is enough for `npm install`.
                         if "package-lock.json" in content and not _project_has_npm_lockfile(
                             self.output_dir
                         ):
@@ -4705,13 +4644,11 @@ class LLMOrchestrator:
 
         Returns True only if the workspace now holds the snapshot's content.
 
-        This used to delete the whole output directory and *then* copy the
-        snapshot back, swallowing any failure with a warning. A copy that
-        died partway — a full disk, a locked file, a path Windows refuses —
-        left the run with a half-erased workspace and no way back, and the
-        run carried on and packaged that as the deliverable. So the current
-        tree is *moved* aside first and only discarded once the restore has
-        actually succeeded; if anything fails, it is moved back.
+        The current tree is *moved* aside and only discarded once the restore
+        succeeds; if anything fails it is moved back. Deleting first and copying
+        after leaves a half-erased workspace with no way back when the copy dies
+        partway (full disk, locked file), which the run then packages as the
+        deliverable.
         """
         snapshot_path = os.path.join(self.output_dir, _SNAPSHOT_DIR)
         if not os.path.isdir(snapshot_path):

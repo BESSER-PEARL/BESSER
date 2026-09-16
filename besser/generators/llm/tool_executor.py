@@ -498,12 +498,9 @@ class ToolExecutor:
                     except Exception:
                         verified = True  # never wedge the run on a broken check
                     if not verified:
-                        # A check that never passes used to be retried forever:
-                        # the refusal said "do the work first, then mark it
-                        # done", the model obliged, the check failed again. One
-                        # live run spent 62 CONSECUTIVE turns in that loop and
-                        # died on the turn cap with 87% of its time budget
-                        # unused (2026-09-11). Bound the retries instead.
+                        # Bound the retries: an unbounded refusal loop cost one
+                        # live run 62 CONSECUTIVE turns, dying on the turn cap
+                        # with 87% of its time budget unused (2026-09-11).
                         t["attempts"] = int(t.get("attempts") or 0) + 1
                         if t["attempts"] >= _MAX_TASK_VERIFY_ATTEMPTS:
                             # NOT marked done: the verifier exists because a
@@ -550,12 +547,10 @@ class ToolExecutor:
                 result["unknown_ids"] = unknown
 
             if not done:
-                # ``_result_status`` classifies a tool outcome as an error ONLY
-                # when the payload carries an "error" key. A call where nothing
-                # was accepted is a failed operation, and the loop guards,
-                # tracing and the "don't re-attempt" memory all depend on
-                # seeing it as one -- without this, batching silently turned
-                # every refusal into a reported success.
+                # ``_result_status`` treats an outcome as an error ONLY when the
+                # payload carries an "error" key, and the loop guards, tracing
+                # and "don't re-attempt" memory all depend on seeing a call that
+                # accepted nothing as one.
                 parts = []
                 for item in refused:
                     parts.append(
@@ -670,13 +665,11 @@ class ToolExecutor:
         ``ok | error | skipped`` status.
         """
         # The shell gate is enforced HERE, not only in the advertised tool list.
-        # `get_tools_for(allow_shell=False)` removes these two from what the
-        # model is offered, but nothing stopped a model from naming one anyway:
-        # the handler table always held them and dispatch did no membership
-        # check. On an OpenAI-compatible endpoint the tool name comes verbatim
-        # out of the model's own output, and the Phase-3 fix prompt names
-        # `run_command` unconditionally. Filtering the menu is not a gate;
-        # refusing the call is (2026-09-14).
+        # `get_tools_for(allow_shell=False)` filters the menu, but the handler
+        # table still holds these two and a model can name one anyway — on an
+        # OpenAI-compatible endpoint the tool name comes verbatim out of the
+        # model's output, and the Phase-3 fix prompt names `run_command`
+        # unconditionally. Filtering the menu is not a gate; refusing is.
         if tool_name in _SHELL_TOOL_NAMES and not self.allow_shell:
             logger.warning(
                 "Refused %s: shell tools are disabled for this run", tool_name,

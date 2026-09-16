@@ -76,18 +76,13 @@ _ALLOWED_NODE_TYPES: Set[type] = {
     ast.USub,
     ast.UAdd,
     ast.Not,
-    # ``try: <assignments> except NameError: pass`` — the ONE control-flow
-    # shape our own builders emit. domain_model_builder writes it around a
-    # method's ``state_machine`` / ``quantum_circuit`` assignment, because the
-    # ``sm`` / ``qc`` variable only exists when the model was exported as part
-    # of a project. Without these three types the loader rejected files BESSER
-    # itself had just written, so export -> re-import was broken for every
-    # state-machine and quantum method (2026-09-15).
-    #
-    # It adds branching, not reach: the try body is validated by exactly the
-    # same rules as any other statement, and _validate_try_shape below pins
-    # the handler to ``except NameError: pass`` so no user-supplied code can
-    # ride in through the handler.
+    # ``try: <assignments> except NameError: pass`` — the ONE control-flow shape
+    # our own builders emit, around a method's ``state_machine`` /
+    # ``quantum_circuit`` assignment (``sm`` / ``qc`` exists only in a project
+    # export). Without these three types the loader rejected files BESSER itself
+    # had just written (2026-09-15). It adds branching, not reach: the body is
+    # validated like any other statement, and _validate_try_shape below pins the
+    # handler to ``except NameError: pass``.
     ast.Try,
     ast.ExceptHandler,
     ast.Pass,
@@ -213,12 +208,9 @@ def _validate_node(
         # Store-context names are fine (we collect them separately); only
         # Load-context references need to resolve to something we allow.
         if isinstance(node.ctx, ast.Load):
-            # Inside `try: ... except NameError: pass` an unresolved name is
-            # the POINT — that is how a standalone domain-model export tolerates
-            # a missing `sm` / `qc`. Tolerating it here costs nothing: the name
-            # is resolved at runtime against the same controlled namespace, so
-            # it either hits an allowed object or raises NameError and is
-            # swallowed by the handler this guard already pinned to `pass`.
+            # Inside `try: ... except NameError: pass` an unresolved name is the
+            # POINT. Safe: it resolves at runtime against the same controlled
+            # namespace, or raises NameError and is swallowed by that `pass`.
             if (node.id not in allowed_names and node.id not in declared_vars
                     and not in_nameerror_guard):
                 raise SafeBumlLoaderError(
@@ -395,12 +387,9 @@ def safe_load_buml(
 
     # Execute with a near-empty ``__builtins__`` so user content cannot reach
     # any built-in helpers; everything it needs must be in ``allowed_names``.
-    #
-    # The single exception is the ``NameError`` class, which the ``except
-    # NameError:`` guard our own builders emit has to be able to resolve. It is
-    # an exception type, not a callable that reaches anything: the validator
-    # already pins that handler to a literal ``pass``, and nothing else in the
-    # allowlist can call it usefully.
+    # The one exception is the ``NameError`` class, which the guard our builders
+    # emit must resolve. It is an exception type, not a callable that reaches
+    # anything, and the validator pins that handler to a literal ``pass``.
     globals_ns: Dict[str, Any] = {"__builtins__": {"NameError": NameError}}
     globals_ns.update(allowed_names)
     locals_ns: Dict[str, Any] = {}

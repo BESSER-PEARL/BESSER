@@ -777,12 +777,10 @@ class SmartGenerationRunner:
         loop = asyncio.get_running_loop()
         self._started_at = time.monotonic()
         if self.request.provider == "free":
-            # Free tier is pinned to the server's hosted model — unless the
-            # request explicitly named one of the other ids the factory
-            # honors: the server's FALLBACK model, or an alt model on the
-            # primary endpoint. Mirror the factory's decision, in the same
-            # order, so the run card header shows the model the run is
-            # actually served by.
+            # Free tier is pinned to the server's hosted model unless the request
+            # named another id the factory honors (the FALLBACK model, or an alt
+            # on the primary endpoint). Mirror the factory's decision in the same
+            # order, so the run card shows the model actually serving the run.
             if is_free_fallback_choice(self.request.llm_model):
                 llm_model = (self.request.llm_model or "").strip()
             else:
@@ -1592,13 +1590,11 @@ class SmartGenerationRunner:
             effective_runtime_cap = getattr(
                 orchestrator, "max_runtime_seconds", self.request.max_runtime_seconds
             )
-            # A cap breach detected HERE is measured on the runner's total
-            # elapsed/spend (Phase 1 + 2 + 3 + packaging), not on Phase 2 alone.
-            # It has to feed the `incomplete` verdict below, which otherwise
-            # keys only on the orchestrator's Phase 2 state: a run whose Phase 2
-            # finished cleanly but whose WALL CLOCK blew the cap was reported as
-            # `incomplete: False` while this very block told the user "Output
-            # may be incomplete" (observed live 2026-09-15, run 932f1367).
+            # Measured on the runner's TOTAL elapsed/spend (Phase 1+2+3+
+            # packaging), not Phase 2 alone, and it must feed the `incomplete`
+            # verdict below: a run whose Phase 2 finished cleanly but whose wall
+            # clock blew the cap reported `incomplete: False` while this block
+            # told the user "Output may be incomplete" (live 2026-09-15, 932f1367).
             _cap_breach: Optional[str] = None
             if final_cost > effective_cost_cap:
                 _cap_breach = (

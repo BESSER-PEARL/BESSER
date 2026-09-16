@@ -69,18 +69,14 @@ LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
 # 900s, so the source disagreed with what the UI advertised ("up to 40 min").
 # Same reasoning as the cost cap above: one honest ceiling everywhere.
 LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 2400)
-# A turn is not a unit of work: a model that batches tool calls does several
-# actions per turn, while one that emits a single call per turn needs roughly
-# 4x the turns for the same result (orchestrator._execute_tool_blocks records
-# the per-turn block count for exactly this reason). The ceiling therefore has
-# to accommodate the WORST ratio, not the average, or non-batching models hit
-# it while still mid-build. Raised 120 -> 150.
+# A turn is not a unit of work: a model that emits one tool call per turn needs
+# roughly 4x the turns of one that batches, so the ceiling has to fit the WORST
+# ratio, not the average, or non-batching models hit it while still mid-build.
 LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 150)
 # Defaults a client gets when it sends no explicit number, and what the BYOK
 # dialog pre-fills. $1/10min was too tight to finish a real application: a
 # 2026-09-14 run spent its whole budget reading and was cancelled two seconds
-# after its first productive turn. $5/20min gives a run room to finish while
-# staying well inside the ceilings a user can opt into.
+# after its first productive turn.
 LLM_DEFAULT_MAX_COST_USD = min(
     _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 5.0),
     LLM_MAX_COST_USD_HARD_CAP,
@@ -175,11 +171,9 @@ AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
 
 # Generator defaults
-# "standard" was not a dialect anything accepts: SQLGenerator passes this
-# straight through as SQLAlchemyGenerator's `dbms`, whose VALID_DBMS is
-# {sqlite, postgresql, mysql, mssql, mariadb, oracle}. Every /generate-output
-# for `sql` WITHOUT an explicit config.dialect therefore raised
-# "Invalid DBMS" (2026-09-14). sqlite matches SQLGenerator's own default.
+# Not "standard": SQLGenerator passes this straight through as
+# SQLAlchemyGenerator's `dbms`, so every /generate-output for `sql` without an
+# explicit config.dialect raised "Invalid DBMS" (2026-09-14).
 DEFAULT_SQL_DIALECT = "sqlite"
 DEFAULT_DBMS = "sqlite"
 DEFAULT_JSONSCHEMA_MODE = "regular"

@@ -1,18 +1,15 @@
 """Output-token ceiling and truncation recovery.
 
-Regression tests for a live failure on 2026-09-10: a scaffolded run (the most
-common path — deterministic generator, then LLM customisation) asked for a
-React frontend, overran the 16_384 output ceiling on its FIRST customisation
-turn, and Phase 2 exited with zero LLM writes.
+Regression tests for a live failure on 2026-09-10: a scaffolded run overran the
+16_384 output ceiling on its FIRST customisation turn and Phase 2 exited with
+zero LLM writes. Two defects, both fixed here:
 
-Two defects, both fixed here:
-
-1. ``_apply_adaptive_budget`` returned early for any scaffolded run, so the
-   scaffolded-customise path kept the client default of 16_384 while pure
-   from-scratch and modify runs both got FROM_SCRATCH_MAX_TOKENS.
+1. ``_apply_adaptive_budget`` returned early for any scaffolded run, so that
+   path kept the client default of 16_384 while from-scratch and modify runs
+   both got FROM_SCRATCH_MAX_TOKENS.
 2. A ``max_tokens``/``length`` stop_reason ended Phase 2 immediately. It is
-   recoverable — the model can emit a smaller turn — so it is now fed back and
-   retried, bounded by ``_MAX_TRUNCATION_RETRIES``.
+   recoverable, so it is now fed back and retried, bounded by
+   ``_MAX_TRUNCATION_RETRIES``.
 """
 
 import pytest

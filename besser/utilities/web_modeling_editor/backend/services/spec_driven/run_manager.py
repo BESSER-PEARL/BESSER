@@ -791,16 +791,11 @@ class DurableRunManager:
             return
         cursor = max(0, after_sequence)
 
-        # A resume clears the event table and restarts numbering at 1, but a
-        # client reconnecting across that resume still holds the PREVIOUS
-        # attempt's cursor (``?after=N``, or Last-Event-ID). Every frame of the
-        # new attempt is then numbered at or below N, so ``events_after``
-        # matched nothing and the client sat on a live-looking but permanently
-        # blank stream while status reported a healthy subscriber.
-        #
-        # Sequences never skip, so a cursor ahead of the run's high-water mark
-        # cannot belong to this attempt. Treat it as stale and replay from the
-        # start rather than stranding the client.
+        # A resume restarts event numbering at 1, but a client reconnecting
+        # across it still holds the previous attempt's cursor, so every new frame
+        # is at or below it and the stream stays live-looking but blank forever.
+        # Sequences never skip, so a cursor ahead of the high-water mark cannot
+        # belong to this attempt: treat it as stale and replay from the start.
         current = self.store.get_run(run_id)
         if current is not None and cursor > current.last_sequence:
             logger.info(

@@ -95,10 +95,9 @@ class ToolCallEvent(BaseSseEvent):
     tool: str
     status: ToolCallStatus = "executing"
     summary: Optional[str] = None
-    # What the call was about (path / action / ids) plus how many calls the
-    # model batched into this turn. The stream used to carry only the tool
-    # NAME, so a finished run could not be diagnosed from the durable event
-    # store: one live run showed 71 task_list calls with no way to tell
+    # What the call was about (path / action / ids) plus how many calls the model
+    # batched into this turn. Without it a finished run cannot be diagnosed from
+    # the durable store - one run showed 71 task_list calls with no way to tell
     # bookkeeping from a livelock (2026-09-11). Never contains file content.
     detail: Optional[str] = None
 

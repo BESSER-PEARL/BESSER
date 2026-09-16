@@ -68,23 +68,12 @@ _SMALL_CONTEXT_WINDOWS: tuple = (
     # "mistral" marker, which would also match mistral-large (256k).
     ("mistral-small", 32_000),
     ("mistral-7b", 32_000),
-    # Our own Ollama box (ollama.besser-pearl.org, one Tesla V100). The env
-    # advertises OLLAMA_CONTEXT_LENGTH=131072, but this is a CAPABILITY number,
-    # not a usable one - on this hardware the binding cost is PREFILL, which the
-    # model pays on every single turn. Measured 2026-09-11 on qwen3-coder:30b:
-    #
-    #     31k prompt tokens ->  33s        (~950 tok/s)
-    #     64k prompt tokens ->  66s        (~980 tok/s)
-    #    128k prompt sent   -> truncated to ~65_536 reported tokens
-    #
-    # So two limits bite well before 131k: turn latency grows linearly with
-    # context, and something caps the usable window around 64k - beyond which
-    # Ollama truncates from the FRONT, silently dropping the system prompt.
-    # 60_000 keeps threshold + max_tokens inside that ceiling (with the 32_768
-    # output reserve: 27k of history + 32k of output = 60k) and holds prefill to
-    # roughly half a minute per turn.
-    #
-    # Covers every qwen3 tag served from that box (qwen3-coder:30b, qwen3.8:27b).
+    # Our own Ollama box (one Tesla V100). OLLAMA_CONTEXT_LENGTH advertises
+    # 131_072, but that is capability, not usable window. Measured 2026-09-11 on
+    # qwen3-coder:30b: prefill runs ~950 tok/s and is paid every turn, and a 128k
+    # prompt comes back truncated to ~65_536 - from the FRONT, silently dropping
+    # the system prompt. 60_000 keeps history plus the 32_768 output reserve
+    # under that ceiling. Covers every qwen3 tag served from that box.
     ("qwen3", 60_000),
 )
 

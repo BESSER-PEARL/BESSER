@@ -136,13 +136,9 @@ SENSITIVE_KEYS = frozenset({
 
 
 # _safe_path is IMPORTED above (services.utils.user_profile_utils.safe_path).
-# A local copy used to be defined here and shadowed that import, so the weaker
-# of the two containment checks was the one that ran: it compared with
-# ``full_path.startswith(real_base)``, while the shared helper uses
-# ``os.path.commonpath`` and handles the Windows cross-drive ValueError. Not
-# exploitable either way — both call os.path.basename first, which strips the
-# traversal — but there is no reason to keep the weaker duplicate, and ruff
-# flagged it as a redefinition (F811).
+# Do not re-add a local copy: the one that used to live here shadowed the import
+# with a weaker ``startswith`` containment check instead of the shared helper's
+# ``os.path.commonpath`` (which also handles the Windows cross-drive ValueError).
 
 
 def _key_is_sensitive(key: str) -> bool:

@@ -137,11 +137,8 @@ class LLMGenerator(GeneratorInterface):
         self.state_machines = state_machines
         self.quantum_circuit = quantum_circuit
         self.primary_kind = primary_kind
-        # Both OFF unless the caller asks. run_command /
-        # install_dependencies execute arbitrary shell commands in the
-        # workspace; the hosted deployment withholds them and a library
-        # run used to enable them silently because this argument was
-        # never threaded through to the orchestrator (2026-09-14).
+        # Both OFF unless the caller asks: run_command / install_dependencies
+        # execute arbitrary shell commands in the workspace.
         self.allow_shell_tools = allow_shell_tools
         self.enable_toolchain_validation = enable_toolchain_validation
         self.max_turns = max_turns

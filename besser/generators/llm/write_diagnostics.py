@@ -63,11 +63,9 @@ def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
     try:
         from pyflakes.checker import Checker
     except ImportError:
-        # pyflakes ships in the backend requirements but a library caller may
-        # not have it. Say so once: without it the same-turn undefined-name
-        # check does nothing, and a silent [] is indistinguishable from a
-        # clean file — which is how generated code that NameErrors on import
-        # gets written back as "no diagnostics".
+        # pyflakes ships in the backend requirements but a library caller may not
+        # have it. Warn once: a silent [] is indistinguishable from a clean file,
+        # which is how code that NameErrors on import ships as "no diagnostics".
         global _WARNED_PYFLAKES_MISSING
         if not _WARNED_PYFLAKES_MISSING:
             _WARNED_PYFLAKES_MISSING = True

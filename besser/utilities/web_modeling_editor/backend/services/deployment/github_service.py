@@ -291,19 +291,12 @@ class GitHubService:
 
         directory = Path(directory_path)
 
-        # Get all files recursively.
-        #
-        # `is_file()` FOLLOWS symlinks, and the tree being pushed is a
-        # generation workspace -- written by the Spec-Driven worker, which runs
-        # model-authored code. A symlink dropped in there (`ln -s
+        # `is_file()` FOLLOWS symlinks, and this tree is a Spec-Driven workspace
+        # written by model-authored code. A symlink dropped in there (`ln -s
         # /proc/self/environ leak.txt`) would be read through and its target
-        # committed to the user's public repository. The backend doing the push
-        # holds the full secret set, so that is an exfiltration path, and the
-        # read-only mount does not close it: `:ro` blocks writes, not traversal.
-        #
-        # So: skip symlinks outright, and re-check every survivor resolves back
-        # inside the directory (guards hardlink/`..` surprises too), using the
-        # same commonpath containment the rest of the codebase uses.
+        # committed to the user's public repo by a backend holding the full
+        # secret set; `:ro` blocks writes, not traversal. So skip symlinks, and
+        # re-check every survivor resolves back inside the directory.
         directory = directory.resolve()
         all_files = []
         skipped_unsafe = 0

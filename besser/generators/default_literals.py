@@ -1,25 +1,19 @@
 """Render a modelled ``default_value`` as a safe Python literal.
 
-A template that interpolates ``default_value`` directly writes whatever the
-model carries into executable source. That is a code-injection sink, because
 ``default_value`` reaches the metamodel unvalidated from request JSON
 (``class_diagram_processor`` passes ``attr.get("defaultValue")`` straight to
-``Property``), and ``Property.default_value``'s setter is a bare assignment.
-
-Observed 2026-09-14 on the SQLAlchemy template, which emitted the value
-UNQUOTED for any non-``str``/``bool``/enum type::
+``Property``), so a template that interpolates it writes whatever it carries
+into executable source. Observed 2026-09-14 on the SQLAlchemy template, which
+emitted non-``str``/``bool``/enum values UNQUOTED::
 
     pages: Mapped_[int] = mapped_column(Integer_, default=__import__("os").getcwd())
 
-``SQLGenerator`` then executes the generated module in a subprocess
-(``sql_generator.py`` runs ``[sys.executable, temp_py_path]``) to dump DDL, so
-that expression runs as the backend user. The ``str`` branch was injectable
-too — the value sat inside a ``"`` it could close.
+``SQLGenerator`` runs the generated module in a subprocess to dump DDL, so that
+expression executes as the backend user; the ``str`` branch was injectable too.
 
-``python_default`` closes the sink at the point of rendering: the value is
-coerced to the attribute's declared type and emitted through ``repr()``, so the
-result is always a literal and never an expression. A value that cannot be
-coerced raises at generation time rather than producing runnable source.
+``python_default`` coerces the value to the attribute's declared type and emits
+it through ``repr()``, so the result is always a literal and never an
+expression. A value that cannot be coerced raises at generation time.
 """
 
 from __future__ import annotations
@@ -117,20 +111,15 @@ def enum_default(raw: Any, enum_name: str, *, members: Any = None,
 def docstring_default(raw: Any, type_name: str, *, owner: str = "") -> str:
     """Render a modelled default for display inside a triple-quoted docstring.
 
-    ``python_default`` is not enough here. It returns a Python literal, and the
-    repr of a string containing a triple-double-quote still *contains* that
-    sequence -- which closes the surrounding docstring and drops whatever
-    follows into the function body at statement indentation.
+    ``python_default`` alone is not enough: the repr of a string containing a
+    triple-double-quote still *contains* that sequence, which closes the
+    surrounding docstring and drops what follows into the function body at
+    statement indentation. Observed on ``backend/templates/router.py.j2``, whose
+    generated routers are executed by ``/besser_api/deploy-app``.
 
-    Observed on ``backend/templates/router.py.j2``, whose generated routers are
-    executed by ``/besser_api/deploy-app``: the value line was hardened while
-    the two docstring lines a few rows above still interpolated raw. That was
-    the third site of the same sink found in this branch.
-
-    So: coerce through ``python_default`` first (which rejects anything not
-    expressible as a literal of the declared type), then make the result
-    docstring-safe -- no double quote survives to form the closing sequence,
-    and no newline reaches column 0.
+    So coerce through ``python_default`` first, then make the result
+    docstring-safe: no double quote survives to form the closing sequence, and
+    no newline reaches column 0.
     """
     literal = python_default(raw, type_name, owner=owner)
     flattened = " ".join(literal.splitlines())

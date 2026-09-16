@@ -135,14 +135,10 @@ def _is_free_local_model(model_lower: str) -> bool:
     a paid model at $0 and SILENTLY DISABLES the cost cap, while a false
     negative bills a self-hosted run that is actually free.
 
-    The family allow-list alone used to decide this, which was right when
-    open-weight implied self-hosted. It stopped being right when the gateway
-    started reselling those same families: ``Qwen/Qwen3.8-Max`` and
-    ``deepseek/deepseek-v4-pro`` are billed cloud models whose ids contain
-    ``qwen`` / ``deepseek``, so every call was priced at $0 and ``max_cost_usd``
-    could never trip.
-
-    So the decision keys on how the model is IDENTIFIED, not on its family:
+    The decision therefore keys on how the model is IDENTIFIED, not on its
+    family: the gateway resells open-weight families, so ``Qwen/Qwen3.8-Max``
+    and ``deepseek/deepseek-v4-pro`` are billed cloud models that a family
+    allow-list priced at $0.
 
     1. an explicit free marker (``:free`` / ``-free``) -- always free;
     2. an Ollama ``name:tag`` id with no vendor namespace -- self-hosted;
@@ -1173,14 +1169,12 @@ class OpenAIProvider(LLMProvider):
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
         self._usage = UsageTracker(self._model)
-        # Optional (base_url, token, model) endpoint used when the primary
-        # endpoint stays unavailable past the retry budget. The switch is
-        # sticky for this provider instance (i.e. for the run) so later
-        # calls don't re-pay the retry tax against a dead primary.
-        # Ordered fallback chain. Accepts a single (base_url, token, model)
-        # tuple for back-compat, or a list of them to try in order. Each step
-        # carries its OWN endpoint and token, which is what makes it safe to
-        # mix a cloud alt model with a self-hosted one in the same chain.
+        # Ordered fallback chain, used when the primary endpoint stays
+        # unavailable past the retry budget. The switch is sticky for the run so
+        # later calls don't re-pay the retry tax. Accepts a single
+        # (base_url, token, model) tuple for back-compat, or a list; each step
+        # carries its OWN endpoint and token, which is what makes mixing a cloud
+        # alt model with a self-hosted one in the same chain safe.
         if fallback is None:
             self._fallback_chain: list = []
         elif isinstance(fallback, tuple):
@@ -1728,14 +1722,11 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
     Order is deliberate: CLOUD alternatives first, the self-hosted box LAST.
 
         1. every ``BESSER_FREE_LLM_ALT_MODELS`` entry, on the PRIMARY endpoint
-           and token (e.g. Laguna, which has no documented daily quota)
-        2. ``BESSER_FREE_LLM_FALLBACK_*`` — our own Ollama box
-
-    Why this order: the primary's usual failure is its 100-requests/day quota,
-    and another model on the same endpoint has its own quota, so step 1 usually
-    succeeds and stays fast. The self-hosted box is a single shared Tesla V100
-    that serves one request at a time and pays 60-75s to load a model cold, so
-    it belongs at the end — it is a true last resort, not a peer.
+           and token — the primary's usual failure is its 100-requests/day
+           quota, and another model on that endpoint has its own
+        2. ``BESSER_FREE_LLM_FALLBACK_*`` — our own Ollama box: a single shared
+           Tesla V100, one request at a time, 60-75s to load a model cold. A
+           true last resort, not a peer.
 
     ``chosen`` is skipped wherever it appears: a run already pinned to a model
     must never "fall back" to the model it is already using.
@@ -1758,14 +1749,11 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
 def free_pilot_model() -> str:
     """The keyless model a PILOT session should default to, or ``""``.
 
-    Read from ``BESSER_FREE_LLM_PILOT_MODEL``. Facilitated pilot participants
-    arrive through ``?pilot=<label>`` and are a small, known population we are
-    deliberately spending on, so they can start on a stronger model than the
-    anonymous public default without changing what everyone else gets.
-
-    Server-side on purpose: the client must not hardcode a model id. Which
-    model is "the good one" has already changed several times, and swapping it
-    should be an env edit and a container restart, not a frontend release.
+    Read from ``BESSER_FREE_LLM_PILOT_MODEL``. Pilot participants arrive through
+    ``?pilot=<label>`` and are a small, known population, so they can start on a
+    stronger model without changing what everyone else gets. Server-side on
+    purpose: which model is "the good one" has changed several times, and
+    swapping it should be an env edit, not a frontend release.
 
     Returns ``""`` when unset (pilots then get the ordinary default), or when
     the configured id is not one the server actually offers -- advertising a
@@ -1781,22 +1769,17 @@ def free_pilot_model() -> str:
 def free_alt_models() -> list[str]:
     """Extra keyless models served by the PRIMARY free endpoint, in order.
 
-    Read from ``BESSER_FREE_LLM_ALT_MODELS`` (comma-separated list of model
-    ids). These share the primary endpoint's base URL **and** its token — that
-    pairing is precisely why they are a separate list from the fallback, which
-    lives on a DIFFERENT host with its own credentials. Sending the primary's
-    bearer to the fallback host (or vice versa) would 401, so an id that
-    collides with the primary or the fallback model is dropped here and served
-    by its own properly-paired branch instead.
+    Read from ``BESSER_FREE_LLM_ALT_MODELS`` (comma-separated model ids). These
+    share the primary endpoint's base URL **and** its token — that pairing is
+    why they are a separate list from the fallback, which lives on a DIFFERENT
+    host with its own credentials (crossing the two 401s). An id colliding with
+    the primary or the fallback model is dropped here and served by its own
+    properly-paired branch instead.
 
-    Why this exists: the upstream aggregator meters each free model
-    SEPARATELY, per model rather than per account. Our primary
-    (``meituan/LongCat-2.0:free``) is capped at 100 requests/day, after which
-    the keyless tier degrades badly; ``poolside/laguna-s-2.1-free`` publishes
-    no daily quota at all ("free while capacity lasts"). Offering such a model
-    as an alt gives the keyless tier an unmetered option without touching the
-    default. Empty by default — a deploy that does not set the var behaves
-    exactly as before.
+    Why this exists: the upstream aggregator meters each free model SEPARATELY,
+    per model rather than per account. Our primary is capped at 100
+    requests/day, while an alt such as ``poolside/laguna-s-2.1-free`` publishes
+    no daily quota at all. Empty by default.
     """
     raw = os.environ.get("BESSER_FREE_LLM_ALT_MODELS", "")
     if not raw.strip():
@@ -1907,15 +1890,13 @@ def create_llm_client(
     if provider == FREE_TIER_PROVIDER:
         # Endpoint, token, and model all come from SERVER env — never from the
         # request. The bearer header is the real gate; the api_key is a
-        # placeholder the endpoint ignores.
-        #
-        # The only client-steerable choice is between the server-configured
-        # models, and each one is built against ITS OWN endpoint+token pair:
+        # placeholder the endpoint ignores. The only client-steerable choice is
+        # between the server-configured models, each built against ITS OWN
+        # endpoint+token pair:
         #   * the FALLBACK model  -> fallback base URL + fallback token
         #   * a free_alt_models() -> primary base URL + primary token
-        # Any other requested value is ignored and the run pins to the primary,
-        # so the server's credentials can never be pointed at an arbitrary
-        # model or host — nor at the wrong one of our own two endpoints.
+        # Anything else pins to the primary, so the server's credentials can
+        # never be pointed at an arbitrary model or host.
         if is_free_fallback_choice(model):
             fb_base_url, fb_token, fb_model = _resolve_free_fallback_config()
             fb_headers = (
@@ -1933,10 +1914,10 @@ def create_llm_client(
                 **kwargs,
             )
         free_base_url, token, free_model = _resolve_free_tier_config()
-        # An alt model rides the primary endpoint's credentials unchanged —
-        # same base URL, same bearer — which is what makes serving it from the
+        # An alt model rides the primary endpoint's credentials unchanged (same
+        # base URL, same bearer), which is what makes serving it from the
         # server's token safe. Resolve the primary config FIRST so an
-        # unconfigured free tier still fails fast with the clear message.
+        # unconfigured free tier still fails fast.
         chosen = free_alt_choice(model) or free_model
         headers = {"Authorization": f"Bearer {token}"} if token else None
         return OpenAIProvider(
@@ -1945,9 +1926,8 @@ def create_llm_client(
             base_url=free_base_url,
             default_headers=headers,
             # Full chain: any OTHER alt model on this endpoint first, then the
-            # self-hosted box last. An alt sits on the same shared cloud
-            # endpoint and sheds requests the same way, so it needs the chain
-            # just as much as the primary does.
+            # self-hosted box last. An alt sits on the same shared cloud endpoint
+            # and sheds requests the same way, so it needs the chain too.
             fallback=_resolve_free_fallback_chain(chosen),
             **kwargs,
         )

@@ -162,12 +162,10 @@ def compute_fingerprint(
 def _to_wire(obj: Any) -> Any:
     """Convert provider SDK content blocks into their JSON wire shape.
 
-    The orchestrator stores ``response["content"]`` verbatim in the
-    message list, so a checkpoint holds whatever objects the provider
-    SDK returned (``TextBlock`` / ``ToolUseBlock`` / thinking blocks —
-    pydantic models on Anthropic, plain objects elsewhere). Those are
-    not JSON-serializable, and stringifying them loses the ``id`` that
-    ties a ``tool_use`` to the ``tool_result`` that follows it.
+    The orchestrator stores ``response["content"]`` verbatim, so a checkpoint
+    holds whatever objects the provider SDK returned. Those are not
+    JSON-serializable, and stringifying them loses the ``id`` that ties a
+    ``tool_use`` to the ``tool_result`` that follows it.
 
     Falls back to ``str`` only for genuinely opaque values, which keeps
     :func:`save_checkpoint` from ever raising.
@@ -214,10 +212,7 @@ def save_checkpoint(
     try:
         os.makedirs(output_dir, exist_ok=True)
         with open(tmp_path, "w", encoding="utf-8") as fh:
-            # _to_wire turns SDK blocks into the dicts the provider APIs
-            # accept, preserving tool_use ids so the tool_results that
-            # follow them still resolve on resume. default=str stays only
-            # as a last resort so a checkpoint write never raises.
+            # default=str is only a last resort, so a write never raises.
             json.dump(_to_wire(checkpoint.to_dict()), fh, default=str, indent=2)
         os.replace(tmp_path, final_path)
         return final_path

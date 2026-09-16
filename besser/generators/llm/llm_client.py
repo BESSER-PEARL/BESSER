@@ -889,7 +889,7 @@ def _openai_max_tokens_key(model: str) -> str:
     return "max_tokens"
 
 
-def _needs_reasoning_none_for_tools(model: str) -> bool:
+def _needs_reasoning_none_for_tools(model: str, base_url: str | None = None) -> bool:
     """Whether this model REQUIRES ``reasoning_effort='none'`` to use tools.
 
     OpenAI's gpt-5.6 reasoning models (sol/terra/luna) reject function tools on
@@ -899,11 +899,22 @@ def _needs_reasoning_none_for_tools(model: str) -> bool:
       - gpt-5.6-*        : REQUIRE reasoning_effort='none' to use tools
       - gpt-5.5 / 5.4    : accept-but-don't-need it (tools work either way)
       - gpt-5 / gpt-4o…  : REJECT the param entirely (400 if sent)
-    So apply the flag ONLY to the models that require it. The Spec-Driven
-    customization loop is tool-driven, so this is what makes gpt-5.6 usable at
-    all here (chat/completions can't combine tools + reasoning; the /v1/responses
-    API could, but that's a larger migration).
+
+    That table holds for the *official* OpenAI endpoint only. A gateway that
+    re-serves these models validates ``reasoning_effort`` against its own enum,
+    and ``none`` is not in it: the keyless free tier (api.commandcode.ai)
+    answers 400 ``Invalid option: expected one of
+    "low"|"medium"|"high"|"xhigh"|"max"``. That killed the tool-driven
+    customization loop mid-run, so the user got a deterministic-only bundle
+    plus an "output may be incomplete" warning.
+
+    Tools need no such flag there — verified 2026-09-16 against gpt-5.6-luna on
+    api.commandcode.ai: ``none`` -> 400, while omitted / ``low`` / ``medium``
+    each returned a proper ``write_file`` tool call. So send the parameter only
+    when talking to OpenAI itself, and omit it on any custom endpoint.
     """
+    if base_url:
+        return False
     return "gpt-5.6" in model.lower()
 
 
@@ -1156,6 +1167,9 @@ class OpenAIProvider(LLMProvider):
             client_kwargs["default_headers"] = default_headers
 
         self._client = OpenAI(**client_kwargs)
+        # Kept because reasoning_effort support is endpoint-specific, not just
+        # model-specific — see _needs_reasoning_none_for_tools.
+        self._base_url = resolved_base
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
         self._usage = UsageTracker(self._model)
@@ -1204,6 +1218,7 @@ class OpenAIProvider(LLMProvider):
             len(self._fallback_chain), fb_model,
         )
         self._client = OpenAI(**client_kwargs)
+        self._base_url = base_url
         self._model = fb_model
         self._on_fallback = True
         # Why we fell back — lets the runner/UI say "free daily quota exhausted"
@@ -1273,7 +1288,8 @@ class OpenAIProvider(LLMProvider):
                         }
                     # gpt-5.6 reasoning models can't combine tools + reasoning
                     # on chat/completions — disable reasoning so tools work.
-                    if _needs_reasoning_none_for_tools(effective_model):
+                    if _needs_reasoning_none_for_tools(
+                            effective_model, self._base_url):
                         kwargs["reasoning_effort"] = "none"
 
                 response = self._client.chat.completions.create(**kwargs)
@@ -1358,7 +1374,8 @@ class OpenAIProvider(LLMProvider):
                     kwargs["tools"] = openai_tools
                     # gpt-5.6 reasoning models can't combine tools + reasoning
                     # on chat/completions — disable reasoning so tools work.
-                    if _needs_reasoning_none_for_tools(self._model):
+                    if _needs_reasoning_none_for_tools(
+                            self._model, self._base_url):
                         kwargs["reasoning_effort"] = "none"
 
                 collected_text = ""

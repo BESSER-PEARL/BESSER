@@ -226,7 +226,10 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
+    # Idempotency-Key lets the spec-driven client safely retry a run start
+    # that failed at the transport layer (see spec_driven_router).
+    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition",
+                   "Authorization", "Idempotency-Key"],
     expose_headers=["Content-Disposition", "X-BESSER-Run-Id"],
 )
 

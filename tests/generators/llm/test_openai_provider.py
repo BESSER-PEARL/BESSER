@@ -709,13 +709,14 @@ class TestOpenAIProviderStream:
 # reasoning_effort='none' for tool-using gpt-5.6 reasoning models
 # ======================================================================
 
-def _provider_with_model(model):
+def _provider_with_model(model, base_url=None):
     """OpenAIProvider on ``model`` with a mocked SDK client."""
     mock_openai_module = MagicMock()
     mock_client = MagicMock()
     mock_openai_module.OpenAI.return_value = mock_client
     with patch.dict("sys.modules", {"openai": mock_openai_module}):
-        provider = OpenAIProvider(api_key="sk-test", model=model)
+        provider = OpenAIProvider(api_key="sk-test", model=model,
+                                  base_url=base_url)
         provider._client = mock_client
         return provider
 
@@ -764,6 +765,22 @@ class TestReasoningEffortHelper:
     def test_others_do_not(self, model):
         assert _needs_reasoning_none_for_tools(model) is False
 
+    @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra",
+                                       "gpt-5.6-luna"])
+    def test_custom_endpoint_never_gets_the_flag(self, model):
+        """A gateway re-serving gpt-5.6 validates the param against its own
+        enum, and ``none`` is not in it. The keyless free tier answers
+        400 ``Invalid option: expected one of "low"|"medium"|"high"|"xhigh"
+        |"max"``, which aborted the Phase 2 customization loop and shipped a
+        deterministic-only bundle with "output may be incomplete".
+
+        Tools need no flag there — verified 2026-09-16 against gpt-5.6-luna on
+        api.commandcode.ai: ``none`` -> 400; omitted / ``low`` / ``medium``
+        each returned a proper tool call.
+        """
+        assert _needs_reasoning_none_for_tools(
+            model, "https://api.commandcode.ai/v1") is False
+
 
 class TestReasoningEffortInRequest:
 
@@ -773,6 +790,22 @@ class TestReasoningEffortInRequest:
         provider.chat(system="sys", messages=[], tools=_ONE_TOOL)
         kw = provider._client.chat.completions.create.call_args.kwargs
         assert kw.get("reasoning_effort") == "none"
+        assert "tools" in kw
+
+    def test_gpt56_on_free_gateway_omits_reasoning_effort(self):
+        """Regression: the free tier 400s on reasoning_effort='none'.
+
+        Sending it aborted the tool-driven Phase 2 loop with
+        "OpenAI API streaming failed: Error code: 400 - Invalid option:
+        expected one of \"low\"|\"medium\"|\"high\"|\"xhigh\"|\"max\"",
+        so the user received a deterministic-only bundle flagged incomplete.
+        """
+        provider = _provider_with_model(
+            "gpt-5.6-luna", base_url="https://api.commandcode.ai/v1")
+        _mock_chat_text(provider)
+        provider.chat(system="sys", messages=[], tools=_ONE_TOOL)
+        kw = provider._client.chat.completions.create.call_args.kwargs
+        assert "reasoning_effort" not in kw
         assert "tools" in kw
 
     def test_gpt56_stream_sends_reasoning_none_with_tools(self):

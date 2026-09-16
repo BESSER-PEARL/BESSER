@@ -220,9 +220,48 @@ async def _stream_with_slot_release(
 # POST /besser_api/spec-driven/generate  (SSE stream)
 # ---------------------------------------------------------------------
 
+#: ``Idempotency-Key`` -> ``(run_id, created_at)``.
+#:
+#: Starting a run is a non-idempotent POST, so the client could not safely
+#: retry one that failed at the transport layer — and behind a TLS-inspecting
+#: proxy that is exactly the request that fails, leaving "Failed to fetch"
+#: with no run to reconnect to. A client-generated key makes the retry safe:
+#: the second attempt attaches to the run the first one started instead of
+#: spawning a duplicate.
+#:
+#: In-process and best-effort on purpose. A missed hit costs one duplicate
+#: run, not corruption, and the durable store remains the source of truth.
+_IDEMPOTENCY_TTL_SECONDS = 900
+_idempotent_runs: dict[str, tuple[str, float]] = {}
+_idempotency_lock = asyncio.Lock()
+
+
+def _prune_idempotency_keys(now: float) -> None:
+    for key, (_, created_at) in list(_idempotent_runs.items()):
+        if now - created_at > _IDEMPOTENCY_TTL_SECONDS:
+            _idempotent_runs.pop(key, None)
+
+
+def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingResponse:
+    return StreamingResponse(
+        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=after_sequence),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            # Disable response buffering in proxies (nginx, Render, etc.)
+            # so events reach the browser in near-real-time.
+            "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
+        },
+    )
+
 
 @router.post("/spec-driven/generate", response_class=StreamingResponse)
-async def smart_generate(request: SmartGenerateRequest):
+async def smart_generate(
+    request: SmartGenerateRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
     """Stream an LLM-orchestrated code generation run as SSE events.
 
     Emits events in order: ``start`` → zero or more of
@@ -237,6 +276,26 @@ async def smart_generate(request: SmartGenerateRequest):
     against ``/spec-driven/download/{runId}`` serves the file; subsequent GETs
     return 404.
     """
+    # A retried start must attach to the original run, not spawn a second
+    # one. Checked before the slot is acquired so a retry cannot 429 against
+    # the very run it is trying to rejoin.
+    idem_key = (idempotency_key or "").strip()[:200]
+    if idem_key:
+        async with _idempotency_lock:
+            _prune_idempotency_keys(time.time())
+            known = _idempotent_runs.get(idem_key)
+            if known is not None:
+                existing_run_id = known[0]
+                if DURABLE_RUN_MANAGER.get_run(existing_run_id) is not None:
+                    logger.info(
+                        "Idempotent retry for run %s — replaying from sequence 0",
+                        existing_run_id,
+                    )
+                    return _run_stream_response(existing_run_id)
+                # The run aged out of the store; let this request start a
+                # fresh one under the same key.
+                _idempotent_runs.pop(idem_key, None)
+
     # Reserve a concurrency slot BEFORE allocating any resources.
     # ``try_acquire_run_slot`` is non-blocking: the client sees an
     # immediate 429 when the server is saturated, never a hung SSE
@@ -255,9 +314,18 @@ async def smart_generate(request: SmartGenerateRequest):
     # run's files and edits them in place (falling back to from-scratch if
     # the base has expired). Both fields default to the from-scratch path.
     run_id = uuid.uuid4().hex
+    if idem_key:
+        # Claim the key with this run id BEFORE the run starts, so a retry
+        # that arrives while startup is still in flight waits for this run
+        # rather than opening a second one.
+        async with _idempotency_lock:
+            _idempotent_runs[idem_key] = (run_id, time.time())
     cancel_event = await reserve_active_run(run_id)
     if cancel_event is None:  # UUID collision is fantastically unlikely.
         release_run_slot()
+        if idem_key:
+            async with _idempotency_lock:
+                _idempotent_runs.pop(idem_key, None)
         raise HTTPException(status_code=409, detail="Generated run ID is already active")
 
     runner = SmartGenerationRunner(
@@ -284,19 +352,11 @@ async def smart_generate(request: SmartGenerateRequest):
     except Exception:
         await release_active_run(run_id, cancel_event)
         release_run_slot()
+        if idem_key:
+            async with _idempotency_lock:
+                _idempotent_runs.pop(idem_key, None)
         raise
-    return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            # Disable response buffering in proxies (nginx, Render, etc.)
-            # so events reach the browser in near-real-time.
-            "X-Accel-Buffering": "no",
-            "X-BESSER-Run-Id": run_id,
-        },
-    )
+    return _run_stream_response(run_id)
 
 
 # ---------------------------------------------------------------------
@@ -313,6 +373,57 @@ async def get_smart_run_status(
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
     return record.to_api_dict()
+
+
+@router.get("/spec-driven/runs/{run_id}/events.json")
+async def poll_smart_run_events(
+    run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
+    after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
+    limit: int = Query(default=250, ge=1, le=1000),
+):
+    """Polling transport for the durable event log — the proxy-safe fallback.
+
+    A TLS-intercepting corporate proxy (Netskope on LIST laptops) inspects the
+    response body before releasing it, which an SSE stream never finishes
+    producing. Two failure shapes follow: the initial POST's headers are held
+    so the fetch promise never settles ("Waiting for the first event…"
+    forever), or the proxy tears the connection down and the client sees
+    "Failed to fetch". The REST endpoints and the agent WebSocket are
+    unaffected, because both terminate.
+
+    So this endpoint returns the same events as a *short, terminating* JSON
+    response the proxy can buffer and release normally. Everything it needs
+    already exists — the durable store assigns sequence numbers before any
+    subscriber sees a frame, so polling and streaming share one cursor and one
+    replay semantic: pass the last sequence you saw as ``after``.
+
+    ``events[].data`` is the decoded SSE payload, so a client can feed these
+    to the same reducer it feeds streamed events. ``hasMore`` tells the poller
+    to come straight back rather than waiting out its interval, and
+    ``status``/``terminalEvent`` tell it when to stop.
+    """
+    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+
+    stored = DURABLE_RUN_MANAGER.store.events_after(run_id, after, limit=limit)
+    events = [
+        {
+            "sequence": item.sequence,
+            "event": item.event_type,
+            "data": item.payload,
+        }
+        for item in stored
+    ]
+    cursor = events[-1]["sequence"] if events else after
+    return {
+        **record.to_api_dict(),
+        "events": events,
+        "cursor": cursor,
+        # A full page almost always means more is waiting; the poller should
+        # loop immediately instead of sleeping through its interval.
+        "hasMore": len(stored) >= limit,
+    }
 
 
 @router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse)

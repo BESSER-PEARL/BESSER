@@ -70,7 +70,13 @@ LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
 # 900s, so the source disagreed with what the UI advertised ("up to 40 min").
 # Same reasoning as the cost cap above: one honest ceiling everywhere.
 LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 2400)
-LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 120)
+# A turn is not a unit of work: a model that batches tool calls does several
+# actions per turn, while one that emits a single call per turn needs roughly
+# 4x the turns for the same result (orchestrator._execute_tool_blocks records
+# the per-turn block count for exactly this reason). The ceiling therefore has
+# to accommodate the WORST ratio, not the average, or non-batching models hit
+# it while still mid-build. Raised 120 -> 150.
+LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 150)
 # Defaults a client gets when it sends no explicit number, and what the BYOK
 # dialog pre-fills. $1/10min was too tight to finish a real application: a
 # 2026-09-14 run spent its whole budget reading and was cancelled two seconds

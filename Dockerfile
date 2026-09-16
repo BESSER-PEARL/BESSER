@@ -1,21 +1,11 @@
-# Use slim variant to reduce image size (200MB smaller).
-# Python 3.12 matches the CI matrix; 3.10 was dropped in v7.5.1 because
-# ``typing.Self`` (used in the NN metamodel, PEP 673) requires 3.11+.
+# slim: 200MB smaller. 3.12 matches CI; 3.11+ is required for typing.Self
+# (NN metamodel, PEP 673).
 FROM python:3.12-slim
 
-# --- Optional corporate CA injection (build behind a TLS-inspecting proxy) ---
-# Some sites (e.g. LIST laptops) build behind Netskope, which re-signs TLS with
-# its own CA. The clean slim image does not trust it, so pip fails with
-# "self-signed certificate in certificate chain". Drop the proxy's root +
-# signing certs as .crt files in ca-certs-extra/ (gitignored, site-internal)
-# and build with --build-arg TRUST_EXTRA_CAS=1.
-#
-# OPT-IN on purpose. deploy.sh builds from the local working tree, so an
-# unconditional COPY would bake whatever .crt happens to be sitting in that
-# directory into the image we ship to a shared host — making the deployed
-# backend trust a corporate CA for every outbound TLS call it makes. Defaulting
-# to 0 means production stays clean by construction, not by remembering to
-# empty the directory first.
+# Build behind a TLS-inspecting proxy: drop its root + signing certs into
+# ca-certs-extra/ (gitignored) and pass --build-arg TRUST_EXTRA_CAS=1.
+# Opt-in because deploy.sh builds from the working tree, so an unconditional
+# COPY would ship whatever .crt happens to sit there to a shared host.
 ARG TRUST_EXTRA_CAS=0
 COPY ca-certs-extra/ /tmp/ca-certs-extra/
 RUN if [ "$TRUST_EXTRA_CAS" = "1" ]; then \
@@ -23,26 +13,17 @@ RUN if [ "$TRUST_EXTRA_CAS" = "1" ]; then \
         && update-ca-certificates; \
     fi; \
     rm -rf /tmp/ca-certs-extra
-# Point every toolchain at the system bundle: curl/apt use it already, but pip
-# (PIP_CERT/REQUESTS_CA_BUNDLE), node/npm (NODE_EXTRA_CA_CERTS) and rustup
-# (SSL_CERT_FILE) each ship their own trust store and must be told explicitly.
-# Harmless when no extra CA was injected — this is the default bundle anyway.
+# pip, npm and rustup each ship their own trust store and must be pointed at
+# the system bundle explicitly. No-op when no extra CA was injected.
 ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-# Phase 3 toolchains for per-project TS/Rust/Kotlin compile validation.
-# Without these binaries on PATH, the Phase 3 validation loop soft-skips
-# (shutil.which returns None), so generated nextjs/rust/spring-boot
-# artifacts never get type-checked / cargo-checked / kotlinc-compiled
-# and per-project compile-pass stays at 0/5. Pinned versions:
-#   - Node.js 20.x (provides npm -> tsc)
-#   - TypeScript 5.x (npm install -g typescript)
-#   - Rust stable, minimal profile (rustup)
-#   - OpenJDK 21 + Kotlin compiler 1.9.24 (matches stack_metadata.py;
-#     python:3.10-slim is Debian Trixie which no longer ships JDK 17)
-# Placed before requirements.txt copy so this slow layer caches well.
+# Phase 3 compile validation soft-skips when these are missing from PATH
+# (shutil.which -> None), so nextjs/rust/spring-boot output ships unchecked.
+# JDK 21 because Debian Trixie no longer packages 17. Kept before the
+# requirements copy so this slow layer caches.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
@@ -65,29 +46,25 @@ ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
 
 WORKDIR /app
 
-# No additional system dependencies needed - Python slim has everything for a basic Flask/FastAPI app
-# If you need specific system libraries (e.g., for image processing), add them here
-
-# Copy and install dependencies first for better layer caching
+# Dependencies first for layer caching.
 COPY requirements.txt ./requirements.txt
 COPY besser/utilities/web_modeling_editor/backend/requirements.txt ./backend-requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 
-# Phase 3 Python verification. The Spec-Driven fix loop promotes ruff's
-# undefined-name findings (F821/F822/F823) to BLOCKERS ("ships green, boots
-# dead") — but ruff was only ever installed in CI, never in this image, so on
-# the hosted backend _collect_ruff_issues() silently returned [] and two pilot
-# runs shipped a backend that NameError'd on import as "success / 0 blockers".
-# Pinned so the check is reproducible across deploys; kept current with the
-# unpinned `pip install ruff` CI runs so both see the same rule semantics.
+# The fix loop treats ruff's F821/F822/F823 as blockers, but ruff was only in
+# CI — so _collect_ruff_issues() returned [] here and two pilot runs shipped a
+# backend that NameError'd on import as "0 blockers". Pinned for reproducibility.
 RUN pip install --no-cache-dir "ruff==0.16.6"
 
-# Copy only necessary files
 COPY pyproject.toml README.md ./
 COPY besser/ ./besser/
-
-# Install BESSER package
 RUN pip install --no-cache-dir -e .
+
+# A build-time CA must not become runtime trust. Unconditional, and the grep
+# is an assertion: the build fails rather than ship an image trusting the proxy.
+RUN rm -f /usr/local/share/ca-certificates/*.crt \
+    && update-ca-certificates --fresh >/dev/null 2>&1 \
+    && ! grep -qi goskope /etc/ssl/certs/ca-certificates.crt
 
 ENV PYTHONPATH=/app
 

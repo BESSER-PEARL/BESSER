@@ -712,10 +712,17 @@ JAZZMIN_SETTINGS = {{
                     )
                 shutil.rmtree(project_dir)
 
+            # `manage.py startapp` imports the settings module it has just
+            # created, so CPython writes `<project>/<project>/__pycache__/*.pyc`
+            # inside the generated tree. Those files were packaged into the
+            # user's download; the generator's own subprocesses must not leave
+            # bytecode behind.
+            subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
             subprocess.run(['django-admin', 'startproject', self.project_name],
-                           cwd=base_dir, check=True)
+                           cwd=base_dir, check=True, env=subprocess_env)
             subprocess.run([sys.executable, 'manage.py', 'startapp',
-                                self.app_name], cwd=project_dir, check=True)
+                                self.app_name], cwd=project_dir, check=True,
+                           env=subprocess_env)
 
             # Step 2: Update settings.py
             self.update_settings()

@@ -1,3 +1,12 @@
+{%- macro _client_supplied(attr) -%}
+{#- True when the Create/Update schema actually carries this attribute.
+    MUST mirror _is_server_owned in pydantic_classes_template.py.j2: the
+    surrogate `id` and the audit timestamps are stamped by the ORM and are
+    absent from the schema, so reading them off the payload raises
+    AttributeError and every create returns 500. -#}
+{{ not ((attr.name == 'id' and not attr.is_id)
+        or (not attr.is_id and (attr.name | lower | replace('_','')) in ['createdat','updatedat'])) }}
+{%- endmacro -%}
 {% macro link_attr_names(assoc_class_name) %}({% for attribute in assoc_classes[assoc_class_name].attributes %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in
    the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
@@ -480,7 +489,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% set ns_args = namespace(args=[]) %}
     {% for parent in all_parents %}
     {% for attrparent in parent.attributes %}
-    {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
+    {% if _client_supplied(attrparent) | trim == 'True' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.value') %}
     {% else %}
@@ -490,7 +499,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
-    {% if not (attribute.name == 'id' and not attribute.is_id) %}
+    {% if _client_supplied(attribute) | trim == 'True' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.value') %}
     {% else %}
@@ -707,7 +716,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
             {% for attrparent in parent.attributes %}
-            {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
+            {% if _client_supplied(attrparent) | trim == 'True' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.value') %}
             {% else %}
@@ -717,7 +726,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endfor %}
             {% endfor %}
             {% for attribute in class.attributes %}
-            {% if not (attribute.name == 'id' and not attribute.is_id) %}
+            {% if _client_supplied(attribute) | trim == 'True' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.value') %}
             {% else %}
@@ -843,13 +852,13 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
        an Employee's last_name lives on Person and must be updatable here #}
     {% for parent in all_parents %}
     {% for attribute in parent.attributes %}
-    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
+    {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
     {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
-    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
+    {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
     {% endif %}
     {% endfor %}

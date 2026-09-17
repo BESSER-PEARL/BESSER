@@ -239,6 +239,7 @@ def test_write_file_allowed_after_two_modifies(tmp_path):
     with open(full, "w", encoding="utf-8") as fh:
         fh.write("line_a = 1\nline_b = 2\n")
     executor._generator_files.add(rel)
+    executor._read_file({"path": rel})      # seen this run: the generator-file guardrail is what fires
 
     # Cold write on a small generated file → rejected, with both escapes named
     cold = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))

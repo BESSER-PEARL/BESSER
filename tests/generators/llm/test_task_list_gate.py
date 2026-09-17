@@ -194,9 +194,10 @@ def _existing_file(tmp_path, name="app.py", lines=30):
 
 def test_modify_guard_off_by_default(tmp_path):
     """From-scratch runs keep today's behavior: rewriting a non-generator
-    file is allowed."""
+    file the model has read is allowed."""
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
+    executor._read_file({"path": "app.py"})
     result = json.loads(executor.execute("write_file", {
         "path": "app.py", "content": "rewritten",
     }))
@@ -206,6 +207,7 @@ def test_modify_guard_off_by_default(tmp_path):
 def test_modify_guard_blocks_rewrite_of_existing_file(tmp_path):
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
+    executor._read_file({"path": "app.py"})     # seen: it is the MODIFY-run guard that fires
     executor.enable_modify_guard()
     result = json.loads(executor.execute("write_file", {
         "path": "app.py", "content": "rewritten",
@@ -219,6 +221,7 @@ def test_modify_guard_blocks_rewrite_of_existing_file(tmp_path):
 def test_modify_guard_allows_new_and_trivial_files(tmp_path):
     _existing_file(tmp_path, name="tiny.py", lines=5)
     executor = ToolExecutor(workspace=str(tmp_path))
+    executor._read_file({"path": "tiny.py"})
     executor.enable_modify_guard()
     new = json.loads(executor.execute("write_file", {
         "path": "brand_new.py", "content": "x = 1",

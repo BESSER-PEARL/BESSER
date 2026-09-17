@@ -284,8 +284,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_file",
         "description": (
-            "Read a file from the workspace. For large files (>200 lines), use "
-            "offset and limit to read specific line ranges instead of the whole file. "
+            "Read a file from the workspace. Every line comes back prefixed with "
+            "its line number, as 'N| '. When quoting a region as modify_file's "
+            "old_text, drop that prefix and quote the code itself; a quote that "
+            "keeps the prefix is accepted too. "
+            "For large files (>200 lines), use offset and limit to read specific "
+            "line ranges instead of the whole file. "
             "Example: offset=50, limit=30 reads lines 50-79."
         ),
         "input_schema": {
@@ -486,6 +490,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "with its status; action='done' marks items complete — pass "
             "`ids=[1,2,3]` for SEVERAL AT ONCE, or `id` for one; "
             "action='add' appends a new item you discovered (pass `text`). "
+            "action='drop' closes an item the user did NOT ask for (pass `id` and "
+            "`reason`) — never mark such an item done. "
             "Mark items done as you complete them — the run does not finish "
             "while items are open. Batch them: one task per call wastes a turn "
             "each, and you have a limited number of turns. Some items are "
@@ -498,8 +504,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "done", "add"],
-                    "description": "list | done | add",
+                    "enum": ["list", "done", "add", "drop"],
+                    "description": "list | done | add | drop",
                 },
                 "id": {
                     "type": "integer",
@@ -507,6 +513,10 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                         "A single item id to mark done. Prefer `ids` when you "
                         "have finished more than one."
                     ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "For action='drop': why the user did not ask for this item.",
                 },
                 "ids": {
                     "type": "array",

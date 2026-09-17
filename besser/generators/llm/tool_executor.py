@@ -229,6 +229,39 @@ def _safe_subprocess_env() -> dict[str, str]:
     return safe
 
 
+def _occurrence_locations(content: str, old_text: str, limit: int = 10) -> list[str]:
+    """``"line N (in <def>)"`` for each occurrence of ``old_text``."""
+    lines = content.split("\n")
+    starts = [i for i, ln in enumerate(lines) if re.match(r"\s*(?:async\s+def|def|class)\s+\w+", ln)]
+    out: list[str] = []
+    pos = content.find(old_text)
+    while pos != -1 and len(out) < limit:
+        line_no = content.count("\n", 0, pos)
+        owner = next((lines[i].strip() for i in reversed(starts) if i <= line_no), None)
+        out.append(f"line {line_no + 1}" + (f" (in {owner})" if owner else ""))
+        pos = content.find(old_text, pos + max(1, len(old_text)))
+    return out
+
+
+def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
+    """The lines of ``new`` that differ from ``old``, numbered, with
+    ``context`` lines either side."""
+    old_lines, new_lines = old.split("\n"), new.split("\n")
+    first = 0
+    while first < min(len(old_lines), len(new_lines)) and old_lines[first] == new_lines[first]:
+        first += 1
+    tail = 0
+    while (tail < min(len(old_lines), len(new_lines)) - first
+           and old_lines[-1 - tail] == new_lines[-1 - tail]):
+        tail += 1
+    start = max(0, first - context)
+    end = min(len(new_lines), len(new_lines) - tail + context)
+    rows = [f"{i + 1:>4}| {new_lines[i]}" for i in range(start, end)]
+    if len(rows) > cap:
+        rows = rows[:cap] + [f"   ...| ({len(rows) - cap} more changed lines)"]
+    return "\n".join(rows)
+
+
 class ToolExecutor:
     """
     Executes LLM tool calls in a sandboxed workspace.
@@ -272,17 +305,18 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
-        # Per-path modify_file counts. Once the LLM has demonstrably
-        # tried targeted edits on a small generator file (>= 2), the
-        # write_file guardrail relaxes and allows a full rewrite —
-        # otherwise the modify-streak reminder ("call write_file") and
-        # the write_file rejection ("use modify_file") contradict each
-        # other and ping-pong the model.
+        # Per-path modify_file counts. After >= 2 targeted edits on a small
+        # generator file the write_file guardrail relaxes, so a deliberate
+        # rewrite is not bounced with "use modify_file".
         self._modify_counts: dict[str, int] = {}
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
         # file" — the pilot's 77-action flail was the same miss repeated.
         self._failed_modifies: dict[str, int] = {}
+        # Files the model has actually SEEN this run: read, written, modified,
+        # or inlined in the scaffold snapshot. A miss on any other path is a
+        # quote from memory, and the reply says so first.
+        self._known_paths: set[str] = set()
         # When True (weak / free-tier models only), the deterministic Phase-1
         # scaffold is IMMUTABLE to delete_file: the model may edit those files
         # in place but cannot tear them down and rebuild in another framework.
@@ -468,7 +502,8 @@ class ToolExecutor:
             return {
                 "tasks": [
                     {"id": t["id"], "text": t["text"],
-                     "status": "done" if t["done"] else "open"}
+                     "status": "dropped" if t.get("dropped") else ("done" if t["done"] else "open"),
+                     **({"reason": t["dropped"]} if t.get("dropped") else {})}
                     for t in self._tasks
                 ],
                 "open": len(self.open_tasks()),
@@ -577,10 +612,38 @@ class ToolExecutor:
                 if parts:
                     result["error"] = " ".join(parts)
             return result
+        if action == "drop":
+            # The honest exit for an item the user never asked for. Without
+            # it the end-turn gate leaves only a false 'done' (live 2026-09-17:
+            # "Added authentication capabilities" with nothing built).
+            task_id = args.get("id")
+            reason = str(args.get("reason") or "").strip()
+            if not isinstance(task_id, int) or not reason:
+                return {"error": (
+                    "action='drop' requires `id` (an integer) and a non-empty `reason` "
+                    "saying why the user did not ask for it."
+                )}
+            for t in self._tasks:
+                if t["id"] != task_id:
+                    continue
+                if t["done"]:
+                    return {"error": f"Task {task_id} is already closed."}
+                t["done"] = True
+                t["dropped"] = reason
+                logger.info("Checklist item %d dropped (%s): %r", task_id, reason, t["text"][:80])
+                return {"status": "dropped", "id": task_id, "open": len(self.open_tasks())}
+            return {"error": f"Unknown task id {task_id}. Use action='list' to see ids."}
         if action == "add":
             text = (args.get("text") or "").strip()
             if not text:
                 return {"error": "action='add' requires non-empty `text`."}
+            # Same item already listed (case, whitespace, trailing period
+            # aside): hand back its id rather than a second copy the model
+            # will later notice and work through again.
+            key = " ".join(text.lower().split()).rstrip(".")
+            for t in self._tasks:
+                if " ".join(t["text"].lower().split()).rstrip(".") == key:
+                    return {"status": "exists", "id": t["id"], "open": len(self.open_tasks())}
             new_id = max((t["id"] for t in self._tasks), default=0) + 1
             self._tasks.append({"id": new_id, "text": text, "done": False})
             return {"status": "added", "id": new_id, "open": len(self.open_tasks())}
@@ -1149,7 +1212,7 @@ class ToolExecutor:
 
     def _read_file(self, args: dict) -> dict:
         """
-        Read a file with optional line-based pagination.
+        Read a file with optional line-based pagination, numbered ``   7| code``.
 
         Supports offset (start line, 0-indexed) and limit (number of lines)
         for reading specific sections of large files without dumping
@@ -1176,13 +1239,20 @@ class ToolExecutor:
         if limit is not None:
             end = min(start + limit, total_lines)
 
-        selected = "\n".join(lines[start:end])
+        # Prefix every line with its TRUE file line number, in the same format
+        # the post-edit echo uses, so a region quoted straight out of this
+        # output lands on modify_file's line-number tier instead of a miss.
+        selected = "\n".join(
+            f"{n:>4}| {line}"
+            for n, line in enumerate(lines[start:end], start=start + 1)
+        )
 
-        # Truncate if still too large
+        # Truncate AFTER numbering, so the marker is not itself numbered.
         if len(selected) > MAX_FILE_READ:
             selected = self._truncate(selected, MAX_FILE_READ)
 
         result = {"content": selected}
+        self._known_paths.add(args["path"].replace("\\", "/").strip())
 
         # Include metadata so the LLM knows about pagination
         if offset > 0 or limit is not None:
@@ -1200,6 +1270,15 @@ class ToolExecutor:
     def _write_file(self, args: dict) -> dict:
         rel_path = args["path"].replace("\\", "/")
         path = self._safe_path(rel_path)
+
+        # Rewriting a file the model has never seen this run is a rewrite
+        # from memory - the edit that lost scaffold code (2026-09-17).
+        if os.path.isfile(path) and rel_path.strip() not in self._known_paths:
+            return {"error": (
+                f"{args['path']} exists and you have not read it this run. Call "
+                "read_file first, then modify_file for targeted changes (write_file "
+                "only if a full rewrite is really needed)."
+            )}
 
         # Edit-first guardrail (MODIFY runs only): every existing
         # non-trivial file is part of the user's working app — reject a
@@ -1254,8 +1333,22 @@ class ToolExecutor:
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
+        self._known_paths.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
         return result
+
+    def mark_known(self, paths) -> None:
+        """Record files whose contents the model was shown (scaffold snapshot)."""
+        for p in paths:
+            self._known_paths.add(str(p).replace("\\", "/").strip())
+
+    def consecutive_modify_misses(self, path: str) -> int:
+        """Failed modify_file attempts on ``path`` since its last successful edit."""
+        key = path.replace("\\", "/").strip()
+        for rel_path, misses in self._failed_modifies.items():
+            if rel_path.strip() == key:
+                return misses
+        return 0
 
     def _modify_file(self, args: dict) -> dict:
         """Targeted search-and-replace, with a flexible apply ladder.
@@ -1312,6 +1405,9 @@ class ToolExecutor:
                         "one place, or set replace_all=true only when every occurrence "
                         "must change."
                     ),
+                    # Generated routers are N identical stubs; naming the enclosing
+                    # def lets the retry pin one without guessing.
+                    "occurrences": _occurrence_locations(content, old_text),
                 }
             new_content = content.replace(
                 old_text, new_text, occurrences if replace_all else 1
@@ -1323,8 +1419,14 @@ class ToolExecutor:
         if new_content is None:
             misses = self._failed_modifies.get(rel_path, 0) + 1
             self._failed_modifies[rel_path] = misses
+            unread = (
+                f"You have not read {args['path']} this run, so old_text cannot be a "
+                "copy of it: call read_file (offset/limit for a region) and quote from "
+                "that. "
+                if rel_path.strip() not in self._known_paths else ""
+            )
             err: dict = {
-                "error": f"old_text not found in {args['path']}. "
+                "error": unread + f"old_text not found in {args['path']}. "
                          f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
                          f"Make sure old_text matches exactly including whitespace/indentation.",
             }
@@ -1347,14 +1449,21 @@ class ToolExecutor:
                 )
             return err
 
-        with open(path, "w", encoding="utf-8") as f:
+        # newline="\n": a text-mode write translates "\n" to os.linesep, which
+        # on a Windows host re-encodes the whole file as CRLF - and the React
+        # generator copies some templates verbatim out of a CRLF checkout.
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new_content)
         self._failed_modifies.pop(rel_path, None)
+        self._known_paths.add(rel_path.strip())
         result = {
             "status": "modified",
             "path": args["path"],
             "replacements": occurrences if replace_all and occurrences else 1,
         }
+        # What is on disk now, numbered: the model quotes from this next time
+        # instead of from its memory of the file.
+        result["snippet"] = _changed_region(content, new_content)
         if matched_by != "exact":
             # Surfaced for telemetry and as a nudge: old_text did not match
             # byte-for-byte, so the model's copy of the file is drifting.

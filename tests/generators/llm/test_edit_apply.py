@@ -236,4 +236,114 @@ def test_typed_execution_result_distinguishes_error_and_success(tmp_path):
 
     assert ok.status == "ok" and ok.succeeded is True
     assert error.status == "error" and error.succeeded is False
-    assert json.loads(ok.to_json())["content"] == "a = 1\n"
+    assert json.loads(ok.to_json())["content"] == "   1| a = 1\n   2| "
+
+
+# ----------------------------------------------------------------------
+# Blank-line runs. Generated scaffolds carry runs of 3-7 blank lines (Jinja
+# whitespace); models collapse them to one when quoting. Measured on a fresh
+# FastAPI scaffold, 2026-09-17: a quote spanning a run missed the ladder in
+# 23/25 windows of routers/bill.py and 13/13 of main_api.py - the single
+# largest reason modify_file "could not find" text the model had just read.
+# ----------------------------------------------------------------------
+
+def test_blank_line_run_quoted_as_one_blank_line_still_matches():
+    whole = "a = 1\n\n\n\nb = 2\n\n\n\n\n\n\nc = 3\n"
+    part = "a = 1\n\nb = 2\n"
+    res = replace_most_similar_chunk(whole, part, "a = 1\n\nB = 2\n")
+    assert res is not None
+    assert res.startswith("a = 1\n\nB = 2\n")
+    assert "b = 2" not in res
+    assert res.endswith("c = 3\n")          # everything after the span untouched
+
+
+def test_blank_line_run_quoted_as_two_blank_lines_still_matches():
+    whole = "def f():\n    pass\n\n\n\n\n@decorator\ndef g():\n    pass\n"
+    part = "    pass\n\n\n@decorator\n"
+    res = replace_most_similar_chunk(whole, part, "    return 1\n\n@decorator\n")
+    assert res == "def f():\n    return 1\n\n@decorator\ndef g():\n    pass\n"
+
+
+def test_omitting_the_blank_line_entirely_is_still_refused():
+    """Only the COUNT within a run is forgiven; every line the model quotes
+    must exist, so a quote with no blank line where the file has a run is
+    a genuine miss, not a match."""
+    whole = "a = 1\n\n\nb = 2\n"
+    assert replace_most_similar_chunk(whole, "a = 1\nb = 2\n", "x\n") is None
+
+
+def test_collapsed_blank_runs_never_match_different_code():
+    whole = "a = 1\n\n\n\nb = 2\n"
+    assert replace_most_similar_chunk(whole, "a = 1\n\nb = 3\n", "x\n") is None
+
+
+def test_modify_file_accepts_a_quote_with_collapsed_blank_lines(tmp_path):
+    """End to end through the tool: the shape of a generated 501 stub."""
+    stub = (
+        "    try:\n"
+        "        sys.stdout = captured_output\n"
+        "\n\n\n"
+        "        # Booking.cancel: no body in the model - be honest: 501\n"
+        "        raise HTTPException(status_code=501)\n"
+    )
+    (tmp_path / "booking_methods.py").write_text(stub, encoding="utf-8")
+    executor = ToolExecutor(workspace=str(tmp_path))
+    result = executor._modify_file({
+        "path": "booking_methods.py",
+        "old_text": (
+            "        sys.stdout = captured_output\n"
+            "\n"
+            "        # Booking.cancel: no body in the model - be honest: 501\n"
+            "        raise HTTPException(status_code=501)\n"
+        ),
+        "new_text": (
+            "        sys.stdout = captured_output\n"
+            "        booking.status = CANCELLED\n"
+            "        return {\"status\": \"cancelled\"}\n"
+        ),
+    })
+    assert result.get("status") == "modified", result
+    text = (tmp_path / "booking_methods.py").read_text(encoding="utf-8")
+    assert "booking.status = CANCELLED" in text
+    assert "status_code=501" not in text
+
+
+# ----------------------------------------------------------------------
+# read_file numbers its output ("   7| code"). The model pastes those lines
+# back verbatim; tier 5 strips the prefix. And a template copied verbatim out
+# of a Windows checkout reaches the workspace with CRLF.
+# ----------------------------------------------------------------------
+
+def test_a_quote_copied_with_read_file_line_numbers_still_applies(tmp_path):
+    _seed(tmp_path, "app.py", "def f():\n    a = 1\n    b = 2\n    return a + b\n")
+    ex = ToolExecutor(workspace=str(tmp_path))
+    numbered = _call(ex, "read_file", {"path": "app.py"})["content"].split("\n")
+    assert numbered[1] == "   2|     a = 1", numbered
+
+    res = _call(ex, "modify_file", {
+        "path": "app.py",
+        "old_text": "\n".join(numbered[1:3]),
+        "new_text": "    a = 10\n    b = 20",
+    })
+
+    assert res.get("status") == "modified", res
+    with open(os.path.join(str(tmp_path), "app.py"), encoding="utf-8") as f:
+        assert f.read() == "def f():\n    a = 10\n    b = 20\n    return a + b\n"
+
+
+def test_a_crlf_file_is_read_and_written_back_as_lf(tmp_path):
+    path = os.path.join(str(tmp_path), "InputComponents.tsx")
+    with open(path, "wb") as f:
+        f.write(b"export function Input() {\r\n  return null;\r\n}\r\n")
+    ex = ToolExecutor(workspace=str(tmp_path))
+
+    assert "\r" not in _call(ex, "read_file", {"path": "InputComponents.tsx"})["content"]
+    res = _call(ex, "modify_file", {
+        "path": "InputComponents.tsx",
+        "old_text": "export function Input() {\n  return null;",
+        "new_text": "export function Input() {\n  return <input />;",
+    })
+
+    assert res.get("status") == "modified", res
+    with open(path, "rb") as f:
+        assert b"\r" not in f.read()

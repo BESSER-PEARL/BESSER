@@ -61,18 +61,18 @@ class TestFileTools:
     def test_write_and_read(self, executor):
         _call(executor, "write_file", {"path": "test.py", "content": "x = 1"})
         result = _call(executor, "read_file", {"path": "test.py"})
-        assert result["content"] == "x = 1"
+        assert result["content"] == "   1| x = 1"
 
     def test_write_creates_subdirs(self, executor):
         _call(executor, "write_file", {"path": "deep/dir/file.py", "content": "y = 2"})
         result = _call(executor, "read_file", {"path": "deep/dir/file.py"})
-        assert result["content"] == "y = 2"
+        assert result["content"] == "   1| y = 2"
 
     def test_modify_file(self, executor):
         _call(executor, "write_file", {"path": "app.py", "content": "name = 'old'"})
         result = _call(executor, "modify_file", {"path": "app.py", "old_text": "'old'", "new_text": "'new'"})
         assert result["status"] == "modified"
-        assert _call(executor, "read_file", {"path": "app.py"})["content"] == "name = 'new'"
+        assert _call(executor, "read_file", {"path": "app.py"})["content"] == "   1| name = 'new'"
 
     def test_modify_not_found(self, executor):
         assert "error" in _call(executor, "modify_file", {"path": "nope.py", "old_text": "x", "new_text": "y"})
@@ -114,6 +114,31 @@ class TestFileTools:
         result = _call(executor, "read_file", {"path": "large.py"})
         assert result["total_lines"] == 300
         assert "hint" in result
+
+    def test_read_file_numbers_lines_from_one(self, executor):
+        """Numbered in the post-edit echo's format, so a quote copied out of a
+        read_file result is quotable straight back into modify_file."""
+        _call(executor, "write_file", {"path": "n.py", "content": "a = 1\nb = 2\nc = 3"})
+        result = _call(executor, "read_file", {"path": "n.py"})
+        assert result["content"] == "   1| a = 1\n   2| b = 2\n   3| c = 3"
+
+    def test_read_file_numbers_lines_from_the_offset(self, executor):
+        """offset=10 starts at line 11: the file's own numbers, not the slice's."""
+        content = "\n".join(f"line {i}" for i in range(100))
+        _call(executor, "write_file", {"path": "off.py", "content": content})
+        result = _call(executor, "read_file", {"path": "off.py", "offset": 10, "limit": 3})
+        assert result["content"].split("\n") == [
+            "  11| line 10", "  12| line 11", "  13| line 12",
+        ]
+
+    def test_truncation_marker_is_not_numbered_like_a_file_line(self, executor):
+        """The marker is appended after numbering, so it cannot be mistaken for
+        (or quoted back as) a line of the file."""
+        content = "\n".join("x" * 200 for _ in range(1000))
+        _call(executor, "write_file", {"path": "huge.py", "content": content})
+        result = _call(executor, "read_file", {"path": "huge.py"})
+        marker = result["content"].rsplit("\n", 1)[-1]
+        assert marker.startswith("... [truncated"), marker
 
     def test_search_in_files(self, executor):
         _call(executor, "write_file", {"path": "one.py", "content": "def hello():\n    pass"})
@@ -182,7 +207,7 @@ class TestPathNormalization:
             "content": "# puma config",
         })
         result = _call(executor, "read_file", {"path": "config/puma.rb"})
-        assert result["content"] == "# puma config"
+        assert result["content"] == "   1| # puma config"
         assert (tmp_path / "config" / "puma.rb").exists()
 
     def test_deeply_nested_write_works(self, executor, tmp_path):

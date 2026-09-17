@@ -12,6 +12,15 @@ similarity-scored:
 2. uniform leading-whitespace correction — the model reproduced the block at the
    wrong indent level, which is the single most common miss
 3. drop one spurious leading blank line (aider issue #25)
+4. blank-line runs compared by presence, not count - every non-blank line
+   still exact. Generated scaffolds carry runs of 3-7 blank lines (Jinja
+   whitespace) that models collapse when quoting; measured 2026-09-17 on a
+   fresh FastAPI scaffold, a quote spanning a run missed tiers 1-3 in 23/25
+   windows of routers/bill.py - the largest single cause of "old_text not
+   found" on text the model had just read.
+5. a uniform line-number prefix (``  12| ``, ``12:``, ``12<tab>``) on EVERY
+   non-blank quoted line is stripped - the quote was copied from numbered
+   output (modify_file's own post-edit snippet, ``cat -n``).
 
 Two of aider's tiers are deliberately NOT ported:
 
@@ -28,6 +37,8 @@ model the closest actual lines so its retry can copy them verbatim.
 """
 
 from __future__ import annotations
+
+import re
 
 from difflib import SequenceMatcher
 
@@ -112,6 +123,55 @@ def _perfect_or_whitespace(
     )
 
 
+def _collapse_blank_runs(lines: list[str]) -> tuple[list[str], list[int]]:
+    """``lines`` with each run of blank lines reduced to one ``"\\n"``, plus
+    the original index of every kept line."""
+    kept: list[str] = []
+    index: list[int] = []
+    prev_blank = False
+    for i, line in enumerate(lines):
+        blank = not line.strip()
+        if blank and prev_blank:
+            continue
+        kept.append("\n" if blank else line)
+        index.append(i)
+        prev_blank = blank
+    return kept, index
+
+
+def _replace_with_collapsed_blank_runs(
+    whole_lines: list[str], part_lines: list[str], replace_lines: list[str]
+) -> str | None:
+    """Tier 4: forgive only the COUNT of blank lines in a run. Every
+    non-blank line must match exactly and every blank the model quoted must
+    exist; the match maps back to the original span, so the run's extra
+    blank lines are consumed with it."""
+    if not any(not line.strip() for line in part_lines):
+        return None
+    whole_c, index = _collapse_blank_runs(whole_lines)
+    part_c, _ = _collapse_blank_runs(part_lines)
+    n = len(part_c)
+    for j in range(len(whole_c) - n + 1):
+        if whole_c[j:j + n] != part_c:
+            continue
+        start = index[j]
+        end = index[j + n] if j + n < len(index) else len(whole_lines)
+        return "".join(whole_lines[:start] + replace_lines + whole_lines[end:])
+    return None
+
+
+_NUMBERED = re.compile(r"^\s*\d+(?:\||:|\t) ?")
+
+
+def _strip_line_numbers(lines: list[str]) -> list[str] | None:
+    """Tier 5: drop a uniform line-number prefix when every non-blank line
+    carries one; ``None`` when the block is not numbered."""
+    content = [ln for ln in lines if ln.strip()]
+    if not content or not all(_NUMBERED.match(ln) for ln in content):
+        return None
+    return [_NUMBERED.sub("", ln, count=1) if ln.strip() else ln for ln in lines]
+
+
 def replace_most_similar_chunk(whole: str, part: str, replace: str) -> str | None:
     """Return the edited file text, or ``None`` when no tier matched.
 
@@ -131,6 +191,15 @@ def replace_most_similar_chunk(whole: str, part: str, replace: str) -> str | Non
         if res is not None:
             return res
 
+    res = _replace_with_collapsed_blank_runs(whole_lines, part_lines, replace_lines)
+    if res is not None:
+        return res
+
+    stripped = _strip_line_numbers(part_lines)
+    if stripped is not None and stripped != part_lines:
+        # new_text copied from the same numbered output loses its prefixes too.
+        stripped_replace = _strip_line_numbers(replace_lines) or replace_lines
+        return replace_most_similar_chunk(whole, "".join(stripped), "".join(stripped_replace))
     return None
 
 

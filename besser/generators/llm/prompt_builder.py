@@ -333,6 +333,32 @@ def build_system_prompt(
     #   Read the generated code before changing it and keep changes tightly scoped to the user's request.
     #   Do not rewrite generated files from scratch — make surgical modifications.{primary_banner}
     # ---------------------------------------------------------------------
+    # Rule 7 depends on whether a scaffold exists: a from-scratch project
+    # needs its standard project file; a scaffold already ships one, and
+    # rewriting it (or adding an unrequested README) is what Rule 1 forbids -
+    # both happened live on 2026-09-17 under the old unconditional wording.
+    has_scaffold = bool(scaffold_snapshot) or bool(
+        inventory and "produced 0 files" not in inventory
+    )
+    if has_scaffold:
+        hygiene_rule = (
+            "7. **Standard hygiene.** The scaffold already ships its project files\n"
+            "   (`package.json`, `requirements.txt`, ...): never recreate or rewrite\n"
+            "   them - add a dependency with `modify_file`. Do not add a `README.md`,\n"
+            "   `tests/`, `Dockerfile` or `.env.example` unless the user request\n"
+            "   mentions them."
+        )
+    else:
+        hygiene_rule = (
+            "7. **Standard hygiene.** Every project must ship the STANDARD project\n"
+            "   file for its target stack: `pyproject.toml` for Python, `pom.xml`\n"
+            "   for Java with Maven, `package.json` for Node / TypeScript,\n"
+            "   `Cargo.toml` for Rust, `go.mod` for Go, `Gemfile` for Ruby,\n"
+            "   `build.gradle.kts` for Kotlin / Gradle. Ship a brief `README.md`\n"
+            "   with a one-line summary + a runnable quick-start command. Only add\n"
+            "   `tests/`, `Dockerfile`, or `.env.example` when the user request\n"
+            "   mentions them."
+        )
     stable_header = f"""\
 You are an expert full-stack developer. You EXTEND an already-working codebase — you never rebuild it.
 
@@ -353,7 +379,8 @@ Make surgical modifications, not from-scratch rewrites.{primary_banner}
 
 ## Plan before you implement
 
-Before making any edits, briefly state your plan, then execute it in the same turn:
+State your plan ONCE, in your first turn, then execute it. Do not restate it
+before later edits - every preamble is a turn:
 1. What does the user request imply on top of the generated scaffold?
 2. Which generated files/components must change, and which new files are needed?
 3. In what order, to avoid broken imports or circular dependencies?
@@ -366,10 +393,11 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 
 1. **Keep changes scoped to the user request.** Don't rewrite generated files
    or add features the user didn't ask for.
-2. **Pick the right write tool.** Use `modify_file` for one or two
-   localised edits to an existing file. Use `write_file` for new files
-   and for any existing file that needs three or more changes — one
-   `write_file` is cheaper than a chain of `modify_file` calls.
+2. **Pick the right write tool.** Use `modify_file` for every change to an
+   existing file - several targeted edits to the same file are fine; issue
+   them together in the SAME turn. Use `write_file` only for new files, or
+   to replace a file you have just read in full.
+   Never rewrite a file from memory.
 3. **Model is truth.** Never invent entities not in the models above. If a
    detail is missing from the JSON, query it with the tools above before
    guessing.
@@ -383,24 +411,20 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 6. **OCL constraints must run.** For every constraint listed under the
    class, emit a runtime check in the language idiomatic to the target
    (Pydantic `@field_validator`, Zod refine, SQL CHECK, etc.).
-7. **Standard hygiene.** Every project must ship the STANDARD project
-   file for its target stack: `pyproject.toml` for Python, `pom.xml`
-   for Java with Maven, `package.json` for Node / TypeScript,
-   `Cargo.toml` for Rust, `go.mod` for Go, `Gemfile` for Ruby,
-   `build.gradle.kts` for Kotlin / Gradle. Ship a brief `README.md`
-   with a one-line summary + a runnable quick-start command. Only add
-   `tests/`, `Dockerfile`, or `.env.example` when the user request
-   mentions them.
+{hygiene_rule}
 8. **Read before modify.** Read the relevant section of a file before editing it.
    Use offset/limit for large files (>200 lines).
 9. **Be efficient. Batch tool calls in one turn.** Issue every
    independent tool call you can in the SAME turn — read multiple files
    in one turn, edit multiple files in one turn. When a single file
-   needs three or more changes, prefer one `write_file` over a chain of
-   `modify_file` calls. Each turn is a separate LLM round-trip, so
+   needs several changes, issue the `modify_file` calls together in
+   one turn. Each turn is a separate LLM round-trip, so
    sequential single edits multiply cost; the runner executes batched
    tool calls in parallel.
-10. **Don't re-read files** you already read. Remember what's in them.
+10. **Re-read only when it matters.** Don't re-read a file you have not
+    changed since you read it. After you edit a file, or after your history
+    was compacted, read it again before quoting from it - the copy in your
+    instructions and your memory of it are stale.
 11. **Check your output against the model before finishing.** Before
     declaring done, verify that every Class's declared attributes and
     methods appear in your output (under whatever name the target
@@ -605,8 +629,9 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
         "This list is loaded into the `task_list` tool. Work through it "
         "and mark each item done with task_list(action='done', id=N) as "
         "you complete it — the run does NOT finish while items are open. "
-        "If an item is wrong or out of scope for the user request, mark "
-        "it done with a brief reason; track newly discovered work with "
+        "If an item is wrong or out of scope for the user request, close "
+        "it with task_list(action='drop', id=N, reason=...) - never mark "
+        "undone work done; track newly discovered work with "
         "task_list(action='add').\n\n"
         f"{bullets}\n"
     )
@@ -877,6 +902,37 @@ def build_scaffold_snapshot(
     return "\n".join(sections)
 
 
+_SYMBOL_PATTERNS = {
+    ".py": re.compile(r"^(?:async\s+)?(?:def|class)\s+(\w+)", re.M),
+    ".js": re.compile(
+        r"^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let)\s+(\w+)", re.M
+    ),
+}
+for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
+    _SYMBOL_PATTERNS[_ext] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_CAP = 10
+
+
+def _symbol_map(path: str) -> str:
+    """``name@line`` for each top-level def/class/export, capped; ``""`` for
+    non-code files or on any read problem."""
+    pattern = _SYMBOL_PATTERNS.get(os.path.splitext(path)[1].lower())
+    if pattern is None:
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    found = [
+        f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}"
+        for m in pattern.finditer(text)
+    ]
+    if len(found) > _SYMBOL_CAP:
+        return ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
+    return ", ".join(found)
+
+
 def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     """
     Describe what the generator produced -- for the LLM's context.
@@ -892,13 +948,22 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     Returns:
         A human-readable inventory string.
     """
-    # List files
+    # List files, each with its top-level symbols and their line numbers.
+    # The scaffold is no longer pasted into the prompt, so this map is how
+    # the model finds the region it needs and reads it with read_file
+    # offset/limit instead of the whole file (aider's repo map, kept to
+    # top-level names: a few hundred tokens).
     files = []
     for root, _, filenames in os.walk(output_dir):
         for f in filenames:
-            rel = os.path.relpath(os.path.join(root, f), output_dir)
-            size = os.path.getsize(os.path.join(root, f))
-            files.append(f"{rel.replace(chr(92), '/')} ({size:,} bytes)")
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, output_dir)
+            size = os.path.getsize(full)
+            symbols = _symbol_map(full)
+            files.append(
+                f"{rel.replace(chr(92), '/')} ({size:,} bytes)"
+                + (f": {symbols}" if symbols else "")
+            )
 
     lines = [f"Generator `{generator_name}` produced {len(files)} files:"]
     for f in sorted(files)[:30]:

@@ -43,6 +43,7 @@ from besser.generators.llm.compaction import (
     maybe_compact,
     _summarize_messages,
 )
+from besser.generators.llm.user_request import user_request
 from besser.generators.llm.history_eviction import evict_stale_file_bodies
 from besser.generators.llm.checkpoint import (
     CHECKPOINT_FILENAME,
@@ -1184,6 +1185,7 @@ class LLMOrchestrator:
         )
         self._trace.write(
             EVENT_RUN_START,
+            # bounded: trace display only, never a decision input
             instructions=instructions[:500],
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
@@ -1475,6 +1477,7 @@ class LLMOrchestrator:
         self._trace.write(
             EVENT_RUN_START,
             mode="modify",
+            # bounded: trace display only, never a decision input
             instructions=instructions[:500],
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
@@ -1972,9 +1975,13 @@ class LLMOrchestrator:
                 "required": ["new_classes"],
             },
         }
+        request = user_request(
+            instructions, excerpt=8_000,
+            reason="one-shot planning call; same budget as the gap analyser",
+        )
         prompt = (
             "An existing app is being MODIFIED with this instruction:\n\n"
-            f"'{instructions[:1000]}'\n\n"
+            f"'{request}'\n\n"
             "The app's current domain model has these classes: "
             f"{', '.join(existing) if existing else '(none)'}.\n\n"
             "List ONLY genuinely NEW domain entities the MODEL should gain "
@@ -2313,7 +2320,7 @@ class LLMOrchestrator:
             ]
 
             prompt = (
-                f"User request: {instructions[:500]}\n\n"
+                f"User request: {user_request(instructions)}\n\n"
                 "Available editor models:\n"
                 + "\n".join(f"  • {line}" for line in available_models) + "\n\n"
                 "Available BESSER generators:\n"
@@ -3086,9 +3093,11 @@ class LLMOrchestrator:
                             "are still OPEN:\n"
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
-                            "complete or not applicable, mark it with "
-                            "task_list(action='done', id=N). End the turn "
-                            "only when every item is closed."
+                            "complete, mark it with task_list(action='done', "
+                            "id=N). If the user did not ask for it, close it "
+                            "honestly with task_list(action='drop', id=N, "
+                            "reason=...) - never mark undone work done. End "
+                            "the turn only when every item is closed."
                         )}],
                     })
                     continue
@@ -5154,17 +5163,25 @@ class LLMOrchestrator:
         concrete bugs (not user requests). ``gap_tasks`` is the optional
         focused checklist produced by the cheap gap-analyzer LLM call.
         """
-        # Inline small scaffold files so the LLM doesn't burn its first
-        # turns on read_file calls. Per-run constant, so it caches like
-        # the rest of the prompt. Disable via BESSER_LLM_INLINE_SCAFFOLD=0.
+        # Optionally inline small scaffold files (BESSER_LLM_INLINE_SCAFFOLD=1)
+        # to save the first read_file turns. OFF by default since 2026-09-17:
+        # the copy is a per-run constant, so after the model edits a file it is
+        # stale, and quoting from it is what produced the modify_file misses.
+        # Like other coding agents, file text now reaches the model only
+        # through read_file, which is current; reads batch four to a turn.
         scaffold_snapshot = ""
         if (
-            os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "1").lower()
-            not in ("0", "false")
+            os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "0").lower()
+            in ("1", "true")
             and (self._generator_used or self._phase0_5_files)
         ):
             try:
                 scaffold_snapshot = build_scaffold_snapshot(self.output_dir)
+                # Inlined files count as read: a miss on any other file is a
+                # quote from memory and the executor says so.
+                self.executor.mark_known(
+                    _re.findall(r"^### `(.+?)`$", scaffold_snapshot, _re.M)
+                )
             except Exception:
                 logger.debug("Scaffold snapshot build failed", exc_info=True)
 
@@ -5328,7 +5345,9 @@ class LLMOrchestrator:
 
         Fires when the tail of the recent write-tool history is
         ``_PER_FILE_MODIFY_THRESHOLD`` consecutive ``modify_file`` calls
-        on the SAME (normalised) path. Any other write-class tool in
+        on the SAME (normalised) path that ALL failed to match (the
+        executor resets its miss count on a successful edit, so N good
+        edits to one file never fire). Any other write-class tool in
         the window — ``write_file``, ``run_command``, ``delete_file``,
         etc. — breaks the streak because its slot in the buffer has
         ``path=None`` (or a different path), so the uniqueness check
@@ -5352,6 +5371,9 @@ class LLMOrchestrator:
         if path is None:
             # modify_file without a parseable path argument — skip.
             return None
+        if self.executor.consecutive_modify_misses(path) < n:
+            # Successful edits are ordinary work on one file, not a flail.
+            return None
         if path == self._last_modify_warning_path:
             # Already warned about this streak; wait for a real change
             # of file or tool before firing again.
@@ -5359,23 +5381,21 @@ class LLMOrchestrator:
         return path
 
     def _build_modify_loop_reminder(self, path: str) -> str:
-        """High-salience system-style reminder text for the per-file
-        modify-streak guard. Worded to push the LLM toward a decisive
-        action (rewrite-or-quit) instead of continuing to dribble out
-        single-line edits.
+        """High-salience system-style reminder for a streak of failed
+        modify_file matches on one path: read, then copy verbatim. It must
+        never suggest a rewrite - the old "call write_file" wording turned
+        targeted edits into whole-file rewrites of scaffold code (2026-09-17).
         """
         n = self._PER_FILE_MODIFY_THRESHOLD
         return (
-            f"<system-reminder>You've called modify_file on `{path}` "
-            f"{n} times in a row. Stop incrementally editing this file. "
-            "EITHER call write_file with the complete new contents for "
-            f"`{path}` in a single call (generator-created files become "
-            "rewritable after repeated modify_file edits — an earlier "
-            "write_file rejection no longer applies), OR stop modifying "
-            "this file and move on to other work (or call end_turn / "
-            "produce your final response if the file is satisfactory). "
-            "Do NOT issue another modify_file on this same path."
-            "</system-reminder>"
+            f"<system-reminder>Your last {n} modify_file calls on `{path}` "
+            "all failed to match: the file on disk is not what you are "
+            "quoting from (the scaffold snapshot in your instructions and "
+            "your memory of the file both go stale after edits). Do NOT "
+            f"rewrite `{path}` from memory. Call read_file on it (offset/"
+            "limit for the region), copy old_text verbatim from that "
+            "result, then retry modify_file once. If the change is already "
+            "present, move on.</system-reminder>"
         )
 
     # ==================================================================
@@ -5414,6 +5434,7 @@ class LLMOrchestrator:
             and isinstance((tc.get("input") or {}).get("path"), str)
         })
         return [{
+            # bounded: recipe history display only
             "instructions": instructions[:300],
             "saved_at": "",
             "mode": "create",
@@ -5519,6 +5540,12 @@ class LLMOrchestrator:
             # ceiling was raised (from-scratch or modify/fix run).
             # Cost/runtime caps remain caller-authorised.
             "adaptive_budget_applied": self._adaptive_budget_applied,
+            # Items the model declined as not requested (task_list drop) with
+            # its stated reasons: the reviewer sees what was NOT built and why.
+            "dropped_tasks": [
+                {"id": t["id"], "text": t["text"], "reason": t["dropped"]}
+                for t in getattr(self.executor, "_tasks", []) if t.get("dropped")
+            ],
             "usage": self.client.usage.summary(),
             "validation_issues": [
                 {"severity": i.severity, "message": i.message}

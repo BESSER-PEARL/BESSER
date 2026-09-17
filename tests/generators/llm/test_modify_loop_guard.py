@@ -1,10 +1,13 @@
 """Tests for the per-file modify_file streak guard.
 
 When the LLM makes N consecutive ``modify_file`` calls on the same path
-the orchestrator must inject a high-salience reminder into the
-conversation BEFORE the next LLM call. The reminder pushes the LLM
-toward either rewriting the file in one shot (``write_file``) or
-moving on — instead of dribbling out one-line edits.
+that ALL fail to match, the orchestrator must inject a high-salience
+reminder into the conversation BEFORE the next LLM call, telling it to
+read the file and copy ``old_text`` verbatim - never to rewrite the file
+from memory. N successful edits to one file are healthy (five methods in
+one router file) and must not trigger it: the live run of 2026-09-17
+showed the old "call write_file" reminder firing on exactly that and
+turning targeted edits into whole-file rewrites of scaffold code.
 
 This guard is separate from the legacy ``_is_stuck`` heuristic, which
 fires on N uniform tool calls regardless of arguments and only injects
@@ -78,78 +81,81 @@ def _extract_text_blocks(messages: list[dict]) -> list[str]:
 # ======================================================================
 
 
+def _streak_turn4_text(simple_model, tmp_path, target: str, old_text) -> str:
+    """Run three modify_file turns on ``target`` (``old_text(n)`` is the
+    text quoted on turn n) and return the user-visible text the model is
+    shown on turn 4 - where a streak reminder, if any, has been appended."""
+    _seed_file(str(tmp_path), target, content="line1\nline2\nline3\n")
+    turn_counter = {"n": 0}
+    captured: dict[str, list[dict]] = {}
+
+    class StreakClient:
+        model = "mock-model"
+        usage = UsageTracker("mock-model")
+
+        def chat(self, system, messages, tools):
+            turn_counter["n"] += 1
+            if turn_counter["n"] == 4:
+                captured["turn4"] = [dict(m) for m in messages]
+                return {"stop_reason": "end_turn", "content": [
+                    MockBlock("text", text="Stopping."),
+                ]}
+            return {"stop_reason": "tool_use", "content": [
+                MockBlock(
+                    "tool_use",
+                    name="modify_file",
+                    input={
+                        "path": target,
+                        "old_text": old_text(turn_counter["n"]),
+                        "new_text": f"updated{turn_counter['n']}",
+                    },
+                    id=f"c{turn_counter['n']}",
+                ),
+            ]}
+
+    LLMOrchestrator(
+        llm_client=StreakClient(),
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=10,
+    ).run("Build an app")
+    assert "turn4" in captured, (
+        "Mock client never observed a 4th turn — the orchestrator ended Phase 2 early."
+    )
+    return "\n".join(_extract_text_blocks(captured["turn4"]))
+
+
 class TestPerFileModifyGuard:
 
-    def test_three_consecutive_modify_triggers_reminder(self, simple_model, tmp_path):
-        """N=3 consecutive modify_file calls on the SAME path should
-        inject a system-style reminder mentioning ``write_file`` and
-        the file path into the conversation before turn 4."""
-        # Seed the file so modify_file's old_text substitution is
-        # plausible (the executor will still error on missing
-        # old_text, but it captures the path for the guard).
+    def test_three_successful_edits_to_one_file_do_not_trigger(self, simple_model, tmp_path):
+        """Three edits that each match and apply are ordinary work on one
+        file, not a flail. Live 2026-09-17: the reminder fired here and
+        ordered a whole-file rewrite of a router the model was editing
+        method by method."""
+        joined = _streak_turn4_text(
+            simple_model, tmp_path, "app.py", old_text=lambda n: f"line{n}",
+        )
+        assert "<system-reminder>" not in joined, joined
+
+    def test_three_misses_on_one_file_trigger_a_read_and_copy_reminder(
+        self, simple_model, tmp_path,
+    ):
+        """N=3 consecutive modify_file calls on the SAME path that all
+        fail to match inject a system-style reminder before turn 4: name
+        the path, tell the model to read the file and copy old_text
+        verbatim, and never suggest rewriting it from memory."""
         target = "app.py"
-        _seed_file(str(tmp_path), target, content="line1\nline2\nline3\n")
-
-        turn_counter = {"n": 0}
-        captured_messages: dict[str, list[dict]] = {}
-
-        class StreakClient:
-            model = "mock-model"
-            usage = UsageTracker("mock-model")
-
-            def chat(self, system, messages, tools):
-                turn_counter["n"] += 1
-                # Snapshot the messages that the orchestrator sent in
-                # on turn 4 (i.e. AFTER three modify_file rounds have
-                # completed). At that point the reminder should
-                # already be appended.
-                if turn_counter["n"] == 4:
-                    captured_messages["turn4"] = [dict(m) for m in messages]
-                    return {"stop_reason": "end_turn", "content": [
-                        MockBlock("text", text="Stopping."),
-                    ]}
-                # Turns 1, 2, 3: emit a modify_file on the SAME path.
-                # The actual edit will probably fail (old_text is
-                # arbitrary) but the tool_executor records the call
-                # and the orchestrator counts it. Errors-as-strings
-                # are exactly the shape ``_is_stuck`` expects to
-                # tolerate.
-                return {"stop_reason": "tool_use", "content": [
-                    MockBlock(
-                        "tool_use",
-                        name="modify_file",
-                        input={
-                            "path": target,
-                            "old_text": f"line{turn_counter['n']}",
-                            "new_text": f"updated{turn_counter['n']}",
-                        },
-                        id=f"c{turn_counter['n']}",
-                    ),
-                ]}
-
-        orchestrator = LLMOrchestrator(
-            llm_client=StreakClient(),
-            domain_model=simple_model,
-            output_dir=str(tmp_path),
-            max_turns=10,
-        )
-        orchestrator.run("Build an app")
-
-        assert "turn4" in captured_messages, (
-            "Mock client never observed a 4th turn — the orchestrator "
-            "ended Phase 2 early."
-        )
-        texts = _extract_text_blocks(captured_messages["turn4"])
-        joined = "\n".join(texts)
-        assert "write_file" in joined, (
-            f"Reminder did not mention write_file. Texts: {texts!r}"
-        )
-        assert target in joined, (
-            f"Reminder did not mention path {target!r}. Texts: {texts!r}"
+        joined = _streak_turn4_text(
+            simple_model, tmp_path, target, old_text=lambda n: f"nope{n}",
         )
         # The reminder is tagged with a system-reminder marker so the
         # LLM treats it as a meta-instruction, not user content.
-        assert "<system-reminder>" in joined
+        assert "<system-reminder>" in joined, joined
+        assert target in joined
+        assert "read_file" in joined and "verbatim" in joined, joined
+        # Never points the model at a rewrite - that is what lost scaffold code.
+        assert "write_file" not in joined, joined
+        assert "complete new contents" not in joined, joined
 
     def test_reminder_does_not_fire_when_interleaved_with_other_tool(
         self, simple_model, tmp_path,

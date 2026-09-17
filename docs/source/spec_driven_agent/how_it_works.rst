@@ -129,9 +129,11 @@ reading a trace and wondering why a run did what it did.
        per-run total that does NOT reset after a clean turn, so it is sized
        against the whole turn budget, not against a single bad patch.
    * - Per-file modify loop
-     - Three consecutive ``modify_file`` calls on the same path inject a
-       reminder to either write the whole file at once or move on. It fires
-       once per path, and any other tool in between breaks the streak.
+     - Three consecutive ``modify_file`` calls on the same path that all
+       fail to match inject a reminder to read the file and copy
+       ``old_text`` verbatim, never to rewrite it from memory. Successful
+       edits do not count; it fires once per path, and any other tool in
+       between breaks the streak.
    * - Checklist gate
      - The run does not finish while ``task_list`` items are open: an
        ``end_turn`` with open items is sent back with the list, twice — four
@@ -139,7 +141,9 @@ reading a trace and wondering why a run did what it did.
        before they are accepted (the "build the frontend" item checks that
        frontend files exist); an item whose check fails three times is recorded
        as *blocked* and stops holding the gate, so a task the model cannot
-       satisfy can no longer livelock the run.
+       satisfy can no longer livelock the run. An item the user did not ask
+       for is closed honestly with ``task_list(action='drop', id=N,
+       reason=...)`` rather than marked done.
    * - Per-write diagnostics
      - Every file the model writes is parsed immediately — ``ast`` plus
        pyflakes' undefined-name checks for Python, and the respective parser

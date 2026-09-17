@@ -84,9 +84,12 @@ Feature flags
   ``.besser_checkpoint.json`` after every tool-use turn.
 - ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (on) -- Parse every file the LLM writes
   immediately and feed findings back in the same tool result.
-- ``BESSER_LLM_INLINE_SCAFFOLD`` (on; set to ``0`` / ``false`` to disable) --
-  Inline the small Phase-1 scaffold files into the Phase-2 prompt so the LLM
-  does not burn its first turns on ``read_file`` calls.
+- ``BESSER_LLM_INLINE_SCAFFOLD`` (**off**; set to ``1`` to enable) -- Inline
+  the small Phase-1 scaffold files into the Phase-2 prompt to save the first
+  ``read_file`` turns. Off by default: the inlined copy never changes during
+  the run, so once the model has edited a file the copy is stale and quoting
+  from it makes ``modify_file`` miss. With it off, file text reaches the model
+  only through ``read_file`` (always current; several reads batch in one turn).
 - ``BESSER_LLM_ROLLING_CACHE`` (**off**; set to ``1`` to enable) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path

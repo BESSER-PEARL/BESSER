@@ -94,7 +94,7 @@ services:
       - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
       # Budgets
       - BESSER_LLM_DEFAULT_MAX_COST_USD=${BESSER_LLM_DEFAULT_MAX_COST_USD:-5.0}
-      - BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS=${BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS:-1200}
+      - BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS=${BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS:-2400}
       - BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP=${BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP:-2400}
       # LLM credentials -- the only secrets this service is given.
       - BESSER_FREE_LLM_BASE_URL=${BESSER_FREE_LLM_BASE_URL:-}
@@ -120,6 +120,10 @@ services:
       - BESSER_SPONSORED_LLM_BASE_URL=${BESSER_SPONSORED_LLM_BASE_URL:-}
       - BESSER_SPONSORED_LLM_TOKEN=${BESSER_SPONSORED_LLM_TOKEN:-}
       - BESSER_SPONSORED_LLM_MODEL=${BESSER_SPONSORED_LLM_MODEL:-}
+      # Secret authorising the sponsored tier (?demo= links). The gate runs
+      # where the run is started, which is THIS container -- and it fails
+      # closed, so omitting it here 403s every demo run.
+      - BESSER_DEMO_TOKEN=${BESSER_DEMO_TOKEN:-}
     volumes:
       - smartgen_workspace:/workspace
       - ./telemetry-logs:/app/telemetry

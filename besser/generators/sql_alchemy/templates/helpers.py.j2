@@ -49,12 +49,17 @@
 {%- endmacro %}
 
 {# ---------- Relationship Renderer ---------- #}
-{%- macro render_relationship(class, end, ns, ids, fkeys) %}
+{%- macro render_relationship(class, end, ns, ids, fkeys, deferred_fks=[]) %}
     {%- set other_end = (end.owner.ends | reject('equalto', end) | list)[0] %}
     {%- set is_many = end.multiplicity.max > 1 %}
     {%- set is_secondary = other_end.multiplicity.max > 1 %}
     {%- set fk_needed = end.owner.name in fkeys %}
     {%- set secondary = end.owner.name.lower() if is_secondary else None %}
+    {#- post_update makes SQLAlchemy issue the link as a second UPDATE after
+        both rows exist. Without it a deferred FK is still unwritable: the
+        flush order that the nullable column made possible is the very thing
+        a single INSERT with the FK set would undo. #}
+    {%- set is_deferred = end.owner.name in deferred_fks %}
     {%- if fk_needed %}
         {%- set fk_expr = fkeys[end.owner.name][0] + "." + fkeys[end.owner.name][1] + "_id" %}
     {%- else %}
@@ -63,11 +68,11 @@
     {%- if is_many -%}
 {{class.name}}.{{end.name}}: Mapped_[List_["{{end.type.name}}"]] = relationship("{{end.type.name}}"
         {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
-        {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %})
+        {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %}{% if is_deferred %}, post_update=True{% endif %})
     {%- else -%}
 {#- uselist is spelled out because these relationships are assigned after the class
     body: SQLAlchemy never sees the Mapped_["X"] annotation and would otherwise infer
     a collection from the foreign-key direction, turning a 0..1 end into a list. #}
-{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %})
+{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %})
     {%- endif -%}
 {%- endmacro %}

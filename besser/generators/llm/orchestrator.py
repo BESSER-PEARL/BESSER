@@ -354,21 +354,128 @@ def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -
     return detail[:_TOOL_DETAIL_MAX_CHARS]
 
 
-# Third-party / stdlib roots a generated Python app legitimately imports.
-# Anything else is expected to be a module the app itself ships.
+# The stdlib half of the allowlist, taken from the interpreter rather than
+# hand-maintained: the hand-written set was missing argparse, sqlite3, glob,
+# zipfile and ~180 others, each of which would be reported as "this app
+# cannot start".
+_STDLIB_ROOTS = frozenset(getattr(sys, "stdlib_module_names", ())) | {
+    "typing_extensions",  # not stdlib, but ubiquitous and always installed
+}
+
+# Third-party roots a generated Python app legitimately imports. This is a
+# fallback: the authoritative source is the app's own manifest (see
+# ``_declared_dependency_roots``). Kept because a generator can emit an
+# import before the manifest entry, and a missing manifest should not turn
+# every framework import into a blocker.
+#
+# Every non-FastAPI family used to be absent here, which is why a 2-class
+# Django app whose requirements.txt declares Django was reported with 10
+# blockers and "cannot start" (2026-09-17). All 20 generators were affected.
 _EXTERNAL_IMPORT_ROOTS = frozenset({
-    "fastapi", "pydantic", "pydantic_settings", "sqlalchemy", "starlette",
-    "uvicorn", "alembic", "psycopg2", "pymysql", "aiosqlite", "httpx",
-    "requests", "jose", "jwt", "passlib", "bcrypt", "dotenv", "multipart",
-    "email_validator", "pytest", "unittest", "typing", "typing_extensions",
-    "datetime", "enum", "os", "sys", "re", "json", "logging", "time", "uuid",
-    "pathlib", "decimal", "collections", "contextlib", "functools", "math",
-    "random", "string", "itertools", "abc", "dataclasses", "asyncio",
-    "secrets", "hashlib", "hmac", "base64", "email", "io", "csv", "tempfile",
-    "shutil", "traceback", "types", "copy", "warnings", "threading",
-    "subprocess", "socket", "urllib", "http", "struct", "binascii", "operator",
-    "statistics", "textwrap", "inspect", "importlib",
+    # FastAPI / Starlette
+    "fastapi", "pydantic", "pydantic_settings", "pydantic_core", "sqlalchemy",
+    "starlette", "uvicorn", "alembic", "sqlmodel", "databases", "anyio",
+    "sniffio", "greenlet", "mako",
+    # Django
+    "django", "rest_framework", "corsheaders", "django_filters", "drf_yasg",
+    "drf_spectacular", "django_extensions", "storages", "environ",
+    # Flask
+    "flask", "flask_sqlalchemy", "flask_cors", "flask_migrate",
+    "flask_login", "flask_jwt_extended", "flask_restful", "werkzeug",
+    "jinja2", "markupsafe", "itsdangerous", "click", "marshmallow",
+    # Drivers / infra
+    "psycopg", "psycopg2", "pymysql", "mysql", "aiosqlite", "asyncpg",
+    "pymongo", "motor", "redis", "celery", "boto3", "botocore", "gunicorn",
+    # HTTP / auth / serialisation
+    "httpx", "requests", "aiohttp", "websockets", "urllib3", "certifi",
+    "idna", "charset_normalizer", "jose", "jwt", "passlib", "bcrypt",
+    "argon2", "cryptography", "nacl", "dotenv", "multipart",
+    "email_validator", "yaml", "toml", "orjson", "ujson", "jsonschema",
+    "dateutil", "pytz", "attr", "attrs",
+    # Common utility packages
+    "loguru", "structlog", "rich", "typer", "tenacity", "cachetools",
+    "slugify", "phonenumbers", "validators", "shortuuid", "ulid", "qrcode",
+    "PIL", "openpyxl", "reportlab", "markdown", "bleach", "babel",
+    "numpy", "pandas", "openai", "anthropic", "stripe", "sentry_sdk",
+    "prometheus_client", "apscheduler",
+    # Test tooling
+    "pytest", "pytest_asyncio", "faker", "factory", "freezegun", "responses",
+    "httpretty", "hypothesis",
 })
+
+# Distribution name → import root, for the cases where they differ. The
+# default rule (lowercase, '-' → '_') handles everything not listed.
+_DIST_TO_IMPORT_ROOT = {
+    "djangorestframework": "rest_framework",
+    "django-cors-headers": "corsheaders",
+    "django-environ": "environ",
+    "python-jose": "jose",
+    "pyjwt": "jwt",
+    "python-dotenv": "dotenv",
+    "python-multipart": "multipart",
+    "python-slugify": "slugify",
+    "psycopg2-binary": "psycopg2",
+    "pillow": "PIL",
+    "pyyaml": "yaml",
+    "beautifulsoup4": "bs4",
+    "opencv-python": "cv2",
+    "scikit-learn": "sklearn",
+    "python-dateutil": "dateutil",
+    "sentry-sdk": "sentry_sdk",
+    "mysqlclient": "MySQLdb",
+    "python-docx": "docx",
+    "attrs": "attr",
+}
+
+_REQUIREMENT_NAME_RE = _re.compile(r"^\s*([A-Za-z0-9._-]+)")
+
+
+def _declared_dependency_roots(output_dir: str) -> set[str]:
+    """Import roots the app's own manifest declares.
+
+    Reading the manifest is what makes this check work for all 20
+    generators instead of only the stack whose packages someone
+    remembered to hardcode. A dependency the app declares is a
+    dependency the app has.
+    """
+    roots: set[str] = set()
+
+    def _add(dist: str) -> None:
+        dist = dist.strip().strip('"\'').lower()
+        if not dist:
+            return
+        roots.add(_DIST_TO_IMPORT_ROOT.get(dist, dist.replace("-", "_")))
+
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = [
+            d for d in dirs
+            if d not in ("node_modules", _SNAPSHOT_DIR, "__pycache__", ".git")
+        ]
+        for name in files:
+            low = name.lower()
+            path = os.path.join(root, name)
+            try:
+                if low.startswith("requirements") and low.endswith(".txt"):
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            line = line.split("#", 1)[0].strip()
+                            if not line or line.startswith("-"):
+                                continue
+                            match = _REQUIREMENT_NAME_RE.match(line)
+                            if match:
+                                _add(match.group(1))
+                elif low in ("pyproject.toml", "pipfile", "setup.py", "setup.cfg"):
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        text = fh.read()
+                    # Deliberately loose: any quoted requirement-looking
+                    # token. A false extra allowlist entry costs nothing;
+                    # a missed one costs a spurious blocker.
+                    for token in _re.findall(r"[\"']([A-Za-z0-9._-]{2,})"
+                                             r"[><=!~\s\"']", text):
+                        _add(token)
+            except OSError:
+                continue
+    return roots
 
 
 def _unresolvable_local_imports(output_dir: str) -> list[str]:
@@ -409,6 +516,18 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
         )
     package_dirs = set(provided)
 
+    # A directory holding .py files is an importable package FROM ITS
+    # PARENT, not only as a sibling of the importing file. Without this,
+    # `from core.config import settings` in backend/routers/x.py was
+    # reported missing even though backend/core/ exists and backend/ is
+    # the service's cwd.
+    for directory in package_dirs:
+        parent = os.path.dirname(directory)
+        if parent and parent != directory:
+            provided.setdefault(parent, set()).add(os.path.basename(directory))
+
+    declared = _declared_dependency_roots(output_dir)
+
     problems: list[str] = []
     for path in py_files:
         try:
@@ -442,7 +561,10 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
 
         rel = os.path.relpath(path, output_dir).replace("\\", "/")
         for root_name in sorted(set(roots)):
-            if root_name in _EXTERNAL_IMPORT_ROOTS or root_name in reachable:
+            if (root_name in _EXTERNAL_IMPORT_ROOTS
+                    or root_name in _STDLIB_ROOTS
+                    or root_name in declared
+                    or root_name in reachable):
                 continue
             if any(os.path.basename(d) == root_name and os.path.dirname(d) ==
                    os.path.dirname(path) for d in package_dirs):
@@ -4001,8 +4123,16 @@ class LLMOrchestrator:
             f"Remove the rewrite and extend the existing {family} app."
         ]
 
+    # "web application" was the miss that mattered: the trailing \b could
+    # not match after "app" when the word continued into "lication", so the
+    # single most natural phrasing of the request slipped past and 9 of 10
+    # sweep runs shipped backend-only while reporting success. Every
+    # alternative here has to tolerate the word being spelled out.
+    # Deliberately NOT included: "spa" — a hotel spec has one.
     _WEBAPP_ASK_RE = _re.compile(
-        r"\b(web ?app|frontend|front-end|website|\bui\b|user interface)\b")
+        r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
+        r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
+        r"user interface|dashboard|portal)\b")
 
     def _has_frontend_files(self) -> bool:
         for root, dirs, files in os.walk(self.output_dir):
@@ -4382,11 +4512,61 @@ class LLMOrchestrator:
                 tail = detail[-1][:200] if detail else f"exit code {result.returncode}"
                 issues.append(f"tsc [{rel}]: {tail}")
                 continue
+            deps_installed = os.path.isdir(os.path.join(project_dir, "node_modules"))
+            if not deps_installed:
+                err_lines = self._demote_tsc_without_deps(err_lines, rel, issues)
+                if not err_lines:
+                    continue
             for line in err_lines[:10]:
                 issues.append(f"tsc [{rel}]: {line}")
             if len(err_lines) > 10:
                 issues.append(f"tsc [{rel}]: (+{len(err_lines) - 10} more errors truncated)")
         return issues
+
+    # A relative import names a file the run was supposed to write; a bare
+    # one names a package. Only the first is checkable without an install.
+    _TSC_MISSING_MODULE_RE = _re.compile(
+        r"error TS2307:.*?Cannot find module ['\"](?P<spec>[^'\"]+)['\"]")
+
+    def _demote_tsc_without_deps(
+        self, err_lines: list[str], rel: str, issues: list[str]
+    ) -> list[str]:
+        """Keep only the tsc errors that survive a missing ``node_modules``.
+
+        We never run ``npm install`` during validation — it needs network
+        the host may not have, and on a proxied corporate network it fails
+        outright. So tsc runs against an uninstalled tree, where every
+        package import is unresolvable and the type errors cascade from
+        there. On the 2026-09-17 hotel run that produced
+        ``error TS2688: Cannot find type definition file for 'vite/client'``
+        and a "3 blocker-level issues remain — may not run as-is" verdict
+        on a frontend that starts and renders perfectly once installed.
+
+        What tsc CAN still tell us truthfully is whether a locally
+        referenced file exists: ``import Foo from './components/Foo'``
+        where the run never wrote that file is a genuine break either way.
+        Everything else is reported, but as advisory — it must not drive
+        the Phase-3 fix loop, which would spend its budget "fixing"
+        imports that are already correct.
+        """
+        real: list[str] = []
+        demoted = 0
+        for line in err_lines:
+            match = self._TSC_MISSING_MODULE_RE.search(line)
+            if match and match.group("spec").startswith("."):
+                real.append(line)
+            else:
+                demoted += 1
+                if demoted <= 5:
+                    issues.append(f"tsc-advisory [{rel}]: {line}")
+        if demoted:
+            issues.append(
+                f"tsc-advisory [{rel}]: {demoted} type error(s) reported without "
+                "node_modules installed — package imports and their types cannot "
+                "resolve, so these are advisory, not blockers. Run npm install "
+                "before trusting them."
+            )
+        return real
 
     def _collect_cargo_issues(self) -> list[str]:
         """Run ``cargo check`` for any Rust crate in the workspace.

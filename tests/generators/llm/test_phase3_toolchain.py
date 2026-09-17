@@ -149,6 +149,9 @@ def _write_broken_typescript_project(tmp_path) -> None:
         "include": ["**/*.ts"],
     }
     (tmp_path / "tsconfig.json").write_text(json.dumps(tsconfig), encoding="utf-8")
+    # An installed tree: without node_modules the collector reports tsc
+    # output as advisory rather than blocking, since nothing can resolve.
+    (tmp_path / "node_modules").mkdir(exist_ok=True)
     (tmp_path / "broken.ts").write_text(
         textwrap.dedent(
             """\

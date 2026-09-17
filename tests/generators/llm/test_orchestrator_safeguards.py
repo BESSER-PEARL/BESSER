@@ -585,8 +585,13 @@ class TestRuffAndTscValidation:
         import shutil as _shutil
         import subprocess
 
-        # Valid tsconfig at the workspace root.
+        # Valid tsconfig at the workspace root. node_modules must exist:
+        # without it the collector treats tsc output as advisory, because
+        # package imports cannot resolve on an uninstalled tree (see
+        # test_validators_that_lie.py). This test is about the installed
+        # case, where a TS2322 is a genuine blocker.
         (tmp_path / "tsconfig.json").write_text("{}")
+        (tmp_path / "node_modules").mkdir()
 
         class FakeCompleted:
             stdout = (

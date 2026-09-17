@@ -323,9 +323,15 @@ def test_backend_generator_one_to_one_optional_field(tmpdir):
     assert "class ADeviceCreate(BaseModel):" in pydantic_code
     assert "serial: int  # 1:1 Relationship (mandatory)" in pydantic_code
 
-    # Non-FK side (BSerial) should still have the relationship field (optional)
+    # Non-FK side (BSerial) must NOT carry the relationship field: the
+    # generated create_bserial endpoint neither validates nor assigns it,
+    # so it was a field the API accepted and threw away. When both ends of
+    # a 1:1 are required, emitting it on both sides made neither entity
+    # creatable (live 2026-09-17).
     assert "class BSerialCreate(BaseModel):" in pydantic_code
-    assert "device: Optional[int] = None  # 1:1 Relationship (optional)" in pydantic_code
+    bserial_create = pydantic_code.split("class BSerialCreate(BaseModel):")[1]
+    bserial_create = bserial_create.split("class ")[0]
+    assert "device" not in bserial_create, bserial_create
 
 
 def test_backend_generator_nested_creations_nm(tmpdir):

@@ -42,6 +42,105 @@ def get_foreign_keys(model: DomainModel) -> Dict[str, List[str]]:
     return fkeys
 
 
+def get_deferred_fk_associations(model: DomainModel) -> set:
+    """Associations whose FK must be created nullable to break a table cycle.
+
+    Two tables that each hold a NOT NULL foreign key to the other cannot be
+    created, and neither row can be inserted first. SQLAlchemy says so
+    outright — ``Can't sort tables; there are unresolvable cycles between
+    tables booking, guest`` — and ``create_all`` raises before the app ever
+    serves a request. Live 2026-09-17: a hotel model where Booking pointed
+    at its contact Guest and Guest pointed back at its Booking.
+
+    A cycle needs at least two associations, since a single association
+    produces only one FK column (see ``get_foreign_keys``). So one edge of
+    each cycle has to give: its FK becomes nullable, the row is inserted
+    without it, and the link is set afterwards from the other side.
+
+    Which edge gives is decided by association name, so the choice is
+    stable across regenerations — a generator that picked a different edge
+    each run would rewrite unrelated files on every run.
+
+    Returns the set of association names whose FK is deferred.
+    """
+    fkeys = get_foreign_keys(model)
+    if len(fkeys) < 2:
+        return set()
+
+    required_by_end = _required_association_ends(model)
+
+    # Edge: the table holding the FK depends on the table it points at.
+    # Only NOT NULL FKs constrain creation order, so only they can form a
+    # blocking cycle — a nullable one is already deferrable.
+    edges: Dict[str, List[tuple]] = {}
+    for assoc_name, owner in fkeys.items():
+        owner_class, fk_end_name = owner[0], owner[1]
+        target = required_by_end.get((assoc_name, fk_end_name))
+        if target is None:
+            continue  # optional FK: no ordering constraint
+        edges.setdefault(owner_class, []).append((target, assoc_name))
+
+    deferred: set = set()
+    # Iterate to a fixed point: breaking one cycle can leave another.
+    while True:
+        cycle = _find_cycle(edges, deferred)
+        if not cycle:
+            return deferred
+        deferred.add(max(cycle))
+
+
+def _required_association_ends(model: DomainModel) -> Dict[tuple, str]:
+    """(association name, end name) -> target class, for REQUIRED ends only."""
+    required: Dict[tuple, str] = {}
+    for association in model.associations:
+        ends = _sorted_association_ends(association)
+        if len(ends) != 2:
+            continue
+        for end in ends:
+            if end.multiplicity.min > 0:
+                required[(association.name, end.name)] = end.type.name
+    return required
+
+
+def _find_cycle(edges: Dict[str, List[tuple]], deferred: set) -> set:
+    """Return the association names on one cycle, or an empty set.
+
+    Only the associations actually ON the cycle are returned, not the whole
+    search path — deferring an edge that merely leads to a cycle would not
+    break it, and would make a second FK nullable for nothing.
+    """
+    colour: Dict[str, int] = {}  # 0 = on the current path, 1 = finished
+    path_nodes: List[str] = []
+    path_assocs: List[str] = []  # edge i goes from path_nodes[i] to [i+1]
+
+    def visit(node: str) -> set:
+        colour[node] = 0
+        path_nodes.append(node)
+        for target, assoc_name in sorted(edges.get(node, ()), key=lambda e: e[1]):
+            if assoc_name in deferred:
+                continue
+            state = colour.get(target)
+            if state == 0:
+                start = path_nodes.index(target)
+                return set(path_assocs[start:]) | {assoc_name}
+            if state is None:
+                path_assocs.append(assoc_name)
+                found = visit(target)
+                if found:
+                    return found
+                path_assocs.pop()
+        colour[node] = 1
+        path_nodes.pop()
+        return set()
+
+    for node in sorted(edges):
+        if node not in colour:
+            found = visit(node)
+            if found:
+                return found
+    return set()
+
+
 # Model type name -> python type used for primary keys and the foreign keys
 # that reference them. Anything not listed keeps the historical integer
 # surrogate. Shared by the SQLAlchemy and backend generators so a ForeignKey

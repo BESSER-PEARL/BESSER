@@ -138,10 +138,18 @@ class {{ class.name }}(
             {%- for a_end in end.owner.ends if a_end != end %}
                 {%- set ns.end_own = a_end %}
             {%- endfor %}
-            {#- Foreign Key #}
+            {#- Foreign Key.
+                A deferred FK is one edge of a table cycle: two tables each
+                holding a NOT NULL FK to the other cannot be created at all
+                ("Can't sort tables; there are unresolvable cycles between
+                tables booking, guest") and neither row can be inserted
+                first. It is emitted nullable, with use_alter so the
+                constraint is added after both tables exist. See
+                get_deferred_fk_associations in structural_utils.py. #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
-    {{end.name}}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
+            {%- set deferred = end.owner.name in deferred_fks %}
+    {{end.name}}_id: Mapped_[{% if deferred %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}"{% if deferred %}, use_alter=True, name="fk_{{class.name.lower()}}_{{end.name.lower()}}"{% endif %})
+            {%- if deferred or end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
     {%- endfor %}
@@ -236,7 +244,7 @@ class {{ asso_class.name }}(Base):
 
 #--- Relationships of the {{ class.name.lower() }} table
             {%- endif %}
-{{ helper.render_relationship(class, end, ns, ids, fkeys) }}
+{{ helper.render_relationship(class, end, ns, ids, fkeys, deferred_fks) }}
         {%- endif %}
     {%- endfor %}
 {%- endfor %}

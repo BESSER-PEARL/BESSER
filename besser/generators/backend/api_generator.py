@@ -42,7 +42,12 @@ from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators.default_literals import register_default_literals
 from besser.generators.action_language.RESTGenerator import bal_to_rest
-from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types, normalize_method_code
+from besser.generators.structural_utils import (
+    get_deferred_fk_associations,
+    get_foreign_keys,
+    get_pk_py_types,
+    normalize_method_code,
+)
 from besser.utilities.utils import sort_by_timestamp
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -205,6 +210,7 @@ def generate_modular_api(
     classes = model.classes_sorted_by_inheritance()
     class_names = [cls.name for cls in classes]
     fkeys: Dict[str, List[str]] = get_foreign_keys(model)
+    deferred_fks = get_deferred_fk_associations(model)
     # Class name -> python type of its primary key (default 'int'). Path
     # params and FK payload fields must use the model's declared id type —
     # a `guest_id: int` param for a String PK 404s on every real id. Shared
@@ -255,6 +261,7 @@ def generate_modular_api(
                 "http_methods": http_methods,
                 "nested_creations": nested_creations,
                 "fkeys": fkeys,
+                "deferred_fks": deferred_fks,
                 "model": model,
                 "pk_types": pk_types,
                 "assoc_classes": assoc_classes,

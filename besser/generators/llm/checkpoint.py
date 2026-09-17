@@ -123,6 +123,7 @@ def compute_fingerprint(
     swaps*, not every possible model edit.
     """
     parts: list[str] = [
+        # bounded: fingerprint; guards against whole-project swaps, not edits
         instructions.strip()[:500],
         primary_kind,
     ]

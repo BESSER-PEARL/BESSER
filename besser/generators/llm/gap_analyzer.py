@@ -185,8 +185,9 @@ def analyze_gaps_via_llm(
     tasks = _call_planner(llm_client, user_prompt)
     if tasks is None:
         return None
-    cleaned = [t.strip() for t in tasks[:_MAX_TASKS] if isinstance(t, str) and t.strip()]
+    cleaned = _dedupe([t.strip() for t in tasks if isinstance(t, str) and t.strip()])[:_MAX_TASKS]
     cleaned = _sanitize_tasks(cleaned, generator_used, instructions)
+    cleaned = _drop_present_enumerations(cleaned, domain_model)
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
 
@@ -205,6 +206,31 @@ _DELETE_SCAFFOLD_RE = re.compile(
     r"generated|frontend|react|output|backend framework)\b",
     re.IGNORECASE,
 )
+
+
+def _task_key(text: str) -> str:
+    """Identity of a checklist item: case, whitespace and a trailing period aside."""
+    return " ".join(text.lower().split()).rstrip(".")
+
+
+def _dedupe(tasks: list) -> list:
+    """Drop repeated tasks, first-seen order kept.
+
+    Live run (2026-09-17): the planner listed the same item three times;
+    the model noticed ("tasks 15, 16 and 18 are duplicated"), did the
+    work once, and then re-did it for each open copy. Runs before the cap
+    so repeats cannot crowd unique work out of the list.
+    """
+    seen: set = set()
+    kept: list = []
+    for task in tasks:
+        key = _task_key(task)
+        if key in seen:
+            logger.info("Gap sanitizer dropped duplicate task: %r", task[:100])
+            continue
+        seen.add(key)
+        kept.append(task)
+    return kept
 
 
 def _sanitize_tasks(
@@ -236,6 +262,53 @@ def _sanitize_tasks(
                 rival_hit, task[:100],
             )
             continue
+        kept.append(task)
+    return kept
+
+
+# An add/create/define verb within three tokens of "enum": proposes the
+# enumeration itself, as opposed to using one ("add a cancel endpoint that
+# moves BookingCommercialStatus ...").
+_ADD_ENUM_RE = re.compile(
+    r"\b(?:add|create|introduce|define|declare)\b(?:\s+\S+){0,3}?\s+enum",
+    re.IGNORECASE,
+)
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _drop_present_enumerations(tasks: list, domain_model) -> list:
+    """Drop add-enumeration tasks whose literal set the model already has.
+
+    Live finding (2026-09-17): the planner proposed adding 'commercialStatus'
+    with AWAITING_PAYMENT/CONFIRMED/CANCELLED while the model carried
+    BookingCommercialStatus with exactly those literals. It matched on the
+    name - the unreliable part - and ignored the identical member set. The
+    proposed name is ignored here on purpose: every literal of an existing
+    enumeration (two or more) named in an add-enumeration task is the match.
+    """
+    if domain_model is None:
+        return tasks
+    try:
+        present = [
+            (enum.name, {lit.name.lower() for lit in enum.literals})
+            for enum in domain_model.get_enumerations()
+        ]
+    except Exception:
+        return tasks
+    kept: list = []
+    for task in tasks:
+        if _ADD_ENUM_RE.search(task):
+            tokens = {t.lower() for t in _IDENT_RE.findall(task)}
+            match = next(
+                (name for name, lits in present if len(lits) >= 2 and lits <= tokens),
+                None,
+            )
+            if match:
+                logger.info(
+                    "Gap sanitizer dropped enumeration already in the model as %s: %r",
+                    match, task[:100],
+                )
+                continue
         kept.append(task)
     return kept
 
@@ -435,12 +508,13 @@ _SYSTEM_PROMPT = (
     "  * Skip anything the generator already provided correctly.\n"
     "  * CRITICAL — what the deterministic generator does NOT produce: it "
     "emits ONLY the data model's structure and basic CRUD endpoints/screens. "
-    "It NEVER produces authentication, login/registration, JWT/session/token "
-    "handling, authorization, roles/permissions, security, payments, email, "
-    "file upload, custom business logic, custom UI styling/theming/colours, or "
-    "third-party integrations. If the user asked for ANY of these, it is "
-    "ALWAYS missing from the scaffold — emit concrete tasks for it and do NOT "
-    "return an empty array.\n"
+    "If, and only if, the user's own words asked for one of the following, "
+    "it is missing from the scaffold — emit concrete tasks for it and do NOT "
+    "return an empty array: authentication, login/registration, "
+    "JWT/session/token handling, authorization, roles/permissions, security, "
+    "payments, email, file upload, custom business logic, custom UI "
+    "styling/theming/colours, third-party integrations. Never propose one "
+    "the request did not mention.\n"
     "  * CRITICAL — THE DOMAIN MODEL IS NOT THE SPEC. It was produced by an "
     "earlier modelling step that routinely loses what the user stated in "
     "prose: operations, status vocabularies, validity rules, and facts that "
@@ -469,6 +543,7 @@ def _build_user_prompt(
     model_json: str,
     inventory: str,
 ) -> str:
+    # bounded: planning-call budget; _clip marks the cut for the planner
     instructions_clipped = _clip(instructions, _MAX_INSTRUCTIONS_CHARS, "instructions")
     inventory_clipped = _clip(inventory, _MAX_INVENTORY_CHARS, "inventory")
     return (
@@ -494,7 +569,12 @@ def _build_user_prompt(
         "link attribute, which needs its own table or column;\n"
         "  - screens, roles, integrations, styling.\n"
         "For each item, check whether it appears in the DOMAIN MODEL JSON "
-        "above. Every item that does NOT appear is a gap the modelling step "
+        "above. Match on MEANING and on member sets, not on exact names: an "
+        "enumeration whose literals are the vocabulary the request describes "
+        "IS that element even when its name carries a prefix "
+        "(BookingCommercialStatus for 'commercial status'); the same goes for "
+        "attributes and methods named with a prefix or different casing. "
+        "Every item that does NOT appear is a gap the modelling step "
         "lost: emit a task stating the exact names and values from the "
         "request, and where in the stack to add them.\n\n"
         "PASS 2 — DOMAIN MODEL vs FILE INVENTORY. What the model does carry "

@@ -57,14 +57,41 @@ def get_pk_py_types(model: DomainModel) -> Dict[str, str]:
     integer surrogate and are simply absent from the mapping (callers use
     ``.get(name, 'int')``).
     """
+    def _own_pk(cls):
+        """The PK declared on this class itself, if any."""
+        return (next((a for a in cls.attributes if a.is_id), None)
+                or next((a for a in cls.attributes if a.name == "id"), None))
+
+    def _resolve(cls, seen):
+        """The PK type, following inheritance.
+
+        A subclass in joined-table inheritance has no id attribute of its
+        own -- its PK IS the parent's, emitted as a ForeignKey to it. Looking
+        only at the class's own attributes therefore missed every subclass,
+        which then fell back to the 'int' default while the parent carried a
+        string uuid. Every FK pointing at Guest or Employee came out
+        Mapped_[int] against a String PK: the schema is inconsistent, the API
+        rejects the real id with 422, and nothing catches it because SQLite
+        creates the tables anyway.
+        """
+        if cls.name in seen:          # defensive: a cycle in parents()
+            return None
+        seen.add(cls.name)
+        own = _own_pk(cls)
+        if own is not None:
+            type_name = (getattr(own.type, "name", "") or "").lower()
+            return _PK_PY_TYPES.get(type_name, "int")
+        for parent in cls.parents():
+            inherited = _resolve(parent, seen)
+            if inherited is not None:
+                return inherited
+        return None
+
     pk_types: Dict[str, str] = {}
     for cls in model.get_classes():
-        id_attr = next((a for a in cls.attributes if a.is_id), None)
-        if id_attr is None:
-            id_attr = next((a for a in cls.attributes if a.name == "id"), None)
-        if id_attr is not None:
-            type_name = (getattr(id_attr.type, "name", "") or "").lower()
-            pk_types[cls.name] = _PK_PY_TYPES.get(type_name, "int")
+        resolved = _resolve(cls, set())
+        if resolved is not None:
+            pk_types[cls.name] = resolved
     return pk_types
 
 

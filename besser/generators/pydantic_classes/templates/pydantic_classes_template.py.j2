@@ -107,7 +107,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% endif %}
     {%- if backend and assoc_end_fields and class.name in assoc_end_fields %}
     {%- for ef in assoc_end_fields[class.name] %}
-    {{ ef.name }}: int  # association end -> {{ ef.type_name }} primary key
+    {{ ef.name }}: {{ pk_types.get(ef.type_name, 'int') }}  # association end -> {{ ef.type_name }} primary key
     {% set ns.has_field = true %}
     {%- endfor %}
     {%- endif %}

@@ -21,19 +21,15 @@ _PK_PY_TYPES = {
 def pk_python_types(model) -> dict:
     """Class name -> python type of its primary key (default ``int``).
 
-    Classes with no declared id attribute are absent — they get the
-    integer surrogate and every layer already agrees on ``int``.
+    Delegates to ``structural_utils.get_pk_py_types`` so there is ONE
+    implementation: this file previously carried its own copy that looked only
+    at a class's own attributes, so a subclass in joined-table inheritance --
+    whose PK *is* the parent's, emitted as a ForeignKey to it -- was absent
+    from the map and every reference to it fell back to ``int`` against a
+    String PK.
     """
-    pk_types: dict = {}
     try:
-        classes = list(model.get_classes())
+        from besser.generators.structural_utils import get_pk_py_types
+        return get_pk_py_types(model)
     except Exception:
-        return pk_types
-    for cls in classes:
-        id_attr = next((a for a in cls.attributes if getattr(a, "is_id", False)), None)
-        if id_attr is None:
-            id_attr = next((a for a in cls.attributes if a.name == "id"), None)
-        if id_attr is not None:
-            type_name = (getattr(id_attr.type, "name", "") or "").lower()
-            pk_types[cls.name] = _PK_PY_TYPES.get(type_name, "int")
-    return pk_types
+        return {}

@@ -253,6 +253,7 @@ def generate_modular_api(
 
     # One router module per class.
     router_template = env.get_template("router.py.j2")
+    methods_template = env.get_template("router_methods.py.j2")
     for cls in classes:
         router_code = router_template.render(
             **{
@@ -271,6 +272,30 @@ def generate_modular_api(
         router_path = os.path.join(routers_dir, f"{cls.name.lower()}.py")
         with open(router_path, mode="w", encoding="utf-8") as f:
             f.write(router_code)
+
+        # Modeled-method endpoints live in their own module: they are the
+        # hand-written half of the generation gap, and keeping them out of
+        # the CRUD file keeps the LLM's edit target small enough to read.
+        if getattr(cls, "methods", None):
+            methods_code = methods_template.render(
+                {
+                    "class": cls,
+                    "classes": classes,
+                    "http_methods": http_methods,
+                    "nested_creations": nested_creations,
+                    "fkeys": fkeys,
+                    "deferred_fks": deferred_fks,
+                    "model": model,
+                    "pk_types": pk_types,
+                    "assoc_classes": assoc_classes,
+                    "assoc_by_association": assoc_by_association,
+                }
+            )
+            methods_path = os.path.join(
+                routers_dir, f"{cls.name.lower()}_methods.py"
+            )
+            with open(methods_path, mode="w", encoding="utf-8") as f:
+                f.write(methods_code)
 
     # main_api.py: slim app setup + router includes (keeps its historical
     # filename so `uvicorn main_api:app` / Docker / deployment tooling that

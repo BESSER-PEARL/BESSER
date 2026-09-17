@@ -120,7 +120,12 @@ def _check_command_safety(command: str) -> str | None:
 MAX_OUTPUT_SIZE = 15_000
 
 # Maximum file content returned by read_file (chars)
-MAX_FILE_READ = 20_000
+# Sized when context windows were small. A generated router runs to ~35k
+# chars, so the agent was editing a file it could see 59% of while
+# write_file asked it to reproduce the whole thing. 60k covers the
+# largest observed generated file with headroom and costs ~15k tokens
+# against an 80k compaction threshold.
+MAX_FILE_READ = 60_000
 
 # Environment variables that are safe to expose to LLM-invoked subprocesses.
 # These are needed for basic tooling to work (PATH for binaries, HOME for

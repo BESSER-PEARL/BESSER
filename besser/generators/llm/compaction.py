@@ -6,8 +6,10 @@ are summarized and replaced with a compact representation that preserves
 the essential information (what tools were called, what files exist).
 """
 
+import json
 import logging
 import os
+import urllib.request
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,13 @@ logger = logging.getLogger(__name__)
 # runtime cap, see pilot-experiment/HARNESS_LIMITS_AUDIT.md).
 COMPACT_TOKEN_THRESHOLD = max(
     8_000, int(os.environ.get("BESSER_LLM_COMPACT_THRESHOLD", "80000") or 80_000)
+)
+# Set explicitly, the same variable is also a hard cap on the adaptive
+# threshold of every known-window model (see ``effective_threshold``): an
+# operator lowering it to cut cost gets exactly that, not silence. Unset,
+# the adaptive value stands, up to MAX_COMPACT_THRESHOLD.
+_OPERATOR_CAP: int | None = (
+    COMPACT_TOKEN_THRESHOLD if os.environ.get("BESSER_LLM_COMPACT_THRESHOLD") else None
 )
 COMPACT_PRESERVE_RECENT = 6
 
@@ -85,16 +94,139 @@ _SMALL_CONTEXT_WINDOWS: tuple = (
 _MIN_WORKABLE_THRESHOLD = 16_500
 
 
+# Advertised context windows from the provider's model catalog.
+#
+# Only the Command Code endpoint (the keyless tier) returns ``context_length``
+# from GET /models; OpenAI's and Anthropic's catalogs do not, so every other
+# provider resolves through ``_KNOWN_CONTEXT_WINDOWS`` or the default. Read
+# from the same server env the client uses (BESSER_FREE_LLM_BASE_URL /
+# BESSER_FREE_LLM_TOKEN). Fetched at most once per process, failure included,
+# and never allowed to fail a run: this runs inside the generation loop, so a
+# dead endpoint costs one short timeout and then the fall-through.
+_CATALOG_TIMEOUT_S = 3.0
+_CATALOG: dict[str, int] | None = None
+_CATALOG_LOADED = False
+
+# Advertised context windows for hosted models, by family substring.
+# Consulted after the measured table and the catalog, before the default.
+#
+# Rows are generous on purpose. Overflow against a hosted API (OpenAI,
+# Anthropic, Command Code) surfaces as a clean provider error - loud and
+# recoverable - whereas our self-hosted Ollama box truncates silently from
+# the FRONT and eats the system prompt. An optimistic row is cheap here and
+# dangerous in the measured table, which is why the measured table wins
+# over everything below it. Family markers rather than exact ids so a point
+# release does not fall back to the default; each marker must be specific
+# enough not to catch a sibling family (see the bare "mistral" audit above).
+# Windows from the Command Code catalog (2026-09-17) and this file's audit.
+_KNOWN_CONTEXT_WINDOWS: tuple = (
+    ("claude-haiku", 200_000),
+    ("claude-sonnet", 1_000_000),
+    ("claude-opus", 1_000_000),
+    ("claude-fable", 1_000_000),
+    ("gpt-5.6", 1_050_000),
+    ("gpt-5.5", 400_000),
+    ("gpt-5.4", 400_000),
+    ("gpt-5.3-codex", 400_000),
+    ("gpt-4o", 128_000),
+    ("gpt-4.1", 1_000_000),
+    ("mistral-large", 256_000),
+)
+
+# Share of the USABLE advertised window (window - reserve) the history may
+# fill. It must absorb the system prompt and tool schemas (outside
+# ``messages``) and the tiktoken-vs-served tokenizer gap; one turn of growth
+# is not on top, because the check runs before every request. 0.8 leaves
+# ~15-19% of the window for those and keeps every hosted row within one
+# file read of the flat default - gpt-4o (128k, the OpenAI default) is the
+# binding case at ~76k. A whole-window 0.5 put it at 31k, i.e. the spiral.
+_USABLE_WINDOW_FRACTION = 0.8
+
+# Absolute ceiling on what an advertised window may hand back. A 1M window
+# would otherwise send ~800k-token prompts every turn: metered credits on a
+# paid plan, and prefill latency the runtime cap cannot absorb. 200k is 2.5x
+# the flat default and bounds the per-turn prompt at ~threshold + reserve
+# whatever the window says.
+MAX_COMPACT_THRESHOLD = int(
+    os.environ.get("BESSER_LLM_MAX_COMPACT_THRESHOLD", "200000") or 200_000
+)
+
+
+def _fetch_models(base_url: str, token: str) -> dict[str, int]:
+    """``{model id: context_length}`` from one endpoint's GET /models."""
+    request = urllib.request.Request(base_url.rstrip("/") + "/models")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(request, timeout=_CATALOG_TIMEOUT_S) as response:
+        payload = json.load(response)
+    entries = payload.get("data") if isinstance(payload, dict) else payload
+    windows: dict[str, int] = {}
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        model_id, window = entry.get("id"), entry.get("context_length")
+        if isinstance(model_id, str) and isinstance(window, int) and window > 0:
+            windows[model_id] = window
+    return windows
+
+
+def _fetch_catalog() -> dict[str, int]:
+    """Union of the free and sponsored tiers' catalogs (same server env the
+    client uses). Empty when neither is configured; a shared endpoint is
+    fetched once; raises only when every configured endpoint failed (the
+    caller caches that as unavailable).
+    """
+    endpoints: list[tuple[str, str]] = []
+    for prefix in ("BESSER_FREE_LLM", "BESSER_SPONSORED_LLM"):
+        base_url = os.environ.get(f"{prefix}_BASE_URL", "").strip()
+        if base_url and base_url not in (b for b, _ in endpoints):
+            endpoints.append((base_url, os.environ.get(f"{prefix}_TOKEN", "").strip()))
+    windows: dict[str, int] = {}
+    failure: Exception | None = None
+    for base_url, token in endpoints:
+        try:
+            windows.update(_fetch_models(base_url, token))
+        except Exception as exc:
+            failure = exc
+    if failure is not None and not windows:
+        raise failure
+    return windows
+
+
+def _advertised_window(model: str) -> int | None:
+    """Catalog window for the exact model id, or None. One fetch per process."""
+    global _CATALOG, _CATALOG_LOADED
+    if not _CATALOG_LOADED:
+        _CATALOG_LOADED = True
+        try:
+            _CATALOG = _fetch_catalog()
+        except Exception as exc:
+            logger.warning("Model catalog unavailable (%s); not retried this process.", exc)
+            _CATALOG = {}
+    return (_CATALOG or {}).get(model)
+
+
 def effective_threshold(
     model: str | None,
     threshold: int = COMPACT_TOKEN_THRESHOLD,
     reserve: int = COMPACT_RESERVE_TOKENS,
 ) -> int:
-    """Clamp the compaction threshold to the model's context window.
+    """Resolve the compaction threshold for ``model``.
 
-    ``window - reserve`` for known small-window models; the unchanged
-    default for everything else (unknown names are assumed frontier-
-    sized - wrongly clamping a big model would compact constantly).
+    Most trusted source first:
+
+    1. ``_SMALL_CONTEXT_WINDOWS`` - measured on the deployment we call.
+       Always wins, even over a larger advertised figure: ``window -
+       reserve``, never above ``threshold``.
+    2. The keyless tier's catalog ``context_length`` for the exact model id.
+    3. ``_KNOWN_CONTEXT_WINDOWS`` by family substring.
+    4. The unchanged ``threshold`` for anything else (unknown names are
+       assumed frontier-sized - wrongly clamping a big model would compact
+       constantly).
+
+    An advertised window (2, 3) yields ``(window - reserve) * fraction``,
+    capped at ``MAX_COMPACT_THRESHOLD`` and, when BESSER_LLM_COMPACT_THRESHOLD
+    is set explicitly, at that value too.
 
     ``reserve`` should be the live ``client.max_tokens`` when the caller
     has raised it above the default, so the headroom actually matches the
@@ -105,18 +237,36 @@ def effective_threshold(
     low = model.lower()
     for marker, window in _SMALL_CONTEXT_WINDOWS:
         if marker in low:
-            effective = max(8_000, min(threshold, window - reserve))
-            if effective < _MIN_WORKABLE_THRESHOLD:
-                logger.warning(
-                    "Compaction threshold for %s is %d tokens (window=%d, "
-                    "reserve=%d). That is under ~4 whole-file reads, so "
-                    "compaction will fire between tool calls and the model "
-                    "will re-read what it loses. Verify the SERVED context "
-                    "window for this model.",
-                    model, effective, window, reserve,
-                )
-            return effective
+            return _guard_floor(model, min(threshold, window - reserve), window, reserve)
+    window = _advertised_window(model)
+    if window is None:
+        for marker, known in _KNOWN_CONTEXT_WINDOWS:
+            if marker in low:
+                window = known
+                break
+    if window:
+        effective = min(
+            MAX_COMPACT_THRESHOLD, int((window - reserve) * _USABLE_WINDOW_FRACTION)
+        )
+        if _OPERATOR_CAP is not None:
+            effective = min(effective, _OPERATOR_CAP)
+        return _guard_floor(model, effective, window, reserve)
     return threshold
+
+
+def _guard_floor(model: str, effective: int, window: int, reserve: int) -> int:
+    """Floor at 8k and warn when the result cannot hold a working set."""
+    effective = max(8_000, effective)
+    if effective < _MIN_WORKABLE_THRESHOLD:
+        logger.warning(
+            "Compaction threshold for %s is %d tokens (window=%d, "
+            "reserve=%d). That is under ~4 whole-file reads, so "
+            "compaction will fire between tool calls and the model "
+            "will re-read what it loses. Verify the SERVED context "
+            "window for this model.",
+            model, effective, window, reserve,
+        )
+    return effective
 
 
 def _is_tool_result_message(msg: dict) -> bool:

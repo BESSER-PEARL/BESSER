@@ -97,7 +97,18 @@ Context and token budgets
 -------------------------
 
 - ``BESSER_LLM_COMPACT_THRESHOLD`` (``80000``) -- Estimated-token threshold at
-  which the Phase 2 conversation is compacted. Floored at 8,000.
+  which the Phase 2 conversation is compacted, for models whose context
+  window is unknown. Models with a known window (from the model catalogs of
+  the free and sponsored tiers, or the built-in table of hosted frontier
+  models) get an
+  adaptive threshold derived from that window instead. Setting this variable
+  also caps the adaptive value, so lowering it to cut cost applies to every
+  model, not only unknown ones. Floored at 8,000.
+- ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive
+  threshold for models with a known window, so a million-token model does
+  not send prompts of that size every turn. Models measured to serve a
+  smaller window than they advertise are clamped below both values
+  regardless.
 - ``BESSER_LLM_HISTORY_EVICTION`` (**off**) -- Opt into the lossless
   alternative to compaction: large file bodies in older messages are replaced
   by stubs pointing back to disk, instead of whole messages being summarised.

@@ -296,7 +296,7 @@ class TestHarnessUpgrades:
           at 60k - see test_self_hosted_qwen_is_clamped_to_fit_its_prefill_budget.
         """
         from besser.generators.llm.compaction import effective_threshold
-        assert effective_threshold("mistral-large-latest") == STANDALONE_THRESHOLD
+        assert effective_threshold("mistral-large-latest") >= STANDALONE_THRESHOLD
         # Evidence-based clamp, not a guess: strictly tighter than the default,
         # and never so tight that a couple of file reads trip compaction.
         qwen = effective_threshold("qwen3-coder:30b", reserve=32_768)
@@ -321,7 +321,7 @@ class TestHarnessUpgrades:
         from besser.generators.llm.compaction import effective_threshold
         for tag in ("meituan/LongCat-2.0:free", "claude-sonnet-4-6",
                     "mistral-large-latest", "gpt-5.6-terra"):
-            assert effective_threshold(tag, reserve=32_768) == STANDALONE_THRESHOLD, tag
+            assert effective_threshold(tag, reserve=32_768) >= STANDALONE_THRESHOLD, tag
 
     def test_clamped_threshold_never_goes_below_a_workable_size(self):
         """Whatever the reserve, we never hand back a threshold that cannot
@@ -329,11 +329,12 @@ class TestHarnessUpgrades:
         from besser.generators.llm.compaction import effective_threshold
         assert effective_threshold("devstral:24b", reserve=32_768) >= 8_000
 
-    def test_effective_threshold_keeps_default_for_frontier_and_unknown(self):
+    def test_effective_threshold_keeps_default_for_unknown_and_never_clamps_frontier(self):
         from besser.generators.llm.compaction import effective_threshold
         assert effective_threshold("gpt-5-mini") == STANDALONE_THRESHOLD
         assert effective_threshold(None) == STANDALONE_THRESHOLD
-        assert effective_threshold("gpt-5.6-terra") == STANDALONE_THRESHOLD
+        # Known 1M-class window: raised above the default, never clamped.
+        assert effective_threshold("gpt-5.6-terra") > STANDALONE_THRESHOLD
 
     def test_small_model_compacts_earlier(self, tmp_path):
         """~20k tokens: under the 80k default, over qwen's clamped 16k."""

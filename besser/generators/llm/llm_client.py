@@ -18,6 +18,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from besser.generators.llm.errors import InvalidApiKeyError, UpstreamLLMError
 
@@ -908,10 +909,23 @@ def _needs_reasoning_none_for_tools(model: str, base_url: str | None = None) -> 
     api.commandcode.ai: ``none`` -> 400, while omitted / ``low`` / ``medium``
     each returned a proper ``write_file`` tool call. So send the parameter only
     when talking to OpenAI itself, and omit it on any custom endpoint.
+
+    The test is the HOST, not merely "a base_url was passed": the sponsored
+    tier always sets one (endpoint lives in server env), so pointing it at
+    api.openai.com would otherwise suppress the flag and break every tool call.
     """
-    if base_url:
+    if base_url and not _is_official_openai_base_url(base_url):
         return False
     return "gpt-5.6" in model.lower()
+
+
+def _is_official_openai_base_url(base_url: str) -> bool:
+    """True when ``base_url`` addresses OpenAI's own API, not a gateway."""
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "api.openai.com"
 
 
 def _anthropic_tools_to_openai(tools: list[dict]) -> list[dict]:

@@ -26,6 +26,14 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   chain.
 - ``BESSER_SPONSORED_LLM_BASE_URL`` / ``_MODEL`` / ``_TOKEN`` -- An additional
   server-funded keyless tier.
+- ``BESSER_DEMO_TOKEN`` -- Shared secret authorising the ``sponsored`` tier.
+  A request for that tier must carry the same value in ``demo_token`` or the
+  server answers 403; the web editor sends it for tabs opened through a
+  ``?demo=<token>`` link. The check **fails closed**: leaving this unset
+  refuses every sponsored run, so the tier cannot be left open by a
+  half-finished configuration. Because the tier spends the deployment's own
+  credits, pair it with a hard spend cap on the provider account — that limit
+  holds even if the link is shared further than intended.
 - ``BESSER_LLM_PLANNING_MODEL`` -- Override the small model used for the gap
   analysis call. Set it to ``primary`` to plan on the main model instead —
   necessary behind a gateway that does not serve the cheap sibling.

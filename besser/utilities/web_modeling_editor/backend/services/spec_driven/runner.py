@@ -757,6 +757,30 @@ class SmartGenerationRunner:
         finally:
             self._record_run_summary()
 
+    def _requested_llm_model(self) -> Optional[str]:
+        """The model this run asks for, honouring a pilot session's default.
+
+        A pilot arrives through ``?pilot=<label>`` and should start on
+        ``BESSER_FREE_LLM_PILOT_MODEL``. The client cannot be relied on to send
+        it: the free tier is the no-popup default, so a pilot who never opens
+        the model dialog stores nothing and the request carries no
+        ``llm_model``. Measured 2026-09-17: 17 of 17 pilot runs went out on the
+        public default, so the configured pilot model had never once taken
+        effect. Resolving it here makes it hold whatever the client sends.
+
+        An explicit ``llm_model`` always wins, so a pilot who deliberately
+        picks another free model keeps it.
+        """
+        if self.request.llm_model or self.request.provider != "free":
+            return self.request.llm_model
+        # A sanitized-non-null participant label IS the pilot signal: the
+        # validator nulls anything not matching the collection pattern.
+        if not self.request.telemetry_participant:
+            return self.request.llm_model
+        from besser.generators.llm.llm_client import free_pilot_model
+
+        return free_pilot_model() or self.request.llm_model
+
     async def _generate_and_stream_impl(
         self,
         http_request: Any | None = None,
@@ -781,11 +805,12 @@ class SmartGenerationRunner:
             # named another id the factory honors (the FALLBACK model, or an alt
             # on the primary endpoint). Mirror the factory's decision in the same
             # order, so the run card shows the model actually serving the run.
-            if is_free_fallback_choice(self.request.llm_model):
-                llm_model = (self.request.llm_model or "").strip()
+            requested = self._requested_llm_model()
+            if is_free_fallback_choice(requested):
+                llm_model = (requested or "").strip()
             else:
                 llm_model = (
-                    free_alt_choice(self.request.llm_model)
+                    free_alt_choice(requested)
                     or free_tier_model()
                     or "free"
                 )
@@ -971,7 +996,7 @@ class SmartGenerationRunner:
                 create_llm_client,
                 provider=self.request.provider,
                 api_key=self.request.resolved_api_key(),
-                model=self.request.llm_model,
+                model=self._requested_llm_model(),
                 base_url=self.request.base_url,
             )
         except ValueError as exc:

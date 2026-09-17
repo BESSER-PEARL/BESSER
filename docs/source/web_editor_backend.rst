@@ -317,11 +317,11 @@ Environment Variables
 
 **Spec-Driven Agent (all optional):**
 
-The agent's ``BESSER_LLM_*``, ``BESSER_FREE_LLM_*`` and
-``BESSER_SPONSORED_LLM_*`` variables -- the keyless tiers, the caps and their
-hard limits, the feature flags, the context budgets, and the durable-run
-storage paths -- are documented in one place, with the agent:
-:doc:`spec_driven_agent/configuration`.
+The agent's ``BESSER_LLM_*``, ``BESSER_FREE_LLM_*``,
+``BESSER_SPONSORED_LLM_*`` and ``BESSER_DEMO_TOKEN`` variables -- the keyless
+tiers, the caps and their hard limits, the feature flags, the context budgets,
+and the durable-run storage paths -- are documented in one place, with the
+agent: :doc:`spec_driven_agent/configuration`.
 
 **Telemetry (all optional):**
 

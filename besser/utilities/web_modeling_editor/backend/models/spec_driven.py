@@ -119,6 +119,11 @@ class SmartGenerateRequest(BaseModel):
     # only when BOTH survive sanitization.
     telemetry_session: Optional[str] = None
     telemetry_participant: Optional[str] = None
+    # Shared secret authorising the server-paid ``sponsored`` tier. Demo links
+    # carry it as ``?demo=<token>``; the router compares it against
+    # BESSER_DEMO_TOKEN. SecretStr for the same reason as api_key — it must
+    # never reach a log or an SSE frame.
+    demo_token: Optional[SecretStr] = Field(default=None, max_length=200)
 
     @field_validator("instructions")
     @classmethod
@@ -250,6 +255,12 @@ class SmartGenerateRequest(BaseModel):
         if self.api_key is None:
             return ""
         return self.api_key.get_secret_value()
+
+    def resolved_demo_token(self) -> str:
+        """The plaintext demo token, or ``""`` when the request carries none."""
+        if self.demo_token is None:
+            return ""
+        return self.demo_token.get_secret_value()
 
 
 class SmartPushDeployConfig(BaseModel):

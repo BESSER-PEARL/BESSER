@@ -781,6 +781,26 @@ class TestReasoningEffortHelper:
         assert _needs_reasoning_none_for_tools(
             model, "https://api.commandcode.ai/v1") is False
 
+    @pytest.mark.parametrize("base_url", [
+        "https://api.openai.com/v1",
+        "https://api.openai.com/v1/",
+        "HTTPS://API.OPENAI.COM/v1",
+    ])
+    def test_openai_own_endpoint_still_gets_the_flag(self, base_url):
+        """A base_url naming OpenAI itself is not a gateway.
+
+        The sponsored tier (server-paid demo key) ALWAYS passes a base_url,
+        because its endpoint lives in server env. Treating "a base_url was
+        set" as "this is a gateway" suppressed the flag and made OpenAI
+        reject every function tool for gpt-5.6-*.
+        """
+        assert _needs_reasoning_none_for_tools("gpt-5.6-terra", base_url) is True
+
+    def test_a_lookalike_host_is_still_a_gateway(self):
+        """Suffix-matching ``api.openai.com`` would trust any attacker domain."""
+        assert _needs_reasoning_none_for_tools(
+            "gpt-5.6-terra", "https://api.openai.com.evil.test/v1") is False
+
 
 class TestReasoningEffortInRequest:
 
@@ -806,6 +826,18 @@ class TestReasoningEffortInRequest:
         provider.chat(system="sys", messages=[], tools=_ONE_TOOL)
         kw = provider._client.chat.completions.create.call_args.kwargs
         assert "reasoning_effort" not in kw
+        assert "tools" in kw
+
+    def test_gpt56_on_sponsored_openai_endpoint_sends_reasoning_none(self):
+        """The demo tier runs gpt-5.6-terra on OpenAI proper via an explicit
+        base_url. Without the flag OpenAI refuses the tools and the Phase 2
+        customization loop dies mid-demo."""
+        provider = _provider_with_model(
+            "gpt-5.6-terra", base_url="https://api.openai.com/v1")
+        _mock_chat_text(provider)
+        provider.chat(system="sys", messages=[], tools=_ONE_TOOL)
+        kw = provider._client.chat.completions.create.call_args.kwargs
+        assert kw.get("reasoning_effort") == "none"
         assert "tools" in kw
 
     def test_gpt56_stream_sends_reasoning_none_with_tools(self):

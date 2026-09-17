@@ -22,6 +22,7 @@ events, and never stored on disk.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import mimetypes
@@ -237,6 +238,35 @@ def _prune_idempotency_keys(now: float) -> None:
             _idempotent_runs.pop(key, None)
 
 
+def _require_demo_token(request: SmartGenerateRequest) -> None:
+    """Reject a ``sponsored``-tier run that does not carry the demo secret.
+
+    The sponsored tier spends the ORG's credits (endpoint + token live in
+    server env), so without this check any caller could POST
+    ``provider: "sponsored"`` and use our key as an open API proxy. Demo links
+    carry the secret as ``?demo=<token>``.
+
+    Fails CLOSED: an unset ``BESSER_DEMO_TOKEN`` refuses every sponsored run,
+    so a half-finished env edit cannot leave the tier open. The message never
+    says which half was wrong.
+
+    Compared as bytes: ``compare_digest`` raises TypeError on a non-ASCII
+    ``str``, which would turn a junk token into a 500 instead of a 403.
+    """
+    if request.provider != "sponsored":
+        return
+    expected = os.environ.get("BESSER_DEMO_TOKEN", "").strip()
+    supplied = request.resolved_demo_token().strip()
+    if not expected or not hmac.compare_digest(
+        supplied.encode("utf-8"), expected.encode("utf-8"),
+    ):
+        logger.warning("Rejected a sponsored-tier run without a valid demo token")
+        raise HTTPException(
+            status_code=403,
+            detail="The sponsored tier is not available on this server.",
+        )
+
+
 def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingResponse:
     return StreamingResponse(
         DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=after_sequence),
@@ -271,6 +301,10 @@ async def smart_generate(
     against ``/spec-driven/download/{runId}`` serves the file; subsequent GETs
     return 404.
     """
+    # Authorisation before anything is allocated: a sponsored-tier run spends
+    # the org's own credits and needs the demo secret.
+    _require_demo_token(request)
+
     # A retried start must attach to the original run, not spawn a second
     # one. Checked before the slot is acquired so a retry cannot 429 against
     # the very run it is trying to rejoin.
@@ -636,6 +670,10 @@ async def resume_smart_gen(
     The run_id path pattern matches hex[32] to keep malformed IDs out
     of the filesystem scan performed by ``_locate_run_temp_dir``.
     """
+    # Resume takes the same request shape as /generate and spends the same
+    # way — gate it identically or it becomes the way around the gate.
+    _require_demo_token(request)
+
     if not re.fullmatch(r"[a-f0-9]{32}", run_id):
         raise HTTPException(status_code=422, detail="Invalid run_id format")
 

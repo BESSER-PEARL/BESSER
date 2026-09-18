@@ -55,18 +55,24 @@ def test_first_elision_wins():
     assert find_elision(block)[0] == 1
 
 
-def test_whole_repo_stays_clean():
-    """The detector is useless if it fires on our own source."""
+def test_false_positives_stay_bounded():
+    """The detector is useless if it fires all over our own source.
+
+    Accepting the dots-only line costs exactly two: a stub body in
+    error_handler.py and one in quantum_diagram_processor.py. That is the
+    measured price of catching the form that corrupted booking_methods.py.
+    This fails if a change makes the detector materially noisier.
+    """
     import pathlib
     flagged = []
     root = pathlib.Path(__file__).resolve().parents[3] / "besser"
-    for p in root.rglob("*.py"):
+    for path in root.rglob("*.py"):
         try:
-            if find_elision(p.read_text(encoding="utf-8")):
-                flagged.append(str(p))
+            if find_elision(path.read_text(encoding="utf-8")):
+                flagged.append(path.name)
         except OSError:
             continue
-    assert not flagged, f"false positives in our own code: {flagged[:5]}"
+    assert len(flagged) <= 3, f"detector got noisy: {flagged}"
 
 
 # -- executor behaviour -------------------------------------------------
@@ -112,12 +118,22 @@ def test_elided_new_text_is_refused_before_touching_the_file(executor, tmp_path)
     assert (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8") == before
 
 
-def test_a_placeholder_already_in_old_text_is_allowed(executor, tmp_path):
-    """Gemini's carve-out: preserving an existing placeholder is a real edit."""
+def test_a_placeholder_preserved_verbatim_is_allowed(executor, tmp_path):
+    """Gemini's carve-out, narrowed: preserving a placeholder is a real edit."""
+    (tmp_path / "doc.py").write_text("x = rel...\nkeep = 1\n", encoding="utf-8")
+    res = executor._modify_file({"path": "doc.py", "old_text": "x = rel...\nkeep = 1",
+                                 "new_text": "x = rel...\nkeep = 2"})
+    assert "error" not in res, res
+
+
+def test_a_placeholder_that_changed_text_is_refused(executor, tmp_path):
+    """Run 36e9c8a6 leaked 6 elisions and refused 0: an ellipsis anywhere in
+    old_text excused every ellipsis in new_text. A CHANGED elided line is a
+    new abbreviation, not a preserved one."""
     (tmp_path / "doc.py").write_text("x = rel...\n", encoding="utf-8")
     res = executor._modify_file({"path": "doc.py", "old_text": "x = rel...",
                                  "new_text": "y = rel..."})
-    assert "error" not in res, res
+    assert "abbreviates" in res.get("error", "")
 
 
 def test_modify_is_refused_after_three_consecutive_misses(executor):
@@ -133,3 +149,48 @@ def test_a_good_edit_still_applies(executor, tmp_path):
                   '    totalPrice: Mapped_[float] = mapped_column(Float_, default=0)')
     assert "error" not in res, res
     assert "default=0" in (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8")
+
+
+# -- the bare "..." line (live 2026-09-18, run 15a8ac7d) -----------------
+# The model used a dots-only line on 10 of 10 edits to booking_methods.py.
+# Four were rejected; the SIX THAT APPLIED spliced a second `try:` inside an
+# unclosed one, so the module failed to import: "line 37: expected 'except'
+# or 'finally' block". An accepted elision is worse than a rejected one.
+RUN13_OLD_TEXT = (
+    "        booking = database.query(Booking).first()\n"
+    "...\n"
+    "        return bill\n"
+)
+
+
+def test_a_dots_only_line_is_an_elision():
+    got = find_elision(RUN13_OLD_TEXT)
+    assert got is not None
+    assert got[0] == 2
+
+
+@pytest.mark.parametrize("line", ["...", "    ...", "\t...", "   ...   "])
+def test_bare_ellipsis_at_any_indent(line):
+    assert find_elision(line) is not None
+
+
+@pytest.mark.parametrize("line", [
+    "    def f(self) -> int: ...",     # one-line stub keeps the code on the line
+    "    x: str = Field(...)",
+    "    arr = a[..., 0]",
+    "    result = call(...)",
+])
+def test_inline_ellipsis_is_still_legitimate(line):
+    assert find_elision(line) is None
+
+
+def test_run13_old_text_is_refused_by_the_executor(tmp_path):
+    """End to end: the shape that corrupted booking_methods.py is rejected."""
+    from besser.generators.llm.tool_executor import ToolExecutor
+    (tmp_path / "m.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+    ex = ToolExecutor(str(tmp_path))
+    res = ex._modify_file({"path": "m.py", "old_text": RUN13_OLD_TEXT,
+                           "new_text": "a = 1\n...\nb = 2\n"})
+    assert "error" in res
+    assert "abbreviates" in res["error"]
+    assert (tmp_path / "m.py").read_text(encoding="utf-8") == "a = 1\nb = 2\n"

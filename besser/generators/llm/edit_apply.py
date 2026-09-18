@@ -279,6 +279,12 @@ _OMISSION_PHRASES = (
 # `contact_id:...` is the live 2026-09-18 shape, while the stub writes `: ...`.
 _GLUED_ELLIPSIS_RE = re.compile(r"[^\s.,(\[{=]\.\.\.\s*$", re.MULTILINE)
 
+# A line that is ONLY "..." means "the rest is unchanged"; aider treats the
+# same shape as an elision marker. Legal Python as a stub body, so it costs 2
+# false positives across besser/ -- worth it: an edit carrying one spliced a
+# second `try:` into an open one and left a module that fails to import.
+_BARE_ELLIPSIS_RE = re.compile(r"^[ 	]*\.\.\.[ 	]*$", re.MULTILINE)
+
 
 def find_elision(text: str) -> tuple[int, str] | None:
     """First line of *text* that abbreviates rather than quotes, or None.
@@ -289,10 +295,25 @@ def find_elision(text: str) -> tuple[int, str] | None:
     that is this codebase's own continuation style.
     """
     for n, line in enumerate(text.splitlines(), 1):
-        if _GLUED_ELLIPSIS_RE.search(line):
+        if _GLUED_ELLIPSIS_RE.search(line) or _BARE_ELLIPSIS_RE.match(line):
             return n, line
         if "..." in line:
             low = line.lower()
             if any(p in low for p in _OMISSION_PHRASES):
                 return n, line
     return None
+
+
+def elided_lines(text: str) -> set[str]:
+    """Every elided line in *text*, stripped, for comparing two sides of an edit.
+
+    ``find_elision`` answers "does this abbreviate?"; a rewrite that preserves
+    an ellipsis the file already had is legitimate, so the guard needs to know
+    *which* lines rather than merely whether any exist.
+    """
+    found = set()
+    for line in text.splitlines():
+        if (_GLUED_ELLIPSIS_RE.search(line) or _BARE_ELLIPSIS_RE.match(line)
+                or ("..." in line and any(p in line.lower() for p in _OMISSION_PHRASES))):
+            found.add(line.strip())
+    return found

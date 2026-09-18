@@ -28,6 +28,7 @@ from besser.BUML.metamodel.structural import DomainModel
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.generators.llm.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.generators.llm.edit_apply import (
+    elided_lines,
     find_elision,
     find_similar_lines,
     replace_most_similar_chunk,
@@ -1405,8 +1406,12 @@ class ToolExecutor:
                     "output - do not retype it from memory or shorten it."
                 ),
             }
+        # An ellipsis the quoted region already carried may legitimately be
+        # rewritten back; a NEW one is an abbreviation. Comparing the lines
+        # rather than mere presence closes the hole that let 6 elisions
+        # through in run 36e9c8a6 because old_text happened to contain one.
         new_elision = find_elision(new_text)
-        if new_elision and not find_elision(old_text):
+        if new_elision and new_elision[1].strip() not in elided_lines(old_text):
             line_no, line = new_elision
             return {
                 "error": (

@@ -30,8 +30,12 @@ def orchestrator(tmp_path):
 
 
 def _project(tmp_path, with_deps=False):
+    # The real generated scaffold's options, verbatim -- es5 / node are what
+    # TypeScript 7 removed.
     (tmp_path / "tsconfig.json").write_text(
-        json.dumps({"compilerOptions": {"types": ["vite/client"]}}), encoding="utf-8")
+        json.dumps({"compilerOptions": {
+            "target": "es5", "moduleResolution": "node",
+            "types": ["vite/client"]}}), encoding="utf-8")
     if with_deps:
         (tmp_path / "node_modules").mkdir()
     return str(tmp_path)
@@ -52,6 +56,19 @@ def test_the_probe_clears_types_so_tsc_does_not_abort(orchestrator, tmp_path):
         body = json.loads((tmp_path / arg).read_text(encoding="utf-8"))
         assert body["compilerOptions"]["types"] == []
         assert body["extends"] == "./tsconfig.json"
+    finally:
+        cleanup()
+
+
+def test_the_probe_overrides_options_typescript_7_removed(orchestrator, tmp_path):
+    """`target: es5` / `moduleResolution: node` are TS5108 on tsc 7 -- the same
+    zero-files-checked abort the probe exists to prevent. Shipped once without
+    this and the probe was inert in production (run 773b8549)."""
+    arg, cleanup = orchestrator._tsc_project_arg(_project(tmp_path), deps_installed=False)
+    try:
+        opts = json.loads((tmp_path / arg).read_text(encoding="utf-8"))["compilerOptions"]
+        assert opts["target"] not in ("es5", "ES5")
+        assert opts["moduleResolution"] not in ("node", "node10")
     finally:
         cleanup()
 

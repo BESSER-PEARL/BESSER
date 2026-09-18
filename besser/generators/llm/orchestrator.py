@@ -4715,9 +4715,17 @@ class LLMOrchestrator:
     # Written next to the real tsconfig so its relative include/exclude/baseUrl
     # still resolve, then removed.
     _TSC_PROBE_NAME = "tsconfig.besser-probe.json"
+    # target/moduleResolution are overridden too: TypeScript 7 REMOVED
+    # `target: es5` and `moduleResolution: node`, which every CRA-era
+    # scaffold still carries, and a removed option is TS5108 at config
+    # time -- the same zero-files-checked abort this probe exists to
+    # avoid. Neither option affects TS2304, the only code promoted here.
     _TSC_PROBE_BODY = (
         '{\n  "extends": "./tsconfig.json",\n'
-        '  "compilerOptions": { "types": [], "noEmit": true }\n}\n'
+        '  "compilerOptions": {\n'
+        '    "types": [], "noEmit": true,\n'
+        '    "target": "es2020", "module": "esnext", "moduleResolution": "bundler"\n'
+        '  }\n}\n'
     )
 
     def _tsc_project_arg(self, project_dir: str, deps_installed: bool):

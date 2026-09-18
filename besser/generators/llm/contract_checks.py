@@ -186,6 +186,17 @@ def _lint_frontend(rel: str, content: str, contract: DataContract) -> list:
     return findings
 
 
+# relationship(..., secondary="<name>"): SQLAlchemy resolves the string on the
+# first query, so a name matching no table passes every static check and 500s
+# each request touching the class (live run 52befadf, 2026-09-18).
+_RELATIONSHIP_SECONDARY_RE = re.compile(
+    r"relationship\([^)]*?\bsecondary\s*=\s*['\"]([^'\"]+)['\"]", re.S
+)
+_TABLE_NAME_RE = re.compile(r"\bTable_?\(\s*['\"]([^'\"]+)['\"]")
+_TABLE_VAR_RE = re.compile(r"^(\w+)\s*=\s*Table_?\(", re.M)
+_TABLENAME_RE = re.compile(r"__tablename__\s*=\s*['\"]([^'\"]+)['\"]")
+
+
 def _lint_python(rel: str, content: str, contract: DataContract) -> list:
     findings: list = []
 
@@ -262,6 +273,27 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
                     ),
                     blocker=True,
                 ))
+
+    # Advisory, not blocker: the table may be defined in another module, and
+    # Phase 3's import smoke check is the gate that proves the mapper fails.
+    tables = set(_TABLE_NAME_RE.findall(content))
+    tables.update(_TABLE_VAR_RE.findall(content))
+    tables.update(_TABLENAME_RE.findall(content))
+    for m in _RELATIONSHIP_SECONDARY_RE.finditer(content):
+        if m.group(1) in tables:
+            continue
+        findings.append(Finding(
+            path=rel,
+            line=_line_of(content, m.start(1)),
+            message=(
+                f'relationship(secondary="{m.group(1)}") names no table '
+                f"defined in this file (tables here: "
+                f"{', '.join(sorted(tables)) or 'none'}); SQLAlchemy resolves "
+                "it on the first query and every request touching the class "
+                "will fail"
+            ),
+            blocker=False,
+        ))
 
     return findings
 

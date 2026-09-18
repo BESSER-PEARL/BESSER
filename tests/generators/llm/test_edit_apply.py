@@ -164,7 +164,8 @@ def test_modify_file_flags_edit_already_applied(tmp_path):
         "new_text": "value = 2\n",   # already present
     })
     assert "error" in res
-    assert "ALREADY present" in res.get("note", "")
+    assert "already in the file at line 1" in res["error"]
+    assert "applied" in res["error"]
 
 
 def test_modify_file_refuses_short_ambiguous_anchor(tmp_path):

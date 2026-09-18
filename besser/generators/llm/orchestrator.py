@@ -19,6 +19,7 @@ Phase 3 (validation & fix):
 """
 
 import ast as _ast
+import hashlib
 import json
 import logging
 import os
@@ -669,6 +670,149 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     return problems
 
 
+_STAR_IMPORT_RE = _re.compile(r"^\s*from\s+\S+\s+import\s+\*", _re.MULTILINE)
+
+
+def _star_import_undefined_names(output_dir: str) -> list[str]:
+    """``undefined name:`` blockers for a name a star-importing module uses but
+    neither defines nor receives from the modules it star-imports.
+
+    ruff cannot report these: with ``from x import *`` in scope every
+    unresolved name is F405 ("may be undefined"), never F821, so the delivered
+    app of 2026-09-18 shipped six NameError routes as "0 blockers". Files
+    without a star import are left to ruff, which reports them as F821
+    already. Same resolver as the write-time check the model was shown.
+    """
+    import importlib
+
+    try:
+        importlib.import_module("pyflakes.checker")
+    except ImportError:
+        return [_check_did_not_run(
+            "the star-import name check", "pyflakes is not installed",
+        )]
+    from besser.generators.llm.write_diagnostics import diagnose_written_content
+
+    issues: list[str] = []
+    for path in _python_files(output_dir):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                content = handle.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _STAR_IMPORT_RE.search(content):
+            continue
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        for finding in diagnose_written_content(rel, content, workspace=output_dir):
+            if finding.get("code") != "UndefinedName":
+                continue
+            detail = finding["message"].removeprefix("undefined name ")
+            issues.append(f"undefined name: {rel} line {finding.get('line')}: {detail}")
+    return issues
+
+
+# The generated ORM module is imported and its mappers configured in a
+# subprocess. SQLAlchemy resolves the strings in relationship() lazily, on the
+# first query, so ast.parse and ruff both passed the 2026-09-18 live run
+# 52befadf while every database request returned 500: a class-body
+# ``relationship("Guest", secondary="booking_guest", ...)`` named a table that
+# does not exist. Import-time NameErrors surface here as well - the class ruff
+# excuses under a star import. ~0.5s per module, no database, server or
+# network: the template keeps create_all under __main__.
+_IMPORT_SMOKE_TIMEOUT_SECONDS = 30
+_TRACEBACK_FRAME_RE = _re.compile(r'^\s*File "(.+?)", line (\d+)', _re.M)
+_QUOTED_NAME_RE = _re.compile(r"'([^']+)'")
+
+
+def _import_smoke_issues(output_dir: str) -> list[str]:
+    """``mapper config:`` blockers for ORM modules that fail to import or
+    configure; ``_check_did_not_run`` notes when the check itself could not."""
+    import subprocess
+
+    issues: list[str] = []
+    for path in _python_files(output_dir):
+        if os.path.basename(path) != "sql_alchemy.py":
+            continue
+        folder = os.path.dirname(path)
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        modules = ["sql_alchemy"]
+        if os.path.isfile(os.path.join(folder, "pydantic_classes.py")):
+            modules.append("pydantic_classes")
+        code = (
+            f"import {', '.join(modules)}\n"
+            "from sqlalchemy.orm import configure_mappers\n"
+            "configure_mappers()\n"
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True, text=True,
+                timeout=_IMPORT_SMOKE_TIMEOUT_SECONDS,
+                cwd=folder, env=_safe_subprocess_env(),
+            )
+        except subprocess.TimeoutExpired:
+            issues.append(_check_did_not_run(
+                "the import smoke check",
+                f"timed out after {_IMPORT_SMOKE_TIMEOUT_SECONDS}s on {rel}",
+            ))
+            continue
+        except OSError as exc:
+            issues.append(_check_did_not_run(
+                "the import smoke check", f"could not be launched: {exc}",
+            ))
+            continue
+        if result.returncode == 0:
+            continue
+        stderr = result.stderr or ""
+        lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+        error = (lines[-1] if lines else "exited non-zero with no error output")[:400]
+        if error.startswith("ModuleNotFoundError:"):
+            # The harness interpreter is not the app's venv: a third-party
+            # module missing HERE says nothing about the app. A missing local
+            # module is _unresolvable_local_imports' finding.
+            issues.append(_check_did_not_run(
+                "the import smoke check", f"{rel}: {error}",
+            ))
+            continue
+        where = _import_smoke_location(output_dir, folder, rel, stderr, error)
+        issues.append(f"mapper config: {where}: {error}")
+    return issues
+
+
+def _import_smoke_location(output_dir, folder, rel, stderr, error) -> str:
+    """``<file> line N`` when it can be found, else ``<file>``.
+
+    An import-time error's traceback ends in the app's own file. A mapper
+    configuration error's ends inside sqlalchemy, so the quoted name from the
+    message (``'booking_guest'``) is looked up in the module instead.
+    """
+    real_folder = os.path.normcase(os.path.realpath(folder))
+    located = None
+    for m in _TRACEBACK_FRAME_RE.finditer(stderr):
+        frame = os.path.realpath(os.path.join(folder, m.group(1)))
+        inside = os.path.normcase(frame).startswith(real_folder + os.sep)
+        if inside and os.path.isfile(frame):
+            located = (frame, int(m.group(2)))
+    if located is not None:
+        frame, line_no = located
+        frame_rel = os.path.relpath(
+            frame, os.path.realpath(output_dir)
+        ).replace("\\", "/")
+        return f"{frame_rel} line {line_no}"
+    try:
+        with open(os.path.join(folder, "sql_alchemy.py"), "r",
+                  encoding="utf-8", errors="ignore") as fh:
+            module_lines = fh.read().splitlines()
+    except OSError:
+        return rel
+    for name in _QUOTED_NAME_RE.findall(error):
+        token = _re.compile(rf"\b{_re.escape(name)}\b")
+        for idx, text in enumerate(module_lines, 1):
+            if token.search(text):
+                return f"{rel} line {idx}"
+    return rel
+
+
 _RUFF_STYLE_CODES = frozenset({
     "F401", "F841",               # genuinely cosmetic: unused import / variable
     # F811 (redefinition) is deliberately NOT here; see the blocker branch below.
@@ -715,6 +859,32 @@ def _classify_issue(message: str) -> ValidationIssue:
     # ruff is structurally blind to it (a star import excuses every name rather
     # than flagging it). See _unresolvable_local_imports.
     if lower.startswith("missing module:"):
+        return ValidationIssue("blocker", text)
+
+    # The ORM module failed to import or to configure its mappers in the import
+    # smoke check: every request that touches the database is a 500.
+    if lower.startswith("mapper config:"):
+        return ValidationIssue("blocker", text)
+
+    # The F821 ruff cannot emit under a star import; a NameError on the first
+    # request that reaches the line. See _star_import_undefined_names.
+    if lower.startswith("undefined name:"):
+        return ValidationIssue("blocker", text)
+
+    # The domain model describes an aggregate no client can create. Legal UML
+    # (DomainModel.validate only warns), fatal here: generating a CRUD API is
+    # exactly the intent this breaks. Live 2026-09-18 — Booking required a
+    # ReservedRoom id and ReservedRoom required a Booking id, so the shipped
+    # app served 69 paths and could not create either.
+    if lower.startswith("model contract:"):
+        return ValidationIssue("blocker", text)
+
+    # The running app refused every schema-valid request for an entity -
+    # tried with each enum literal, booleans flipped and dates reversed, its
+    # prerequisites created first. Live 2026-09-18: a capacity rule placed
+    # in create_booking, checked against BookedRooms that cannot exist before
+    # the Booking, made POST /booking/ a 400 for every possible request.
+    if lower.startswith("create contract:"):
         return ValidationIssue("blocker", text)
 
     # Ruff: classify by rule code. F821 (undefined name) is a BLOCKER:
@@ -776,6 +946,18 @@ _MAX_PARALLEL_WORKERS = 4
 # steadily converging — the no-progress-streak guard below handles the
 # stuck case.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
+
+# Turns per fix attempt. An attempt that reaches the cap, or ends in prose,
+# without one successful write gets exactly one more turn with modify_file
+# forced (run 7f918e11, 2026-09-18: two attempts, ten turns, no edit).
+_PHASE3_FIX_TURNS = 5
+_PHASE3_NO_EDIT_REMINDER = (
+    "<system-reminder>This attempt has not edited any file, and the blocker is "
+    "still there. Explaining the fix does not apply it. Your next call must be "
+    "modify_file on the file the blocker names (quote old_text exactly from the "
+    "excerpt), or write_file if the file has to be rewritten. Then keep going "
+    "until every blocker is fixed.</system-reminder>"
+)
 
 # Checkpoint history eviction (see history_eviction.py). When enabled, stale
 # file bodies in older messages are stubbed at the compaction checkpoint to cut
@@ -866,6 +1048,7 @@ class LLMOrchestrator:
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
         per_write_diagnostics: bool = True,
+        enable_import_smoke_check: bool = True,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -954,6 +1137,11 @@ class LLMOrchestrator:
         # VALIDATION); library users keep the default. The cheap checks
         # In-process checks always run; shell/toolchain checks are gated.
         self.enable_toolchain_validation = enable_toolchain_validation
+        # Phase 3 import smoke check: import the generated ORM module in a
+        # subprocess and configure its mappers (~0.5s). Deliberately NOT tied
+        # to allow_shell_tools - the hosted deploy has that off, and it is
+        # where a mapper that fails on first use ships as a green run.
+        self.enable_import_smoke_check = enable_import_smoke_check
         # Binding Phase-1 generator choice (e.g. from a user-approved
         # preview plan). A bound ``None`` explicitly skips Phase 1; an
         # unbound ``None`` keeps auto-selection. Either bound state avoids a
@@ -969,7 +1157,10 @@ class LLMOrchestrator:
         self._should_continue = should_continue
         self.tool_calls_log: list[dict] = []
         self.total_turns = 0
-        self._recent_tool_calls: list[str] = []
+        # (loop key, succeeded) per non-readonly call. Success matters: run
+        # 0c537a4e (2026-09-18) was told "called 4 times in a row. Move on."
+        # on two SUCCESSFUL edits because only the names were counted.
+        self._recent_tool_calls: list[tuple[str, bool]] = []
         # Parallel ring buffer of (tool_name, path) entries used by the
         # per-file modify-loop guard. ``path`` is None for tools that
         # don't operate on a single file (e.g. ``list_files``,
@@ -983,6 +1174,11 @@ class LLMOrchestrator:
         # working on the SAME file. Resets when a different file or
         # tool is observed.
         self._last_modify_warning_path: str | None = None
+        # Escalation for an edit the executor has already rejected and the
+        # model sends again (see _escalate_repeat_rejection): the tool the
+        # next request must call, and per path the repeat count already acted on.
+        self._force_tool_next: str | None = None
+        self._repeat_escalations: dict[str, int] = {}
         self._compaction_count = 0
         self._generator_used: str | None = None
         # When Phase 1 selected a generator but the generator FAILED,
@@ -1191,6 +1387,12 @@ class LLMOrchestrator:
             max_runtime_seconds=self.max_runtime_seconds,
             max_turns=self.max_turns,
         )
+
+        # -- Phase 0: the model itself ------------------------------------
+        # Runs before anything is generated: a defect here is one no amount
+        # of Phase 2 or Phase 3 work can repair, because the code will be a
+        # faithful rendering of an impossible specification.
+        self._collect_model_contract_issues()
 
         # -- Phase 1: Deterministic generation ----------------------------
         self._trace.write(EVENT_PHASE_ENTER, phase="phase1")
@@ -3026,12 +3228,7 @@ class LLMOrchestrator:
             messages = self._maybe_compact(messages)
 
             try:
-                if self.use_streaming and self.on_text and hasattr(self.client, 'chat_stream'):
-                    response = self._call_streaming(system, messages)
-                else:
-                    response = self.client.chat(
-                        system=system, messages=messages, tools=self.tools,
-                    )
+                response = self._chat_with_pending_force(system, messages)
             except InvalidApiKeyError:
                 # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
                 # not a misleading INTERNAL/api_error or a fake "incomplete
@@ -3150,6 +3347,9 @@ class LLMOrchestrator:
                         last_tool, last_path = self._recent_modify_targets[-1]
                         if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
                             self._last_modify_warning_path = None
+
+                if self._escalate_repeat_rejection(messages):
+                    break
 
                 # Save a checkpoint at the end of every full turn so a
                 # crash AFTER tool execution doesn't make the LLM
@@ -3410,31 +3610,30 @@ class LLMOrchestrator:
                 raw_loop_path = block.input.get("path")
                 if isinstance(raw_loop_path, str) and raw_loop_path.strip():
                     loop_key = f"{tool_name}:{raw_loop_path.replace(chr(92), '/').strip()}"
-            self._recent_tool_calls.append(loop_key)
-            # Cap the ring buffer so long runs don't leak memory. Keeping
-            # 2x the loop threshold is plenty — _is_stuck() only checks
-            # the tail.
-            if len(self._recent_tool_calls) > self._LOOP_THRESHOLD * 2:
-                self._recent_tool_calls = self._recent_tool_calls[-self._LOOP_THRESHOLD * 2 :]
+        else:
+            loop_key = None
 
-        # Track (tool, path) for the per-file modify streak guard. We
-        # record ALL tools here — including read-only ones — so that a
-        # ``read_file`` / ``list_files`` between modify calls correctly
-        # breaks the streak. For ``modify_file`` we capture the path;
-        # any other tool gets ``path=None`` and so trips the
-        # uniqueness check in ``_consecutive_modify_on_same_file``.
+        # Track (tool, path) for the per-file modify streak guard. We record
+        # ALL tools so that unrelated work between modify calls breaks the
+        # streak. ``read_file`` captures its path too: re-reading the very
+        # file you have just failed to edit is part of the flail, not a
+        # break from it, and treating it as a break is what let run
+        # a5dce952 alternate modify/read on one file for 38 pairs. Every
+        # other tool gets ``path=None`` and so trips the check in
+        # ``_consecutive_modify_on_same_file``.
         target_path = None
-        if tool_name == "modify_file" and isinstance(block.input, dict):
+        if tool_name in ("modify_file", "read_file") and isinstance(block.input, dict):
             raw_path = block.input.get("path")
             if isinstance(raw_path, str):
                 # Normalise for stable comparison across mixed
                 # separators (Windows ``\`` vs POSIX ``/``).
                 target_path = raw_path.replace("\\", "/").strip()
         self._recent_modify_targets.append((tool_name, target_path))
-        if len(self._recent_modify_targets) > self._PER_FILE_MODIFY_THRESHOLD * 2:
-            self._recent_modify_targets = self._recent_modify_targets[
-                -self._PER_FILE_MODIFY_THRESHOLD * 2 :
-            ]
+        # Room for the threshold's worth of modify calls PLUS an interleaved
+        # read after each, so the alternating shape still fits the window.
+        _window = self._PER_FILE_MODIFY_THRESHOLD * 4
+        if len(self._recent_modify_targets) > _window:
+            self._recent_modify_targets = self._recent_modify_targets[-_window:]
 
         if self.on_progress:
             # `detail` carries WHAT the call was about plus this turn's batch
@@ -3447,6 +3646,15 @@ class LLMOrchestrator:
 
         execution = self.executor.execute_typed(tool_name, block.input)
         result = execution.to_json()
+        success = execution.succeeded
+
+        if loop_key is not None:
+            self._recent_tool_calls.append((loop_key, success))
+            # Cap the ring buffer so long runs don't leak memory. Keeping
+            # 2x the loop threshold is plenty — _is_stuck() only checks
+            # the tail.
+            if len(self._recent_tool_calls) > self._LOOP_THRESHOLD * 2:
+                self._recent_tool_calls = self._recent_tool_calls[-self._LOOP_THRESHOLD * 2 :]
 
         if self._is_stuck():
             logger.warning("Possible loop: %s", tool_name)
@@ -3455,17 +3663,21 @@ class LLMOrchestrator:
             except (json.JSONDecodeError, TypeError):
                 result_obj = result
             result = json.dumps({
-                "warning": f"'{tool_name}' called {self._LOOP_THRESHOLD} times in a row. Move on.",
+                "warning": (
+                    f"'{tool_name}' has failed {self._LOOP_THRESHOLD} times in a row "
+                    "on the same target. Do not repeat it; take a different action."
+                ),
                 "result": result_obj,
             })
 
-        success = execution.succeeded
         self.tool_calls_log.append({
             "turn": turn + 1, "tool": tool_name,
             "input": _sanitize_for_log(block.input),
             "success": success,
             "status": execution.status,
         })
+        if tool_name in _WRITE_TOOLS_ON_RECORD and self._trace.path:
+            self._record_full_tool_input(turn + 1, tool_name, block.input, success, execution.status)
         self._trace.write(
             EVENT_TOOL_CALL,
             turn=turn + 1,
@@ -3548,6 +3760,8 @@ class LLMOrchestrator:
         - package.json exists if Dockerfile uses npm
         - npm ci -> npm install (common LLM mistake)
         - ``ruff`` lint (if installed)
+        - the app booted in a subprocess: mappers configure, and every
+          entity can be created through its own create endpoint
         - ``tsc --noEmit`` on every tsconfig (if tsc installed)
         - ``cargo check`` on every Cargo.toml (if cargo installed)
         - ``kotlinc`` on every Kotlin source root (if kotlinc installed)
@@ -3629,16 +3843,24 @@ class LLMOrchestrator:
         prev_blocker_count = len(blockers_before)
         last_issues = list(issues)
         no_progress_streak = 0
+        attempts_run = 0
 
         for attempt in range(_MAX_TOOLCHAIN_FIX_ITERATIONS):
             is_first_attempt = attempt == 0
+            attempts_run = attempt + 1
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",
                 attempt=attempt + 1,
                 blockers=len(current_blockers),
             )
-            self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
+            edits = self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
+            if not edits:
+                # The one line that was missing from run 7f918e11's log: the
+                # attempt burned its turns and changed nothing.
+                logger.warning(
+                    "Phase 3: attempt %d ended with no successful edit", attempt + 1,
+                )
 
             # Re-validate. The bench's per-project compile-pass score
             # only cares about a clean toolchain, so re-running these
@@ -3730,7 +3952,7 @@ class LLMOrchestrator:
             logger.warning(
                 "Phase 3: %d blocker(s) remain after %d attempt(s); "
                 "accepting as-is.",
-                len(remaining_blockers), _MAX_TOOLCHAIN_FIX_ITERATIONS,
+                len(remaining_blockers), attempts_run,
             )
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
@@ -3739,14 +3961,20 @@ class LLMOrchestrator:
         self,
         blockers: list[ValidationIssue],
         is_first_attempt: bool,
-    ) -> None:
-        """Run one 5-turn LLM fix loop against ``blockers``.
+    ) -> int:
+        """Run one LLM fix attempt against ``blockers``; return the number
+        of successful write-tool calls it made.
 
         Factored out of ``_run_phase3_validation`` so the outer
         toolchain-fix iteration cap can call it more than once. Each
         invocation builds a fresh prompt (so the LLM doesn't see
-        stale context from a previous attempt) and exits as soon as
-        the LLM emits ``end_turn`` or hits the per-loop turn budget.
+        stale context from a previous attempt) and exits when the LLM
+        emits ``end_turn`` or hits the per-attempt turn budget - except
+        that an attempt with no successful edit is re-prompted once,
+        with ``modify_file`` forced where the client supports
+        ``tool_choice`` and a reminder in the message either way.
+        Tool calls run through ``_execute_tool_blocks`` so they are
+        recorded like Phase 2's.
 
         The prompt always reproduces the current blocker list verbatim
         — including any ``tsc [...]:`` / ``cargo [...]:`` /
@@ -3757,7 +3985,7 @@ class LLMOrchestrator:
         first plausible-looking change.
         """
         if not blockers:
-            return
+            return 0
 
         # Only the toolchain half is needed: it drives the re-run reminder
         # below. Every blocker, toolchain or not, is listed in the prompt.
@@ -3799,8 +4027,10 @@ class LLMOrchestrator:
 
         prompt_parts.append("")
         prompt_parts.append(
-            "Use modify_file or write_file as needed. Do NOT touch "
-            "anything unrelated."
+            "Fix them with modify_file (or write_file). Reading first is "
+            "fine, but you are not done until the edit is made: do not stop, "
+            "and do not answer in prose, before a modify_file or write_file "
+            "call has been accepted. Do NOT touch anything unrelated."
         )
 
         # When the blockers include toolchain errors, instruct the LLM
@@ -3845,17 +4075,33 @@ class LLMOrchestrator:
                 "content": [{"type": "text", "text": reminder}],
             })
 
-        for turn in range(5):  # max 5 fix turns per attempt
+        edits = 0                 # successful write-tool calls this attempt
+        nudged = False            # the one re-prompt an edit-less attempt gets
+        force_next: str | None = None
+        turn_cap = _PHASE3_FIX_TURNS
+        turn = 0
+        while True:
+            if turn >= turn_cap:
+                if edits or nudged:
+                    return edits
+                # Read until the cap and wrote nothing: one more turn, and
+                # it has to be the edit.
+                nudged, force_next = True, "modify_file"
+                turn_cap += 1
+                messages.append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": _PHASE3_NO_EDIT_REMINDER}],
+                })
             # Same per-turn guards as the Phase 2 loop — the fix loop bills
             # real turns, so it must honour cancellation and the run's
-            # cost/runtime budget instead of assuming the 5-turn cap is
-            # small enough to never matter (15 worst-case turns across the
+            # cost/runtime budget instead of assuming the turn cap is
+            # small enough to never matter (the worst case across the
             # outer attempts is NOT small on an expensive model).
             if self._should_continue is not None and not self._should_continue():
                 logger.warning(
                     "Phase 3: cancellation requested — stopping fix loop"
                 )
-                return
+                return edits
             if self._start_time is not None:
                 elapsed = time.monotonic() - self._start_time
                 if elapsed > self.max_runtime_seconds:
@@ -3863,56 +4109,75 @@ class LLMOrchestrator:
                         "Phase 3: runtime cap reached (%.1fs > %ds) — "
                         "stopping fix loop", elapsed, self.max_runtime_seconds,
                     )
-                    return
+                    return edits
             if self.client.usage.estimated_cost > self.max_cost_usd:
                 logger.warning(
                     "Phase 3: cost cap reached before fix turn %d "
                     "($%.4f > $%.4f) — stopping fix loop",
                     turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
                 )
-                return
+                return edits
 
+            turn += 1
             self.total_turns += 1
+            force, force_next = force_next, None
             try:
-                response = self.client.chat(
-                    system=system, messages=messages, tools=self.tools,
-                )
+                if force and self._client_supports_structured_chat():
+                    response = self.client.chat(
+                        system=system, messages=messages, tools=self.tools,
+                        force_tool=force,
+                    )
+                else:
+                    response = self.client.chat(
+                        system=system, messages=messages, tools=self.tools,
+                    )
             except Exception as exc:
                 # Surface the failure instead of silently exiting the fix
                 # loop — callers and logs need to see why validation bailed.
                 logger.warning(
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
-                    turn + 1, exc,
+                    turn, exc,
                 )
-                return
+                return edits
             if response["stop_reason"] == "end_turn":
-                return
-            if response["stop_reason"] not in ("end_turn", "tool_use"):
+                if edits or nudged:
+                    return edits
+                # Ended in prose with nothing written. Say so once, force the
+                # edit where tool_choice is honoured, and let the reminder
+                # carry it where the gateway ignores tool_choice.
+                nudged, force_next = True, "modify_file"
+                if response["content"]:
+                    messages.append({"role": "assistant", "content": response["content"]})
+                messages.append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": _PHASE3_NO_EDIT_REMINDER}],
+                })
+                continue
+            if response["stop_reason"] != "tool_use":
                 # Without this the loop appends nothing and re-sends an
-                # identical request for all 5 turns, twice, then reports
-                # "unresolved blockers" - the 2026-09-18 signature (10 turns,
-                # zero tool calls, no cap hit). Phase 2 already breaks here.
+                # identical request until the cap. Phase 2 already breaks here.
                 logger.warning(
                     "Phase 3: unexpected stop_reason %r on fix turn %d — "
                     "stopping the fix loop instead of re-sending the same "
-                    "request", response["stop_reason"], turn + 1,
+                    "request", response["stop_reason"], turn,
                 )
-                return
-            if response["stop_reason"] == "tool_use":
-                messages.append({"role": "assistant", "content": response["content"]})
-                tool_results = []
-                for block in response["content"]:
-                    if hasattr(block, "type") and block.type == "tool_use":
-                        result = self.executor.execute(
-                            getattr(block, "name", ""),
-                            getattr(block, "input", {}),
-                        )
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                        })
-                messages.append({"role": "user", "content": tool_results})
+                return edits
+            messages.append({"role": "assistant", "content": response["content"]})
+            tool_blocks = [
+                block for block in response["content"]
+                if hasattr(block, "type") and block.type == "tool_use"
+                and getattr(block, "name", None)
+            ]
+            # Through the Phase 2 path, so the trace, recipe and sidecar see
+            # these calls; run 7f918e11's ten turns went through the raw
+            # executor and left no record of what they were.
+            logged_before = len(self.tool_calls_log)
+            tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
+            edits += sum(
+                1 for entry in self.tool_calls_log[logged_before:]
+                if entry["tool"] in _WRITE_TOOLS_ON_RECORD and entry["success"]
+            )
+            messages.append({"role": "user", "content": tool_results})
 
     _FILE_LINE_RE = _re.compile(r" in ([\w./\-]+\.\w+) line (\d+)")
 
@@ -4213,6 +4478,21 @@ class LLMOrchestrator:
 
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(_unresolvable_local_imports(self.output_dir))
+        raw_issues.extend(_star_import_undefined_names(self.output_dir))
+        if self.enable_import_smoke_check:
+            raw_issues.extend(_import_smoke_issues(self.output_dir))
+            # Same gate: this one boots the app in a subprocess too.
+            try:
+                from besser.generators.llm.constructibility import (
+                    collect_constructibility_issues,
+                )
+                raw_issues.extend(collect_constructibility_issues(self.output_dir))
+            except Exception as exc:
+                raw_issues.append(_check_did_not_run(
+                    "the constructibility probe", f"it raised {type(exc).__name__}: {exc}",
+                ))
+        else:
+            logger.info("Phase 3: import smoke check disabled for this run")
         raw_issues.extend(_create_schema_router_mismatches(self.output_dir))
         if self.enable_toolchain_validation:
             raw_issues.extend(self._collect_tsc_issues())
@@ -5256,12 +5536,7 @@ class LLMOrchestrator:
                     break
 
             try:
-                if self.use_streaming and self.on_text and hasattr(self.client, 'chat_stream'):
-                    response = self._call_streaming(system, messages)
-                else:
-                    response = self.client.chat(
-                        system=system, messages=messages, tools=self.tools,
-                    )
+                response = self._chat_with_pending_force(system, messages)
             except Exception as e:
                 logger.error("Fix cycle API call failed: %s", e)
                 break
@@ -5309,6 +5584,8 @@ class LLMOrchestrator:
                         last_tool, last_path = self._recent_modify_targets[-1]
                         if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
                             self._last_modify_warning_path = None
+                if self._escalate_repeat_rejection(messages):
+                    break
             else:
                 break
 
@@ -5505,6 +5782,40 @@ class LLMOrchestrator:
     # Loop detection
     # ==================================================================
 
+    def _collect_model_contract_issues(self) -> None:
+        """Promote the domain model's constructibility warnings to blockers.
+
+        ``DomainModel.validate`` only warns about a mandatory creation cycle:
+        an association with 1..1 on both ends is legal UML, and BESSER's own
+        ``user_reference_domain_model`` ships three of them. Here the intent
+        IS to generate a CRUD API, and a cycle makes that API unusable — live
+        2026-09-18, ``BookingCreate`` required a ReservedRoom id while
+        ``ReservedRoomCreate`` required a Booking id, so the delivered app
+        served 69 paths and could not create either class.
+
+        Recorded once, before Phase 1, and deliberately NOT part of
+        ``_collect_validation_issues``: the Phase 3 fix loop edits code, and
+        no edit to the generated code can repair the specification it was
+        generated from. Surfacing it early is the whole value.
+        """
+        if self.domain_model is None:
+            return
+        try:
+            result = self.domain_model.validate(raise_exception=False)
+        except Exception:
+            logger.debug("Domain-model validation raised; skipping", exc_info=True)
+            return
+        for warning in result.get("warnings", []):
+            if not warning.lower().startswith("mandatory creation cycle"):
+                continue
+            issue = _classify_issue(f"model contract: {warning}")
+            self._validation_issues.append(issue)
+            logger.warning("Phase 0: %s", issue.message)
+            self._trace.write(
+                EVENT_VALIDATION_ISSUE, phase="phase0",
+                severity=issue.severity, message=issue.message,
+            )
+
     def _workspace_file_list(self) -> list[str]:
         """Every file in the output tree, relative and ``/``-separated.
 
@@ -5527,22 +5838,106 @@ class LLMOrchestrator:
             return []
         return files
 
+    def _chat_with_pending_force(self, system: str, messages: list[dict]) -> dict:
+        """One chat call. When an escalation asked for a specific tool, make
+        that request non-streaming with ``force_tool`` (only clients whose
+        ``chat`` accepts it; a plain client just gets the message)."""
+        force = self._force_tool_next
+        self._force_tool_next = None
+        if force and self._client_supports_structured_chat():
+            return self.client.chat(
+                system=system, messages=messages, tools=self.tools, force_tool=force,
+            )
+        if self.use_streaming and self.on_text and hasattr(self.client, "chat_stream"):
+            return self._call_streaming(system, messages)
+        return self.client.chat(system=system, messages=messages, tools=self.tools)
+
+    # Repeats of an edit the executor already rejected, per path. Two live
+    # runs on 2026-09-18 (0c537a4e: 13 identical misses; 57160293: 16
+    # identical no-ops) alternated read_file / modify_file for ~30 turns while
+    # every advisory guard was ignored or never fired. Aider stops after three
+    # reflections and hands the prompt to a human; headless, the runtime has
+    # to change what the model can do: force the task list, close the file,
+    # then end the phase and deliver what exists.
+    _REPEAT_FORCE_AT = 3
+    _REPEAT_FREEZE_AT = 5
+    _REPEAT_STOP_AT = 7
+
+    def _escalate_repeat_rejection(self, messages: list[dict]) -> bool:
+        """Act on ``executor.last_repeat``. Returns True when the caller's
+        loop must stop."""
+        hit = getattr(self.executor, "last_repeat", None)
+        if not hit:
+            return False
+        path, seen = hit
+        if self._repeat_escalations.get(path) == seen:
+            return False
+        self._repeat_escalations[path] = seen
+        if seen >= self._REPEAT_STOP_AT:
+            logger.warning(
+                "Stuck edit loop: the same rejected modify_file on %s was sent %d "
+                "times; ending the phase", path, seen,
+            )
+            self._phase2_stop_reason = "stuck_edit_loop"
+            return True
+        if seen >= self._REPEAT_FREEZE_AT:
+            self.executor.freeze_path(path, f"the same rejected edit was sent {seen} times")
+            text = (
+                f"<system-reminder>`{path}` is now closed for edits for the rest of "
+                f"this run: the same rejected modify_file was sent {seen} times. "
+                "Continue with the other tasks, or finish.</system-reminder>"
+            )
+        elif seen >= self._REPEAT_FORCE_AT:
+            self._force_tool_next = "task_list"
+            text = (
+                f"<system-reminder>modify_file on `{path}` was rejected {seen} times "
+                "with the same arguments; the executor will not apply it. Your next "
+                "call must be task_list: mark the item done if the change is already "
+                "in the file, otherwise drop it with a reason. Then continue with "
+                "other work.</system-reminder>"
+            )
+        else:
+            return False
+        logger.warning("Repeat rejection on %s (%d): %s", path, seen, text[:80])
+        messages.append({"role": "user", "content": [{"type": "text", "text": text}]})
+        return False
+
+    def _record_full_tool_input(
+        self, turn: int, tool_name: str, tool_input: object, success: bool, status: str,
+    ) -> None:
+        """Append the UNTRUNCATED input of a write tool to the sidecar. The
+        trace, checkpoint and recipe are bounded by ``_sanitize_for_log``;
+        this is where a run's real edits can be read back and cut into
+        fixtures."""
+        try:
+            row = {"turn": turn, "tool": tool_name, "success": success,
+                   "status": status, "input": tool_input}
+            with open(os.path.join(self.output_dir, TOOL_INPUTS_FILENAME), "a",
+                      encoding="utf-8") as f:
+                f.write(json.dumps(row, default=str) + "\n")
+        except Exception:
+            logger.debug("tool-input sidecar write failed", exc_info=True)
+
     def _is_stuck(self) -> bool:
         recent = self._recent_tool_calls[-self._LOOP_THRESHOLD:]
-        return len(recent) >= self._LOOP_THRESHOLD and len(set(recent)) == 1
+        return (
+            len(recent) >= self._LOOP_THRESHOLD
+            and len({key for key, _ in recent}) == 1
+            and not any(ok for _, ok in recent)
+        )
 
     def _consecutive_modify_on_same_file(self) -> str | None:
         """Return the file path being repeatedly modified, or None.
 
-        Fires when the tail of the recent write-tool history is
-        ``_PER_FILE_MODIFY_THRESHOLD`` consecutive ``modify_file`` calls
-        on the SAME (normalised) path that ALL failed to match (the
-        executor resets its miss count on a successful edit, so N good
-        edits to one file never fire). Any other write-class tool in
-        the window — ``write_file``, ``run_command``, ``delete_file``,
-        etc. — breaks the streak because its slot in the buffer has
-        ``path=None`` (or a different path), so the uniqueness check
-        below fails.
+        Fires when the tail of the recent tool history is
+        ``_PER_FILE_MODIFY_THRESHOLD`` ``modify_file`` calls on the SAME
+        (normalised) path that ALL failed to match (the executor resets its
+        miss count on a successful edit, so N good edits to one file never
+        fire). A ``read_file`` on that same path does NOT break the streak:
+        re-reading the file you cannot edit is the flail's own rhythm — live
+        run a5dce952 alternated modify/read on one file for 38 pairs, 85
+        turns and $0.70 while this guard stayed silent. Any other tool, and
+        a read of a DIFFERENT file, still breaks it: those are real movement.
 
         Resets / suppresses repeat firing: once we've warned about a
         path, ``_last_modify_warning_path`` is set; subsequent identical
@@ -5550,15 +5945,28 @@ class LLMOrchestrator:
         switches tools.
         """
         n = self._PER_FILE_MODIFY_THRESHOLD
-        recent = self._recent_modify_targets[-n:]
-        if len(recent) < n:
+        # The most recent modify_file fixes which file the streak is about.
+        path = next(
+            (p for tool, p in reversed(self._recent_modify_targets)
+             if tool == "modify_file"),
+            None,
+        )
+        if path is None:
             return None
-        if any(tool != "modify_file" for tool, _ in recent):
+        # Walk back over modify calls on that file, stepping over a re-read
+        # of the SAME file (part of the flail — see the note at the
+        # recording site). Anything else, including a read of a different
+        # file, is real movement and ends the streak.
+        streak = 0
+        for tool, entry in reversed(self._recent_modify_targets):
+            if tool == "modify_file" and entry == path:
+                streak += 1
+            elif tool == "read_file" and entry == path:
+                continue
+            else:
+                break
+        if streak < n:
             return None
-        paths = {path for _, path in recent}
-        if len(paths) != 1:
-            return None
-        path = next(iter(paths))
         if path is None:
             # modify_file without a parseable path argument — skip.
             return None
@@ -5785,10 +6193,29 @@ class LLMOrchestrator:
 # Helpers
 # ======================================================================
 
+# Per-value budget for the trace, the checkpoint's tool_calls_log and the
+# recipe. Untruncated write-tool inputs go to TOOL_INPUTS_FILENAME.
+_LOG_VALUE_BUDGET = 500
+_WRITE_TOOLS_ON_RECORD = frozenset({"modify_file", "write_file", "delete_file"})
+TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"
+
+
 def _sanitize_for_log(data: Any) -> Any:
+    """Bound string values for the logs with a marker that cannot be read as
+    code. The old ``v[:500] + "..."`` was twice diagnosed as a model-written
+    elision (runs 3f9a34b8 and 57160293, 2026-09-18). The marker names the
+    cut, its size and a fingerprint, so two different over-budget inputs
+    never render identically."""
     if isinstance(data, dict):
-        return {
-            k: (v[:500] + "..." if isinstance(v, str) and len(v) > 500 else v)
-            for k, v in data.items()
-        }
+        out: dict = {}
+        for k, v in data.items():
+            if isinstance(v, str) and len(v) > _LOG_VALUE_BUDGET:
+                digest = hashlib.sha256(v.encode("utf-8", "replace")).hexdigest()[:12]
+                v = (
+                    v[:_LOG_VALUE_BUDGET]
+                    + f"\n<<truncated {len(v) - _LOG_VALUE_BUDGET} of {len(v)} chars, "
+                    f"sha256 {digest}>>"
+                )
+            out[k] = v
+        return out
     return data

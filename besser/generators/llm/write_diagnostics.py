@@ -127,7 +127,128 @@ def _unawaited_coroutines(tree: ast.Module) -> list[dict[str, Any]]:
     return findings
 
 
-def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
+def _module_scope_statements(body):
+    """Statements bound at module scope: descends into if/for/while/with/try
+    blocks (still module scope), never into a def or class body."""
+    for node in body:
+        yield node
+        if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)):
+            yield from _module_scope_statements(node.body)
+            yield from _module_scope_statements(getattr(node, "orelse", []))
+        elif isinstance(node, ast.Try):
+            yield from _module_scope_statements(node.body)
+            for handler in node.handlers:
+                yield handler
+                yield from _module_scope_statements(handler.body)
+            yield from _module_scope_statements(node.orelse)
+            yield from _module_scope_statements(node.finalbody)
+
+
+def _resolve_module(module: str, start_dir: str, root: str) -> str | None:
+    """Path of a local ``module`` as the generated service imports it.
+
+    A service runs with its own folder as cwd (``python main_api.py`` from
+    ``backend/``), so ``routers/x.py`` resolves ``sql_alchemy`` from
+    ``backend/``: search the importing file's folder, then each ancestor up
+    to the workspace root. Same rule as ``_unresolvable_local_imports``.
+    """
+    rel = module.replace(".", os.sep)
+    directory = start_dir
+    while True:
+        for candidate in (rel + ".py", os.path.join(rel, "__init__.py")):
+            path = os.path.join(directory, candidate)
+            if os.path.isfile(path):
+                return path
+        if os.path.normpath(directory) == os.path.normpath(root):
+            return None
+        parent = os.path.dirname(directory)
+        if not parent or parent == directory:
+            return None
+        directory = parent
+
+
+def _star_exports(path: str, root: str, visited: set[str]) -> set[str] | None:
+    """Names ``from <module> import *`` binds, read off the module's AST.
+
+    ``__all__`` when declared, else every module-scope binding without a
+    leading underscore, including names the module imports itself (star
+    imports transitively). ``None`` when the module, or one it star-imports,
+    is not on disk to read: nothing can be judged against it.
+    """
+    if path in visited:
+        return set()
+    visited.add(path)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+        return None
+    names: set[str] = set()
+    for node in _module_scope_statements(tree.body):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            if (any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+                    and isinstance(node.value, (ast.List, ast.Tuple))
+                    and all(isinstance(e, ast.Constant) and isinstance(e.value, str)
+                            for e in node.value.elts)):
+                return {e.value for e in node.value.elts}
+            for target in node.targets:
+                names |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+        elif isinstance(node, ast.AnnAssign):
+            if node.value is not None and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            names |= {n.id for n in ast.walk(node.target) if isinstance(n, ast.Name)}
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names |= {n.id for n in ast.walk(item.optional_vars) if isinstance(n, ast.Name)}
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                names.add(node.name)
+        elif isinstance(node, ast.Import):
+            names |= {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+                    continue
+                if node.level or not node.module:
+                    return None
+                target = _resolve_module(node.module, os.path.dirname(path), root)
+                inner = _star_exports(target, root, visited) if target else None
+                if inner is None:
+                    return None
+                names |= inner
+    return {name for name in names if not name.startswith("_")}
+
+
+def _star_import_scope(
+    tree: ast.Module, rel_path: str, workspace: str
+) -> tuple[list[str], set[str]] | None:
+    """The written file's star-imported module names and the union of what
+    they export, or ``None`` when any of them cannot be read off disk."""
+    start_dir = os.path.dirname(os.path.join(workspace, rel_path))
+    modules: list[str] = []
+    exported: set[str] = set()
+    for node in _module_scope_statements(tree.body):
+        if not isinstance(node, ast.ImportFrom) or not any(a.name == "*" for a in node.names):
+            continue
+        if node.level or not node.module:
+            return None
+        target = _resolve_module(node.module, start_dir, workspace)
+        exports = _star_exports(target, workspace, set()) if target else None
+        if exports is None:
+            return None
+        modules.append(node.module)
+        exported |= exports
+    return modules, exported
+
+
+def _python_diagnostics(
+    rel_path: str, content: str, workspace: str | None = None
+) -> list[dict[str, Any]]:
     try:
         tree = ast.parse(content, filename=rel_path)
     except SyntaxError as exc:
@@ -144,6 +265,13 @@ def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
     # Pyflakes is a small, in-process AST checker. Keep this collector focused
     # on undefined-name failures; unused-import style feedback is noisy during
     # incremental construction and the full Ruff pass handles it later.
+    #
+    # Under ``from x import *`` pyflakes reports every unresolved load as
+    # ImportStarUsage, never UndefinedName (checker.py, handleNodeLoad), and
+    # every scaffold router star-imports sql_alchemy, pydantic_classes and
+    # bal_stdlib. Those modules are ours: read what they export and judge the
+    # name against it (run 0c537a4e, 2026-09-18, shipped five bodies with
+    # undefined names and no diagnostics because of this).
     try:
         from pyflakes.checker import Checker
     except ImportError:
@@ -165,19 +293,36 @@ def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
         logger.debug("pyflakes failed on %s", rel_path, exc_info=True)
         return unawaited
 
+    star_scope = None
+    if workspace:
+        try:
+            star_scope = _star_import_scope(tree, rel_path, workspace)
+        except Exception:
+            logger.debug("star-import resolution failed on %s", rel_path, exc_info=True)
+
     findings: list[dict[str, Any]] = list(unawaited)
     undefined_kinds = {"UndefinedName", "UndefinedExport", "UndefinedLocal"}
     for item in sorted(messages, key=lambda msg: (msg.lineno, msg.col)):
-        if type(item).__name__ not in undefined_kinds:
+        kind = type(item).__name__
+        if kind == "ImportStarUsage":
+            if star_scope is None or item.message_args[0] in star_scope[1]:
+                continue
+            kind = "UndefinedName"
+            message = (
+                f"undefined name '{item.message_args[0]}' - not defined in this file "
+                f"and not exported by {', '.join(star_scope[0])}"
+            )
+        elif kind not in undefined_kinds:
             continue
-        try:
-            message = item.message % item.message_args
-        except Exception:
-            message = str(item)
+        else:
+            try:
+                message = item.message % item.message_args
+            except Exception:
+                message = str(item)
         findings.append(_finding(
             "pyflakes",
             message,
-            code=type(item).__name__,
+            code=kind,
             line=getattr(item, "lineno", None),
             column=(getattr(item, "col", 0) or 0) + 1,
         ))
@@ -231,12 +376,17 @@ def diagnose_written_content(
     content: str,
     *,
     limit: int = MAX_WRITE_DIAGNOSTICS,
+    workspace: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return bounded parser/undefined-name findings for supported file types."""
+    """Return bounded parser/undefined-name findings for supported file types.
+
+    ``workspace`` is the root the file's local star imports resolve under;
+    without it a name behind ``from x import *`` is not judged.
+    """
     extension = os.path.splitext(rel_path.lower())[1]
     try:
         if extension in {".py", ".pyi"}:
-            findings = _python_diagnostics(rel_path, content)
+            findings = _python_diagnostics(rel_path, content, workspace)
         elif extension == ".json":
             findings = _json_diagnostics(content)
         elif extension in {".yaml", ".yml"}:

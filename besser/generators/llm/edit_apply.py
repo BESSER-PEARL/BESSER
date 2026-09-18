@@ -203,6 +203,26 @@ def replace_most_similar_chunk(whole: str, part: str, replace: str) -> str | Non
     return None
 
 
+def locate_chunk(whole: str, part: str) -> int | None:
+    """1-based line where the lines of ``part`` appear consecutively in
+    ``whole``, each line's surrounding whitespace aside, else ``None``.
+
+    For the already-applied checks in ``_modify_file``. Those were byte-exact
+    and went blind after every tier-2 apply: run 4efe04ff (2026-09-18) landed
+    a block quoted at indent 4 in a file that holds it at 12, re-sent the same
+    call and was told "old_text not found". Diagnostic only, never an edit, so
+    it is looser than the ladder: a model's copy of a block differs from the
+    file's mostly in indentation.
+    """
+    whole_lines = [line.strip() for line in whole.split("\n")]
+    part_lines = [line.strip() for line in part.strip("\n").split("\n")]
+    n = len(part_lines)
+    for i in range(len(whole_lines) - n + 1):
+        if whole_lines[i:i + n] == part_lines:
+            return i + 1
+    return None
+
+
 def find_similar_lines(
     search: str, content: str, threshold: float = 0.6, pad: int = 5
 ) -> str:

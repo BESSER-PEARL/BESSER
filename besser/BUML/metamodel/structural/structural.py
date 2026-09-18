@@ -2407,6 +2407,8 @@ class DomainModel(Model):
         self._validate_circular_inheritance(errors)
         self._validate_attribute_shadowing(errors)
         self._validate_member_name_collisions(errors)
+        self._validate_mandatory_cycles(warnings)
+        self._validate_duplicate_associations(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2457,6 +2459,103 @@ class DomainModel(Model):
                         f"Association '{association.name}', end '{end.name}': "
                         f"min multiplicity ({mult.min}) cannot exceed max ({mult.max})."
                     )
+
+    def _mandatory_dependencies(self) -> dict[str, set[str]]:
+        """``{class: classes it needs to exist before it can be created}``.
+
+        An end with ``min >= 1`` says every instance of the classes at the
+        OTHER ends must already be linked to at least one instance of this
+        end's type — so those classes depend on this one.
+        """
+        needs: dict[str, set[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) < 2:
+                continue
+            for end in ends:
+                if end.multiplicity.min < 1:
+                    continue
+                for other in ends:
+                    if other is end:
+                        continue
+                    needs.setdefault(other.type.name, set()).add(end.type.name)
+        return needs
+
+    def _validate_mandatory_cycles(self, warnings: list[str]):
+        """Flag a set of classes that can never be instantiated.
+
+        Live run 2026-09-18: ``Booking`` required at least one
+        ``ReservedRoom`` (end ``reservedRooms`` 1..*) while ``ReservedRoom``
+        required exactly one ``Booking`` (end ``booking_1`` 1..1), through two
+        DIFFERENT associations — so no per-association check could see it. The
+        diagram validated clean, the generator faithfully made both fields
+        mandatory in the create schemas, and the shipped API could not create
+        either class. A self-association with a mandatory end is the same
+        defect with a cycle of length one.
+
+        A WARNING, not an error: an association with 1..1 on both ends is
+        legal UML and BESSER's own ``user_reference_domain_model`` ships three
+        of them (Input/Output/Interaction_Modality, Knowledge/Topic), so the
+        general metamodel validator must not reject it. It is fatal only when
+        the model is about to be turned into a CRUD API, which is where the
+        Spec-Driven Agent promotes this to a blocker.
+        """
+        needs = self._mandatory_dependencies()
+        reported: set[frozenset] = set()
+        # Iterative DFS keeping the path, so the message can name the cycle.
+        for start in sorted(needs):
+            stack: list[tuple[str, list[str]]] = [(start, [start])]
+            seen: set[str] = set()
+            while stack:
+                node, path = stack.pop()
+                for nxt in sorted(needs.get(node, ())):
+                    if nxt in path:
+                        cycle = path[path.index(nxt):]
+                        key = frozenset(cycle)
+                        if key in reported:
+                            continue
+                        reported.add(key)
+                        warnings.append(
+                            "Mandatory creation cycle: "
+                            + " -> ".join(cycle + [nxt])
+                            + ". Each class requires an instance of the next "
+                            "before it can be created, so none of them can be "
+                            "created first and the generated API cannot "
+                            "construct any of them. Relax one of the "
+                            "association ends in the cycle to an optional "
+                            "multiplicity (0..1 or 0..*)."
+                        )
+                    elif nxt not in seen:
+                        seen.add(nxt)
+                        stack.append((nxt, path + [nxt]))
+
+    def _validate_duplicate_associations(self, warnings: list[str]):
+        """Warn when one class pair is connected by more than one association.
+
+        Legal UML — ``homeAddress`` / ``workAddress`` are genuinely different
+        relationships — so this is a warning, not an error. But on the live
+        model above, all three duplicated pairs were one concept drawn twice,
+        and each produced a redundant foreign key plus a ``_1``-suffixed role
+        name (the collision marker) in the generated schema.
+        """
+        by_pair: dict[frozenset, list[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            pair = frozenset((ends[0].type.name, ends[1].type.name))
+            by_pair.setdefault(pair, []).append(association.name)
+        for pair, names in by_pair.items():
+            if len(names) < 2:
+                continue
+            classes = " and ".join(f"'{n}'" for n in sorted(pair))
+            warnings.append(
+                f"Classes {classes} are connected by {len(names)} "
+                f"associations ({', '.join(sorted(names))}). If these are the "
+                "same relationship drawn twice, the generated code will carry "
+                "duplicate foreign keys and a suffixed role name for one of "
+                "them; keep both only if they are genuinely different roles."
+            )
 
     def _validate_constraints(self, errors: list[str]):
         """Validate that constraint contexts reference classes in the model.

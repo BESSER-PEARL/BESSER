@@ -71,12 +71,18 @@ class TestPostEditEcho:
     def test_result_carries_the_edited_region_numbered(self, tmp_path):
         ex = _executor(tmp_path, **{"m.py": STUB})
         ex.mark_known(["m.py"])
+        # The whole body: dropping only the try would orphan its except, and
+        # since 2026-09-18 an edit that leaves a valid file unparseable is
+        # refused rather than written with a diagnostic.
         res = ex._modify_file({
             "path": "m.py",
-            "old_text": "def cancel():\n    try:\n        raise NotImplementedError\n",
+            "old_text": (
+                "def cancel():\n    try:\n        raise NotImplementedError\n"
+                "    except Exception:\n        pass\n"
+            ),
             "new_text": "def cancel():\n    return 'cancelled'\n",
         })
-        assert res["status"] == "modified"
+        assert res["status"] == "modified", res
         snippet = res["snippet"]
         assert "|     return 'cancelled'" in snippet
         assert "  10| " in snippet           # numbered from the file, not from 1

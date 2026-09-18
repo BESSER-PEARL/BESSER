@@ -196,6 +196,7 @@ def analyze_gaps_via_llm(
     cleaned = _sanitize_tasks(cleaned, generator_used, instructions)
     cleaned = _drop_present_enumerations(cleaned, domain_model)
     cleaned = _resolve_task_paths(cleaned, workspace_files or [])
+    cleaned = _note_dependent_rule_placement(cleaned, domain_model)
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
 
@@ -431,6 +432,76 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
             )
         repaired.append(text)
     return repaired
+
+
+# The creation verb, optional articles, then the class name - whose camel
+# humps may be split in prose ("booked room", "booked_room").
+_CREATE_VERB = r"\bcreat(?:e|es|ed|ing|ion)(?:[\s_-]+(?:a|an|the|new|each|every|of))*[\s_-]+"
+
+
+def _class_name_pattern(name: str) -> str:
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", lambda _: r"[\s_-]*", re.escape(name))
+
+
+def _note_dependent_rule_placement(tasks: list, domain_model) -> list:
+    """Tell a create-time task about rows that cannot exist yet.
+
+    Live run 9a6063ed (2026-09-18): the planner emitted "add validation in
+    'create_booking' to enforce that the total number of guests does not
+    exceed the sum of room capacities across all BookedRooms", and Phase 2
+    wrote exactly that - at insert time. A BookedRoom needs a Booking id, so
+    when create_booking runs there are never any: capacity was 0, every
+    POST /booking/ was a 400, and the booking half of the app was dead.
+
+    The dependency is in the model. For a task that creates X and names a
+    class whose rows require an X, say where the rule can hold. The rule
+    itself stays - only its placement is corrected.
+    """
+    if domain_model is None:
+        return tasks
+    try:
+        needs = domain_model._mandatory_dependencies()
+    except Exception:
+        return tasks
+    dependents: dict[str, set] = {}
+    for cls, required in needs.items():
+        for parent in required:
+            if parent != cls:
+                dependents.setdefault(parent, set()).add(cls)
+    if not dependents:
+        return tasks
+
+    noted: list = []
+    for task in tasks:
+        text = task
+        squashed = re.sub(r"[\s_-]+", "", task.lower())
+        for parent in sorted(dependents):
+            name = _class_name_pattern(parent)
+            creates_parent = re.search(
+                rf"{_CREATE_VERB}{name}\b|\b{name}[\s_-]*creat(?:e|ion)\b|\bpost\s+/{name}/?",
+                task, re.IGNORECASE,
+            )
+            if not creates_parent:
+                continue
+            named = sorted(c for c in dependents[parent] if c.lower() in squashed)
+            if not named:
+                continue
+            rows = " or ".join(named)
+            text = (
+                f"{text.rstrip().rstrip('.')}. NOTE: no {rows} row can exist before "
+                f"the {parent} it requires, so a {parent} being created has none - a "
+                f"rule about them cannot be checked while creating the {parent} "
+                f"without rejecting every request. Enforce it where {rows} rows are "
+                f"created, updated or deleted (and when the {parent} is updated), "
+                f"or create them inline in the same request."
+            )
+            logger.info(
+                "Gap sanitizer noted dependent-row placement (%s) in task: %r",
+                parent, task[:100],
+            )
+            break
+        noted.append(text)
+    return noted
 
 
 def _call_planner(llm_client, user_prompt: str) -> list | None:

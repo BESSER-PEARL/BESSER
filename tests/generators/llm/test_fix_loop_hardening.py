@@ -82,16 +82,26 @@ def test_duplicate_file_and_line_is_not_repeated(orchestrator):
     assert len(orchestrator._excerpts_for(issues)) == 1
 
 
-def test_fix_loop_stops_on_an_unexpected_stop_reason():
+def test_fix_loop_stops_on_an_unexpected_stop_reason(tmp_path):
     """The defect: any stop_reason other than end_turn / tool_use used to fall
     through, leaving `messages` untouched so the same request went out again."""
-    import inspect
-    src = inspect.getsource(LLMOrchestrator._invoke_phase3_fix_loop)
-    assert 'not in ("end_turn", "tool_use")' in src, (
-        "Phase 3 must handle an unexpected stop_reason instead of re-sending")
-    guard = src.index('not in ("end_turn", "tool_use")')
-    tool_use = src.index('== "tool_use"', guard)
-    assert guard < tool_use, "the guard must come before the tool_use branch"
+    class _MaxTokensClient:
+        model = "mock-model"
+        usage = type("Usage", (), {"estimated_cost": 0.0})()
+        calls = 0
+
+        def chat(self, system, messages, tools, **kwargs):
+            self.calls += 1
+            return {"stop_reason": "max_tokens", "content": []}
+
+    client = _MaxTokensClient()
+    orch = LLMOrchestrator(
+        llm_client=client, state_machines=[type("SM", (), {"name": "x"})()],
+        output_dir=str(tmp_path), max_cost_usd=10.0,
+        enable_tracing=False, enable_checkpointing=False,
+    )
+    orch._invoke_phase3_fix_loop([ValidationIssue("blocker", BLOCKER)], is_first_attempt=True)
+    assert client.calls == 1
 
 
 def test_fix_prompt_tells_the_model_not_to_abbreviate():

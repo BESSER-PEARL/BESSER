@@ -329,3 +329,138 @@ class TestPerFileModifyGuard:
             "Reminder fired when modify_file alternated between two "
             "different paths. Texts: %r" % all_texts
         )
+
+
+# ======================================================================
+# Interleaved re-reads: the shape the guard could not see
+# ======================================================================
+#
+# Live run a5dce952 (2026-09-18, Qwen3-30B, hosted). Phase 2 alternated
+# modify_file and read_file on ONE file for 38 consecutive pairs:
+#
+#     t9  modify_file web_app/backend/sql_alchemy.py
+#     t10 read_file   web_app/backend/sql_alchemy.py
+#     t11 modify_file web_app/backend/sql_alchemy.py
+#     ... 38 pairs ... 85 turns, 402s, $0.70, no progress
+#
+# `_is_stuck` DID fire ("Possible loop: modify_file" in the container log,
+# repeatedly) but it only appends "Move on." inside a tool_result, which
+# this model class ignores — test_elided_edit.py records the same note
+# being ignored 61 times. The guard that uses the channel that works,
+# `_consecutive_modify_on_same_file`, could not fire at all: it rejected
+# any window containing a non-modify tool, and the interleaved read_file
+# is exactly that. The flail's own rhythm disarmed the guard built for it.
+
+
+def _interleaved_turn_text(simple_model, tmp_path, target: str, old_text,
+                           stop_turn: int = 6) -> str:
+    """Alternate modify_file / read_file on ``target`` and return the text
+    the model is shown on ``stop_turn``."""
+    _seed_file(str(tmp_path), target, content="line1\nline2\nline3\n")
+    turn_counter = {"n": 0}
+    captured: dict[str, list[dict]] = {}
+
+    class InterleavedClient:
+        model = "mock-model"
+        usage = UsageTracker("mock-model")
+
+        def chat(self, system, messages, tools):
+            turn_counter["n"] += 1
+            n = turn_counter["n"]
+            if n == stop_turn:
+                captured["stop"] = [dict(m) for m in messages]
+                return {"stop_reason": "end_turn", "content": [
+                    MockBlock("text", text="Stopping."),
+                ]}
+            if n % 2 == 1:
+                return {"stop_reason": "tool_use", "content": [
+                    MockBlock("tool_use", name="modify_file", input={
+                        "path": target,
+                        "old_text": old_text(n),
+                        "new_text": f"updated{n}",
+                    }, id=f"m{n}"),
+                ]}
+            return {"stop_reason": "tool_use", "content": [
+                MockBlock("tool_use", name="read_file",
+                          input={"path": target}, id=f"r{n}"),
+            ]}
+
+    LLMOrchestrator(
+        llm_client=InterleavedClient(),
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=12,
+    ).run("Build an app")
+    assert "stop" in captured, (
+        "Mock client never reached the stop turn — Phase 2 ended early."
+    )
+    return "\n".join(_extract_text_blocks(captured["stop"]))
+
+
+class TestInterleavedReadDoesNotDisarmTheGuard:
+
+    def test_modify_read_modify_read_on_one_file_still_triggers(
+        self, simple_model, tmp_path
+    ):
+        """The a5dce952 shape: every modify misses, each followed by a
+        re-read of the same file. Re-reading the file you cannot edit is
+        part of the flail, not progress that clears it."""
+        joined = _interleaved_turn_text(
+            simple_model, tmp_path, "app.py",
+            old_text=lambda n: f"nomatch{n}",
+        )
+        assert "<system-reminder>" in joined, joined
+        assert "app.py" in joined
+
+    def test_interleaved_reads_with_successful_edits_do_not_trigger(
+        self, simple_model, tmp_path
+    ):
+        """Edit, re-read to confirm, edit again is a healthy rhythm. The
+        executor resets its miss count on a hit, so a matching edit must
+        never be mistaken for the flail above."""
+        joined = _interleaved_turn_text(
+            simple_model, tmp_path, "app.py",
+            old_text=lambda n: f"line{(n + 1) // 2}",
+        )
+        assert "<system-reminder>" not in joined, joined
+
+    def test_a_read_of_a_different_file_still_breaks_the_streak(
+        self, simple_model, tmp_path
+    ):
+        """Reading a DIFFERENT file is real exploration — the model went
+        to look somewhere else — so it must still clear the streak."""
+        _seed_file(str(tmp_path), "app.py", content="line1\nline2\nline3\n")
+        _seed_file(str(tmp_path), "other.py", content="elsewhere\n")
+        turn_counter = {"n": 0}
+        captured: dict[str, list[dict]] = {}
+
+        class MixedClient:
+            model = "mock-model"
+            usage = UsageTracker("mock-model")
+
+            def chat(self, system, messages, tools):
+                turn_counter["n"] += 1
+                n = turn_counter["n"]
+                if n == 6:
+                    captured["stop"] = [dict(m) for m in messages]
+                    return {"stop_reason": "end_turn", "content": [
+                        MockBlock("text", text="Stopping."),
+                    ]}
+                if n % 2 == 1:
+                    return {"stop_reason": "tool_use", "content": [
+                        MockBlock("tool_use", name="modify_file", input={
+                            "path": "app.py", "old_text": f"nomatch{n}",
+                            "new_text": "x",
+                        }, id=f"m{n}"),
+                    ]}
+                return {"stop_reason": "tool_use", "content": [
+                    MockBlock("tool_use", name="read_file",
+                              input={"path": "other.py"}, id=f"r{n}"),
+                ]}
+
+        LLMOrchestrator(
+            llm_client=MixedClient(), domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=12,
+        ).run("Build an app")
+        joined = "\n".join(_extract_text_blocks(captured["stop"]))
+        assert "<system-reminder>" not in joined, joined

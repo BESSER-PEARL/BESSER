@@ -65,6 +65,14 @@ loop stops early when blockers reach zero, gives up after two consecutive
 rounds without progress, and rolls back to that snapshot if the fixes made
 blockers *worse* — a failed repair can never cost you the Phase 2 work.
 
+An attempt that ends without a single successful edit — the model explained
+the fix instead of making it, or read files until its turn budget ran out — is
+re-prompted once, with ``modify_file`` forced through ``tool_choice`` where the
+provider honours it and a reminder in the message either way; if that still
+produces no edit the attempt ends, and the log says ``ended with no successful
+edit``. Phase 3 tool calls are recorded in the trace and the recipe exactly
+like Phase 2's.
+
 Validation itself always runs. The *repair* half is a flag:
 ``LLMOrchestrator(auto_fix_issues=...)`` defaults to ``False`` for library
 users — report by default, fix on request, the usual static-analyser

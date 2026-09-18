@@ -442,9 +442,13 @@ def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path) -> None:
 
     with patch.object(orch, "_collect_validation_issues", side_effect=stub_collect), \
          patch.object(orch, "_create_snapshot"), \
-         patch.object(orch, "_restore_snapshot"):
+         patch.object(orch, "_restore_snapshot"), \
+         patch.object(orch, "_invoke_phase3_fix_loop",
+                      wraps=orch._invoke_phase3_fix_loop) as attempts:
         orch._run_phase3_validation()
 
-    # Exactly one LLM call: the first attempt cleared the blockers,
-    # so the outer loop returned without spinning up a second attempt.
-    assert len(client.calls) == 1
+    # Exactly one attempt: it cleared the blockers, so the outer loop
+    # returned without spinning up a second one. (The attempt itself makes
+    # two calls: an end_turn with no edit is re-prompted once.)
+    assert attempts.call_count == 1
+    assert len(client.calls) >= 1

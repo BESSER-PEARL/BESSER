@@ -16,6 +16,11 @@ fine (they had merely run out of turns).
    it report "unable to detect undefined names", which EXCUSES every name the
    module needed instead of flagging it. One app imported sql_alchemy and
    pydantic_classes with neither file present anywhere.
+
+3. A relationship() whose string arguments resolve to nothing is invisible to
+   every static gate, because SQLAlchemy configures mappers lazily, on the
+   first query. Live run 52befadf (2026-09-18) booted, passed ast.parse and
+   ruff, and returned 500 on every database request.
 """
 
 import pytest
@@ -203,3 +208,177 @@ def test_a_raising_callback_never_breaks_the_run():
     orch = object.__new__(LLMOrchestrator)
     orch.on_progress = explode
     orch._emit_progress(1, "write_file", "executing", "path=a.py")   # must not raise
+
+
+# ------------------------------------------ mappers that fail on first use
+
+
+# Trimmed from the live download of run 52befadf (2026-09-18): Phase 2 added
+# ``relationship(..., secondary="booking_guest", ...)`` inside the class body
+# of a file whose only many-to-many table is ``guests``. The module imports,
+# ast.parse and ruff pass, and every database request returned 500. Removing
+# just that line made 14 of 15 workflow checks pass on the real app; the same
+# removal below gives the healthy fixture.
+_FATAL_LINE = (
+    '    guests: Mapped[List["Guest"]] = relationship("Guest", '
+    'secondary="booking_guest", back_populates="booking")'
+)
+
+_LIVE52_SQL_ALCHEMY = '''import enum
+import os
+from typing import List, Optional, List as List_, Optional as Optional_
+from sqlalchemy import (
+    create_engine, Enum,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Interval,
+    PickleType, String, Table, Text, Time,
+    Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
+    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
+    Interval as Interval_, PickleType as PickleType_,
+)
+from sqlalchemy.orm import (
+    column_property, DeclarativeBase, Mapped, Mapped as Mapped_, mapped_column,
+    relationship
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
+# Tables definition for many-to-many relationships
+guests = Table_(
+    "guests",
+    Base.metadata,
+    Column_("guests", ForeignKey_("booking.id"), primary_key=True),
+    Column_("guest", ForeignKey_("guest.id"), primary_key=True),
+)
+
+# Tables definition
+class Booking(Base):
+    __tablename__ = "booking"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    contact_id: Mapped_[int] = mapped_column(ForeignKey_("person.id"))
+
+    # Relationships
+    contact: Mapped["Person"] = relationship("Person", back_populates="booking")
+''' + _FATAL_LINE + '''
+
+class Person(Base):
+    __tablename__ = "person"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    type_spec: Mapped_[str] = mapped_column(String_(50))
+    __mapper_args__ = {
+        "polymorphic_identity": "person",
+        "polymorphic_on": "type_spec",
+    }
+
+class Guest(Person):
+    __tablename__ = "guest"
+    id: Mapped_[int] = mapped_column(ForeignKey_("person.id"), primary_key=True)
+    __mapper_args__ = {
+        "polymorphic_identity": "guest",
+    }
+
+
+#--- Relationships of the booking table
+Booking.contact: Mapped_["Person"] = relationship("Person", back_populates="booking", uselist=False, foreign_keys=[Booking.contact_id])
+Booking.guest: Mapped_[List_["Guest"]] = relationship("Guest", secondary=guests, back_populates="guests")
+
+#--- Relationships of the person table
+Person.booking: Mapped_[List_["Booking"]] = relationship("Booking", back_populates="contact", foreign_keys=[Booking.contact_id])
+
+#--- Relationships of the guest table
+Guest.guests: Mapped_[List_["Booking"]] = relationship("Booking", secondary=guests, back_populates="guest")
+
+# Database connection (override the default with the DATABASE_URL environment variable)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/Class_Diagram.db")  # SQLite connection
+engine = create_engine(DATABASE_URL)
+'''
+
+_HEALTHY_SQL_ALCHEMY = _LIVE52_SQL_ALCHEMY.replace(_FATAL_LINE + "\n", "")
+_FATAL_LINE_NO = _LIVE52_SQL_ALCHEMY.splitlines().index(_FATAL_LINE) + 1
+
+
+def test_the_live_mapper_failure_is_a_blocker_that_names_the_line(tmp_path):
+    """Nested web_app/backend/ layout, as downloaded."""
+    from besser.generators.llm.orchestrator import _import_smoke_issues
+
+    _write(tmp_path, "web_app/backend/sql_alchemy.py", _LIVE52_SQL_ALCHEMY)
+    issues = _import_smoke_issues(str(tmp_path))
+    assert len(issues) == 1, issues
+    assert issues[0].startswith(
+        f"mapper config: web_app/backend/sql_alchemy.py line {_FATAL_LINE_NO}:"
+    ), issues[0]
+    assert "booking_guest" in issues[0]
+    assert _classify_issue(issues[0]).severity == "blocker"
+
+
+def test_the_same_file_without_that_line_is_clean(tmp_path):
+    """Flat backend/ layout: the file is found wherever it is."""
+    from besser.generators.llm.orchestrator import _import_smoke_issues
+
+    _write(tmp_path, "backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY)
+    assert _import_smoke_issues(str(tmp_path)) == []
+
+
+def test_an_import_time_name_error_is_caught_with_its_own_line(tmp_path):
+    """The star-import blind spot: ruff excuses the name, the import dies."""
+    from besser.generators.llm.orchestrator import _import_smoke_issues
+
+    _write(tmp_path, "backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY)
+    _write(tmp_path, "backend/pydantic_classes.py",
+           "from pydantic import BaseModel\n\n\nclass BookingCreate(BaseModel):\n"
+           "    arrivalDate: dt_date\n")
+    issues = _import_smoke_issues(str(tmp_path))
+    assert len(issues) == 1, issues
+    assert issues[0].startswith("mapper config: backend/pydantic_classes.py line 5:")
+    assert "dt_date" in issues[0]
+    assert _classify_issue(issues[0]).severity == "blocker"
+
+
+def test_a_missing_interpreter_is_reported_as_not_run(tmp_path, monkeypatch):
+    from besser.generators.llm.orchestrator import _import_smoke_issues
+
+    _write(tmp_path, "backend/sql_alchemy.py", _LIVE52_SQL_ALCHEMY)
+    monkeypatch.setattr("sys.executable", str(tmp_path / "no-such-python"))
+    issues = _import_smoke_issues(str(tmp_path))
+    assert issues, "a check that could not run must say so, never return []"
+    assert all("did not run" in i and "SKIPPED" in i for i in issues)
+    assert all(_classify_issue(i).severity == "warning" for i in issues)
+
+
+def test_a_dependency_the_harness_lacks_is_not_the_apps_fault(tmp_path):
+    """The check runs in the harness interpreter, not the app's venv. A
+    third-party module missing HERE proves nothing about the app."""
+    from besser.generators.llm.orchestrator import _import_smoke_issues
+
+    _write(tmp_path, "backend/sql_alchemy.py",
+           "import no_such_third_party_package_xyz\n" + _HEALTHY_SQL_ALCHEMY)
+    issues = _import_smoke_issues(str(tmp_path))
+    assert issues and all("did not run" in i for i in issues), issues
+    assert all(_classify_issue(i).severity == "warning" for i in issues)
+
+
+def test_the_phantom_secondary_is_named_at_write_time():
+    """Same-turn feedback: the executor lints every write_file / modify_file
+    through lint_file, so the model hears about it while the file is still
+    in context. Advisory, not blocker - the table could be defined in another
+    module; the import smoke check above is the gate that proves it."""
+    from besser.generators.llm.contract_checks import DataContract, lint_file
+
+    findings = lint_file("web_app/backend/sql_alchemy.py", _LIVE52_SQL_ALCHEMY,
+                         DataContract(pk_types={}))
+    assert len(findings) == 1, findings
+    assert findings[0].line == _FATAL_LINE_NO
+    assert "booking_guest" in findings[0].message
+    assert "guests" in findings[0].message, "must list the tables that do exist"
+    assert not findings[0].blocker
+
+
+def test_a_secondary_that_names_a_real_table_is_not_flagged():
+    from besser.generators.llm.contract_checks import DataContract, lint_file
+
+    contract = DataContract(pk_types={})
+    assert lint_file("backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY, contract) == []
+    quoted = _HEALTHY_SQL_ALCHEMY.replace("secondary=guests", 'secondary="guests"')
+    assert lint_file("backend/sql_alchemy.py", quoted, contract) == []

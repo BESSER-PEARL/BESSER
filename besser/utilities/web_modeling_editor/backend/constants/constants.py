@@ -150,6 +150,19 @@ LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
 # var. Durable answer is per-run container isolation.
 LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
 
+# Phase 3 import smoke check: import the generated ORM module (sql_alchemy.py,
+# plus pydantic_classes.py beside it) in a subprocess and run SQLAlchemy's
+# configure_mappers(). It is the only check that sees a relationship() whose
+# string arguments resolve to nothing - a lazily-configured mapper that passes
+# ast.parse and ruff and then 500s every database request (live run 52befadf,
+# 2026-09-18). Trade-off, stated plainly: this executes LLM-authored Python on
+# the host, which the shell-tools gate above withholds. It is kept separate
+# from that gate because it imports a module the user is about to download and
+# run anyway, with the stripped subprocess environment, no network, database
+# or server, a 30s timeout and ~0.5s of wall-clock. ON by default: the hosted
+# deploy is exactly where it matters.
+LLM_ENABLE_IMPORT_SMOKE_CHECK = _env_bool("BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK", True)
+
 # Whether a spec-driven generation request may carry a custom LLM ``base_url`` (the
 # 'PIA (LIST)' and 'Local / self-hosted' BYOK providers route through an
 # OpenAI-compatible endpoint at a user-supplied URL). OFF by default: on a

@@ -311,12 +311,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "write_file",
         "description": (
-            "Create a new file or completely overwrite an existing file "
-            "with full contents. Use for new files (Dockerfiles, configs, "
-            "auth modules, README) and for existing files that need three "
-            "or more changes — one write_file is cheaper than a chain of "
-            "modify_file calls. For one or two localised edits to an "
-            "existing file, prefer modify_file."
+            "Create a new file, or replace an existing file's full contents. "
+            "Use it for NEW files (configs, new modules, pages). For an "
+            "existing file use modify_file - one call per change site, as "
+            "many as needed, in the same turn - and reach for write_file only "
+            "when you have just read the whole file and genuinely need to "
+            "replace most of it. Never rewrite a file from memory."
         ),
         "input_schema": {
             "type": "object",
@@ -331,16 +331,15 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "name": "modify_file",
         "description": (
             "Apply a targeted search-and-replace edit to an existing file. "
-            "Use for small, localised changes (1-2 edits per file). "
-            "If a file needs three or more changes, use write_file with "
-            "the complete new contents instead — fewer round-trips. "
-            "You can issue multiple modify_file calls in the SAME turn. "
-            "Calls on DIFFERENT files run in parallel; several calls on the "
-            "SAME file are applied in the order you list them, so each one "
-            "must match the file as the previous one left it. "
-            "Prefer one modify_file per distinct edit site, and include "
-            "enough surrounding lines that old_text matches exactly one place. "
-            "old_text must match exactly (including whitespace)."
+            "This is the tool for changing existing files: one modify_file "
+            "per change site, as many as the file needs, issued together in "
+            "the SAME turn. Keep old_text short - just the lines that change "
+            "plus a few neighbours so it matches exactly one place; do not "
+            "quote long unchanging runs. Calls on DIFFERENT files run in "
+            "parallel; several calls on the SAME file are applied in the "
+            "order you list them, so each one must match the file as the "
+            "previous one left it. old_text must match exactly, including "
+            "indentation."
         ),
         "input_schema": {
             "type": "object",
@@ -489,7 +488,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "Your work checklist for this run. action='list' shows every item "
             "with its status; action='done' marks items complete — pass "
             "`ids=[1,2,3]` for SEVERAL AT ONCE, or `id` for one; "
-            "action='add' appends a new item you discovered (pass `text`). "
+            "action='add' appends items you discovered — pass `texts=[...]` "
+            "for SEVERAL AT ONCE, or `text` for one. "
             "action='drop' closes an item the user did NOT ask for (pass `id` and "
             "`reason`) — never mark such an item done. "
             "Mark items done as you complete them — the run does not finish "
@@ -528,7 +528,18 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                 },
                 "text": {
                     "type": "string",
-                    "description": "New item text (required for action='add')",
+                    "description": (
+                        "New item text for action='add'. Prefer `texts` when "
+                        "you have more than one."
+                    ),
+                },
+                "texts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Several new items to append in ONE call. Use this "
+                        "instead of one call per item."
+                    ),
                 },
             },
             "required": ["action"],

@@ -956,3 +956,171 @@ def test_a_method_named_differently_from_every_attribute_is_accepted():
     domain_model = DomainModel(name="TestModel", types={booking})
 
     assert domain_model.validate(raise_exception=False)["success"] is True
+
+
+# ----------------------------------------------------------------------
+# Constructibility: a model can be structurally valid and still describe an
+# application nobody can use.
+#
+# Live run 2026-09-18 (hotel booking, `latest.json`). validate() returned
+# SUCCESS with 0 errors and 0 warnings. The generated FastAPI app booted,
+# served 69 paths, and its central aggregate could not be created by any
+# client: BookingCreate required a ReservedRoom id and ReservedRoomCreate
+# required a Booking id. Two separate associations, each mandatory in the
+# opposite direction, so no per-association check can see it:
+#
+#     reservedRooms   ReservedRoom [1..*]   -> a Booking needs >=1 ReservedRoom
+#     booking_1       Booking      [1..1]   -> a ReservedRoom needs exactly 1
+#
+# The same diagram also connected three class pairs twice each
+# (Booking<->ReservedRoom, Room<->ReservedRoom, Bill<->Booking), which is
+# what produced duplicate foreign keys and `_1`-suffixed role names in the
+# generated schema.
+# ----------------------------------------------------------------------
+
+
+def _assoc(name, cls_a, role_a, mult_a, cls_b, role_b, mult_b):
+    """A binary association, written the way a diagram reads."""
+    return BinaryAssociation(name=name, ends={
+        Property(name=role_a, type=cls_a, multiplicity=Multiplicity(*mult_a)),
+        Property(name=role_b, type=cls_b, multiplicity=Multiplicity(*mult_b)),
+    })
+
+
+def test_mandatory_creation_cycle_is_reported():
+    """Neither end can be created first — the aggregate is unconstructible.
+
+    A warning here, not an error: 1..1 on both ends is legal UML and BESSER's
+    own user_reference_domain_model ships three such pairs. The Spec-Driven
+    Agent promotes it to a blocker, where generating a CRUD API is the intent.
+    """
+    booking = Class(name="Booking", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={booking, reserved},
+        associations={
+            # A Booking needs at least one ReservedRoom.
+            _assoc("reservedRooms", booking, "booking", (0, 9999),
+                   reserved, "reservedRooms", (1, 9999)),
+            # A ReservedRoom needs exactly one Booking.
+            _assoc("booking_1", booking, "booking_1", (1, 1),
+                   reserved, "reservedroom", (0, 9999)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    joined = " ".join(result["warnings"])
+    assert "Booking" in joined and "ReservedRoom" in joined
+    assert "cycle" in joined.lower()
+
+
+def test_one_optional_end_breaks_the_cycle():
+    """Relaxing either side to 0..* makes the aggregate constructible."""
+    booking = Class(name="Booking", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={booking, reserved},
+        associations={
+            _assoc("reservedRooms", booking, "booking", (0, 9999),
+                   reserved, "reservedRooms", (0, 9999)),   # now optional
+            _assoc("booking_1", booking, "booking_1", (1, 1),
+                   reserved, "reservedroom", (0, 9999)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert result["success"] is True
+    assert not any("cycle" in w.lower() for w in result["warnings"])
+
+
+def test_a_chain_of_mandatory_ends_is_not_a_cycle():
+    """Bill needs Booking needs Person is a valid creation ORDER, not a cycle."""
+    person = Class(name="Person", attributes=set())
+    booking = Class(name="Booking", attributes=set())
+    bill = Class(name="Bill", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={person, booking, bill},
+        associations={
+            _assoc("contact", booking, "bookings", (0, 9999),
+                   person, "contact", (1, 1)),
+            _assoc("billOf", bill, "bills", (0, 9999),
+                   booking, "booking", (1, 1)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert result["success"] is True
+    assert not any("cycle" in w.lower() for w in result["warnings"])
+
+
+def test_self_association_that_is_mandatory_is_a_cycle():
+    """An Employee that must have a manager can never have a first Employee."""
+    employee = Class(name="Employee", attributes=set())
+    model = DomainModel(
+        name="Org",
+        types={employee},
+        associations={
+            _assoc("manages", employee, "reports", (0, 9999),
+                   employee, "manager", (1, 1)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert any("Employee" in w and "cycle" in w.lower() for w in result["warnings"])
+
+
+def test_optional_self_association_is_fine():
+    employee = Class(name="Employee", attributes=set())
+    model = DomainModel(
+        name="Org",
+        types={employee},
+        associations={
+            _assoc("manages", employee, "reports", (0, 9999),
+                   employee, "manager", (0, 1)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert result["success"] is True
+    assert not any("cycle" in w.lower() for w in result["warnings"])
+
+
+def test_duplicate_associations_over_one_class_pair_warn():
+    """Two associations between the same pair: one concept drawn twice.
+
+    A warning, not an error — parallel associations are legal UML
+    (homeAddress / workAddress) — but on the live model all three duplicated
+    pairs carried a `_1`-suffixed role, the collision marker, and each became
+    a redundant foreign key in the generated schema.
+    """
+    room = Class(name="Room", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={room, reserved},
+        associations={
+            _assoc("room_1", reserved, "reservedroom", (0, 9999),
+                   room, "room_1", (1, 1)),
+            _assoc("reservations", reserved, "reservations", (0, 9999),
+                   room, "room", (0, 9999)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    # Legal, so the model still validates...
+    assert result["success"] is True
+    # ...but the reviewer is told.
+    joined = " ".join(result["warnings"])
+    assert "Room" in joined and "ReservedRoom" in joined
+    assert "2" in joined
+
+
+def test_a_single_association_per_pair_does_not_warn():
+    room = Class(name="Room", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={room, reserved},
+        associations={
+            _assoc("room_1", reserved, "reservedroom", (0, 9999),
+                   room, "room_1", (1, 1)),
+        },
+    )
+    assert model.validate(raise_exception=False)["warnings"] == []

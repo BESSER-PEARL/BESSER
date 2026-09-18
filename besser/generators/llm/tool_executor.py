@@ -31,6 +31,7 @@ from besser.generators.llm.edit_apply import (
     elided_lines,
     find_elision,
     find_similar_lines,
+    locate_chunk,
     replace_most_similar_chunk,
 )
 
@@ -231,6 +232,31 @@ def _safe_subprocess_env() -> dict[str, str]:
     return safe
 
 
+_DEF_HEADER_RE = re.compile(r"^\s*(?:async\s+)?(def|class)\s+(\w+)", re.MULTILINE)
+
+# Recovery for an anchor the file does not hold. Never "use write_file": that
+# wording turned targeted edits into whole-file rewrites of scaffold code
+# (2026-09-17, see Orchestrator._build_modify_loop_reminder).
+_ANCHOR_ADVICE = (
+    "To add code that does not exist yet, anchor on a line that IS in the file: "
+    "old_text = that line copied from read_file output, new_text = that line "
+    "followed by the new code. To change existing code, copy the real lines from "
+    "read_file output."
+)
+
+
+def _missing_definition(old_text: str, content: str) -> str:
+    """``"There is no `def X` in this file. "`` when old_text quotes a
+    definition header the file never had, else ``""``."""
+    match = _DEF_HEADER_RE.search(old_text)
+    if not match:
+        return ""
+    keyword, name = match.groups()
+    if re.search(rf"^\s*(?:async\s+)?{keyword}\s+{re.escape(name)}\b", content, re.MULTILINE):
+        return ""
+    return f"There is no `{keyword} {name}` in this file. "
+
+
 def _occurrence_locations(content: str, old_text: str, limit: int = 10) -> list[str]:
     """``"line N (in <def>)"`` for each occurrence of ``old_text``."""
     lines = content.split("\n")
@@ -243,6 +269,42 @@ def _occurrence_locations(content: str, old_text: str, limit: int = 10) -> list[
         out.append(f"line {line_no + 1}" + (f" (in {owner})" if owner else ""))
         pos = content.find(old_text, pos + max(1, len(old_text)))
     return out
+
+
+def _anchored_occurrences(content: str, old_text: str) -> list[int]:
+    """Start offsets of ``old_text`` that do not begin inside a line's
+    indentation. A quote whose first line is under-indented still matches as
+    a substring a few characters into the file's line; replacing that span
+    keeps the file's leading spaces and writes the rest at the quote's indent.
+    Run 57160293 t19 (2026-09-18) produced a second ``try:`` at the enclosing
+    level that way. A hit at column 0, or after real text (a partial-line
+    edit), is fine."""
+    out: list[int] = []
+    pos = content.find(old_text)
+    while pos != -1:
+        line_start = content.rfind("\n", 0, pos) + 1
+        if pos == line_start or content[line_start:pos].strip():
+            out.append(pos)
+        pos = content.find(old_text, pos + max(1, len(old_text)))
+    return out
+
+
+def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int] | None:
+    """``(message, line)`` when ``after`` fails to parse as Python although
+    ``before`` parsed; ``None`` otherwise (non-Python, or already broken)."""
+    if not rel_path.lower().endswith(".py"):
+        return None
+    try:
+        compile(before, rel_path, "exec")
+    except Exception:
+        return None
+    try:
+        compile(after, rel_path, "exec")
+    except SyntaxError as exc:
+        return (exc.msg or "syntax error", exc.lineno or 0)
+    except Exception:
+        return None
+    return None
 
 
 def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
@@ -315,6 +377,22 @@ class ToolExecutor:
         # error message from "not found" to "stop retyping old_text, read the
         # file" — the pilot's 77-action flail was the same miss repeated.
         self._failed_modifies: dict[str, int] = {}
+        # The old_text of the last miss per path. A byte-identical resend
+        # cannot succeed; run 0c537a4e (2026-09-18) sent one 13 times.
+        self._last_missed_old_text: dict[str, str] = {}
+        # Every rejected modify_file this run, (path, old_text, new_text) ->
+        # times seen, and per path the highest repeat count. Run 57160293
+        # (2026-09-18) sent one no-op call (old_text == new_text) 16 times and
+        # nothing counted it; run 0c537a4e came back with one anchor for four
+        # 3-strike cycles because the refusal reset its own counter. Only a
+        # successful edit on the path clears these.
+        self._rejected_edits: dict[tuple[str, str, str], int] = {}
+        self._repeat_hits: dict[str, int] = {}
+        # (path, times seen) when the LAST call repeated a rejected edit, for
+        # the orchestrator's escalation; None otherwise.
+        self.last_repeat: tuple[str, int] | None = None
+        # Paths the orchestrator closed for the rest of the run -> reason.
+        self._frozen_paths: dict[str, str] = {}
         # Files the model has actually SEEN this run: read, written, modified,
         # or inlined in the scaffold snapshot. A miss on any other path is a
         # quote from memory, and the reply says so first.
@@ -636,19 +714,50 @@ class ToolExecutor:
                 return {"status": "dropped", "id": task_id, "open": len(self.open_tasks())}
             return {"error": f"Unknown task id {task_id}. Use action='list' to see ids."}
         if action == "add":
-            text = (args.get("text") or "").strip()
-            if not text:
-                return {"error": "action='add' requires non-empty `text`."}
-            # Same item already listed (case, whitespace, trailing period
-            # aside): hand back its id rather than a second copy the model
-            # will later notice and work through again.
-            key = " ".join(text.lower().split()).rstrip(".")
-            for t in self._tasks:
-                if " ".join(t["text"].lower().split()).rstrip(".") == key:
-                    return {"status": "exists", "id": t["id"], "open": len(self.open_tasks())}
-            new_id = max((t["id"] for t in self._tasks), default=0) + 1
-            self._tasks.append({"id": new_id, "text": text, "done": False})
-            return {"status": "added", "id": new_id, "open": len(self.open_tasks())}
+            # `texts` appends several in one call; `text` keeps the single
+            # shape existing prompts and checkpoints use. Live run 4efe04ff
+            # (2026-09-18) spent turns 11-23 on thirteen consecutive adds
+            # building one checklist — the same waste the ``done`` batching
+            # fixed, on the other action.
+            raw = args.get("texts")
+            batched = isinstance(raw, list)
+            if not batched:
+                raw = [args.get("text")]
+            items = [t.strip() for t in raw if isinstance(t, str) and t.strip()]
+            if not items:
+                return {"error": (
+                    "action='add' requires non-empty `text`, or `texts` with "
+                    "at least one non-empty item."
+                )}
+            ids: list[int] = []
+            appended: set[int] = set()
+            for text in items:
+                # Same item already listed (case, whitespace, trailing period
+                # aside): hand back its id rather than a second copy the model
+                # will later notice and work through again.
+                key = " ".join(text.lower().split()).rstrip(".")
+                existing = next(
+                    (t for t in self._tasks
+                     if " ".join(t["text"].lower().split()).rstrip(".") == key),
+                    None,
+                )
+                if existing is not None:
+                    ids.append(existing["id"])
+                    continue
+                new_id = max((t["id"] for t in self._tasks), default=0) + 1
+                self._tasks.append({"id": new_id, "text": text, "done": False})
+                ids.append(new_id)
+                appended.add(new_id)
+            if batched:
+                return {"status": "added", "ids": ids, "open": len(self.open_tasks())}
+            # Single-item shape unchanged, including the "exists" status a
+            # caller may branch on.
+            only = ids[0]
+            return {
+                "status": "added" if only in appended else "exists",
+                "id": only,
+                "open": len(self.open_tasks()),
+            }
         return {"error": f"Unknown action '{action}'. Use list | done | add."}
 
     def _contract_warnings(self, rel_path: str, content: str) -> str | None:
@@ -685,7 +794,7 @@ class ToolExecutor:
         try:
             from besser.generators.llm.write_diagnostics import diagnose_written_content
 
-            diagnostics = diagnose_written_content(rel_path, content)
+            diagnostics = diagnose_written_content(rel_path, content, workspace=self.workspace)
         except Exception:
             diagnostics = []
         if diagnostics:
@@ -1272,6 +1381,9 @@ class ToolExecutor:
     def _write_file(self, args: dict) -> dict:
         rel_path = args["path"].replace("\\", "/")
         path = self._safe_path(rel_path)
+        frozen = self._frozen(rel_path)
+        if frozen:
+            return frozen
 
         # Rewriting a file the model has never seen this run is a rewrite
         # from memory - the edit that lost scaffold code (2026-09-17).
@@ -1331,6 +1443,19 @@ class ToolExecutor:
                 rel_path, existing_lines, self._modify_counts.get(rel_path, 0),
             )
 
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                before = f.read()
+            broke = _new_syntax_error(rel_path, before, args["content"])
+            if broke:
+                msg, line_no = broke
+                return {
+                    "error": (
+                        f"Refused: this rewrite would make {args['path']} unparseable "
+                        f"({msg} at line {line_no}); the file was left unchanged. Fix "
+                        "the syntax and resend the full content."
+                    ),
+                }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])
@@ -1356,34 +1481,123 @@ class ToolExecutor:
                 return misses
         return 0
 
+    def repeat_rejections(self, path: str) -> int:
+        """Highest number of times one already-rejected edit was sent to ``path``."""
+        return self._repeat_hits.get(path.replace("\\", "/").strip(), 0)
+
+    def freeze_path(self, path: str, reason: str) -> None:
+        """Close ``path`` to modify_file / write_file for the rest of the run."""
+        self._frozen_paths[path.replace("\\", "/").strip()] = reason
+
+    def _frozen(self, rel_path: str) -> dict | None:
+        reason = self._frozen_paths.get(rel_path.strip())
+        if reason is None:
+            return None
+        return {
+            "error": (
+                f"{rel_path} is closed for edits for the rest of this run "
+                f"({reason}). Continue with other work or finish."
+            ),
+        }
+
+    def _note_rejection(self, rel_path: str, old_text: str, new_text: str) -> int:
+        """Record a rejected edit; return how often this exact call has now been seen."""
+        key = (rel_path.strip(), old_text, new_text)
+        seen = self._rejected_edits.get(key, 0) + 1
+        self._rejected_edits[key] = seen
+        if seen > 1:
+            self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), seen)
+            self.last_repeat = (key[0], seen)
+        return seen
+
+    def _clear_rejections(self, rel_path: str) -> None:
+        key_path = rel_path.strip()
+        for key in [k for k in self._rejected_edits if k[0] == key_path]:
+            del self._rejected_edits[key]
+        self._repeat_hits.pop(key_path, None)
+
     def _modify_file(self, args: dict) -> dict:
         """Targeted search-and-replace, with a flexible apply ladder.
 
-        Match tiers, most literal first (never similarity-scored):
-        exact -> typographic normalization -> ``edit_apply`` (uniform-indent
-        correction, spurious leading blank line). On a miss the error carries a
-        "did you mean" window of the closest real lines so the retry can copy
-        them verbatim instead of retyping from memory.
+        Match tiers, most literal first (never similarity-scored): exact,
+        line-anchored -> typographic normalization -> ``edit_apply`` (uniform-
+        indent correction, spurious leading blank line, blank-run count,
+        line-number prefix). On a miss the error carries a "did you mean"
+        window of the closest real lines so the retry can copy them verbatim.
+        An edit that would turn a parseable Python file into an unparseable
+        one is refused and the file left untouched. Every rejection is
+        fingerprinted; a repeat of a rejected call after three misses is
+        refused outright and only a successful edit on the path clears that.
         """
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
             return {"error": f"File not found: {args['path']}"}
         rel_path = args["path"].replace("\\", "/")
+        self.last_repeat = None
+        old_text = args["old_text"]
+        new_text = args["new_text"]
+        frozen = self._frozen(rel_path)
+        if frozen:
+            self._note_rejection(rel_path, old_text, new_text)
+            return frozen
         self._modify_counts[rel_path] = self._modify_counts.get(rel_path, 0) + 1
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
-        old_text = args["old_text"]
-        new_text = args["new_text"]
         replace_all = args.get("replace_all") is True
         if not old_text.strip():
             return {
                 "error": "old_text is empty or whitespace only. To create a file "
                          "or append to it, use write_file instead.",
             }
-        if old_text == new_text:
+        # Sticky stop. After three misses a call the executor has ALREADY
+        # rejected is refused without running the ladder, and only a
+        # successful edit on this path clears it (the old refusal popped its
+        # own counter: four 3-strike cycles on one anchor in run 0c537a4e).
+        # A NEW anchor still goes to the ladder below.
+        if (
+            self.consecutive_modify_misses(rel_path) >= self._MAX_MODIFY_MISSES
+            and self._rejected_edits.get((rel_path.strip(), old_text, new_text), 0) > 0
+        ):
+            self._note_rejection(rel_path, old_text, new_text)
             return {
-                "error": "old_text and new_text are identical; no edit was applied. "
-                         "Read the file before retrying if this change may already exist.",
+                "error": (
+                    f"modify_file has missed {self._MAX_MODIFY_MISSES} times in a row on "
+                    f"{args['path']} and this exact call was already rejected, so it is "
+                    "refused. Do not send it again. A DIFFERENT edit on this file is "
+                    "still accepted: call read_file on the region and copy old_text "
+                    "verbatim from that output."
+                ),
+            }
+        if old_text == new_text:
+            # A no-op is a rejection like any other. Run 57160293 sent one 16
+            # times and this branch returned before every counter.
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            seen = self._note_rejection(rel_path, old_text, new_text)
+            where = ""
+            # locate_chunk, not `in`: the ladder re-indents new_text on a
+            # tier-2 apply, and a byte-exact check then misses its own output
+            # (run 4efe04ff, turns 65/68/70).
+            line_no = locate_chunk(content, new_text) if new_text.strip() else None
+            if line_no:
+                where = (
+                    f" new_text is already in the file at line {line_no}, so this "
+                    "change is done."
+                )
+            if seen > 1:
+                return {
+                    "error": (
+                        f"This identical no-op call was already rejected {seen - 1} "
+                        f"time(s) on {args['path']} and cannot succeed.{where} Do not "
+                        "send it again: mark the task done or drop it, and move on."
+                    ),
+                }
+            return {
+                "error": (
+                    "old_text and new_text are identical, so this call changes "
+                    f"nothing.{where} Do not resend it. For a different change, send "
+                    "old_text = the current lines copied from read_file output and "
+                    "new_text = the changed lines."
+                ),
             }
         # Refuse to write an abbreviation into the file. Observed 2026-09-18:
         # every new_text in a 38-call run carried "..." and the one edit that
@@ -1391,21 +1605,6 @@ class ToolExecutor:
         # this pre-flight for the same reason; the carve-out is theirs too --
         # a placeholder already present in old_text is being preserved, not
         # introduced.
-        # Hard stop, not a nudge. Cline and Roo halt at three consecutive
-        # mistakes and Aider stops the turn after three reflections; ours only
-        # appended "Move on." to the result, which one model ignored 61 times
-        # while missing 37 edits on a single file (2026-09-18). After this many
-        # misses on one path, refuse the tool and require a fresh read.
-        if self.consecutive_modify_misses(rel_path) >= self._MAX_MODIFY_MISSES:
-            self._failed_modifies.pop(rel_path, None)
-            return {
-                "error": (
-                    f"modify_file has missed {self._MAX_MODIFY_MISSES} times in a row on "
-                    f"{args['path']} and is refused for now. Call read_file on the exact "
-                    "region you intend to change and copy old_text verbatim from that "
-                    "output - do not retype it from memory or shorten it."
-                ),
-            }
         # An ellipsis the quoted region already carried may legitimately be
         # rewritten back; a NEW one is an abbreviation. Comparing the lines
         # rather than mere presence closes the hole that let 6 elisions
@@ -1413,6 +1612,8 @@ class ToolExecutor:
         new_elision = find_elision(new_text)
         if new_elision and new_elision[1].strip() not in elided_lines(old_text):
             line_no, line = new_elision
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            self._note_rejection(rel_path, old_text, new_text)
             return {
                 "error": (
                     f"new_text abbreviates the code at line {line_no}: {line.strip()!r}. "
@@ -1433,7 +1634,12 @@ class ToolExecutor:
                 old_text = content[idx:idx + len(old_text)]
                 matched_by = "typographic"
 
-        occurrences = content.count(old_text) if old_text in content else 0
+        # Only line-anchored hits (or hits after real text: a partial-line
+        # edit) count as exact. A hit inside a line's indentation is the quote
+        # under-indented - see _anchored_occurrences.
+        starts = _anchored_occurrences(content, old_text)
+        indent_shifted = not starts and old_text in content
+        occurrences = len(starts)
         if occurrences:
             # A short anchor appearing more than once is genuinely ambiguous:
             # silently editing "the first one" can edit the wrong place. Refuse
@@ -1450,9 +1656,9 @@ class ToolExecutor:
                     # def lets the retry pin one without guessing.
                     "occurrences": _occurrence_locations(content, old_text),
                 }
-            new_content = content.replace(
-                old_text, new_text, occurrences if replace_all else 1
-            )
+            new_content = content
+            for i in (reversed(starts) if replace_all else starts[:1]):
+                new_content = new_content[:i] + new_text + new_content[i + len(old_text):]
         else:
             new_content = replace_most_similar_chunk(content, old_text, new_text)
             matched_by = "flexible"
@@ -1460,6 +1666,10 @@ class ToolExecutor:
         if new_content is None:
             misses = self._failed_modifies.get(rel_path, 0) + 1
             self._failed_modifies[rel_path] = misses
+            self._note_rejection(rel_path, old_text, new_text)
+            resent = self._last_missed_old_text.get(rel_path) == old_text
+            self._last_missed_old_text[rel_path] = old_text
+            hint = find_similar_lines(old_text, content)
             unread = (
                 f"You have not read {args['path']} this run, so old_text cannot be a "
                 "copy of it: call read_file (offset/limit for a region) and quote from "
@@ -1471,6 +1681,7 @@ class ToolExecutor:
             # (2026-09-18) were a shortened quote, and the generic message was
             # what kept it looping. Name the real cause first.
             elision = find_elision(old_text)
+            applied_at = locate_chunk(content, new_text) if new_text.strip() else None
             if elision:
                 line_no, line = elision
                 err: dict = {
@@ -1481,22 +1692,62 @@ class ToolExecutor:
                         "copy the full lines verbatim."
                     ),
                 }
+            elif applied_at:
+                # The anchor is gone because this edit already landed. Run
+                # 4efe04ff t63 re-sent a call whose new_text the ladder had
+                # re-indented on write; "not found" sent it to re-read and
+                # re-send the same text as a no-op.
+                err = {
+                    "error": (
+                        f"old_text not found in {args['path']}, but new_text is "
+                        f"already in the file at line {applied_at}, so this edit has "
+                        "been applied. Do not resend it. For a different change, call "
+                        "read_file on that region and copy old_text verbatim from "
+                        "the output."
+                    ),
+                }
+            elif resent:
+                err = {
+                    "error": (
+                        f"This exact old_text was already rejected on {args['path']} and "
+                        "the file still does not contain it, so resending it cannot "
+                        "succeed. Do not send it again. " + _ANCHOR_ADVICE
+                    ),
+                }
+            elif indent_shifted:
+                raw = content.find(old_text)
+                quoted = len(old_text) - len(old_text.lstrip(" \t"))
+                in_file = raw - (content.rfind("\n", 0, raw) + 1) + quoted
+                err = {
+                    "error": (
+                        f"old_text's first line is indented differently from "
+                        f"{args['path']}: the file's line has {in_file} leading "
+                        f"spaces, the quote has {quoted}. Copy the line's "
+                        "indentation exactly from read_file output."
+                    ),
+                }
+            elif not hint:
+                # Nothing in the file is even similar: the model is quoting
+                # code that was never there. Live, a stub for a helper it had
+                # only ever CALLED; "check your whitespace" sent it to re-read
+                # the file 16 times and resend the same quote.
+                err = {
+                    "error": (
+                        unread + f"old_text not found in {args['path']}, and no region of "
+                        "the file resembles it, so re-reading and re-quoting will not "
+                        "help. " + _missing_definition(old_text, content) + _ANCHOR_ADVICE
+                    ),
+                }
             else:
                 err = {
                     "error": unread + f"old_text not found in {args['path']}. "
                              f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
                              f"Make sure old_text matches exactly including whitespace/indentation.",
                 }
-            hint = find_similar_lines(old_text, content)
             if hint:
                 err["did_you_mean"] = (
                     "Closest lines actually in the file - copy old_text verbatim "
                     "from here:" + chr(10) + hint
-                )
-            if new_text.strip() and new_text in content:
-                err["note"] = (
-                    "new_text is ALREADY present in the file - this edit may have "
-                    "been applied already. Read the file before retrying."
                 )
             if misses >= 2:
                 err["advice"] = (
@@ -1504,7 +1755,32 @@ class ToolExecutor:
                     "read_file on that region and copy old_text out of the output "
                     "instead of retyping it."
                 )
+            if misses > self._MAX_MODIFY_MISSES:
+                err["error"] = (
+                    f"modify_file has missed {misses} times in a row on {args['path']}; "
+                    "this attempt is refused as well. Call read_file on the region and "
+                    "copy old_text verbatim from that output, or move on. "
+                    + err["error"]
+                )
             return err
+
+        # A valid file must never leave this tool unparseable. Run 57160293 t19
+        # wrote a second `try:` at the enclosing level, the executor computed
+        # "expected 'except' or 'finally' block", returned it - and kept it.
+        broke = _new_syntax_error(rel_path, content, new_content)
+        if broke:
+            msg, line_no = broke
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            self._note_rejection(rel_path, old_text, new_text)
+            return {
+                "error": (
+                    f"Refused: this edit would make {args['path']} unparseable "
+                    f"({msg} at line {line_no}) and the file was left unchanged. "
+                    "Check the indentation of new_text against the surrounding code "
+                    "and that every block you open is closed."
+                ),
+                "would_write": _changed_region(content, new_content),
+            }
 
         # newline="\n": a text-mode write translates "\n" to os.linesep, which
         # on a Windows host re-encodes the whole file as CRLF - and the React
@@ -1512,6 +1788,8 @@ class ToolExecutor:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new_content)
         self._failed_modifies.pop(rel_path, None)
+        self._last_missed_old_text.pop(rel_path, None)
+        self._clear_rejections(rel_path)
         self._known_paths.add(rel_path.strip())
         result = {
             "status": "modified",

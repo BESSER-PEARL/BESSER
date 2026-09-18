@@ -248,10 +248,13 @@ def test_modify_guard_unlocks_after_two_targeted_edits(tmp_path):
             "path": "app.py", "old_text": old, "new_text": new_text,
         }))
         assert r["status"] == "modified", r
+    # Valid Python: since 2026-09-18 a rewrite that would leave a parseable
+    # .py file unparseable is refused, and "rewritten as last resort" is not
+    # Python.
     result = json.loads(executor.execute("write_file", {
-        "path": "app.py", "content": "rewritten as last resort",
+        "path": "app.py", "content": "rewritten = 'as last resort'\n",
     }))
-    assert result["status"] == "written"
+    assert result["status"] == "written", result
 
 
 def test_modify_run_enables_the_guard(tmp_path, monkeypatch):

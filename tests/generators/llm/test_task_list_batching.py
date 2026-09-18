@@ -225,3 +225,66 @@ def test_a_partial_batch_counts_as_progress(executor):
     assert payload["refused"][0]["id"] == 2
     assert "error" not in payload
     assert executor._result_status(payload) == "ok"
+
+
+# ======================================================================
+# The other half: action='add'
+# ======================================================================
+#
+# The 2026-09-11 fix batched ``done`` and left ``add`` taking a single
+# ``text``. Live run 4efe04ff, 2026-09-18: turns 11-23 were THIRTEEN
+# consecutive ``add`` calls building a 32-item checklist, one item per round
+# trip, before a single line of code was written. The tool's own description
+# says "Batch them: one task per call wastes a turn each" while offering no
+# way to batch an add.
+
+
+def test_many_items_are_added_in_one_call(executor):
+    """The 4efe04ff shape: 13 turns of bookkeeping become 1."""
+    res = executor._task_list({"action": "add", "texts": [
+        "Implement booking_registerArrival in routers/booking_methods.py",
+        "Implement booking_registerDeparture in routers/booking_methods.py",
+        "Implement bill_registerPayment in routers/bill_methods.py",
+    ]})
+    assert res.get("status") == "added", res
+    assert res.get("ids") == [1, 2, 3], res
+    assert len(executor.open_tasks()) == 3
+
+
+def test_a_single_text_still_works(executor):
+    """The existing call shape must not break."""
+    res = executor._task_list({"action": "add", "text": "One item"})
+    assert res.get("status") == "added"
+    assert res.get("id") == 1
+    assert len(executor.open_tasks()) == 1
+
+
+def test_a_duplicate_inside_a_batch_reuses_its_id(executor):
+    """Dedupe already applies per item; a batch must not bypass it."""
+    executor._task_list({"action": "add", "text": "Wire the Bill screen"})
+    res = executor._task_list({"action": "add", "texts": [
+        "Wire the Bill screen.",          # same item, trailing period
+        "Wire the Booking screen",
+    ]})
+    assert res.get("ids") == [1, 2], res
+    assert len(executor.open_tasks()) == 2, "the duplicate must not add a second copy"
+
+
+def test_blank_entries_in_a_batch_are_ignored_not_added(executor):
+    res = executor._task_list({"action": "add", "texts": ["Real item", "", "   "]})
+    assert res.get("ids") == [1], res
+    assert len(executor.open_tasks()) == 1
+
+
+def test_an_empty_batch_is_refused_clearly(executor):
+    for args in ({"action": "add", "texts": []}, {"action": "add", "texts": ["", " "]}):
+        res = executor._task_list(args)
+        assert "error" in res, (args, res)
+
+
+def test_the_tool_advertises_batched_adds(executor):
+    """A capability the description does not mention is a capability unused."""
+    from besser.generators.llm.tools import VALIDATION_TOOLS
+    spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
+    assert "texts" in spec["input_schema"]["properties"], spec["input_schema"]["properties"].keys()
+    assert "texts" in spec["description"]

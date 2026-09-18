@@ -915,6 +915,16 @@ for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
     _SYMBOL_PATTERNS[_ext] = _SYMBOL_PATTERNS[".js"]
 _SYMBOL_CAP = 10
 
+# Inventory hygiene. Measured on a 60-file web-app scaffold (2026-09-18): the
+# alphabetical 30-path cap spent 5 slots on .besser_* records and
+# __pycache__/*.pyc and listed none of the 33 frontend/src files; a delivered
+# app spent 16 slots on .pyc/.db and lost three routers off the end. Junk is
+# skipped, code files sort first, and the cap is wide enough for any scaffold.
+_INVENTORY_SKIP_EXTENSIONS = {
+    ".pyc", ".pyo", ".db", ".sqlite", ".sqlite3", ".lock", ".zip", ".gz", ".tar",
+}
+_INVENTORY_MAX_FILES = 150
+
 
 def _symbol_map(path: str) -> str:
     """``name@line`` for each top-level def/class/export, capped; ``""`` for
@@ -955,24 +965,33 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     # The scaffold is no longer pasted into the prompt, so this map is how
     # the model finds the region it needs and reads it with read_file
     # offset/limit instead of the whole file (aider's repo map, kept to
-    # top-level names: a few hundred tokens).
-    files = []
-    for root, _, filenames in os.walk(output_dir):
+    # top-level names: a few hundred tokens). Code files first, so a cap
+    # can only ever drop assets and notes.
+    files: list[tuple[int, str, str]] = []
+    for root, dirs, filenames in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
         for f in filenames:
+            ext = os.path.splitext(f)[1].lower()
+            if f.startswith(".besser_") or f in _SNAPSHOT_SKIP_NAMES:
+                continue
+            if ext in _INVENTORY_SKIP_EXTENSIONS:
+                continue
             full = os.path.join(root, f)
-            rel = os.path.relpath(full, output_dir)
+            rel = os.path.relpath(full, output_dir).replace(chr(92), '/')
             size = os.path.getsize(full)
             symbols = _symbol_map(full)
-            files.append(
-                f"{rel.replace(chr(92), '/')} ({size:,} bytes)"
-                + (f": {symbols}" if symbols else "")
-            )
+            files.append((
+                0 if ext in _SYMBOL_PATTERNS else 1,
+                rel,
+                f"{rel} ({size:,} bytes)" + (f": {symbols}" if symbols else ""),
+            ))
+    files.sort()
 
     lines = [f"Generator `{generator_name}` produced {len(files)} files:"]
-    for f in sorted(files)[:30]:
-        lines.append(f"  - {f}")
-    if len(files) > 30:
-        lines.append(f"  ... and {len(files) - 30} more files")
+    for _, _, entry in files[:_INVENTORY_MAX_FILES]:
+        lines.append(f"  - {entry}")
+    if len(files) > _INVENTORY_MAX_FILES:
+        lines.append(f"  ... and {len(files) - _INVENTORY_MAX_FILES} more files")
 
     if domain_model is not None:
         try:
@@ -994,7 +1013,8 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
         lines.append("Docker: docker-compose.yml + Dockerfiles")
         # List frontend pages
         pages = []
-        for root, _, filenames in os.walk(output_dir):
+        for root, dirs, filenames in os.walk(output_dir):
+            dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
             for f in filenames:
                 if "/pages/" in os.path.join(root, f).replace("\\", "/") and f.endswith((".tsx", ".jsx")):
                     pages.append(f.replace(".tsx", "").replace(".jsx", ""))

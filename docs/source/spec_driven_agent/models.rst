@@ -17,7 +17,8 @@ model on the request's behalf. The free tier is gated by
 backend config endpoint reports it as ``free_tier: {available, model, models}``.
 
 **Bring Your Own Key (BYOK, optional).** To target a commercial provider —
-``anthropic``, ``openai``, or ``mistral`` — for higher-fidelity results, the
+``anthropic``, ``openai``, ``mistral``, or ``nebius`` — for higher-fidelity
+results, the
 user supplies their **own API key**. The key:
 
 - is sent only in the request body, never in the URL;
@@ -75,6 +76,10 @@ provider default is used:
      - ``mistral-large-latest``
      - ``mistral-small-latest``
      - ``llm_model``
+   * - ``nebius``
+     - ``Qwen/Qwen3-30B-A3B-Instruct-2507``
+     - the main model
+     - ``llm_model``
    * - ``free``
      - server-configured (``BESSER_FREE_LLM_MODEL``)
      - the main model
@@ -88,6 +93,15 @@ For the free tier, ``llm_model`` may only name a model the server has
 configured — the primary, one of ``BESSER_FREE_LLM_ALT_MODELS``, or the
 fallback. Any other value pins the run to the primary.
 
+``nebius`` is `Nebius Token Factory <https://tokenfactory.nebius.com/>`_
+(formerly Nebius AI Studio), reached over its OpenAI-compatible Chat
+Completions API. Its endpoint is **fixed server-side**
+(``https://api.tokenfactory.nebius.com/v1/``, overridable only by the operator
+through ``NEBIUS_BASE_URL``), so a Nebius run carries no ``base_url`` and is
+not subject to the custom-endpoint gate that ``local`` / ``PIA`` runs are.
+Because the whole customization loop is tool-driven, any ``llm_model`` chosen
+here must support OpenAI-style function calling.
+
 The planning model
 ------------------
 
@@ -99,7 +113,9 @@ on Anthropic, a ``mini`` / ``nano`` model on OpenAI), and — on the
 OpenAI-compatible providers — when the model reads as self-hosted or
 open-weight, whose endpoint has no such sibling. That last test is name-based
 (a ``name:size`` tag, or a known open-weight family), which is what makes the
-``free`` tier route planning to its own model.
+``free`` tier route planning to its own model. ``nebius`` opts out explicitly:
+its default is already a small-activation MoE, and the OpenAI cheap sibling
+does not exist on that endpoint.
 
 .. important::
    The sponsored tier is served through an OpenAI-compatible aggregator, so a

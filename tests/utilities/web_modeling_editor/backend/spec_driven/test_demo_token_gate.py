@@ -125,7 +125,9 @@ def test_the_refusal_does_not_say_which_half_was_wrong(_demo_enabled):
     assert "token" not in detail and "invalid" not in detail
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai", "mistral", "free"])
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "openai", "mistral", "nebius", "free"]
+)
 def test_other_providers_need_no_demo_token(provider, monkeypatch):
     """The gate guards the org's wallet, not every run on the server."""
     monkeypatch.delenv("BESSER_DEMO_TOKEN", raising=False)

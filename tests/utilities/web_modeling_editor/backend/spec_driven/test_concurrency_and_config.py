@@ -68,7 +68,7 @@ def test_config_endpoint_exposes_expected_fields():
 
     # Providers
     assert set(payload["supported_providers"]) == {
-        "anthropic", "openai", "mistral",
+        "anthropic", "openai", "mistral", "nebius",
     }
 
 

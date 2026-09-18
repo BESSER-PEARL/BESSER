@@ -293,9 +293,26 @@ class TestKnownWindows:
         "Materially" is one whole-file read.
         """
         for marker, _window in c._KNOWN_CONTEXT_WINDOWS:
+            # A bare marker that ALSO matches a measured row is the documented
+            # exception above ("only a measured row may clamp below it"):
+            # un-namespaced ids look self-hosted, and the measured window for
+            # that box is the more trustworthy figure. The cloud form of such
+            # a model is vendor-namespaced and is checked below instead.
+            if any(m in marker for m, _ in c._SMALL_CONTEXT_WINDOWS):
+                continue
             for reserve in (COMPACT_RESERVE_TOKENS, RESERVE):
                 threshold = effective_threshold(marker, reserve=reserve)
                 assert threshold >= COMPACT_TOKEN_THRESHOLD - ONE_FILE_READ, (marker, reserve)
+
+    def test_namespaced_form_of_a_measured_family_keeps_its_full_window(self):
+        """The exception above must not swallow the cloud case: a vendor-
+        namespaced id is served by a provider, not by our box."""
+        for marker, window in c._KNOWN_CONTEXT_WINDOWS:
+            if not any(m in marker for m, _ in c._SMALL_CONTEXT_WINDOWS):
+                continue
+            namespaced = f"Vendor/{marker}"
+            threshold = effective_threshold(namespaced, reserve=COMPACT_RESERVE_TOKENS)
+            assert threshold >= COMPACT_TOKEN_THRESHOLD - ONE_FILE_READ, namespaced
 
     def test_measured_small_mistral_rows_still_win_over_the_family_table(self):
         assert effective_threshold("mistral-small-latest") == 16_000

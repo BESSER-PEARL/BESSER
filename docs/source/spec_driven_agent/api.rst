@@ -76,10 +76,12 @@ Request body
      - Natural-language description of what to build (1–8000 chars).
    * - ``api_key``
      - string (secret)
-     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral``; omitted for
-       the keyless tiers. Sent only in the body, never logged or persisted.
+     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``;
+       omitted for the keyless tiers. Sent only in the body, never logged or
+       persisted.
    * - ``provider``
-     - ``anthropic`` | ``openai`` | ``mistral`` | ``free`` | ``sponsored``
+     - ``anthropic`` | ``openai`` | ``mistral`` | ``nebius`` | ``free`` |
+       ``sponsored``
      - Which provider serves the run. Default ``anthropic``; the editor
        selects ``free`` when the deployment configures a free tier. See
        :doc:`models`.

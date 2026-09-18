@@ -600,10 +600,13 @@ def _data_contract_section(domain_model) -> str:
    param for a string id, and a ForeignKey column uses the SAME type as
    the primary key it references.
 2. **Server-owned fields.** `id`, `createdAt`/`created_at`,
-   `updatedAt`/`updated_at` are assigned by the backend. They NEVER
-   appear in create-request schemas or create forms, and the client
-   never sends them. (A declared domain identifier with another name —
-   e.g. `isbn` — IS client-supplied and belongs in the create form.)
+   `updatedAt`/`updated_at`, and **every attribute the model marks
+   `"is_derived": true`** are assigned or computed by the backend. They
+   NEVER appear in create-request schemas or create forms, and the client
+   never sends them. A derived attribute must be COMPUTED — from the
+   values the request does carry — not accepted. (A declared domain
+   identifier with another name — e.g. `isbn` — IS client-supplied and
+   belongs in the create form.)
 3. **No fake success.** A modeled method you did not implement must
    return HTTP 501 (Not Implemented) with a clear message — NEVER a fake
    `{{"status": "executed"}}` or a silent 200. A button wired to an

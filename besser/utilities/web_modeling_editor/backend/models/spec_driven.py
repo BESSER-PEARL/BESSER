@@ -50,7 +50,8 @@ class SmartGenerateRequest(BaseModel):
         Natural-language description of what to build. Typically refined
         by the modeling agent before being sent.
     api_key
-        The user's Anthropic, OpenAI, or Mistral API key. BYOK — sent only
+        The user's Anthropic, OpenAI, Mistral, or Nebius Token Factory API
+        key. BYOK — sent only
         in the POST body, never in the URL, never logged, never persisted.
     provider
         Which provider the key is for.
@@ -68,7 +69,9 @@ class SmartGenerateRequest(BaseModel):
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.
     api_key: Optional[SecretStr] = None
-    provider: Literal["anthropic", "openai", "mistral", "free", "sponsored"] = "anthropic"
+    provider: Literal[
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored"
+    ] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
     # OpenAI-compatible base URL for the frontend's 'PIA (LIST)' and 'Local
     # (self-hosted)' providers (both arrive as provider="openai" + this URL).

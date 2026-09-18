@@ -563,7 +563,7 @@ async def smart_gen_config():
             "cancel_abandoned_runs": C.LLM_CANCEL_ABANDONED_RUNS,
             "disconnected_grace_seconds": C.LLM_DISCONNECTED_GRACE_SECONDS,
         },
-        "supported_providers": ["anthropic", "openai", "mistral"],
+        "supported_providers": ["anthropic", "openai", "mistral", "nebius"],
         # Per-provider default model names, sourced from the LLM client
         # layer (single source of truth — the BYOK dialog should read
         # these instead of hardcoding its own copies).

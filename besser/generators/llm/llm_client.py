@@ -2,7 +2,8 @@
 LLM client adapter for the BESSER augmented generator.
 
 Features:
-- **Provider abstraction** — ``LLMProvider`` interface with Anthropic, OpenAI, and Mistral backends
+- **Provider abstraction** — ``LLMProvider`` interface with Anthropic, OpenAI,
+  Mistral, and Nebius Token Factory backends
 - Anthropic Claude API with tool-use support and prompt caching
 - OpenAI-compatible API (GPT, Mistral, etc.) with automatic tool format translation
 - **Cost tracking** — tracks input/output/cache tokens and estimates USD cost
@@ -107,6 +108,13 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     # ($0.50 / $1.50). Re-check https://mistral.ai/pricing/ if exactness
     # matters; $2 / $6 is the conservative (higher) of the two.
     "mistral-large": {"input": 2.0, "output": 6.0, "cache_write": 0, "cache_read": 2.0},
+    # Nebius Token Factory — open-weight models served on Nebius hardware.
+    # Read off the endpoint properties in the Nebius console 2026-09-18:
+    # $0.10 / 1M in, $0.30 / 1M out (~70 tok/s). Nebius publishes these rates
+    # only in the console, not in fetchable docs. Nebius publishes no
+    # prompt-cache discount, so cache_read == input rather than a fictional
+    # cheaper tier (same reasoning as Mistral above).
+    "qwen3-30b-a3b": {"input": 0.1, "output": 0.3, "cache_write": 0, "cache_read": 0.1},
 }
 
 # Self-hosted / open-weight models served through an OpenAI-compatible
@@ -180,6 +188,14 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     # Mistral tiers — match before the OpenAI fallback so a Mistral
     # model never silently bills at the ``gpt-4o`` default rate.
     for key in ("mistral-large",):
+        if key in model_lower:
+            return _MODEL_PRICING[key]
+    # Nebius Token Factory tiers. These ids are vendor-namespaced
+    # (``Qwen/Qwen3-30B-A3B-Instruct-2507``), so ``_is_free_local_model``
+    # correctly classifies them as billed rather than $0 — but without a row
+    # here they would then land on the ``gpt-4o`` fallback and be billed ~8x
+    # over, tripping ``max_cost_usd`` long before the user's real budget.
+    for key in ("qwen3-30b-a3b",):
         if key in model_lower:
             return _MODEL_PRICING[key]
     # OpenAI: variant-specific GPT-5.6 / GPT-5.5 keys must precede the
@@ -1577,6 +1593,86 @@ class MistralProvider(OpenAIProvider):
 
 
 # ======================================================================
+# Nebius Token Factory provider
+# ======================================================================
+
+class NebiusProvider(OpenAIProvider):
+    """
+    Nebius Token Factory provider via its OpenAI-compatible API.
+
+    Nebius Token Factory (formerly Nebius AI Studio — ``docs.nebius.com/studio``
+    now redirects to ``docs.tokenfactory.nebius.com``) serves open-weight models
+    behind an OpenAI-compatible Chat Completions endpoint at
+    ``https://api.tokenfactory.nebius.com/v1/``, and documents the same
+    ``tools`` / ``tool_calls`` / ``tool_choice`` function-calling protocol the
+    orchestrator's ReAct loop depends on. We therefore reuse the whole
+    ``OpenAIProvider`` request/response machinery (tool translation, streaming
+    accumulation, usage tracking) and only override the defaults and the
+    base-URL resolution — no extra SDK dependency.
+
+    The base URL is FIXED here rather than accepted from the request: a
+    client-supplied endpoint is an SSRF surface and is gated behind
+    ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` (off by default). A server operator
+    may still repoint the provider with ``NEBIUS_BASE_URL`` — server env, never
+    request data — exactly as ``MISTRAL_BASE_URL`` works for Mistral.
+
+    Nebius model ids are vendor-namespaced (``Qwen/Qwen3-30B-A3B-Instruct-2507``)
+    and contain none of ``gpt-5`` / ``o1`` / ``o3`` / ``o4``, so
+    ``_openai_max_tokens_key`` returns plain ``max_tokens`` and
+    ``_needs_reasoning_none_for_tools`` never fires (the host is not
+    ``api.openai.com``) — both correct for this endpoint.
+
+    Args:
+        api_key: Nebius Token Factory API key (or set ``NEBIUS_API_KEY``).
+        model: Model identifier (default: ``Qwen/Qwen3-30B-A3B-Instruct-2507``).
+        max_tokens: Maximum output tokens per response.
+        base_url: Override endpoint (falls back to ``NEBIUS_BASE_URL``, then
+            the Nebius default).
+    """
+
+    DEFAULT_MODEL = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    DEFAULT_MAX_TOKENS = 16384
+    # No cheap sibling: the default is already a small-activation MoE
+    # (3B active of 30B), so routing planning calls elsewhere buys nothing
+    # and a wrong id costs two failing round-trips per gap analysis.
+    PLANNING_MODEL = None
+    DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ):
+        # Precedence: explicit arg → NEBIUS_BASE_URL env → the Nebius
+        # default. We never fall back to OPENAI_BASE_URL for a Nebius
+        # client (the inherited constructor would otherwise do so).
+        resolved_base = (
+            base_url
+            or os.environ.get("NEBIUS_BASE_URL")
+            or self.DEFAULT_BASE_URL
+        )
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            max_tokens=max_tokens,
+            base_url=resolved_base,
+            timeout=timeout,
+        )
+
+    @property
+    def planning_model(self) -> str | None:
+        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        if env:
+            return None if env.lower() == "primary" else env
+        # None => use the primary model. Inheriting OpenAIProvider's
+        # ``gpt-4o-mini`` would send an id Nebius does not serve.
+        return self.PLANNING_MODEL
+
+
+# ======================================================================
 # Provider defaults (single source — the web runner and the config
 # endpoint import this instead of keeping their own copies in sync)
 # ======================================================================
@@ -1585,6 +1681,7 @@ DEFAULT_MODELS: dict[str, str] = {
     "anthropic": ClaudeLLMClient.DEFAULT_MODEL,
     "openai": OpenAIProvider.DEFAULT_MODEL,
     "mistral": MistralProvider.DEFAULT_MODEL,
+    "nebius": NebiusProvider.DEFAULT_MODEL,
 }
 
 
@@ -1627,6 +1724,25 @@ def _resolve_mistral_api_key(
             return value
     raise InvalidApiKeyError(
         "No Mistral API key found. Set MISTRAL_API_KEY or pass api_key explicitly."
+    )
+
+
+def _resolve_nebius_api_key(
+    api_key: str | None = None,
+    config: dict | None = None,
+) -> str:
+    if api_key:
+        return api_key
+    if config:
+        for key in ("api_key", "nebius_api_key", "NEBIUS_API_KEY"):
+            if config.get(key):
+                return config[key]
+    for env_var in ("NEBIUS_API_KEY",):
+        value = os.environ.get(env_var)
+        if value:
+            return value
+    raise InvalidApiKeyError(
+        "No Nebius API key found. Set NEBIUS_API_KEY or pass api_key explicitly."
     )
 
 
@@ -1857,8 +1973,9 @@ def create_llm_client(
     Create an LLM client for the specified provider.
 
     Args:
-        provider: ``"anthropic"`` (default), ``"openai"``, ``"mistral"``, or
-            ``"free"`` (server-hosted open-weight model; needs no user key).
+        provider: ``"anthropic"`` (default), ``"openai"``, ``"mistral"``,
+            ``"nebius"``, or ``"free"`` (server-hosted open-weight model;
+            needs no user key).
         api_key: API key. If not provided, resolved from environment variables.
             Ignored for the ``"free"`` provider.
         model: Model identifier. Defaults to provider-specific default. For the
@@ -1964,7 +2081,15 @@ def create_llm_client(
             api_key=resolved_key, model=model,
             base_url=base_url, **kwargs,
         )
+    elif provider == "nebius":
+        resolved_key = _resolve_nebius_api_key(api_key=api_key)
+        # ``base_url`` is deliberately NOT forwarded: the endpoint is fixed to
+        # Nebius (server env may repoint it, a request may not). A request that
+        # carries one is already rejected upstream by the runner's SSRF gate
+        # unless BESSER_LLM_ALLOW_CUSTOM_BASE_URL is on.
+        return NebiusProvider(api_key=resolved_key, model=model, **kwargs)
     else:
         raise ValueError(
-            f"Unknown provider: {provider!r}. Supported providers: 'anthropic', 'openai', 'mistral'."
+            f"Unknown provider: {provider!r}. Supported providers: "
+            f"'anthropic', 'openai', 'mistral', 'nebius'."
         )

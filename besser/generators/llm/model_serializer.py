@@ -40,6 +40,9 @@ def _attribute_entry(attr) -> dict[str, Any]:
     }
     if getattr(attr, "is_id", False):
         entry["is_id"] = True
+    # Computed by the server; without this the agent sees an ordinary field.
+    if getattr(attr, "is_derived", False):
+        entry["is_derived"] = True
     if getattr(attr, "is_optional", False):
         entry["is_optional"] = True
     mult = getattr(attr, "multiplicity", None)

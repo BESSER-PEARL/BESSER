@@ -44,7 +44,7 @@ The agent is also a normal BESSER generator: ``LLMGenerator`` implements
        model=library_model,
        instructions="Build a FastAPI backend with JWT auth and PostgreSQL",
        api_key="sk-ant-...",              # or the provider's env var
-       provider="anthropic",              # "anthropic" | "openai" | "mistral"
+       provider="anthropic",              # "anthropic" | "openai" | "mistral" | "nebius"
        llm_model="claude-sonnet-4-6",     # optional; provider default otherwise
        output_dir="./my_app",
    )
@@ -98,7 +98,7 @@ Troubleshooting a run
    * - ``INVALID_KEY`` error
      - Only applies when using BYOK (never the keyless free tier). The provider
        rejected the API key. Check the key, and that it matches the selected
-       provider (``anthropic`` / ``openai`` / ``mistral``).
+       provider (``anthropic`` / ``openai`` / ``mistral`` / ``nebius``).
    * - ``COST_CAP`` warning
      - The run reached ``max_cost_usd`` and stopped early. Whatever it
        produced so far is still returned (a ``done`` event follows). Raise the

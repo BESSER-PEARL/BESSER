@@ -3,7 +3,8 @@ LLM-augmented code generation for BESSER.
 
 Uses an LLM to orchestrate BESSER's deterministic generators and customize
 their output based on natural language instructions.  Supports multiple
-LLM providers (Anthropic Claude, OpenAI GPT/o3, and Mistral).
+LLM providers (Anthropic Claude, OpenAI GPT/o3, Mistral, and
+Nebius Token Factory).
 
 Usage::
 
@@ -51,6 +52,7 @@ nor invents behaviour for them.  Body inference lives in each generator's
 from besser.generators.llm.llm_client import (
     LLMProvider,
     MistralProvider,
+    NebiusProvider,
     OpenAIProvider,
     create_llm_client,
 )
@@ -61,5 +63,6 @@ __all__ = [
     "LLMProvider",
     "OpenAIProvider",
     "MistralProvider",
+    "NebiusProvider",
     "create_llm_client",
 ]

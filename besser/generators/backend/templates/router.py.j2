@@ -553,7 +553,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         )
 
     database.add(db_{{ class.name | lower}})
-    database.commit()
+    database.flush()
     database.refresh(db_{{ class.name | lower}})
 
     {# Set one-to-many relationships if provided #}
@@ -571,7 +571,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{ class.name | lower }}_data.{{x[2]}})).update(
             {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.{{ pk }}{{"}"}}, synchronize_session=False
         )
-        database.commit()
+        database.flush()
     {% endfor %}
     {% endif %}
 
@@ -586,7 +586,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                 {{x[3]}}_id=link_target(link),
                 **link_attrs(link, {{ link_attr_names(x[4]) }})
             ))
-        database.commit()
+        database.flush()
     {% else %}
     if {{x[3]}}_payload is not None:
         database.add({{x[4]}}(
@@ -594,7 +594,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             {{x[3]}}_id=link_target({{x[3]}}_payload),
             **link_attrs({{x[3]}}_payload, {{ link_attr_names(x[4]) }})
         ))
-        database.commit()
+        database.flush()
     {% endif %}
     {% endfor %}
     {% endif %}
@@ -607,7 +607,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             # Create the association
             association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.{{ pk }}, {{ x[3] }}=db_{{ x[1]|lower }}.{{ x[1] | pk }})
             database.execute(association)
-            database.commit()
+            database.flush()
     {% endfor -%}
     {% endif %}
 
@@ -628,11 +628,11 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                     {%endfor%}
                 )
             database.add(db_{{x[1] | lower}})
-            database.commit()
+            database.flush()
             # Create the association
             association = {{x[4]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.{{ pk }}, {{ x[1]|lower }}_id=db_{{ x[1]|lower }}.{{ x[1] | pk }})
             database.execute(association)
-            database.commit()
+            database.flush()
             {% endif %}
             {%endfor%}
     {% endfor %}
@@ -661,8 +661,13 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
         {% endfor %}
     }
+    {# One commit for the whole create: a raise above leaves nothing behind. #}
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
     return response_data
     {% else %}
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
     return db_{{ class.name | lower}}
     {% endif %}
 {% endif %}

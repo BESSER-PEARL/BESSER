@@ -131,6 +131,9 @@ _KNOWN_CONTEXT_WINDOWS: tuple = (
     ("gpt-4o", 128_000),
     ("gpt-4.1", 1_000_000),
     ("mistral-large", 256_000),
+    # Nebius Token Factory endpoint properties, read from the console
+    # 2026-09-18: 262K context, FP8, tool calling available.
+    ("qwen3-30b-a3b", 262_144),
 )
 
 # Share of the USABLE advertised window (window - reserve) the history may
@@ -235,9 +238,17 @@ def effective_threshold(
     if not model:
         return threshold
     low = model.lower()
-    for marker, window in _SMALL_CONTEXT_WINDOWS:
-        if marker in low:
-            return _guard_floor(model, min(threshold, window - reserve), window, reserve)
+    # Every row below was measured on a SELF-HOSTED deployment (our Ollama
+    # box, the LIST box). Those serve bare ``name:tag`` ids. A cloud provider
+    # namespaces its ids by vendor ("Qwen/Qwen3-30B-A3B-Instruct-2507" on
+    # Nebius, 262k native), and clamping one of those to a self-hosted box's
+    # measured window compacts constantly for no reason. The "/" is what
+    # tells them apart, so a namespaced id skips the measured table and falls
+    # through to the advertised/known windows below.
+    if "/" not in low:
+        for marker, window in _SMALL_CONTEXT_WINDOWS:
+            if marker in low:
+                return _guard_floor(model, min(threshold, window - reserve), window, reserve)
     window = _advertised_window(model)
     if window is None:
         for marker, known in _KNOWN_CONTEXT_WINDOWS:

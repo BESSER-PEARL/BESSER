@@ -40,7 +40,9 @@ def test_start_event_accepts_free_provider():
     assert ev.provider == "free"
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai", "mistral", "free"])
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "openai", "mistral", "nebius", "free"]
+)
 def test_start_event_all_supported_providers(provider):
     StartEvent(runId="x", provider=provider, llmModel="m", maxCost=1.0, maxRuntime=1)
 

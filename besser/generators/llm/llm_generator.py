@@ -59,6 +59,8 @@ class LLMGenerator(GeneratorInterface):
     - ``"openai"`` — OpenAI GPT / o3 models (requires ``pip install openai``)
     - ``"mistral"`` — Mistral models via the OpenAI-compatible API
       (reuses the ``openai`` SDK; no extra dependency)
+    - ``"nebius"`` — Nebius Token Factory open-weight models via its
+      OpenAI-compatible API (reuses the ``openai`` SDK; fixed endpoint)
 
     For components where BESSER has a generator (FastAPI, Django, React, etc.),
     the LLM calls it to get reliable base code, then modifies the output.
@@ -70,7 +72,8 @@ class LLMGenerator(GeneratorInterface):
         instructions: Natural language description of what to build.
         api_key: API key for the selected provider (or set via environment variable).
         llm_model: Model ID (default depends on provider).
-        provider: LLM provider to use: ``"anthropic"``, ``"openai"``, or ``"mistral"``.
+        provider: LLM provider to use: ``"anthropic"``, ``"openai"``,
+            ``"mistral"``, or ``"nebius"``.
         gui_model: Optional GUI model (for React/Flutter/WebApp generators).
         agent_model: Optional agent model (for BAF generator).
         agent_config: Optional agent config dict.

@@ -3,6 +3,14 @@ uvicorn
 pydantic
 python-multipart
 PyYAML
+pyflakes>=3.2.0,<4
+# Phase 3 promotes ruff's undefined-name findings (F811/F821/F822/F823) to
+# blockers. Without ruff those checks are skipped and the run says so, but it
+# checks nothing -- so it is a runtime dependency of the backend, not just a
+# CI tool. It was previously installed only in the Dockerfile, which left every
+# non-Docker deploy (on-prem, bare metal, dev) without the check entirely.
+# Pinned to match the Dockerfile so both see the same rule semantics.
+ruff==0.16.6
 deep_translator
 bocl == 1.0.1
 cryptography

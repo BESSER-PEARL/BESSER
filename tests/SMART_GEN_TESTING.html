@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spec-Driven Agent & Free-tier — Test Guide</title>
+<style>
+  html{color-scheme:light dark}
+  .theme-toggle{
+    position:fixed; top:16px; right:16px; z-index:10;
+    width:38px; height:38px; border-radius:10px; cursor:pointer;
+    background:var(--surface); border:1px solid var(--border); color:var(--muted);
+    display:grid; place-items:center; font-size:16px; box-shadow:var(--shadow);
+  }
+  .theme-toggle:hover{color:var(--accent); border-color:var(--accent)}
+  .theme-toggle:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  :root{
+    --ground:#f5f8f7; --surface:#ffffff; --surface-2:#eef3f2; --border:#dce5e3;
+    --ink:#132320; --muted:#586863; --faint:#839590;
+    --accent:#0c7d70; --accent-2:#0a5f55; --accent-soft:#d8ece8;
+    --ok:#1c7f4e; --ok-soft:#dcefe3; --warn:#9a6a12; --warn-soft:#f4e9d2;
+    --console:#0e1a18; --console-ink:#cfe6df; --console-dim:#7fa39a; --console-accent:#38c9b3;
+    --shadow:0 1px 2px rgba(19,35,32,.04),0 6px 20px rgba(19,35,32,.05);
+    --radius:14px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0d1312; --surface:#141d1b; --surface-2:#1a2523; --border:#26332f;
+      --ink:#e3ece9; --muted:#93a49e; --faint:#6d7f79;
+      --accent:#2fb9a7; --accent-2:#54cdbd; --accent-soft:#123330;
+      --ok:#3fbb7c; --ok-soft:#12291e; --warn:#d3a24e; --warn-soft:#2c2311;
+      --console:#0a1210; --console-ink:#cfe6df; --console-dim:#6f938a; --console-accent:#3fd6bf;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 26px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#f5f8f7; --surface:#ffffff; --surface-2:#eef3f2; --border:#dce5e3;
+    --ink:#132320; --muted:#586863; --faint:#839590;
+    --accent:#0c7d70; --accent-2:#0a5f55; --accent-soft:#d8ece8;
+    --ok:#1c7f4e; --ok-soft:#dcefe3; --warn:#9a6a12; --warn-soft:#f4e9d2;
+    --console:#0e1a18; --console-ink:#cfe6df; --console-dim:#7fa39a; --console-accent:#38c9b3;
+    --shadow:0 1px 2px rgba(19,35,32,.04),0 6px 20px rgba(19,35,32,.05);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0d1312; --surface:#141d1b; --surface-2:#1a2523; --border:#26332f;
+    --ink:#e3ece9; --muted:#93a49e; --faint:#6d7f79;
+    --accent:#2fb9a7; --accent-2:#54cdbd; --accent-soft:#123330;
+    --ok:#3fbb7c; --ok-soft:#12291e; --warn:#d3a24e; --warn-soft:#2c2311;
+    --console:#0a1210; --console-ink:#cfe6df; --console-dim:#6f938a; --console-accent:#3fd6bf;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 26px rgba(0,0,0,.34);
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+    font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+  .wrap{max-width:920px; margin:0 auto; padding:0 24px}
+
+  /* ---- header ---- */
+  header.top{padding:64px 0 40px}
+  .eyebrow{
+    font-size:12px; letter-spacing:.14em; text-transform:uppercase; font-weight:600;
+    color:var(--accent); margin:0 0 16px; display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow::before{content:""; width:26px; height:2px; background:var(--accent); display:inline-block; border-radius:2px}
+  h1{
+    font-size:clamp(30px,5vw,46px); line-height:1.08; letter-spacing:-.02em;
+    font-weight:700; margin:0 0 16px; text-wrap:balance;
+  }
+  .lede{font-size:18px; color:var(--muted); max-width:60ch; margin:0}
+  .stats{display:flex; flex-wrap:wrap; gap:10px; margin-top:28px}
+  .stat{
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:12px 16px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:2px;
+  }
+  .stat b{font-size:20px; font-weight:700; letter-spacing:-.01em; font-variant-numeric:tabular-nums}
+  .stat span{font-size:12.5px; color:var(--muted)}
+  .stat.pass b{color:var(--ok)}
+
+  /* ---- sections ---- */
+  section{padding:22px 0}
+  h2{
+    font-size:13px; letter-spacing:.11em; text-transform:uppercase; font-weight:700;
+    color:var(--muted); margin:0 0 20px; padding-bottom:12px; border-bottom:1px solid var(--border);
+  }
+  h2 .n{color:var(--accent); margin-right:10px}
+  p{margin:0 0 14px}
+  a{color:var(--accent); text-decoration:none; border-bottom:1px solid var(--accent-soft)}
+  a:hover{border-bottom-color:var(--accent)}
+
+  /* ---- pyramid ---- */
+  .pyramid{display:flex; flex-direction:column; align-items:center; gap:6px; margin:6px 0 8px}
+  .tier{
+    display:flex; align-items:center; gap:14px; width:100%;
+    border:1px solid var(--border); border-radius:12px; background:var(--surface);
+    padding:13px 18px; box-shadow:var(--shadow); position:relative;
+  }
+  .tier .num{
+    font-weight:700; font-size:13px; width:26px; height:26px; flex:none; border-radius:7px;
+    display:grid; place-items:center; background:var(--surface-2); color:var(--accent);
+  }
+  .tier .lbl{font-weight:600; flex:1}
+  .tier .lbl-sub{color:var(--muted); font-weight:400; font-size:13.5px}
+  .tier[data-w="1"]{width:100%} .tier[data-w="2"]{width:88%} .tier[data-w="3"]{width:76%}
+  .tier[data-w="4"]{width:60%} .tier[data-w="5"]{width:46%}
+  .tier .edge{position:absolute; left:0; top:10px; bottom:10px; width:3px; border-radius:3px}
+  .tier.ci .edge{background:var(--ok)} .tier.live .edge{background:var(--warn)}
+  .axis{display:flex; justify-content:space-between; width:100%; margin-top:12px; font-size:12px; color:var(--muted)}
+
+  /* ---- pills ---- */
+  .pill{
+    display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
+    letter-spacing:.02em; padding:3px 9px; border-radius:999px; white-space:nowrap;
+  }
+  .pill::before{content:""; width:6px; height:6px; border-radius:50%}
+  .pill.ci{background:var(--ok-soft); color:var(--ok)} .pill.ci::before{background:var(--ok)}
+  .pill.live{background:var(--warn-soft); color:var(--warn)} .pill.live::before{background:var(--warn)}
+
+  /* ---- quickstart / tables ---- */
+  .tbl-scroll{overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow)}
+  table{border-collapse:collapse; width:100%; background:var(--surface); font-size:14.5px}
+  th,td{text-align:left; padding:12px 16px; border-bottom:1px solid var(--border); vertical-align:top}
+  th{font-size:12px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); font-weight:600; background:var(--surface-2)}
+  tr:last-child td{border-bottom:none}
+  td code, p code, li code{
+    font-family:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+    font-size:13px; background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; padding:1px 6px; color:var(--ink); white-space:nowrap;
+  }
+
+  /* ---- layer cards ---- */
+  .cards{display:flex; flex-direction:column; gap:16px}
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:20px 22px; box-shadow:var(--shadow);
+  }
+  .card-head{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px}
+  .card-num{
+    font-weight:700; width:30px; height:30px; border-radius:8px; flex:none; display:grid; place-items:center;
+    background:var(--accent-soft); color:var(--accent-2); font-size:15px;
+  }
+  .card-title{font-weight:700; font-size:17px; letter-spacing:-.01em; flex:1; min-width:200px}
+  .card-file{font-size:12.5px; color:var(--muted); margin:-4px 0 12px 42px; word-break:break-all}
+  .card p{margin:0 0 12px; color:var(--ink)}
+  .card .k{color:var(--accent-2); font-weight:600}
+  .meta{display:flex; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-top:12px}
+  .meta b{color:var(--ink); font-weight:600}
+
+  /* ---- console ---- */
+  .console{
+    background:var(--console); border-radius:10px; padding:14px 16px; margin:12px 0 0;
+    overflow-x:auto; border:1px solid rgba(255,255,255,.06);
+  }
+  .console pre{margin:0; font-family:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+    font-size:13px; line-height:1.7; color:var(--console-ink); white-space:pre}
+  .console .cmt{color:var(--console-dim)}
+  .console .pr{color:var(--console-accent); user-select:none}
+  .shell-tag{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--console-dim); display:block; margin-bottom:6px}
+
+  /* ---- callout ---- */
+  .callout{
+    border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:12px;
+    background:var(--surface); padding:18px 20px; box-shadow:var(--shadow);
+  }
+  .callout.warn{border-left-color:var(--warn)}
+  .callout h3{margin:0 0 6px; font-size:15.5px; font-weight:700}
+  .callout p{margin:0; color:var(--muted); font-size:14.5px}
+  .callout p + p{margin-top:8px}
+
+  /* ---- windows banner ---- */
+  .banner{
+    display:flex; gap:14px; align-items:flex-start; background:var(--accent-soft);
+    border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin:0 0 4px;
+  }
+  .banner .ico{font-weight:700; color:var(--accent-2); font-size:18px; line-height:1.4}
+  .banner div{font-size:14.5px}
+  .banner b{color:var(--accent-2)}
+
+  footer{border-top:1px solid var(--border); margin-top:20px; padding:28px 0 60px; color:var(--muted); font-size:13.5px}
+  hr.spacer{border:0; height:1px; background:var(--border); margin:0}
+
+  @media (max-width:560px){
+    .tier[data-w]{width:100% !important}
+    .card-file{margin-left:0}
+  }
+  @media (prefers-reduced-motion:no-preference){
+    a,.tier{transition:border-color .15s ease}
+  }
+</style>
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light / dark theme" title="Toggle theme" onclick="(function(b){var r=document.documentElement;var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'☾':'☀';try{localStorage.setItem('sgt-theme',d?'light':'dark')}catch(e){}})(this)">☾</button>
+<script>
+  (function(){
+    try{
+      var s=localStorage.getItem('sgt-theme');
+      if(s){document.documentElement.setAttribute('data-theme',s);}
+    }catch(e){}
+  })();
+</script>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">BESSER · Test guide</p>
+    <h1>Spec-Driven Agent &amp; keyless free-tier testing</h1>
+    <p class="lede">How to test “describe an app → generate code”, including the no-API-key free tier. Five layers across three repos — pick the lowest one that proves your change.</p>
+    <div class="stats">
+      <div class="stat pass"><b>542</b><span>backend tests green</span></div>
+      <div class="stat pass"><b>96</b><span>frontend unit green</span></div>
+      <div class="stat"><b>5</b><span>test layers</span></div>
+      <div class="stat"><b>3</b><span>repos</span></div>
+    </div>
+  </header>
+
+  <section>
+    <h2><span class="n">◇</span>The pyramid</h2>
+    <p>Many fast, deterministic tests at the base; a couple of slow, real-world smokes at the top. The wider the tier, the cheaper and more reliable it is to run.</p>
+    <div class="pyramid">
+      <div class="tier live" data-w="5"><span class="edge"></span><span class="num">5</span><span class="lbl">Live browser vibe <span class="lbl-sub">real classifier + GPU</span></span></div>
+      <div class="tier live" data-w="4"><span class="edge"></span><span class="num">4</span><span class="lbl">Live backend free-gen <span class="lbl-sub">real free tier</span></span></div>
+      <div class="tier ci" data-w="3"><span class="edge"></span><span class="num">3</span><span class="lbl">Mocked browser e2e <span class="lbl-sub">Playwright</span></span></div>
+      <div class="tier ci" data-w="2"><span class="edge"></span><span class="num">2</span><span class="lbl">Frontend unit <span class="lbl-sub">Vitest</span></span></div>
+      <div class="tier ci" data-w="1"><span class="edge"></span><span class="num">1</span><span class="lbl">Backend contract <span class="lbl-sub">pytest — fastest, most reliable</span></span></div>
+    </div>
+    <div class="axis"><span>◀ many · fast · deterministic</span><span>few · slow · real ▶</span></div>
+  </section>
+
+  <section>
+    <h2><span class="n">▸</span>Quick start</h2>
+    <div class="banner">
+      <span class="ico">⚠</span>
+      <div><b>Windows / PowerShell:</b> <code>FLAG=1 cmd</code> is bash-only and errors with <code>CommandNotFoundException</code>. Use <code>$env:FLAG=1; cmd</code> — it persists for the terminal, so clear it later with <code>Remove-Item Env:FLAG</code>.</div>
+    </div>
+    <div class="tbl-scroll" style="margin-top:16px">
+      <table>
+        <thead><tr><th>I want to…</th><th>Run</th></tr></thead>
+        <tbody>
+          <tr><td>Check the free-tier <b>backend contract</b></td><td><code>pytest …/test_free_tier.py</code></td></tr>
+          <tr><td>Check the <b>frontend logic</b></td><td><code>npm run test --workspace=webapp</code></td></tr>
+          <tr><td>Check the <b>free-run UI</b> (mocked, fast)</td><td><code>npx playwright test smart-gen-free-tier</code></td></tr>
+          <tr><td>Prove a <b>real free generation</b></td><td><code>python tests/live/test_vibe_free_e2e.py</code></td></tr>
+          <tr><td>Watch the <b>whole vibe pipeline</b> for real</td><td>layer 5 (gated) — see below</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">▤</span>The five layers</h2>
+    <div class="cards">
+
+      <div class="card">
+        <div class="card-head"><span class="card-num">1</span><span class="card-title">Backend contract</span><span class="pill ci">deterministic · CI</span></div>
+        <div class="card-file mono">tests/…/smart_generation/test_free_tier.py</div>
+        <p><span class="k">Asserts:</span> <code>provider="free"</code> needs no key while others still require one; the request <em>and</em> <code>StartEvent</code> Literals both accept <code>"free"</code> (the bug that once killed every free run); local models price at <code>$0</code> so a run can’t trip the cost cap; the factory injects the server endpoint + bearer header and ignores client-supplied key/model/URL.</p>
+        <div class="console"><pre><span class="pr">$</span> python -m pytest tests/utilities/web_modeling_editor/backend/smart_generation/test_free_tier.py -q</pre></div>
+        <div class="meta"><span><b>~3s</b></span><span>runs in normal CI</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="card-num">2</span><span class="card-title">Frontend logic — Vitest</span><span class="pill ci">deterministic · CI</span></div>
+        <div class="card-file mono">packages/webapp/src/main/**/__tests__/ · SmartGenByokDialog.test.tsx</div>
+        <p><span class="k">Asserts:</span> the dialog’s keyless-approve contract — clicking “Use the free model” yields an <em>approved, keyless</em> pending trigger (free flag set, no key written, no cancel event) — plus the trigger / SSE / Redux logic. All mocked.</p>
+        <div class="console"><pre><span class="pr">$</span> npm run test --workspace=webapp
+<span class="cmt"># or just the free-tier dialog file:</span>
+<span class="pr">$</span> npx vitest run src/main/features/smart-generation/components/__tests__/SmartGenByokDialog.test.tsx</pre></div>
+        <div class="meta"><span><b>~15s</b></span><span>runs in normal CI</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="card-num">3</span><span class="card-title">Mocked browser e2e</span><span class="pill ci">deterministic · CI-safe</span></div>
+        <div class="card-file mono">packages/webapp/tests/e2e/smart-gen-free-tier.spec.ts</div>
+        <p><span class="k">Asserts (real browser, mocked network):</span> injects the trigger over a mocked WebSocket, mocks <code>/smart-gen/config</code> + the <code>/smart-generate</code> SSE, clicks “Use the free model”, and checks the POST body is <code>provider:'free'</code> with <b>no</b> <code>api_key</code>/<code>base_url</code>, the run completes, and the “no API key” message never shows.</p>
+        <div class="console"><pre><span class="pr">$</span> npx playwright test smart-gen-free-tier --project=chromium
+<span class="cmt"># --headed to watch · --ui for step-through mode</span></pre></div>
+        <div class="meta"><span><b>~15s</b></span><span>auto-starts Vite · no backend needed</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="card-num">4</span><span class="card-title">Live backend free generation</span><span class="pill live">gated · not in CI</span></div>
+        <div class="card-file mono">tests/live/test_vibe_free_e2e.py</div>
+        <p><span class="k">Asserts (real free tier):</span> a class model → a FastAPI app (<code>main_api.py</code>, <code>pydantic_classes.py</code>…); a class model → Rust classes (<code>.rs</code> with <code>struct</code>s). Checks the run <em>produces</em> the right output — not that it boots.</p>
+        <div class="console">
+          <span class="shell-tag">bash</span>
+          <pre><span class="pr">$</span> RUN_LIVE_FREE_E2E=1 python -m pytest tests/live/test_vibe_free_e2e.py -s</pre>
+        </div>
+        <div class="console">
+          <span class="shell-tag">PowerShell</span>
+          <pre><span class="pr">></span> $env:RUN_LIVE_FREE_E2E=1; python -m pytest tests/live/test_vibe_free_e2e.py -s</pre>
+        </div>
+        <div class="console">
+          <span class="shell-tag">standalone demo runner — streams phases, self-enables</span>
+          <pre><span class="pr">$</span> python tests/live/test_vibe_free_e2e.py</pre>
+        </div>
+        <div class="meta"><span><b>~1–3 min</b> each</span><span>gated behind <code>RUN_LIVE_FREE_E2E</code></span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="card-num">5</span><span class="card-title">Live full vibe pipeline</span><span class="pill live">gated · nightly smoke</span></div>
+        <div class="card-file mono">packages/webapp/tests/e2e/smart-gen-vibe-live.spec.ts</div>
+        <p><span class="k">Asserts (the whole thing, no mocks):</span> fresh browser → create a project → describe an app in plain words so the agent <b>models</b> a class diagram → <b>spec-driven generate</b> a full app on the free tier → the run finishes. The no-API-key demo path, automated.</p>
+        <div class="console">
+          <span class="shell-tag">PowerShell — add --headed to watch</span>
+          <pre><span class="pr">></span> $env:RUN_LIVE_E2E=1; npx playwright test smart-gen-vibe-live --headed
+<span class="pr">></span> Remove-Item Env:RUN_LIVE_E2E   <span class="cmt"># when done</span></pre>
+        </div>
+        <div class="meta"><span><b>~5 min</b></span><span>never a CI gate — see caveats</span></div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">⚙</span>Environment flags</h2>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Flag</th><th>Enables</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td><code>RUN_LIVE_FREE_E2E=1</code></td><td>Backend live free tests (layer 4)</td><td>off → skipped</td></tr>
+          <tr><td><code>RUN_LIVE_E2E=1</code></td><td>Live browser vibe e2e (layer 5)</td><td>off → skipped</td></tr>
+          <tr><td><code>BACKEND_URL</code> · <code>LIVE_E2E_BASE_URL</code></td><td>Point live tests at another host</td><td>experimental deploy</td></tr>
+          <tr><td><code>BESSER_FREE_LLM_BASE_URL</code> · <code>_TOKEN</code> · <code>_MODEL</code></td><td>Free-tier config, <b>server-side only</b></td><td>unset → free tier off</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">◐</span>What is <em>not</em> tested</h2>
+    <div class="callout">
+      <h3>Whether the generated app boots</h3>
+      <p>Every layer asserts generation produced the <em>right output</em> — not that the app <em>runs</em>. That fidelity check (import-smoke + start the backend, hit <code>/openapi.json</code>) is the deferred <b>Phase-3 boot check</b>. It’s out of scope on purpose: free-model output often doesn’t boot yet, so a boot assertion would be a known-flaky gate. When it lands it becomes both a fix-loop input and the assertion these tests are missing.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">✱</span>Troubleshooting</h2>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause → fix</th></tr></thead>
+        <tbody>
+          <tr><td><code>RUN_LIVE_E2E=1 : CommandNotFoundException</code></td><td>Bash syntax in PowerShell. Use <code>$env:RUN_LIVE_E2E=1; &lt;cmd&gt;</code>.</td></tr>
+          <tr><td>Live test reports <b>1 skipped</b></td><td>Gate flag isn’t set. Set <code>RUN_LIVE_E2E</code> / <code>RUN_LIVE_FREE_E2E</code> (correct shell).</td></tr>
+          <tr><td><code>Executable doesn't exist</code></td><td>Playwright browser missing → <code>npx playwright install chromium</code>.</td></tr>
+          <tr><td>Python live test → <b>HTTP 403</b></td><td>Cloudflare bot filter blocks the default UA. Tests send a browser UA; add one if you hand-roll a request.</td></tr>
+          <tr><td>Layer 5 fails at <b>modeling</b></td><td>Classifier occasionally times out. Re-run; the test already retries once.</td></tr>
+          <tr><td>Layer 5 fails at <b>“Use the free model”</b></td><td>Duplicate widget/drawer buttons + classifier lag. Test targets <code>:visible</code>/<code>.last()</code> and falls back to “yes”; re-run on a cold GPU.</td></tr>
+          <tr><td>First free run stalls ~60s</td><td>Model reloading into VRAM after idle. Expected — timeouts are generous.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">◆</span>CI &amp; the one caveat</h2>
+    <div class="callout warn">
+      <h3>Layers 1–3 gate every PR. Layers 4–5 are nightly / manual.</h3>
+      <p>The deterministic layers are your dependable everyday coverage. The full live browser test drives the real classifier and shared GPU, so it will occasionally go red for infra reasons (GPU load, a classifier hiccup) unrelated to any code change — treat it as a fidelity <em>signal</em>, not a blocking gate.</p>
+      <p>One thing to protect: the “Use-the-free-model does nothing” race is <b>production-build-only</b> (it doesn’t reproduce in dev or jsdom) and is held by the <code>startingRunRef</code> guard in <code>SmartGenByokDialog</code> — keep that guard; no automated test can catch a regression of it.</p>
+    </div>
+  </section>
+
+  <footer class="wrap" style="padding-left:0;padding-right:0">
+    Canonical source: <code>BESSER/tests/SMART_GEN_TESTING.md</code> · frontend catalogue: <code>packages/webapp/tests/e2e/README.md</code>. Free tier backed by a Cloudflare-tunnelled <span class="mono">qwen3-coder:30b</span> — one shared GPU, so never run the live layers in parallel.
+  </footer>
+</div>
+</body>
+</html>

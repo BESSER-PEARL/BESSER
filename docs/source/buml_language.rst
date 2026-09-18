@@ -9,36 +9,46 @@ With B-UML, you can design various types of models using its diverse sublanguage
 
 * :doc:`../buml_language/model_types/structural`
 * :doc:`../buml_language/model_types/object`
+* :doc:`../buml_language/model_types/user_diagram`
 * :doc:`../buml_language/model_types/gui`
 * :doc:`../buml_language/model_types/ocl`
 * :doc:`../buml_language/model_types/deployment`
 * :doc:`../buml_language/model_types/state_machine`
 * :doc:`../buml_language/model_types/agent`
 * :doc:`../buml_language/model_types/bpmn`
+* :doc:`../buml_language/model_types/feature_model`
+* :doc:`../buml_language/model_types/nn`
+* :doc:`../buml_language/model_types/quantum`
 
-BESSER currently offers five ways to specify your models with B-UML. However, not all model types support all five forms.
+BESSER currently offers seven ways to specify your models with B-UML. However, not all model types support all seven forms.
 
 * Build the model coding in Python Using the B-UML python library
 * Define the model via textual notation using one of our grammars
 * Transform an image into a B-UML model (e.g., a photo of a hand-drawn model on a board)
+* Transform a knowledge graph (TTL/RDF/JSON) into a B-UML model
+* Import a draw.io class diagram
 * Use the BESSER Web Modeling Editor to design models with a graphical notation
 * Transform mockup(s) into a B-UML model (e.g., a screenshot or a hand-drawn UI sketch)
 
 The following table shows the different notations supported by each type of model
 
-+----------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+-------+-----------------+--------+
-| Notation                                                                   | Structural |   Object   |    GUI     |    OCL     | Deployment | State Machine | Agent | Neural Network  |  BPMN  |
-+============================================================================+============+============+============+============+============+===============+=======+=================+========+
-| :doc:`Web Modeling Editor <./web_editor>`                                  |     X      |     X      |     X      |            |            |      X        |   X   |       X         |   X    |
-+----------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+-------+-----------------+--------+
-| :doc:`B-UML python library <buml_language/model_building/buml_core>`       |     X      |     X      |     X      |     X      |     X      |      X        |   X   |       X         |   X    |
-+----------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+-------+-----------------+--------+
-| :doc:`B-UML Grammars <buml_language/model_building/grammars>`              |     X      |     X      |            |     X      |     X      |               |       |                 |        |
-+----------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+-------+-----------------+--------+
-| :doc:`Image transformation <buml_language/model_building/image_to_buml>`   |     X      |            |            |            |            |               |       |                 |        |
-+----------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+-------+-----------------+--------+
-| :doc:`Mock-up transformation <buml_language/model_building/mockup_to_buml>`|     X      |            |     X      |            |            |               |       |                 |        |
-+----------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+-------+-----------------+--------+
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| Notation                                                                        |  Structural  |  Object  |  GUI  |  OCL  |  Deployment  |  State Machine  |  Agent  |  Neural Network  |  BPMN  |
++=================================================================================+==============+==========+=======+=======+==============+=================+=========+==================+========+
+| :doc:`Web Modeling Editor <./web_editor>`                                       |      X       |    X     |   X   |   X   |              |        X        |    X    |        X         |   X    |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| :doc:`B-UML python library <buml_language/model_building/buml_core>`            |      X       |    X     |   X   |   X   |      X       |        X        |    X    |        X         |   X    |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| :doc:`B-UML Grammars <buml_language/model_building/grammars>`                   |      X       |    X     |       |   X   |      X       |                 |         |        X         |        |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| :doc:`Image transformation <buml_language/model_building/image_to_buml>`        |      X       |          |       |       |              |                 |         |                  |        |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| :doc:`Knowledge graph transformation <buml_language/model_building/kg_to_buml>` |      X       |          |       |       |              |                 |         |                  |        |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| :doc:`draw.io import <buml_language/model_building/drawio_structural>`          |      X       |          |       |       |              |                 |         |                  |        |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
+| :doc:`Mock-up transformation <buml_language/model_building/mockup_to_buml>`     |      X       |          |   X   |       |              |                 |         |                  |        |
++---------------------------------------------------------------------------------+--------------+----------+-------+-------+--------------+-----------------+---------+------------------+--------+
 
 
 Contents

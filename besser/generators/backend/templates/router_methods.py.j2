@@ -1,0 +1,244 @@
+{# Modeled-method endpoints for one class, split out of router.py.j2.
+   The combined file reached ~35k chars for a class with five methods -
+   larger than the agent's file-read limit - so the LLM was asked to fill
+   in five method bodies inside a file it could only see part of, and to
+   reproduce the whole thing on write. Method bodies are the hand-written
+   part of the generation gap; giving them their own file keeps the edit
+   target small and stops a botched rewrite taking the CRUD with it.
+   Routes are unchanged: same paths, same tags, a second APIRouter that
+   main_api includes alongside the CRUD one. #}
+from fastapi import APIRouter, Depends, HTTPException, Body
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
+from pydantic_classes import *
+from sql_alchemy import *
+from database import get_db
+from bal_stdlib import *
+
+router = APIRouter()
+{% set pk = class.name | pk %}
+
+{# Generate endpoints for class methods #}
+{% if class.methods %}
+############################################
+#   {{ class.name }} Method Endpoints
+############################################
+{% for method in class.methods %}
+{% set clean_name = method.name | clean_method_name %}
+{% set method_params = [] %}
+{% for param in method.parameters %}
+{% set param_type = 'Any' %}
+{% set needs_fk_access = true %}
+{% if param.type.name == 'str' %}{% set param_type = 'str' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'int' %}{% set param_type = 'int' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'float' %}{% set param_type = 'float' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'bool' %}{% set param_type = 'bool' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'date' %}{% set param_type = 'date' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'time' %}{% set param_type = 'time' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'any' %}{% set needs_fk_access = false %}
+{% else %}{% set param_type = param.type.name %}
+{% endif %}
+{# param[4] is the MODELLED type. param[1] is the rendered annotation ('Any', or an FK class name), which is not what python_default keys on. #}
+{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access, param.type.name)) %}
+{% endfor %}
+
+{% set method_code = "" %}
+{% if method.implementation_type.name == "BAL" %}
+{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
+{% elif method.implementation_type.name == "CODE" %}
+{% set method_code = method.code %}
+{% endif %}
+
+{# Normalize (expand tabs, dedent, compile-gate) the body so a method authored
+   with mixed indentation or invalid Python cannot break the generated app. #}
+{% set method_code = normalize_code(method_code, method.name) %}
+
+{# A method is class-level only when its CODE says so (no 'self' parameter). A
+   method with no body is an unimplemented INSTANCE method - B-UML has no static
+   methods - and the React generator addresses every method button as
+   /<class>/{id}/methods/<name>/, so routing a body-less method class-level left
+   every method button 404ing (run 19h35, 2026-09-18: 12 of 18 scenarios). #}
+{% set is_class_method = method_code | length > 0 and '(self' not in method_code and '(self,' not in method_code %}
+
+
+{% if "POST" in http_methods %}
+{% if is_class_method %}
+{# Class-level method - no entity ID required #}
+@router.post("/{{ class.name | lower }}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def {{ class.name | lower }}_{{ clean_name }}(
+    {% if method_params %}
+    params: dict = Body(default=None, embed=True),
+    {% endif %}
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ clean_name }} class method on {{ class.name }}.
+    This method operates on all {{ class.name }} entities or performs class-level operations.
+    {% if method_params %}
+
+    Parameters (pass as JSON body):
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] | docstring_default(param[4], owner=class.name ~ '.' ~ param[0]) }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    try:
+        # {{ class.name }}.{{ clean_name }}: capture stdout to include print outputs in the response
+        import io
+        import sys
+        _{{ clean_name }}_stdout = io.StringIO()
+        sys.stdout = _{{ clean_name }}_stdout
+
+        {% for imp in cross_router_calls(method_code, class.name) %}
+        from routers.{{ imp[0] }} import {{ imp[1] }}
+        {% endfor %}
+
+        {% if method_params %}
+        # Extract parameters from request body
+        params = params or {}
+        {% for param in method_params %}
+        {% if param[3] %}
+        {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
+        {% else %}
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        {% if method_code %}
+        # Execute the class method body
+        {% set method_lines = method_code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+
+        def _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %}):
+{{ method_body | indent(4, first=True) | indent(4, first=True) }}
+
+        result = _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
+
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = _{{ clean_name }}_stdout.getvalue()
+
+        # Handle result serialization
+        if hasattr(result, '__iter__') and not isinstance(result, (str, dict)):
+            # It's a list of entities
+            result_data = []
+            for item in result:
+                if hasattr(item, '__dict__'):
+                    item_dict = {k: v for k, v in item.__dict__.items() if not k.startswith('_')}
+                    result_data.append(item_dict)
+                else:
+                    result_data.append(str(item))
+            result = result_data
+        elif hasattr(result, '__dict__'):
+            result = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
+
+        return {
+            "class": "{{ class.name }}",
+            "method": "{{ clean_name }}",
+            "status": "executed",
+            "result": result,
+            "output": output if output else None
+        }
+        {% else %}
+        # {{ class.name }}.{{ clean_name }}: no body in the model - be honest: 501, never a fake "executed" success.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
+        {% endif %}
+    except HTTPException:
+        sys.stdout = sys.__stdout__
+        raise
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"{{ class.name }}.{{ clean_name }} failed: {str(e)}")
+
+{% else %}
+{# Instance method - requires entity ID. Every method-agnostic line below carries
+   the method's name or sits within three lines of one that does: a body-less
+   stub must stay quotable by modify_file without "old_text occurs N times"
+   (test_method_stubs_are_distinguishable). #}
+@router.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def execute_{{ class.name | lower }}_{{ clean_name }}(
+    {{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }},  # the {{ class.name }} that {{ clean_name }} runs on
+    params: dict = Body(default=None, embed=True),
+    database: Session = Depends(get_db)
+):
+    """Execute the {{ clean_name }} method on a {{ class.name }} instance.
+    {% if method_params %}
+
+    Parameters:
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] | docstring_default(param[4], owner=class.name ~ '.' ~ param[0]) }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    # {{ class.name }}.{{ clean_name }}: load the instance
+    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
+    if _{{ class.name | lower }}_object is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    # {{ class.name }}.{{ clean_name }}: parameters
+    {% for param in method_params %}
+    {% if param[3] %}
+    {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
+    {% else %}
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
+    {% endif %}
+    {% endfor %}
+    # {{ class.name }}.{{ clean_name }}: execute
+    try:
+        # {{ class.name }}.{{ clean_name }}: capture stdout to include print outputs in the response
+        import io
+        import sys
+        _{{ clean_name }}_stdout = io.StringIO()
+        sys.stdout = _{{ clean_name }}_stdout
+
+        {% for imp in cross_router_calls(method_code, class.name) %}
+        from routers.{{ imp[0] }} import {{ imp[1] }}
+        {% endfor %}
+        {% if method_code %}
+        {% set method_lines = method_code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+        {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
+
+        async def wrapper(_{{ class.name | lower }}_object):
+{{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
+
+        result = await wrapper(_{{ class.name | lower }}_object)
+        # Commit DB
+        database.commit()
+        database.refresh(_{{ class.name | lower }}_object)
+
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = _{{ clean_name }}_stdout.getvalue()
+
+        return {
+            "{{ class.name | lower }}_id": {{ class.name | lower }}_id,
+            "method": "{{ clean_name }}",
+            "status": "executed",
+            "result": str(result) if result is not None else None,
+            "output": output if output else None
+        }
+        {% else %}
+        # {{ class.name }}.{{ clean_name }}: no body in the model - be honest: 501, never a fake "executed" success.
+        sys.stdout = sys.__stdout__
+        raise HTTPException(
+            status_code=501,
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        )
+        {% endif %}
+    except HTTPException:
+        sys.stdout = sys.__stdout__
+        raise
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"{{ class.name }}.{{ clean_name }} failed: {str(e)}")
+{% endif %}
+{% endif %}
+
+{% endfor %}
+{% endif %}

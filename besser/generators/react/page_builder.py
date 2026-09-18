@@ -80,7 +80,7 @@ class PageBuilderMixin:
             )
 
             file_path = os.path.join(pages_dir, f"{component_name}.tsx")
-            with open(file_path, "w", encoding="utf-8") as f:
+            with open(file_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(file_contents)
 
             page_infos.append(
@@ -1215,7 +1215,7 @@ class PageBuilderMixin:
         )
 
         app_path = self.build_generation_path("src/App.tsx")
-        with open(app_path, "w", encoding="utf-8") as f:
+        with open(app_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(app_contents)
     # --------------------------------------------------------------------- #
     # Context builders

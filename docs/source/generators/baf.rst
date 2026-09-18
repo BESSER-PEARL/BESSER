@@ -13,12 +13,25 @@ Let's generate the agent for Greetings Agent defined in :doc:`../buml_language/m
 
 Optional constructor parameters:
 
-- ``config_path``: Path to a YAML configuration file for the agent.
+- ``output_dir``: Output directory (default: ``output/`` in the current directory).
+- ``config_path``: Path to a **JSON** configuration file for the agent. It is read with
+  ``json.load``, so a YAML file will fail to parse.
 - ``config``: Configuration dictionary (alternative to ``config_path``).
+- ``config_yaml``: Raw YAML text to write out as the agent's ``config.yaml``
+  instead of the template-rendered default.
 - ``openai_api_key``: OpenAI API key for LLM-powered agent features.
+- ``generation_mode``: See `Generation Modes`_ below.
 
-The corresponding ``agent.py`` file and its config file titled ``config.yaml`` will be generated in the ``<<current_directory>>/output``
-folder.
+The generated files land in the ``<<current_directory>>/output`` folder:
+
+- ``<AgentName>.py``: the agent script, named after the agent model — not ``agent.py``.
+- ``config.yaml``: the agent's configuration file.
+- ``readme.txt``: how to run the generated agent.
+- ``tools.py``: the agent's tool function definitions — only when the model declares tools.
+- ``skills/``: one Markdown file per skill — only when the model declares skills.
+- ``personalized_agent_model.py`` / ``personalized_agent_model.json``: the
+  personalized agent model, written alongside the others only when a
+  personalization config is supplied and the mode is not ``CODE_ONLY``.
 
 Check out the BAF documentation for more details on how to use the generated agent: `BESSER Agentic Framework Documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_.
 

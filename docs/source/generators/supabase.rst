@@ -153,6 +153,7 @@ For the simple ``User --< IntakeSchedule`` model, the generator emits roughly
 the following (abbreviated for brevity):
 
 .. code-block:: sql
+   :force:
 
     -- user-root mirrors auth.users (no gen_random_uuid default).
     -- Note: keep email/password/phone OUT of this table -- they live in

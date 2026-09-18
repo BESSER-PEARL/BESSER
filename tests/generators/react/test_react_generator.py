@@ -598,3 +598,27 @@ def test_a_method_that_declines_is_not_reported_as_a_success():
     assert "const wasDeclined = /^false$/i.test(String(formattedResult).trim());" in code
     assert "if (!wasDeclined) {" in code
     assert 'declined ? "Not applied" : "Method Result"' in code
+
+
+def test_generated_files_use_lf_line_endings(domain_model, gui_model, tmp_path):
+    """git checks these templates out with CRLF on Windows (core.autocrlf), and
+    a text-mode write translates "\n" to os.linesep - so a workspace generated
+    on a Windows host shipped CRLF that no LF quote from the agent can match."""
+    ReactGenerator(
+        model=domain_model, gui_model=gui_model, output_dir=str(tmp_path)
+    ).generate()
+
+    offenders = []
+    for root, _, names in os.walk(str(tmp_path)):
+        for name in names:
+            full = os.path.join(root, name)
+            with open(full, "rb") as f:
+                raw = f.read()
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue            # binary asset (images)
+            if b"\r" in raw:
+                offenders.append(os.path.relpath(full, str(tmp_path)))
+
+    assert offenders == [], offenders

@@ -1,0 +1,161 @@
+"""Tests for the spec-driven generation SSE event schema and framer."""
+
+import json
+
+import pytest
+
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
+    CostEvent,
+    DoneEvent,
+    ErrorEvent,
+    ModelUpdateEvent,
+    PhaseEvent,
+    StartEvent,
+    TextDeltaEvent,
+    ToolCallEvent,
+    format_sse,
+)
+
+
+class TestFormatSse:
+    """format_sse must produce exactly `event: <name>\\ndata: <json>\\n\\n`."""
+
+    def test_start_event_framing(self):
+        event = StartEvent(
+            runId="abc123",
+            provider="anthropic",
+            llmModel="claude-sonnet-4-5",
+            maxCost=1.0,
+            maxRuntime=600,
+        )
+        frame = format_sse(event)
+        assert isinstance(frame, bytes)
+        text = frame.decode("utf-8")
+        assert text.startswith("event: start\n")
+        assert "\ndata: " in text
+        assert text.endswith("\n\n")
+        # Exactly one terminating blank line
+        assert text.count("\n\n") == 1
+
+    def test_data_line_is_valid_json_with_event_field(self):
+        event = PhaseEvent(phase="generate", message="running django_generator")
+        frame = format_sse(event).decode("utf-8")
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["event"] == "phase"
+        assert payload["phase"] == "generate"
+        assert payload["message"] == "running django_generator"
+
+    def test_text_delta_escapes_newlines(self):
+        """A delta containing literal newlines must not break SSE framing."""
+        event = TextDeltaEvent(delta="line one\nline two\r\nline three")
+        frame = format_sse(event).decode("utf-8")
+        # Still exactly one `\n\n` terminator
+        assert frame.count("\n\n") == 1
+        # The payload must round-trip
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["delta"] == "line one\nline two\r\nline three"
+
+    def test_redacts_secrets_from_error_and_nested_recipe_frames(self):
+        token = "sk-ant-REALSECRET0123456789abcdef"
+        error_frame = format_sse(
+            ErrorEvent(code="UPSTREAM_LLM", message=f"provider rejected {token}")
+        ).decode("utf-8")
+        done_frame = format_sse(DoneEvent(
+            downloadUrl="/d/abc",
+            fileName="a.zip",
+            isZip=True,
+            recipe={"debug": {"message": f"API_TOKEN={token}"}},
+        )).decode("utf-8")
+
+        assert token not in error_frame
+        assert token not in done_frame
+        assert "[REDACTED]" in error_frame
+        assert "[REDACTED]" in done_frame
+
+    @pytest.mark.parametrize(
+        "event",
+        [
+            ToolCallEvent(turn=3, tool="write_file", status="executing"),
+            CostEvent(usd=0.0342, turns=7, elapsedSeconds=23.41),
+            DoneEvent(
+                downloadUrl="/besser_api/spec-driven/download/abc",
+                fileName="besser_smart_abc.zip",
+                isZip=True,
+                recipe={"usage": {"input_tokens": 100}},
+            ),
+            ErrorEvent(code="INVALID_KEY", message="No API key"),
+            ErrorEvent(code="COST_CAP", message="Cost cap reached ($1.01 > $1.00)"),
+            ModelUpdateEvent(
+                model="qwen3-coder:30b",
+                previousModel="meituan/LongCat-2.0:free",
+            ),
+        ],
+    )
+    def test_all_event_types_round_trip(self, event):
+        """Every event type should round-trip through format_sse + JSON."""
+        frame = format_sse(event).decode("utf-8")
+        assert frame.startswith(f"event: {event.event}\n")
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["event"] == event.event
+
+
+class TestEventValidation:
+    """Pydantic should reject malformed events at construction time."""
+
+    def test_phase_rejects_unknown_phase(self):
+        with pytest.raises(Exception):
+            PhaseEvent(phase="nonsense", message="oops")  # type: ignore[arg-type]
+
+    def test_error_rejects_unknown_code(self):
+        with pytest.raises(Exception):
+            ErrorEvent(code="FROBNICATED", message="oops")  # type: ignore[arg-type]
+
+    def test_events_do_not_expose_api_key_field(self):
+        """None of the event models should have an api_key field at all."""
+        for cls in (StartEvent, PhaseEvent, TextDeltaEvent, ToolCallEvent,
+                    CostEvent, DoneEvent, ErrorEvent, ModelUpdateEvent):
+            assert "api_key" not in cls.model_fields
+            assert "apiKey" not in cls.model_fields
+
+
+class TestModelUpdateEvent:
+    """Schema for the mid-run model-switch event (outage fallback)."""
+
+    def test_defaults(self):
+        ev = ModelUpdateEvent(model="qwen3-coder:30b")
+        assert ev.event == "model_update"
+        assert ev.model == "qwen3-coder:30b"
+        assert ev.previousModel is None
+        assert ev.reason == "primary_unavailable"
+
+    def test_frame_carries_both_models(self):
+        frame = format_sse(ModelUpdateEvent(
+            model="qwen3-coder:30b",
+            previousModel="meituan/LongCat-2.0:free",
+        )).decode("utf-8")
+        assert frame.startswith("event: model_update\n")
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["model"] == "qwen3-coder:30b"
+        assert payload["previousModel"] == "meituan/LongCat-2.0:free"
+        assert payload["reason"] == "primary_unavailable"
+
+
+class TestDoneEventBlockerCount:
+    """blockerCount defaults to 0 and serialises when set."""
+
+    def test_default_is_zero(self):
+        ev = DoneEvent(downloadUrl="/d/abc", fileName="a.zip", isZip=True)
+        assert ev.blockerCount == 0
+
+    def test_serialises_when_set(self):
+        ev = DoneEvent(
+            downloadUrl="/d/abc", fileName="a.zip", isZip=True, blockerCount=3,
+        )
+        frame = format_sse(ev).decode("utf-8")
+        data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["blockerCount"] == 3

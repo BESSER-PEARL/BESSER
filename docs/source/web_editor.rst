@@ -75,9 +75,55 @@ workflow under the *Agent* diagram type:
   multi-language output, configuration variants, and per-profile
   **personalization mappings** that bundle one agent variant per mapped user.
 
-The *Deploy chatbot* action reuses the same pipeline to push a standalone,
-Streamlit-based agent to a GitHub repository with a ready-to-use Render
-blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
+The editor's *Publish to Render* action reuses the same pipeline to push a
+standalone, Streamlit-based agent to a GitHub repository with a ready-to-use
+Render blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
+
+AI Assistant & Spec-Driven Generation
+-------------------------------------
+
+The editor ships with an AI assistant (a floating widget and a workspace
+drawer) backed by a modeling agent. Through it you
+can create and modify diagrams in natural language, ask questions about your
+model, and trigger code generation — including the
+:doc:`Spec-Driven Agent <spec_driven_agent/index>`.
+
+When you ask for a customised codebase ("a FastAPI backend for this model with
+JWT auth and Docker", "build this in Rust"), the assistant routes the request to
+the Spec-Driven Agent, which generates a deterministic scaffold, lets an LLM
+customise it, then validates and repairs the result. When a free tier is
+configured it is the **default** — the assistant runs on it with no API-key
+prompt. Bringing your own commercial API key (BYOK) is **optional**, offered for
+higher-fidelity results; whenever a run would spend your own key, the assistant
+always asks for explicit confirmation first — a run never spends your key
+silently.
+
+The run streams over `Server-Sent Events
+<https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events>`_ so the
+assistant can show the phase timeline, the LLM's tool calls, and a live
+cost/runtime meter as it works. The run is owned by the server rather than the
+browser connection, so closing the tab does not immediately kill it: you can
+reattach and keep watching. A run that stays unattended past the server's grace
+period is then cancelled, so an abandoned tab cannot burn a full budget.
+
+.. seealso::
+   The agent's own documentation is the
+   :doc:`Spec-Driven Agent <spec_driven_agent/index>` section:
+   :doc:`how it works <spec_driven_agent/how_it_works>`,
+   the :doc:`REST + SSE contract <spec_driven_agent/api>` behind this panel,
+   :doc:`providers and the free tier <spec_driven_agent/models>`, and
+   :doc:`durable runs <spec_driven_agent/runs>`.
+
+Building a web app (review-then-generate)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When you ask the assistant to **create a web app**, it first builds the **data
+model** (a class diagram) *and* the **screens** (a GUI no-code diagram), then
+**pauses**: it presents the spec and screens for your review and does **not**
+auto-run code generation. To produce the code, reply with **"generate the web
+app"**. This deliberate pause is a safety and quality feature — there is no
+surprise, long-running code-generation pass until you approve the model and
+screens.
 
 Neural Network Diagram
 ----------------------
@@ -152,9 +198,11 @@ JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close th
 round-trip through executable BUML ``.py`` files.
 
 .. note::
-   The frontend BPMN editor is being integrated into the
-   `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
-   repository; check there for the latest availability.
+   The frontend BPMN editor ships in the
+   `BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
+   repository, which this repo tracks as a submodule. It covers pools,
+   gateways, flows, start/intermediate/end events and call activities, and
+   supports importing BPMN 2.0 XML.
 
 Backend API Reference
 ---------------------

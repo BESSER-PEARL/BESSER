@@ -10,6 +10,8 @@ from sql_alchemy import *
 from database import get_db
 {% for class in classes %}
 from routers import {{ class.name | lower }} as {{ class.name | lower }}_router
+{% if class.methods %}from routers import {{ class.name | lower }}_methods as {{ class.name | lower }}_methods_router
+{% endif %}
 {% endfor %}
 
 # Configure logging
@@ -146,6 +148,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 {% for class in classes %}
 app.include_router({{ class.name | lower }}_router.router)
+{% if class.methods %}app.include_router({{ class.name | lower }}_methods_router.router)
+{% endif %}
 {% endfor %}
 
 ############################################

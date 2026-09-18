@@ -11,6 +11,12 @@ The BESSER backend generator streamlines the development process by leveraging m
 - **Database Models**: Integrates BESSER's SQL Alchemy Generator to construct efficient ORM-based models for database interactions.
 - **Data Validation Models**: Employs BESSER's Pydantic Generator to ensure that data conforms to the defined schemas, enhancing the integrity and security of the backend.
 
+.. seealso::
+   This generator emits a fixed scaffold. If you need more than the template
+   provides — JWT authentication, a Dockerfile, migrations, tests — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs *this* generator
+   first and then lets an LLM customise its output to a natural-language
+   request, validating and repairing the result before handing it back.
 
 To generate the complete backend for a B-UML model, follow the steps below. The example uses the ``library`` example B-UML model as a reference.
 
@@ -31,7 +37,7 @@ entities using their identifiers. The default setting is False, which restricts 
 
 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
-This method will generate several files:
+This method will generate a modular project (rather than one large file) so each concern lives in its own module:
 
    + ``main_api.py``: The slim FastAPI application entry point (app setup, middleware, exception handlers, system endpoints, and one ``include_router`` per resource). It keeps its historical filename and module-level ``app`` object, so ``uvicorn main_api:app`` works unchanged.
    + ``routers/<class>.py``: One router module per class in the model, containing all of that class's CRUD, relationship and method endpoints.

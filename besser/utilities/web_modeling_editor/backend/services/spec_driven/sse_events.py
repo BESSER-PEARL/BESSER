@@ -1,0 +1,239 @@
+"""SSE event schema for the smart generation endpoint.
+
+Every event is a Pydantic model with an ``event`` discriminator. The
+``format_sse`` helper serialises an event into the canonical SSE frame:
+
+    event: <name>\\n
+    data: <compact-json>\\n
+    \\n
+
+The ``event:`` header enables browser ``EventSource.addEventListener``
+dispatch, and the JSON body repeats the ``event`` field so that simple
+``onmessage`` / fetch-reader consumers can switch on it too. Both styles
+work without special-casing.
+
+The endpoint never includes user API keys in any event — there is no
+``api_key`` field on any model so it cannot leak by accident.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    redact_data,
+)
+
+
+class BaseSseEvent(BaseModel):
+    """Common parent for all SSE events."""
+
+    event: str
+
+
+class StartEvent(BaseSseEvent):
+    """Emitted once at the start of a run, before any BUML assembly."""
+
+    event: Literal["start"] = "start"
+    runId: str
+    provider: Literal[
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored"
+    ]
+    llmModel: str
+    maxCost: float
+    maxRuntime: int
+
+
+PhaseName = Literal["select", "generate", "gap", "customize", "validate"]
+
+
+class PhaseEvent(BaseSseEvent):
+    """Coarse-grained phase marker emitted as the pipeline advances."""
+
+    event: Literal["phase"] = "phase"
+    phase: PhaseName
+    message: str
+
+
+class PhaseUpdateEvent(BaseSseEvent):
+    """Adds details to an already-emitted phase row.
+
+    Distinct from PhaseEvent so the frontend can update an existing
+    timeline entry in place (rather than appending a duplicate row).
+    Used by the gap analyser to surface the task list after the planning
+    LLM call returns. ``details`` is rendered behind a chevron on the
+    spec-driven card.
+    """
+
+    event: Literal["phase_update"] = "phase_update"
+    phase: PhaseName
+    details: str
+    message: Optional[str] = None
+
+
+class TextDeltaEvent(BaseSseEvent):
+    """A streaming text delta from the underlying LLM response.
+
+    ``delta`` may contain newlines; they're JSON-escaped by
+    ``model_dump_json`` so the SSE frame stays single-line until the
+    terminating blank line.
+    """
+
+    event: Literal["text"] = "text"
+    delta: str
+
+
+ToolCallStatus = Literal["executing", "done", "error"]
+
+
+class ToolCallEvent(BaseSseEvent):
+    """A tool invocation made by the LLM during Phase 2."""
+
+    event: Literal["tool_call"] = "tool_call"
+    turn: int
+    tool: str
+    status: ToolCallStatus = "executing"
+    summary: Optional[str] = None
+    # What the call was about (path / action / ids) plus how many calls the model
+    # batched into this turn. Without it a finished run cannot be diagnosed from
+    # the durable store - one run showed 71 task_list calls with no way to tell
+    # bookkeeping from a livelock (2026-09-11). Never contains file content.
+    detail: Optional[str] = None
+
+
+class ModelUpdateEvent(BaseSseEvent):
+    """The LLM serving this run changed mid-run.
+
+    Emitted when the provider's outage fallback switches the run to a
+    different model (see ``OpenAIProvider._activate_fallback`` — the
+    switch is sticky for the rest of the run). Without this event the
+    run card keeps showing the model from the ``start`` event even
+    though every subsequent turn is served by the fallback.
+
+    ``reason`` is a short machine-readable cause the frontend maps to
+    user-facing copy; today the only producer is the outage fallback
+    (``primary_unavailable``).
+    """
+
+    event: Literal["model_update"] = "model_update"
+    model: str
+    previousModel: Optional[str] = None
+    reason: str = "primary_unavailable"
+
+
+class CostEvent(BaseSseEvent):
+    """Periodic cost / runtime tick emitted by the cost emitter task.
+
+    ``servedModel`` carries the model name the upstream provider
+    actually served on the most recent call. Useful for audits where
+    the requested model (e.g. ``gpt-5.5``) may get aliased server-side
+    to a different variant. Optional because not every chunk knows it
+    (Anthropic doesn't expose it the same way).
+    """
+
+    event: Literal["cost"] = "cost"
+    usd: float
+    turns: int
+    elapsedSeconds: float
+    servedModel: Optional[str] = None
+
+
+class DoneEvent(BaseSseEvent):
+    """Terminal event on successful completion.
+
+    ``downloadUrl`` points to the sibling ``GET /spec-driven/download/{runId}``
+    endpoint which single-use-serves the generated ZIP or file. ``runId``
+    is carried explicitly so clients don't have to parse it back out of
+    the URL. The ``recipe`` field carries the contents of
+    ``.besser_recipe.json`` that ``LLMOrchestrator`` writes at the end
+    of every run.
+    """
+
+    event: Literal["done"] = "done"
+    runId: str = ""
+    downloadUrl: str
+    fileName: str
+    isZip: bool
+    recipe: dict[str, Any] = Field(default_factory=dict)
+    # Lightweight "what was generated" summary for the UI: how many user files
+    # the run produced and the top-level entries (dir/file names at the project
+    # root), so the client can show a concrete summary instead of a generic
+    # "code is ready". Capped so a large tree can't bloat the event.
+    fileCount: int = 0
+    topLevel: list[str] = Field(default_factory=list)
+    # Total LLM tokens the run consumed (0 for a purely deterministic run). Shown
+    # on the card as "N tokens used" — the counterpart to the deterministic
+    # card's "0 tokens".
+    tokensUsed: int = 0
+    # True when the run produced downloadable output but the customization
+    # loop did NOT finish cleanly (e.g. a provider rate-limit, cost/runtime
+    # cap, or turn cap cut it short). Clients should warn that the output
+    # may be incomplete rather than report an unqualified success.
+    incomplete: bool = False
+    incompleteReason: Optional[str] = None
+    # Number of unresolved blocker-severity validation issues left by a run
+    # whose customization loop COMPLETED. Lets the client distinguish
+    # "finished, but with issues that may stop the app from running" from a
+    # run that was genuinely cut short (which reports 0 here) — the two need
+    # different user-facing framing. 0 when there is nothing to distinguish.
+    blockerCount: int = 0
+    # Three-way authorship split over the final output tree —
+    # ``{generator_untouched, generator_llm_modified, llm_authored, total,
+    # *_pct}`` — how much of the app the deterministic pipeline carried vs.
+    # the LLM. Best-effort: ``None`` when the split could not be computed.
+    fileSplit: Optional[dict[str, Any]] = None
+
+
+ErrorCode = Literal[
+    "INVALID_KEY",
+    "UPSTREAM_LLM",
+    "COST_CAP",
+    "TIMEOUT",
+    "INCOMPLETE",
+    "INTERNAL",
+    "BAD_REQUEST",
+    "CANCELLED",
+]
+
+
+class ErrorEvent(BaseSseEvent):
+    """Error signal. May or may not be terminal depending on ``code``.
+
+    * ``INVALID_KEY``, ``UPSTREAM_LLM``, ``INTERNAL``, ``BAD_REQUEST``,
+      ``CANCELLED`` — terminal.
+    * ``COST_CAP``, ``TIMEOUT``, ``INCOMPLETE`` — warnings emitted *before* the
+      ``done`` event when the run still produced usable output but did not
+      finish cleanly (budget exceeded, or the customization loop was cut short
+      by a provider rate-limit / turn cap). The client should treat them as
+      non-terminal warnings and wait for ``done`` to get the download URL.
+
+    ``INTERNAL`` errors are always sent with the literal string
+    ``"Internal server error"``; tracebacks go to ``logger.exception``
+    only, never to the client.
+    """
+
+    event: Literal["error"] = "error"
+    code: ErrorCode
+    message: str
+    reason: Optional[Literal["user", "abandoned"]] = None
+    resumeAvailable: Optional[bool] = None
+
+
+def format_sse(event: BaseSseEvent) -> bytes:
+    """Serialize an event to an SSE frame.
+
+    The ``event:`` header line enables ``EventSource.addEventListener``
+    dispatch in the browser; the JSON body (which also contains the
+    ``event`` field) supports plain ``onmessage`` / fetch-reader style
+    consumers. Frame is always terminated with the mandatory blank line.
+    """
+    # This is the last serialization boundary before data reaches the browser.
+    # Redact recursively so exception text, model prose, phase details, and the
+    # embedded recipe cannot echo credential-shaped values.
+    safe_body, _findings = redact_data(event.model_dump(mode="json"))
+    body = json.dumps(safe_body, ensure_ascii=False, separators=(",", ":"))
+    frame = f"event: {event.event}\ndata: {body}\n\n"
+    return frame.encode("utf-8")

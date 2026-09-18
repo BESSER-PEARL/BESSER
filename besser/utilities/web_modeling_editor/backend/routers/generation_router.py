@@ -118,12 +118,56 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
+# Key-name fragments that mark a value as sensitive. Substring match
+# (case-insensitive) so this catches camelCase, kebab-case, snake_case,
+# screaming-snake, and weird vendor names alike: ``openaiApiKey``,
+# ``OPENAI_API_KEY``, ``api-key``, ``X-Auth-Token`` all hit one of these.
+SENSITIVE_KEYS = frozenset({
+    "api_key", "apikey", "api-key",
+    "secret", "password", "passwd",
+    "token",                              # access_token, id_token, refresh_token
+    "credential",
+    "private",                            # private_key, private-key
+    "auth",                               # bearer_auth, basic_auth, x-auth-*
+    "cert",                               # cert, certificate
+    "session",                            # session_id, session_token
+    "key",                                # catch-all (last so longer matches dominate)
+})
 
 
-def sanitize_config(config: dict) -> dict:
-    """Return a shallow copy of config with sensitive values masked."""
-    return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
+# _safe_path is IMPORTED above (services.utils.user_profile_utils.safe_path).
+# Do not re-add a local copy: the one that used to live here shadowed the import
+# with a weaker ``startswith`` containment check instead of the shared helper's
+# ``os.path.commonpath`` (which also handles the Windows cross-drive ValueError).
+
+
+def _key_is_sensitive(key: str) -> bool:
+    """True if a config key name looks like it holds a secret."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(token in lowered for token in SENSITIVE_KEYS)
+
+
+def sanitize_config(config):
+    """Return a deep-copied structure with sensitive values masked.
+
+    Walks nested dicts, lists, and tuples so a credential nested under
+    ``config["llm"]["openai"]["api_key"]`` is still masked. Non-dict
+    leaves are returned untouched (we only redact when the *key name*
+    looks sensitive — value-level heuristics are too prone to false
+    positives for now).
+    """
+    if isinstance(config, dict):
+        return {
+            k: ("***" if _key_is_sensitive(k) else sanitize_config(v))
+            for k, v in config.items()
+        }
+    if isinstance(config, list):
+        return [sanitize_config(item) for item in config]
+    if isinstance(config, tuple):
+        return tuple(sanitize_config(item) for item in config)
+    return config
 
 
 router = APIRouter(prefix="/besser_api", tags=["generation"])
@@ -899,20 +943,10 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         output_dir=temp_dir,
     )
 
-    # DjangoGenerator.generate() shells out to `django-admin startproject`
-    # without a cwd, and several internal paths are derived from os.getcwd().
-    # The caller therefore has to chdir into temp_dir for the duration of the
-    # generation; otherwise the project gets scaffolded in the FastAPI
-    # process's cwd and the harvester below finds an empty temp_dir/<project>.
-    def _run_generate_in_temp_dir():
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(temp_dir)
-            generator_instance.generate()
-        finally:
-            os.chdir(original_cwd)
-
-    await asyncio.to_thread(_run_generate_in_temp_dir)
+    # DjangoGenerator anchors all of its filesystem effects on output_dir
+    # (its subprocesses run with an explicit cwd), so it can run directly on
+    # a worker thread without touching the process-wide working directory.
+    await asyncio.to_thread(generator_instance.generate)
 
     # Validate generation
     if not os.path.exists(project_dir) or not os.listdir(project_dir):

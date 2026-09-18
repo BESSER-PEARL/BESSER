@@ -1,18 +1,34 @@
 {% import "helpers.py.j2" as helper -%}
 import enum
 import os
-from typing import List as List_, Optional as Optional_
+# Both spellings are bound on purpose. Generated code uses the trailing-
+# underscore aliases so a modelled class named List, Optional or DateTime
+# cannot shadow them. The PLAIN names are imported too because this file is
+# routinely edited afterwards by an LLM, which writes ordinary Python and has
+# no reason to know about our aliasing convention. Observed in generated apps
+# on 2026-09-11, each one an app that would not import:
+#
+#     Mapped_[Optional[int]]        undefined name 'Optional'
+#     mapped_column(DateTime())     undefined name 'DateTime'
+#
+# Binding only the names we had seen fail left the same trap set for every
+# other alias, so every aliased name below is bound both ways.
+from typing import List, Optional, List as List_, Optional as Optional_
 from sqlalchemy import (
-    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    create_engine, Enum,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Interval,
+    PickleType, String, Table, Text, Time,
+    Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
     Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
     Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
-    Interval as Interval_, PickleType as PickleType_, Enum
+    Interval as Interval_, PickleType as PickleType_,
 )
 {%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
 {%- endif %}
 from sqlalchemy.orm import (
-    column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
+    column_property, DeclarativeBase, Mapped, Mapped as Mapped_, mapped_column,
+    relationship
 )
 from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
 from uuid import uuid4 as _uuid4
@@ -122,10 +138,18 @@ class {{ class.name }}(
             {%- for a_end in end.owner.ends if a_end != end %}
                 {%- set ns.end_own = a_end %}
             {%- endfor %}
-            {#- Foreign Key #}
+            {#- Foreign Key.
+                A deferred FK is one edge of a table cycle: two tables each
+                holding a NOT NULL FK to the other cannot be created at all
+                ("Can't sort tables; there are unresolvable cycles between
+                tables booking, guest") and neither row can be inserted
+                first. It is emitted nullable, with use_alter so the
+                constraint is added after both tables exist. See
+                get_deferred_fk_associations in structural_utils.py. #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
-    {{end.name}}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
+            {%- set deferred = end.owner.name in deferred_fks %}
+    {{end.name}}_id: Mapped_[{% if deferred %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}"{% if deferred %}, use_alter=True, name="fk_{{class.name.lower()}}_{{end.name.lower()}}"{% endif %})
+            {%- if deferred or end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
     {%- endfor %}
@@ -181,7 +205,17 @@ class {{ asso_class.name }}(Base):
     {%- if is_pk %}, primary_key=True{% endif %}
     {%- if unique_needed %}, unique=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
-    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
+    {#- Same sink as helpers.py.j2: default_value is unvalidated request JSON and
+        SQLGenerator EXECUTES this module. This association-class copy of the
+        attribute loop was missed when the regular-class macro was hardened, so
+        the raw interpolation survived here and an AssociationClass attribute
+        still ran arbitrary code (2026-09-15). #}
+    {%- if attribute.default_value is not none %}, default=
+        {%- if attribute.type.__class__.__name__ == 'Enumeration' -%}
+            {{ enum_default(attribute.default_value, attribute.type.name, members=attribute.type.literals, owner=asso_class.name ~ '.' ~ attribute.name) }}
+        {%- else -%}
+            {{ attribute.default_value | python_default(attribute.type.name, owner=asso_class.name ~ '.' ~ attribute.name) }}
+        {%- endif %}{% endif %})
     {%- endfor %}
 {% endfor %}
 
@@ -210,7 +244,7 @@ class {{ asso_class.name }}(Base):
 
 #--- Relationships of the {{ class.name.lower() }} table
             {%- endif %}
-{{ helper.render_relationship(class, end, ns, ids, fkeys) }}
+{{ helper.render_relationship(class, end, ns, ids, fkeys, deferred_fks) }}
         {%- endif %}
     {%- endfor %}
 {%- endfor %}

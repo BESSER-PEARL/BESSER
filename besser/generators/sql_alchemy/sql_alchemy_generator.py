@@ -1,9 +1,16 @@
 import os
 from jinja2 import Environment, FileSystemLoader
+
+from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
-from besser.generators.structural_utils import get_foreign_keys, normalize_method_code, get_pk_py_types
+from besser.generators.structural_utils import (
+    get_deferred_fk_associations,
+    get_foreign_keys,
+    normalize_method_code,
+    get_pk_py_types,
+)
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -231,6 +238,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         env.globals.update(normalize_code=normalize_method_code)
+        # default_value reaches the metamodel unvalidated from request JSON and
+        # used to be interpolated raw into the generated module — which
+        # SQLGenerator then EXECUTES. These emit literals, never expressions.
+        register_default_literals(env)
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
@@ -244,6 +255,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 ids=self.get_ids(),
                 pk_types=self.get_pk_py_types(),
                 fkeys=get_foreign_keys(self.model),
+                deferred_fks=get_deferred_fk_associations(self.model),
                 sort=sort_by_timestamp,
                 concrete_parents=concrete_parents
             )

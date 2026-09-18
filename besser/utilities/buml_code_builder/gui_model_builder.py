@@ -7,7 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.buml_code_builder.common import safe_class_name, _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, safe_class_name, _escape_python_string
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewContainer,
     Button,
@@ -262,7 +262,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
 
         # Process each module
         for module_idx, module in enumerate(sorted(model.modules, key=lambda m: m.name)):
-            f.write(f"# Module: {module.name}\n")
+            f.write(f"# Module: {_comment_safe(module.name)}\n")
 
             # Process each screen in the module
             for screen_idx, screen in enumerate(sorted(module.screens, key=lambda s: s.name)):
@@ -1236,20 +1236,15 @@ def _write_map_layer(f, layer_var, layer_comp, created_vars):
             if field_name:
                 escaped_domain = _escape_string(domain_name)
                 escaped_field = _escape_string(field_name)
-                # domain_model may be absent entirely when the GUI model is
-                # emitted standalone — resolve it via globals() so the generated
-                # code degrades to a no-op instead of raising NameError.
+                # domain_model may be absent when the GUI model is emitted
+                # standalone, so the assignment is guarded and left unset.
+                # Keep it to ONE call - see bind_domain_field.
+                f.write("try:\n")
                 f.write(
-                    "_dm_ref = globals().get('domain_model')\n"
+                    f"    {layer_var}.{attr_name} = bind_domain_field(domain_model, \"{escaped_domain}\", \"{escaped_field}\")\n"
                 )
-                f.write("if _dm_ref is not None:\n")
-                f.write(f"    _dc = _dm_ref.get_class_by_name(\"{escaped_domain}\")\n")
-                f.write("    if _dc:\n")
-                f.write(
-                    f"        {layer_var}.{attr_name} = next(\n"
-                    f"            (a for a in _dc.attributes if a.name == \"{escaped_field}\"), None\n"
-                    f"        )\n"
-                )
+                f.write("except NameError:\n")
+                f.write("    pass\n")
 
 
 def _write_map(f, var_name, map_comp, created_vars):

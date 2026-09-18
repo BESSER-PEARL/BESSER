@@ -20,3 +20,7 @@ psycopg2-binary>=2.9.10
 pymysql>=1.1.1
 pyodbc>=5.2.0
 bocl==1.0.1
+# Accurate token counting for context compaction. Without it
+# compaction.py falls back to len(text)//4, which OVER-reports code
+# by ~21% (measured 4.83 chars/token), tripping compaction early.
+tiktoken>=0.7,<1

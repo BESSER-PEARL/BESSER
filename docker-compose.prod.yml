@@ -10,11 +10,24 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
+      # NOTE: the backend deliberately does NOT set
+      # BESSER_LLM_RUN_WORKSPACE_ROOT. It looked harmless -- the root is only
+      # scanned -- but runner.py mkdtemps INTO that root, so pointing it at the
+      # read-only mount made every backend path that opens a run workspace die
+      # EROFS. It also cannot usefully resolve worker runs: SMART_RUN_REGISTRY
+      # is in-memory and restored once at boot, so manifests the worker writes
+      # later are never seen. push-to-github for worker runs needs a registry
+      # rescan, not a mount.
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
     volumes:
       - feedback_data:/app/besser/feedback_data
+      # Read-only view of the worker's run workspaces. push-to-github and
+      # import-github-run stay on the backend because they need the OAuth
+      # session, which is process-local here; they read the generated files
+      # through this mount rather than the worker handing them over.
+      - smartgen_workspace:/workspace:ro
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     networks:
@@ -44,11 +57,94 @@ services:
     networks:
       - besser_network
 
+  # Spec-Driven Agent worker. Same image as the backend, different container:
+  # generation is the only path that runs LLM-authored code, so it is the only
+  # one that should sit next to the toolchains -- and it should NOT sit next to
+  # the backend's full secret set.
+  #
+  # Deliberately no `env_file`. The backend loads all of ./.env (SMTP_PASSWORD,
+  # GPG_KEY, GITHUB_CLIENT_SECRET, POSTHOG_KEY, BESSER_TELEMETRY_ADMIN_TOKEN,
+  # OPENAI_API_KEY...). This service gets an explicit allowlist instead, so a
+  # compromise during generation reaches the LLM credentials and nothing else.
+  besser-wme-smartgen:
+    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
+    container_name: besser-wme-smartgen
+    ports:
+      - "127.0.0.1:9001:9000"
+    working_dir: /app/besser
+    environment:
+      - PYTHONPATH=/app
+      - BESSER_LLM_MAX_CONCURRENT_RUNS=${BESSER_LLM_MAX_CONCURRENT_RUNS:-8}
+      # The image already carries tsc / cargo / kotlinc. In the backend that was
+      # ~2GB for a flag that is off; here it is the point -- real compile errors
+      # are what the static checks were missing on generated frontends.
+      - BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION=true
+      # Shell tools ON here, and ONLY here. This is why the worker exists: the
+      # backend keeps all nine secrets and never runs model-authored commands,
+      # while this container holds three LLM tokens, is off besser_network (so
+      # it cannot reach the backend, frontend or agent), and is disposable.
+      # It is a narrowed blast radius, not a sandbox -- a compromise still
+      # reaches the LLM tokens and outbound internet.
+      - BESSER_LLM_ENABLE_SHELL_TOOLS=true
+      - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=false
+      # Shared with the backend so push-to-github can still read a finished
+      # workspace: that endpoint needs the OAuth session, which is process-local
+      # to the backend, so it stays there and reads the files over this volume.
+      - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
+      - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
+      # Budgets
+      - BESSER_LLM_DEFAULT_MAX_COST_USD=${BESSER_LLM_DEFAULT_MAX_COST_USD:-5.0}
+      - BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS=${BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS:-2400}
+      - BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP=${BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP:-2400}
+      # LLM credentials -- the only secrets this service is given.
+      - BESSER_FREE_LLM_BASE_URL=${BESSER_FREE_LLM_BASE_URL:-}
+      - BESSER_FREE_LLM_TOKEN=${BESSER_FREE_LLM_TOKEN:-}
+      - BESSER_FREE_LLM_MODEL=${BESSER_FREE_LLM_MODEL:-}
+      # The extra keyless models the picker offers. Omitting this from the
+      # allowlist silently dropped a model from the UI once the config
+      # endpoint moved to this container.
+      - BESSER_FREE_LLM_ALT_MODELS=${BESSER_FREE_LLM_ALT_MODELS:-}
+      # The model a ?pilot= session pre-selects. Config is served by THIS
+      # container, so a var the allowlist omits reads as unset and the
+      # feature silently does nothing -- which is how ALT_MODELS and the
+      # telemetry vars were lost before it.
+      - BESSER_FREE_LLM_PILOT_MODEL=${BESSER_FREE_LLM_PILOT_MODEL:-}
+      # Run telemetry is recorded by whoever runs the generation, which is
+      # this container. The ADMIN token is deliberately NOT here: the report
+      # endpoint it guards stays on the backend.
+      - BESSER_TELEMETRY_ENABLED=${BESSER_TELEMETRY_ENABLED:-}
+      - BESSER_TELEMETRY_DIR=${BESSER_TELEMETRY_DIR:-/app/telemetry}
+      - BESSER_FREE_LLM_FALLBACK_BASE_URL=${BESSER_FREE_LLM_FALLBACK_BASE_URL:-}
+      - BESSER_FREE_LLM_FALLBACK_TOKEN=${BESSER_FREE_LLM_FALLBACK_TOKEN:-}
+      - BESSER_FREE_LLM_FALLBACK_MODEL=${BESSER_FREE_LLM_FALLBACK_MODEL:-}
+      - BESSER_SPONSORED_LLM_BASE_URL=${BESSER_SPONSORED_LLM_BASE_URL:-}
+      - BESSER_SPONSORED_LLM_TOKEN=${BESSER_SPONSORED_LLM_TOKEN:-}
+      - BESSER_SPONSORED_LLM_MODEL=${BESSER_SPONSORED_LLM_MODEL:-}
+      # Secret authorising the sponsored tier (?demo= links). The gate runs
+      # where the run is started, which is THIS container -- and it fails
+      # closed, so omitting it here 403s every demo run.
+      - BESSER_DEMO_TOKEN=${BESSER_DEMO_TOKEN:-}
+    volumes:
+      - smartgen_workspace:/workspace
+      - ./telemetry-logs:/app/telemetry
+    command: python -m besser.utilities.web_modeling_editor.backend.backend
+    restart: unless-stopped
+    # NOT on besser_network: generation has no reason to reach the backend, the
+    # frontend or the modeling agent by name. It still has outbound internet for
+    # the LLM endpoints via its own bridge.
+    networks:
+      - smartgen_network
+
 volumes:
   feedback_data:
     driver: local
+  smartgen_workspace:
+    driver: local
 
 networks:
+  smartgen_network:
+    name: smartgen_network
+    driver: bridge
   besser_network:
     name: besser_network
     driver: bridge

@@ -18,6 +18,25 @@ from .page_builder import PageBuilderMixin
 from .serialization import GuiSerializationMixin
 
 
+def _copy_template_file(src: str, dest: str) -> None:
+    """Copy a non-Jinja template file, normalising CRLF in text files.
+
+    git checks these templates out with CRLF on Windows (core.autocrlf), so a
+    verbatim copy shipped CRLF into the generated workspace while every
+    Jinja-rendered file stayed LF. Text files are rewritten (copy2's metadata
+    is not preserved for them); binary assets are copied byte-for-byte.
+    """
+    with open(src, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        shutil.copy2(src, dest)
+        return
+    with open(dest, mode="w", encoding="utf-8", newline="\n") as f:
+        f.write(text.replace("\r\n", "\n"))
+
+
 class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface):
     """
     Generates React code based on BUML and GUI models.
@@ -59,7 +78,9 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 template = self.env.get_template(rel_template_path.replace("\\", "/"))
                 generated_code = template.render(**context)
-                with open(file_path, mode="w", encoding="utf-8") as f:
+                # newline="\n": a text-mode write turns "\n" into os.linesep,
+                # so a Windows host produced a CRLF workspace from LF templates.
+                with open(file_path, mode="w", encoding="utf-8", newline="\n") as f:
                     f.write(generated_code)
             except Exception as exc:
                 print(f"Error generating {file_path} from {rel_template_path}: {exc}")
@@ -80,7 +101,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                     rel_output_path = rel_template_path
                     dest_path = self.build_generation_path(file_name=rel_output_path)
                     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    shutil.copy2(abs_template_path, dest_path)
+                    _copy_template_file(abs_template_path, dest_path)
 
         self._generate_pages()
 

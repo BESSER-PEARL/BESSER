@@ -67,6 +67,17 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     conversion_router,
     validation_router,
     deployment_router,
+    spec_driven_router,
+    telemetry_router,
+)
+
+# Smart-generation download registry — started/cancelled in the lifespan below
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    DURABLE_RUN_MANAGER,
+    SMART_RUN_REGISTRY,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_DOWNLOAD_TTL_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,12 +172,36 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
+    # Download metadata lives beside artifacts on the persistent run volume,
+    # so a backend/container restart does not invalidate a completed result.
+    await SMART_RUN_REGISTRY.restore_persisted()
+
+    # Sweep expired spec-driven generation download entries every minute.
+    smart_gen_sweeper = asyncio.create_task(
+        SMART_RUN_REGISTRY.periodic_sweep(),
+        name="spec-driven-registry-sweeper",
+    )
+    durable_run_sweeper = asyncio.create_task(
+        DURABLE_RUN_MANAGER.periodic_sweep(LLM_DOWNLOAD_TTL_SECONDS),
+        name="spec-driven-durable-run-sweeper",
+    )
+
     yield
 
-    # Cancel the periodic cleanup task on shutdown.
+    # Cancel background tasks on shutdown.
     cleanup_task.cancel()
+    smart_gen_sweeper.cancel()
+    durable_run_sweeper.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await smart_gen_sweeper
+    except asyncio.CancelledError:
+        pass
+    try:
+        await durable_run_sweeper
     except asyncio.CancelledError:
         pass
 
@@ -191,8 +226,11 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
-    expose_headers=["Content-Disposition"],
+    # Idempotency-Key lets the spec-driven client safely retry a run start
+    # that failed at the transport layer (see spec_driven_router).
+    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition",
+                   "Authorization", "Idempotency-Key"],
+    expose_headers=["Content-Disposition", "X-BESSER-Run-Id"],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)
@@ -208,6 +246,8 @@ app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
+app.include_router(spec_driven_router.router)
+app.include_router(telemetry_router.router)
 
 
 # Exception handlers
@@ -250,6 +290,8 @@ def get_api_root():
         "endpoints": {
             "generate": "/besser_api/generate-output",
             "generate_from_project": "/besser_api/generate-output-from-project",
+            "smart_generate": "/besser_api/spec-driven/generate",
+            "download_smart": "/besser_api/spec-driven/download/{run_id}",
             "deploy": "/besser_api/deploy-app",
             "export_buml": "/besser_api/export-buml",
             "export_project": "/besser_api/export-project-as-buml",

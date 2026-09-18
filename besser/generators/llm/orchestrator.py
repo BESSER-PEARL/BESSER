@@ -3780,6 +3780,22 @@ class LLMOrchestrator:
 
         prompt_parts.append("")
         prompt_parts.extend(f"- {i.message}" for i in blockers)
+
+        # Show the offending lines. Measured 2026-09-18 on the model that had
+        # just failed here: with only "file line N" it spends a turn on
+        # read_file (6/6); with the excerpt it calls modify_file immediately
+        # (6/6). A BOUNDED window is the point -- SWE-agent's ablation scores
+        # a 100-line window above the whole file (18.0 vs 12.7 on SWE-bench
+        # Lite), so this never pastes an entire file.
+        excerpts = self._excerpts_for(blockers)
+        if excerpts:
+            prompt_parts.append("")
+            prompt_parts.append(
+                "The offending lines, verbatim from disk. Quote old_text from "
+                "here exactly — never abbreviate with '...':"
+            )
+            prompt_parts.extend(excerpts)
+
         prompt_parts.append("")
         prompt_parts.append(
             "Use modify_file or write_file as needed. Do NOT touch "
@@ -3870,6 +3886,17 @@ class LLMOrchestrator:
                 return
             if response["stop_reason"] == "end_turn":
                 return
+            if response["stop_reason"] not in ("end_turn", "tool_use"):
+                # Without this the loop appends nothing and re-sends an
+                # identical request for all 5 turns, twice, then reports
+                # "unresolved blockers" - the 2026-09-18 signature (10 turns,
+                # zero tool calls, no cap hit). Phase 2 already breaks here.
+                logger.warning(
+                    "Phase 3: unexpected stop_reason %r on fix turn %d — "
+                    "stopping the fix loop instead of re-sending the same "
+                    "request", response["stop_reason"], turn + 1,
+                )
+                return
             if response["stop_reason"] == "tool_use":
                 messages.append({"role": "assistant", "content": response["content"]})
                 tool_results = []
@@ -3885,6 +3912,38 @@ class LLMOrchestrator:
                             "content": result,
                         })
                 messages.append({"role": "user", "content": tool_results})
+
+    _FILE_LINE_RE = _re.compile(r" in ([\w./\-]+\.\w+) line (\d+)")
+
+    def _excerpts_for(
+        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3
+    ) -> list[str]:
+        """Numbered source windows around each blocker that names file+line."""
+        out: list[str] = []
+        seen: set[tuple[str, int]] = set()
+        for issue in blockers:
+            match = self._FILE_LINE_RE.search(issue.message)
+            if not match:
+                continue
+            rel, line_no = match.group(1), int(match.group(2))
+            if (rel, line_no) in seen or len(seen) >= limit:
+                continue
+            seen.add((rel, line_no))
+            path = os.path.join(self.output_dir, rel.replace("/", os.sep))
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    lines = fh.read().splitlines()
+            except OSError:
+                continue
+            lo = max(0, line_no - 1 - context)
+            hi = min(len(lines), line_no + context)
+            body = chr(10).join(
+                f"{n + 1:>5}| {lines[n]}" for n in range(lo, hi)
+            )
+            header = f"{rel} (lines {lo + 1}-{hi}):"
+            fence = "```"
+            out.append(chr(10).join(["", header, fence, body, fence]))
+        return out
 
     def _toolchain_commands_for(
         self, toolchain_blockers: list[ValidationIssue]
@@ -4581,9 +4640,11 @@ class LLMOrchestrator:
         issues: list[str] = []
         for project_dir in tsconfigs:
             rel = os.path.relpath(project_dir, self.output_dir).replace("\\", "/") or "."
+            deps_installed = os.path.isdir(os.path.join(project_dir, "node_modules"))
+            project_arg, cleanup = self._tsc_project_arg(project_dir, deps_installed)
             try:
                 result = subprocess.run(
-                    [tsc_bin, "--noEmit", "-p", "."],
+                    [tsc_bin, "--noEmit", "-p", project_arg],
                     capture_output=True, text=True, timeout=60,
                     cwd=project_dir,
                     env=_safe_subprocess_env(),
@@ -4596,6 +4657,8 @@ class LLMOrchestrator:
                     _check_did_not_run(f"tsc [{rel}]", f"could not be launched: {exc}")
                 )
                 continue
+            finally:
+                cleanup()
 
             # tsc emits errors on stdout (not stderr) in the classic
             # ``file(line,col): error TSxxxx: message`` format.
@@ -4614,21 +4677,116 @@ class LLMOrchestrator:
                 tail = detail[-1][:200] if detail else f"exit code {result.returncode}"
                 issues.append(f"tsc [{rel}]: {tail}")
                 continue
-            deps_installed = os.path.isdir(os.path.join(project_dir, "node_modules"))
             if not deps_installed:
                 err_lines = self._demote_tsc_without_deps(err_lines, rel, issues)
                 if not err_lines:
                     continue
+            # One name repeated 8 times would fill the cap and hide the other
+            # 7 distinct names behind "truncated", costing a whole fix round.
+            err_lines = self._collapse_repeated_names(err_lines)
             for line in err_lines[:10]:
                 issues.append(f"tsc [{rel}]: {line}")
             if len(err_lines) > 10:
                 issues.append(f"tsc [{rel}]: (+{len(err_lines) - 10} more errors truncated)")
         return issues
 
+    @classmethod
+    def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
+        """Keep the first occurrence of each undefined name per file."""
+        seen: set[tuple[str, str]] = set()
+        kept: list[str] = []
+        for line in err_lines:
+            match = cls._TSC_UNDEFINED_NAME_RE.match(line.strip())
+            if not match:
+                kept.append(line)
+                continue
+            key = (match.group("file"), match.group("name"))
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(line)
+        return kept
+
     # A relative import names a file the run was supposed to write; a bare
     # one names a package. Only the first is checkable without an install.
     _TSC_MISSING_MODULE_RE = _re.compile(
         r"error TS2307:.*?Cannot find module ['\"](?P<spec>[^'\"]+)['\"]")
+
+    # Written next to the real tsconfig so its relative include/exclude/baseUrl
+    # still resolve, then removed.
+    _TSC_PROBE_NAME = "tsconfig.besser-probe.json"
+    _TSC_PROBE_BODY = (
+        '{\n  "extends": "./tsconfig.json",\n'
+        '  "compilerOptions": { "types": [], "noEmit": true }\n}\n'
+    )
+
+    def _tsc_project_arg(self, project_dir: str, deps_installed: bool):
+        """Return the ``-p`` target for tsc, plus a cleanup callable.
+
+        A ``types`` entry naming an uninstalled package (``"types":
+        ["vite/client"]``, which every Vite scaffold carries) makes tsc abort
+        at config resolution: it emits TS2688 and type-checks ZERO files. Run
+        36e9c8a6 shipped a frontend with 23 real errors whose entire tsc
+        output was that one line, so Phase 3 saw a clean frontend.
+
+        Clearing ``types`` costs nothing when deps are missing — those types
+        cannot resolve either way — and lets tsc actually read the source.
+        There is no CLI equivalent: ``--types ""`` is TS6044 and
+        ``--typeRoots`` does not suppress an explicit ``types`` entry.
+        """
+        if deps_installed:
+            return ".", lambda: None
+
+        probe = os.path.join(project_dir, self._TSC_PROBE_NAME)
+        try:
+            with open(probe, "w", encoding="utf-8") as handle:
+                handle.write(self._TSC_PROBE_BODY)
+        except OSError:
+            return ".", lambda: None
+
+        def cleanup():
+            try:
+                os.remove(probe)
+            except OSError:
+                pass
+
+        return self._TSC_PROBE_NAME, cleanup
+
+    # TS2304 means a name has no binding in scope. That is true whether or not
+    # packages are installed -- EXCEPT for names a package contributes as a
+    # global type declaration, which are unresolvable only because of the
+    # missing install.
+    _TSC_PACKAGE_GLOBALS = frozenset({
+        # test runners (vitest / jest globals)
+        "describe", "it", "test", "expect", "vi", "jest", "suite", "assert",
+        "beforeEach", "afterEach", "beforeAll", "afterAll", "afterFile",
+        # node
+        "process", "Buffer", "__dirname", "__filename", "global", "require",
+        "module", "exports", "NodeJS", "globalThis",
+        # react UMD global / JSX namespace
+        "React", "JSX",
+    })
+
+    _TSC_UNDEFINED_NAME_RE = _re.compile(
+        r"^(?P<file>[^(]+)\(.*?error TS2304: Cannot find name '(?P<name>[^']+)'"
+    )
+
+    @classmethod
+    def _is_real_undefined_name(cls, line: str) -> bool:
+        """True for a TS2304 that a ``npm install`` would not have fixed."""
+        match = cls._TSC_UNDEFINED_NAME_RE.match(line.strip())
+        if not match:
+            return False
+        if match.group("name") in cls._TSC_PACKAGE_GLOBALS:
+            return False
+        path = match.group("file").replace("\\", "/").lower()
+        base = path.rsplit("/", 1)[-1]
+        # Test files pull in runner globals we cannot enumerate; skip them.
+        if "__tests__" in path or "__mocks__" in path:
+            return False
+        return not any(
+            f".{kind}." in base for kind in ("test", "spec", "stories", "cy")
+        )
 
     def _demote_tsc_without_deps(
         self, err_lines: list[str], rel: str, issues: list[str]
@@ -4656,6 +4814,8 @@ class LLMOrchestrator:
         for line in err_lines:
             match = self._TSC_MISSING_MODULE_RE.search(line)
             if match and match.group("spec").startswith("."):
+                real.append(line)
+            elif self._is_real_undefined_name(line):
                 real.append(line)
             else:
                 demoted += 1

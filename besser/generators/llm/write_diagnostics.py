@@ -45,6 +45,88 @@ def _finding(
     return finding
 
 
+_COROUTINE_SCHEDULERS = {
+    "create_task", "ensure_future", "gather", "wait", "wait_for", "run",
+    "run_until_complete", "run_coroutine_threadsafe", "shield", "as_completed",
+    "to_thread", "start_soon", "spawn",
+}
+
+
+def _is_async_generator(fn: ast.AsyncFunctionDef) -> bool:
+    """An ``async def`` that yields returns an iterator, not a coroutine."""
+    for node in ast.walk(fn):
+        if not isinstance(node, (ast.Yield, ast.YieldFrom)):
+            continue
+        owner = node
+        while owner is not fn:
+            owner = _parent_of(fn, owner)
+            if owner is None or isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                break
+        if owner is fn:
+            return True
+    return False
+
+
+def _parent_of(root: ast.AST, target: ast.AST) -> ast.AST | None:
+    for node in ast.walk(root):
+        for child in ast.iter_child_nodes(node):
+            if child is target:
+                return node
+    return None
+
+
+def _unawaited_coroutines(tree: ast.Module) -> list[dict[str, Any]]:
+    """Calls to a local ``async def`` that are neither awaited nor scheduled.
+
+    Neither ``ast.parse`` nor pyflakes sees this; it surfaces as a 500 at
+    runtime (``'coroutine' object is not subscriptable``) once the route is
+    actually exercised, which no static gate reaches.
+    """
+    coroutine_names = {
+        node.name for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and not _is_async_generator(node)
+    }
+    if not coroutine_names:
+        return []
+
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def is_consumed(call: ast.Call) -> bool:
+        node: ast.AST = call
+        while True:
+            parent = parents.get(node)
+            if parent is None or isinstance(parent, ast.stmt):
+                return False
+            if isinstance(parent, ast.Await):
+                return True
+            if isinstance(parent, ast.Call):
+                func = parent.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if name in _COROUTINE_SCHEDULERS:
+                    return True
+            node = parent
+
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        name = node.func.id
+        if name in coroutine_names and not is_consumed(node):
+            findings.append(_finding(
+                "python",
+                f"'{name}' is an async function; calling it without 'await' returns a "
+                f"coroutine, not its result. Use 'await {name}(...)', or move the shared "
+                f"logic into a plain (non-async) helper both callers use.",
+                code="unawaited-coroutine",
+                line=node.lineno,
+                column=node.col_offset + 1,
+            ))
+    return findings
+
+
 def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
     try:
         tree = ast.parse(content, filename=rel_path)
@@ -56,6 +138,8 @@ def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
             line=exc.lineno,
             column=exc.offset,
         )]
+
+    unawaited = _unawaited_coroutines(tree)
 
     # Pyflakes is a small, in-process AST checker. Keep this collector focused
     # on undefined-name failures; unused-import style feedback is noisy during
@@ -73,15 +157,15 @@ def _python_diagnostics(rel_path: str, content: str) -> list[dict[str, Any]]:
                 "pyflakes is not installed - same-turn undefined-name checks on "
                 "written files are SKIPPED. Install pyflakes to enable them."
             )
-        return []
+        return unawaited
 
     try:
         messages = Checker(tree, filename=rel_path).messages
     except Exception:
         logger.debug("pyflakes failed on %s", rel_path, exc_info=True)
-        return []
+        return unawaited
 
-    findings: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = list(unawaited)
     undefined_kinds = {"UndefinedName", "UndefinedExport", "UndefinedLocal"}
     for item in sorted(messages, key=lambda msg: (msg.lineno, msg.col)):
         if type(item).__name__ not in undefined_kinds:

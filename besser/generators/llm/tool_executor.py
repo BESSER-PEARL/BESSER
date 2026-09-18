@@ -28,6 +28,7 @@ from besser.BUML.metamodel.structural import DomainModel
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.generators.llm.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.generators.llm.edit_apply import (
+    find_elision,
     find_similar_lines,
     replace_most_similar_chunk,
 )
@@ -1342,6 +1343,10 @@ class ToolExecutor:
         for p in paths:
             self._known_paths.add(str(p).replace("\\", "/").strip())
 
+    # Three is the figure Cline (consecutiveMistakeCount) and Roo
+    # (DEFAULT_CONSECUTIVE_MISTAKE_LIMIT) both settled on.
+    _MAX_MODIFY_MISSES = 3
+
     def consecutive_modify_misses(self, path: str) -> int:
         """Failed modify_file attempts on ``path`` since its last successful edit."""
         key = path.replace("\\", "/").strip()
@@ -1378,6 +1383,37 @@ class ToolExecutor:
             return {
                 "error": "old_text and new_text are identical; no edit was applied. "
                          "Read the file before retrying if this change may already exist.",
+            }
+        # Refuse to write an abbreviation into the file. Observed 2026-09-18:
+        # every new_text in a 38-call run carried "..." and the one edit that
+        # landed wrote `contact_id:...` into sql_alchemy.py. Gemini CLI rejects
+        # this pre-flight for the same reason; the carve-out is theirs too --
+        # a placeholder already present in old_text is being preserved, not
+        # introduced.
+        # Hard stop, not a nudge. Cline and Roo halt at three consecutive
+        # mistakes and Aider stops the turn after three reflections; ours only
+        # appended "Move on." to the result, which one model ignored 61 times
+        # while missing 37 edits on a single file (2026-09-18). After this many
+        # misses on one path, refuse the tool and require a fresh read.
+        if self.consecutive_modify_misses(rel_path) >= self._MAX_MODIFY_MISSES:
+            self._failed_modifies.pop(rel_path, None)
+            return {
+                "error": (
+                    f"modify_file has missed {self._MAX_MODIFY_MISSES} times in a row on "
+                    f"{args['path']} and is refused for now. Call read_file on the exact "
+                    "region you intend to change and copy old_text verbatim from that "
+                    "output - do not retype it from memory or shorten it."
+                ),
+            }
+        new_elision = find_elision(new_text)
+        if new_elision and not find_elision(old_text):
+            line_no, line = new_elision
+            return {
+                "error": (
+                    f"new_text abbreviates the code at line {line_no}: {line.strip()!r}. "
+                    "new_text must be the complete literal text to write - an editor "
+                    "cannot expand \"...\". Write out every line in full."
+                ),
             }
 
         matched_by = "exact"
@@ -1425,11 +1461,27 @@ class ToolExecutor:
                 "that. "
                 if rel_path.strip() not in self._known_paths else ""
             )
-            err: dict = {
-                "error": unread + f"old_text not found in {args['path']}. "
-                         f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
-                         f"Make sure old_text matches exactly including whitespace/indentation.",
-            }
+            # An elided quote can never match, and "check your whitespace" sends
+            # the model to re-read and re-elide: 37 of 38 misses in one live run
+            # (2026-09-18) were a shortened quote, and the generic message was
+            # what kept it looping. Name the real cause first.
+            elision = find_elision(old_text)
+            if elision:
+                line_no, line = elision
+                err: dict = {
+                    "error": (
+                        f"old_text abbreviates the file at line {line_no}: "
+                        f"{line.strip()!r}. old_text must be the exact literal text, "
+                        "never a shortened quote - call read_file on that region and "
+                        "copy the full lines verbatim."
+                    ),
+                }
+            else:
+                err = {
+                    "error": unread + f"old_text not found in {args['path']}. "
+                             f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
+                             f"Make sure old_text matches exactly including whitespace/indentation.",
+                }
             hint = find_similar_lines(old_text, content)
             if hint:
                 err["did_you_mean"] = (

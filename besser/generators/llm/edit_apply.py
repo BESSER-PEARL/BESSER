@@ -250,3 +250,49 @@ def find_similar_lines(
     lo = max(0, best_i - pad)
     hi = min(len(content_lines), best_i + n + pad)
     return "\n".join(content_lines[lo:hi])
+
+
+# ---------------------------------------------------------------------------
+# Elided quotes
+# ---------------------------------------------------------------------------
+
+# Phrases that mark a deliberate omission, from Gemini CLI's
+# omissionPlaceholderDetector (github.com/google-gemini/gemini-cli, Apache-2.0).
+_OMISSION_PHRASES = (
+    "rest of",
+    "remaining",
+    "unchanged",
+    "same as before",
+    "as above",
+    "and so on",
+    "etc.",
+    "existing code",
+    "previous code",
+    "no changes",
+)
+
+# A CODE line that trails off: "contact_id:..." / "contact = rel...".
+# Requires the dots glued to a non-space, non-dot character, which is what
+# separates an abbreviation from legitimate Python: `Field(...)`, `Query(...)`,
+# a Protocol stub `def f() -> int: ...`, or numpy `a[..., 0]` all have the dots
+# preceded by a space, an opening bracket or a comma. A GLUED colon does count:
+# `contact_id:...` is the live 2026-09-18 shape, while the stub writes `: ...`.
+_GLUED_ELLIPSIS_RE = re.compile(r"[^\s.,(\[{=]\.\.\.\s*$", re.MULTILINE)
+
+
+def find_elision(text: str) -> tuple[int, str] | None:
+    """First line of *text* that abbreviates rather than quotes, or None.
+
+    Returns ``(line_number, line)`` 1-based. Deliberately narrow: calibrated
+    over 2,077 files / 400,777 lines of this repo, it flags one prose docstring
+    and nothing else. A comment merely STARTING with "..." is not an elision --
+    that is this codebase's own continuation style.
+    """
+    for n, line in enumerate(text.splitlines(), 1):
+        if _GLUED_ELLIPSIS_RE.search(line):
+            return n, line
+        if "..." in line:
+            low = line.lower()
+            if any(p in low for p in _OMISSION_PHRASES):
+                return n, line
+    return None

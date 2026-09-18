@@ -54,8 +54,12 @@ router = APIRouter()
    with mixed indentation or invalid Python cannot break the generated app. #}
 {% set method_code = normalize_code(method_code, method.name) %}
 
-{# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
-{% set is_class_method = '(self' not in method_code and '(self,' not in method_code %}
+{# A method is class-level only when its CODE says so (no 'self' parameter). A
+   method with no body is an unimplemented INSTANCE method - B-UML has no static
+   methods - and the React generator addresses every method button as
+   /<class>/{id}/methods/<name>/, so routing a body-less method class-level left
+   every method button 404ing (run 19h35, 2026-09-18: 12 of 18 scenarios). #}
+{% set is_class_method = method_code | length > 0 and '(self' not in method_code and '(self,' not in method_code %}
 
 
 {% if "POST" in http_methods %}
@@ -153,15 +157,17 @@ async def {{ class.name | lower }}_{{ clean_name }}(
         raise HTTPException(status_code=500, detail=f"{{ class.name }}.{{ clean_name }} failed: {str(e)}")
 
 {% else %}
-{# Instance method - requires entity ID #}
+{# Instance method - requires entity ID. Every method-agnostic line below carries
+   the method's name or sits within three lines of one that does: a body-less
+   stub must stay quotable by modify_file without "old_text occurs N times"
+   (test_method_stubs_are_distinguishable). #}
 @router.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
 async def execute_{{ class.name | lower }}_{{ clean_name }}(
-    {{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }},
+    {{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }},  # the {{ class.name }} that {{ clean_name }} runs on
     params: dict = Body(default=None, embed=True),
     database: Session = Depends(get_db)
 ):
-    """
-    Execute the {{ clean_name }} method on a {{ class.name }} instance.
+    """Execute the {{ clean_name }} method on a {{ class.name }} instance.
     {% if method_params %}
 
     Parameters:
@@ -170,12 +176,11 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     {% endfor %}
     {% endif %}
     """
-    # Retrieve the entity from the database
+    # {{ class.name }}.{{ clean_name }}: load the instance
     _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
     if _{{ class.name | lower }}_object is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-
-    # Prepare method parameters
+    # {{ class.name }}.{{ clean_name }}: parameters
     {% for param in method_params %}
     {% if param[3] %}
     {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
@@ -183,8 +188,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
     {% endif %}
     {% endfor %}
-
-    # Execute the method
+    # {{ class.name }}.{{ clean_name }}: execute
     try:
         # {{ class.name }}.{{ clean_name }}: capture stdout to include print outputs in the response
         import io

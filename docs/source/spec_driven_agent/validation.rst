@@ -39,7 +39,17 @@ Findings are classified into three severities:
      - What lands here
    * - ``blocker``
      - Syntax errors; dependency conflicts; a Dockerfile referencing a file
-       that doesn't exist; unresolvable local imports; frontend-contract and
+       that doesn't exist; unresolvable local imports; an ORM module that
+       fails to import or to configure its SQLAlchemy mappers (``mapper
+       config:`` — the generated ``sql_alchemy.py`` is imported in a
+       subprocess and ``configure_mappers()`` is run, which is the only way
+       to see a ``relationship()`` whose string arguments resolve to
+       nothing); a requirement the user stated that the code does not
+       implement (``requirement:`` — the verbatim request is turned into
+       atomic requirements once and each is judged against the generated
+       code, with every "implemented" citation re-checked by the harness);
+       a method button that takes its row id from a table of another
+       entity; frontend-contract and
        data-contract violations; ``ruff`` **F821** / **F822** / **F823**
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model

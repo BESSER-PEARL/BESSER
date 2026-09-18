@@ -46,6 +46,7 @@ from besser.generators.llm.compaction import (
 )
 from besser.generators.llm.user_request import user_request
 from besser.generators.llm.history_eviction import evict_stale_file_bodies
+from besser.generators.llm import requirements_ledger as _requirements_ledger
 from besser.generators.llm.checkpoint import (
     CHECKPOINT_FILENAME,
     CHECKPOINT_SCHEMA_VERSION,
@@ -96,6 +97,12 @@ from besser.generators.llm.tracing import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _hard_blockers(issues: list) -> list:
+    """Blockers from deterministic checks - everything but the requirements
+    ledger's ``requirement:`` verdicts, which an LLM judge produces."""
+    return [i for i in issues if not i.message.startswith("requirement:")]
 
 
 def _check_did_not_run(tool: str, reason: str) -> str:
@@ -813,6 +820,69 @@ def _import_smoke_location(output_dir, folder, rel, stderr, error) -> str:
     return rel
 
 
+_JSX_TAG_RE = _re.compile(r"<(MethodButton|TableBlock)\b[^>]*>")
+_JSX_ATTR_RE = r'\b{name}="([^"]*)"'
+_TABLE_ENTITY_RE = _re.compile(r'"entity"\s*:\s*"([^"]+)"')
+
+
+def _method_button_source_issues(output_dir: str) -> list[str]:
+    """A method button whose id comes from a table of another entity.
+
+    Run 19h35 (2026-09-18): Phase 2 copied the Bill page's ``registerPayment``
+    button into Booking.tsx and rebound it to the Booking table, so the page
+    posted ``/bill/<booking id>/methods/registerPayment/``. The generated
+    ``TableBlock`` names its entity in ``dataBinding``, so the mismatch is a
+    one-file check; a button whose table is not on the page is left alone.
+    """
+    issues: list[str] = []
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+        for fname in files:
+            if not fname.endswith((".tsx", ".jsx")):
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, output_dir).replace("\\", "/")
+            if rel.startswith(_SNAPSHOT_DIR):
+                continue
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            tables: dict[str, str] = {}
+            buttons: list[tuple[int, str]] = []
+            for m in _JSX_TAG_RE.finditer(content):
+                tag = m.group(0)
+                if m.group(1) == "TableBlock":
+                    tid = _re.search(_JSX_ATTR_RE.format(name="id"), tag)
+                    entity = _TABLE_ENTITY_RE.search(tag)
+                    if tid and entity:
+                        tables[tid.group(1)] = entity.group(1)
+                else:
+                    buttons.append((m.start(), tag))
+            for start, tag in buttons:
+                endpoint = _re.search(_JSX_ATTR_RE.format(name="endpoint"), tag)
+                source = _re.search(_JSX_ATTR_RE.format(name="instanceSourceTableId"), tag)
+                if not (endpoint and source):
+                    continue
+                route_entity = endpoint.group(1).strip("/").split("/")[0].lower()
+                table_entity = tables.get(source.group(1))
+                if not route_entity or table_entity is None or table_entity.lower() == route_entity:
+                    continue
+                label = _re.search(_JSX_ATTR_RE.format(name="label"), tag)
+                line_no = content.count("\n", 0, start) + 1
+                issues.append(
+                    f"frontend contract: {rel} line {line_no}: method button "
+                    f"'{label.group(1) if label else endpoint.group(1)}' posts to "
+                    f"/{route_entity}/ but takes its id from table "
+                    f"'{source.group(1)}', which lists {table_entity} rows - the "
+                    f"request would carry a {table_entity} id where a "
+                    f"{route_entity} id is required. Bind it to a {route_entity} "
+                    f"table (or move it to the {route_entity} page)."
+                )
+    return issues
+
+
 _RUFF_STYLE_CODES = frozenset({
     "F401", "F841",               # genuinely cosmetic: unused import / variable
     # F811 (redefinition) is deliberately NOT here; see the blocker branch below.
@@ -864,6 +934,11 @@ def _classify_issue(message: str) -> ValidationIssue:
     # The ORM module failed to import or to configure its mappers in the import
     # smoke check: every request that touches the database is a 500.
     if lower.startswith("mapper config:"):
+        return ValidationIssue("blocker", text)
+
+    # A requirement the user stated and the code does not implement. Partial
+    # and unverified findings carry a parenthesised prefix and stay warnings.
+    if lower.startswith("requirement:"):
         return ValidationIssue("blocker", text)
 
     # The F821 ruff cannot emit under a star import; a NameError on the first
@@ -1049,6 +1124,7 @@ class LLMOrchestrator:
         source_project_export: dict | None = None,
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
+        enable_requirements_ledger: bool = True,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -1142,6 +1218,13 @@ class LLMOrchestrator:
         # to allow_shell_tools - the hosted deploy has that off, and it is
         # where a mapper that fails on first use ships as a green run.
         self.enable_import_smoke_check = enable_import_smoke_check
+        # Requirements ledger: the user's verbatim request turned into atomic
+        # requirements once, then judged against the code on every Phase 3
+        # pass (see requirements_ledger.py). ``_requirements`` is None until
+        # extracted; the verdicts of the last pass go to the recipe.
+        self.enable_requirements_ledger = enable_requirements_ledger
+        self._requirements: list[dict] | None = None
+        self._requirement_verdicts: list[dict] = []
         # Binding Phase-1 generator choice (e.g. from a user-approved
         # preview plan). A bound ``None`` explicitly skips Phase 1; an
         # unbound ``None`` keeps auto-selection. Either bound state avoids a
@@ -3884,7 +3967,12 @@ class LLMOrchestrator:
                 self._validation_issues = list(issues_after)
                 return
 
-            if len(blockers_after) > len(blockers_before):
+            # Requirement verdicts vary between judge calls (two calls on
+            # the same 19h35 app returned 12 and 22 missing), so a verdict
+            # that appears between passes is not a regression the fix caused
+            # and must never roll back real work. Only the deterministic
+            # blockers decide "worse".
+            if len(_hard_blockers(blockers_after)) > len(_hard_blockers(blockers_before)):
                 # Fixes made BLOCKERS worse than the original state →
                 # rollback to pre-Phase-3 and stop. Comparing against
                 # blockers_before (the pre-Phase-3 baseline), not the
@@ -4448,6 +4536,7 @@ class LLMOrchestrator:
         # ``enable_toolchain_validation`` so the web deployment can
         # opt out per deploy.
         raw_issues.extend(self._collect_frontend_contract_issues())
+        raw_issues.extend(_method_button_source_issues(self.output_dir))
         try:
             from besser.generators.llm.endpoint_coherence import (
                 collect_endpoint_coherence_issues,
@@ -4476,6 +4565,7 @@ class LLMOrchestrator:
         except Exception:
             logger.debug("Acceptance matrix computation failed", exc_info=True)
 
+        raw_issues.extend(self._collect_requirement_issues())
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(_unresolvable_local_imports(self.output_dir))
         raw_issues.extend(_star_import_undefined_names(self.output_dir))
@@ -4608,13 +4698,50 @@ class LLMOrchestrator:
         gate, which is enforcement, not prose.
         """
         low = (self._instructions or "").lower()
+        tasks: list = []
         if self._WEBAPP_ASK_RE.search(low) and not self._has_frontend_files():
-            return [{
+            tasks.append({
                 "text": self._FRONTEND_CHECKLIST_TASK,
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
-            }]
-        return []
+            })
+        tasks.extend(self._unenforced_rule_tasks())
+        return tasks
+
+    def _unenforced_rule_tasks(self) -> list[str]:
+        """One task per modeled OCL rule the generators could not enforce.
+
+        The pydantic generator declines a constraint that spans relationships
+        and leaves a NOTE in the schema (pydantic_classes_template.py.j2). The
+        rule is the user's own words in the model, so it is checklist work,
+        not a comment: run 19h35 (2026-09-18) shipped without the guest-
+        capacity rule its model carried. FastAPI scaffolds only - the
+        placement names a router file.
+        """
+        if self._scaffold_family() != "fastapi" or self.domain_model is None:
+            return []
+        from besser.generators.pydantic_classes.ocl_utils import parse_ocl_constraint
+        tasks: list[str] = []
+        for constraint in list(getattr(self.domain_model, "constraints", None) or []):
+            context = getattr(constraint, "context", None)
+            if context is None or getattr(constraint, "language", "OCL") != "OCL":
+                continue
+            try:
+                parsed = parse_ocl_constraint(constraint, self.domain_model)
+            except Exception:
+                parsed = None
+            if not (isinstance(parsed, dict) and parsed.get("skipped")):
+                continue
+            cls = context.name
+            tasks.append(
+                f"Enforce the modeled rule '{constraint.name}' of {cls} - OCL: "
+                f"{constraint.expression}. The generators could not express it "
+                "(it spans relationships), so nothing enforces it yet: implement "
+                f"the check in the create and update endpoints of routers/{cls.lower()}.py "
+                "and in every modeled method that changes the values involved, and "
+                "refuse a violating request with HTTP 400 naming the rule."
+            )
+        return tasks
 
     def _collect_missing_frontend_issue(self) -> list[str]:
         """BLOCKER when the user asked for a web app and got no frontend.
@@ -4692,6 +4819,33 @@ class LLMOrchestrator:
                         f"{prefix} {finding.path} line {finding.line}: {finding.message}"
                     )
         return issues
+
+    def _collect_requirement_issues(self) -> list[str]:
+        """``requirement:`` blockers for what the user asked for and the code
+        does not do. Run 19h35 (2026-09-18) planned the guest-capacity rule and
+        shipped without it, and never planned the unique room number or the
+        extra charges; nothing checked the app against the request itself.
+        """
+        if not self.enable_requirements_ledger:
+            return []
+        if self._requirements is None:
+            self._requirements = _requirements_ledger.extract_requirements(
+                self._instructions, self.client,
+            ) or []
+        if not self._requirements:
+            return []
+        digest = _requirements_ledger.build_app_digest(self.output_dir)
+        verdicts = _requirements_ledger.judge_coverage(
+            self._requirements, digest, self.client,
+        )
+        if verdicts is None:
+            return [_check_did_not_run(
+                "the requirements check", "the judge call returned nothing",
+            )]
+        self._requirement_verdicts = _requirements_ledger.verify_evidence(
+            verdicts, self.output_dir,
+        )
+        return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
     def _collect_frontend_contract_issues(self) -> list[str]:
         """High-precision correctness checks on the (LLM-authored) frontend.
@@ -6145,6 +6299,9 @@ class LLMOrchestrator:
                 {"id": t["id"], "text": t["text"], "reason": t["dropped"]}
                 for t in getattr(self.executor, "_tasks", []) if t.get("dropped")
             ],
+            # The user's requirements with the last Phase 3 verdict on each:
+            # what was NOT built is read here, not inferred from the code.
+            "requirements": self._requirement_verdicts,
             "usage": self.client.usage.summary(),
             "validation_issues": [
                 {"severity": i.severity, "message": i.message}

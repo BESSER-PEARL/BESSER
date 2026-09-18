@@ -163,6 +163,14 @@ LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
 # deploy is exactly where it matters.
 LLM_ENABLE_IMPORT_SMOKE_CHECK = _env_bool("BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK", True)
 
+# Phase 3 requirements ledger: two extra planning-model calls per run (one to
+# turn the user's verbatim request into atomic requirements, one per Phase 3
+# pass to judge each against the generated code, citations re-checked by the
+# harness). Missing requirements become blockers for the auto-fix loop and
+# every verdict lands in the recipe. ON by default: it is the only check that
+# reads the request the user actually wrote (live run 19h35, 2026-09-18).
+LLM_ENABLE_REQUIREMENTS_LEDGER = _env_bool("BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER", True)
+
 # Whether a spec-driven generation request may carry a custom LLM ``base_url`` (the
 # 'PIA (LIST)' and 'Local / self-hosted' BYOK providers route through an
 # OpenAI-compatible endpoint at a user-supplied URL). OFF by default: on a

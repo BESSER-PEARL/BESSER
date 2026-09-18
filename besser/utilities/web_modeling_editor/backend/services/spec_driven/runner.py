@@ -57,6 +57,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_ENABLE_SHELL_TOOLS,
     LLM_ENABLE_CHECKPOINTING,
     LLM_ENABLE_IMPORT_SMOKE_CHECK,
+    LLM_ENABLE_REQUIREMENTS_LEDGER,
     LLM_ENABLE_TOOLCHAIN_VALIDATION,
     LLM_ENABLE_TRACING,
     LLM_PER_WRITE_DIAGNOSTICS,
@@ -1274,6 +1275,7 @@ class SmartGenerationRunner:
             allow_shell_tools=LLM_ENABLE_SHELL_TOOLS,
             per_write_diagnostics=LLM_PER_WRITE_DIAGNOSTICS,
             enable_import_smoke_check=LLM_ENABLE_IMPORT_SMOKE_CHECK,
+            enable_requirements_ledger=LLM_ENABLE_REQUIREMENTS_LEDGER,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,

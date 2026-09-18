@@ -96,6 +96,7 @@ def analyze_gaps_via_llm(
     on_phase_details: Callable[[str, str], None] | None = None,
     generator_failure: str | None = None,
     modify_mode: bool = False,
+    workspace_files: list[str] | None = None,
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -120,6 +121,12 @@ def analyze_gaps_via_llm(
             FAILED, the reason string (``"<generator>: <error>"``). It
             is woven into the from-scratch fallback task so Phase 2
             knows why the scaffold is missing and can avoid the cause.
+        workspace_files: Every file in the output tree, relative and
+            ``/``-separated. Used to repair the paths the planner names
+            (see ``_resolve_task_paths``); when omitted the task text is
+            passed through unchanged. The full list on purpose — the
+            ``inventory`` string is capped at 30 entries, so the paths a
+            planner most often invents are the ones missing from it.
 
     Returns:
         ``None`` on failure, ``[]`` when no work is needed, otherwise
@@ -188,6 +195,7 @@ def analyze_gaps_via_llm(
     cleaned = _dedupe([t.strip() for t in tasks if isinstance(t, str) and t.strip()])[:_MAX_TASKS]
     cleaned = _sanitize_tasks(cleaned, generator_used, instructions)
     cleaned = _drop_present_enumerations(cleaned, domain_model)
+    cleaned = _resolve_task_paths(cleaned, workspace_files or [])
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
 
@@ -311,6 +319,118 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
                 continue
         kept.append(task)
     return kept
+
+
+# File paths named inside a task: a dotted basename, optionally preceded
+# by directory segments. Restricted to extensions the generators actually
+# emit so prose like ``domain_model.get_classes`` or a bare ``Booking.`` is
+# not mistaken for a file.
+_TASK_PATH_RE = re.compile(
+    r"(?<![\w/\\.])((?:[\w.\-]+[/\\])*[\w.\-]+"
+    r"\.(?:py|tsx|ts|jsx|js|css|scss|html|json|ya?ml|md|sql|txt|toml|cfg|ini|sh))"
+    r"(?![\w/\\])",
+    re.IGNORECASE,
+)
+# Minimum shared basename prefix before one file is offered as the "nearest"
+# candidate for another. Four characters keeps ``BookingForm`` -> ``Booking``
+# while rejecting ``Bill`` -> ``Booking``.
+_NEAREST_PREFIX_CHARS = 4
+_MAX_NEAREST = 2
+
+
+def _nearest_existing(path: str, workspace_files: list[str]) -> list[str]:
+    """Real files whose name plausibly answers ``path``.
+
+    Same extension and a shared basename-stem prefix, longest first — the
+    planner's invented ``BookingForm.tsx`` resolves to the real
+    ``pages/Booking.tsx`` this way.
+    """
+    base = path.rsplit("/", 1)[-1]
+    stem, _, ext = base.rpartition(".")
+    stem = stem.lower()
+    scored: list[tuple[int, str]] = []
+    for real in workspace_files:
+        real_base = real.rsplit("/", 1)[-1]
+        real_stem, _, real_ext = real_base.rpartition(".")
+        if real_ext.lower() != ext.lower():
+            continue
+        real_stem = real_stem.lower()
+        shared = 0
+        for a, b in zip(stem, real_stem):
+            if a != b:
+                break
+            shared += 1
+        if shared >= _NEAREST_PREFIX_CHARS:
+            scored.append((shared, real))
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    return [real for _, real in scored[:_MAX_NEAREST]]
+
+
+def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
+    """Repair the file paths a task list names, against the real tree.
+
+    Live run (2026-09-18, Qwen3-30B on a 63-file ``generate_web_app``
+    scaffold): the planner named ``frontend/src/components/BookingForm.tsx``
+    and ``BookingDetails.tsx``, neither of which exists — the Booking screen
+    is ``frontend/src/pages/Booking.tsx``. Phase 2 failed both reads and then
+    re-ran the same four searches three times over: 18 turns, zero writes.
+
+    Two deterministic repairs, no LLM call:
+
+    * a path whose suffix matches exactly ONE real file is rewritten to it
+      (the planner routinely drops the ``web_app/`` prefix);
+    * a path matching NO real file keeps its task — "create this file" is
+      legitimate work — but is annotated with that fact and the nearest real
+      candidates, which is what stops the hunt.
+
+    An ambiguous suffix is left alone: guessing between two real files is
+    worse than leaving the model to look.
+    """
+    if not workspace_files:
+        return tasks
+
+    real = {f.replace("\\", "/").lstrip("./") for f in workspace_files}
+    by_suffix: dict[str, set] = {}
+    for full in real:
+        parts = full.split("/")
+        for i in range(len(parts)):
+            by_suffix.setdefault("/".join(parts[i:]), set()).add(full)
+
+    repaired: list = []
+    for task in tasks:
+        text = task
+        missing: list[str] = []
+        for token in dict.fromkeys(_TASK_PATH_RE.findall(task)):
+            norm = token.replace("\\", "/").lstrip("./")
+            if norm in real:
+                continue
+            matches = by_suffix.get(norm, set())
+            if len(matches) == 1:
+                target = next(iter(matches))
+                text = text.replace(token, target)
+                logger.info(
+                    "Gap sanitizer repaired task path %r -> %r", token, target
+                )
+            elif not matches:
+                missing.append(norm)
+        if missing:
+            notes = []
+            for path in missing:
+                nearest = _nearest_existing(path, sorted(real))
+                notes.append(
+                    f"{path} does not exist in the workspace"
+                    + (f" (nearest existing: {', '.join(nearest)})" if nearest else "")
+                )
+            text = f"{text.rstrip().rstrip('.')}. NOTE: " + "; ".join(notes) + (
+                ". Do not search for it — edit the nearest existing file, or "
+                "create the file if the task genuinely needs a new one."
+            )
+            logger.info(
+                "Gap sanitizer flagged unresolved path(s) %s in task: %r",
+                missing, task[:100],
+            )
+        repaired.append(text)
+    return repaired
 
 
 def _call_planner(llm_client, user_prompt: str) -> list | None:

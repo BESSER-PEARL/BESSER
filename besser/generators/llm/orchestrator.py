@@ -2892,6 +2892,7 @@ class LLMOrchestrator:
                 on_phase_details=self.on_phase_details,
                 generator_failure=self._phase1_failure_reason,
                 modify_mode=self._modify_mode,
+                workspace_files=self._workspace_file_list(),
             )
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
@@ -5503,6 +5504,28 @@ class LLMOrchestrator:
     # ==================================================================
     # Loop detection
     # ==================================================================
+
+    def _workspace_file_list(self) -> list[str]:
+        """Every file in the output tree, relative and ``/``-separated.
+
+        Feeds the gap analyser's path repair. Unlike the inventory string
+        (capped at 30 entries) this is the complete list, which is the
+        point: the paths a planner invents are the ones it could not see.
+        """
+        files: list[str] = []
+        try:
+            for root, dirs, fnames in os.walk(self.output_dir):
+                dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
+                for f in fnames:
+                    if f.startswith(".besser_"):
+                        continue
+                    rel = os.path.relpath(os.path.join(root, f), self.output_dir)
+                    files.append(rel.replace("\\", "/"))
+        except Exception:
+            # Path repair is a best-effort assist, never a run blocker.
+            logger.debug("Workspace walk failed; skipping path repair", exc_info=True)
+            return []
+        return files
 
     def _is_stuck(self) -> bool:
         recent = self._recent_tool_calls[-self._LOOP_THRESHOLD:]

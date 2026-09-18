@@ -3168,7 +3168,7 @@ class LLMOrchestrator:
             messages = list(self._resume_messages or [])
         else:
             gap_tasks = analyze_gaps_via_llm(
-                instructions=instructions,
+                instructions=self._planner_instructions(instructions),
                 generator_used=self._generator_used,
                 domain_model=self.domain_model,
                 inventory=self._inventory,
@@ -4820,6 +4820,27 @@ class LLMOrchestrator:
                     )
         return issues
 
+    def _planner_instructions(self, instructions: str) -> str:
+        """The request, then the requirements ledger as numbered lines.
+
+        The planner already reads the verbatim spec, and on the 19h35 model
+        it still skipped the unique room number and the extra charges. A
+        numbered list is something to diff against, not prose to skim. The
+        extraction happens here, once per run, so Phase 2 and Phase 3 hold
+        the model to the same list.
+        """
+        if self.enable_requirements_ledger and self._requirements is None:
+            self._requirements = _requirements_ledger.extract_requirements(
+                instructions, self.client,
+            ) or []
+        if not self._requirements:
+            return instructions
+        return (
+            f"{instructions}\n\n"
+            "## Requirements the user stated (each is verified after generation)\n\n"
+            f"{_requirements_ledger.render_requirements(self._requirements)}"
+        )
+
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code
         does not do. Run 19h35 (2026-09-18) planned the guest-capacity rule and
@@ -5811,6 +5832,7 @@ class LLMOrchestrator:
             primary_kind=self.primary_kind,
             scaffold_snapshot=scaffold_snapshot,
             endpoint_manifest=endpoint_manifest,
+            requirements=_requirements_ledger.render_requirements(self._requirements),
             # ``_modify_mode`` is False on the run()/resume() paths, so the
             # from-scratch prompt stays byte-identical; only ``modify()``
             # flips it to prepend the "preserve what works" directive.

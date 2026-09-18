@@ -363,6 +363,60 @@ def test_a_new_hard_blocker_after_a_fix_still_rolls_back(simple_model, tmp_path,
     assert restored is True
 
 
+# ------------------------------------------- the ledger reaches Phase 2 too
+
+
+_LEDGER = [
+    {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"},
+    {"id": 2, "text": "Guests never exceed the rooms' combined capacity", "kind": "rule"},
+]
+
+
+def test_requirements_render_one_numbered_line_each():
+    assert ledger.render_requirements(_LEDGER) == (
+        "R1. Room numbers are unique\n"
+        "R2. Guests never exceed the rooms' combined capacity"
+    )
+    assert ledger.render_requirements(None) == ""
+
+
+def test_the_planner_is_handed_the_ledger_under_the_request(simple_model, tmp_path, monkeypatch):
+    """The gap analyser reads the spec too, but on the 19h35 model it still
+    skipped the unique room number and the extra charges. Numbered
+    requirements are a list to diff against, not prose to skim."""
+    seen = {}
+
+    def fake_planner(**kwargs):
+        seen["instructions"] = kwargs["instructions"]
+        return []
+
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client: list(_LEDGER))
+    monkeypatch.setattr("besser.generators.llm.orchestrator.analyze_gaps_via_llm", fake_planner)
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path))
+    orch._generator_used = "generate_web_app"
+    planner_text = orch._planner_instructions(INSTRUCTIONS)
+    assert planner_text.startswith(INSTRUCTIONS), "the verbatim request stays first"
+    assert "R1. Room numbers are unique" in planner_text
+    assert orch._requirements == _LEDGER
+
+
+def test_the_phase2_prompt_names_the_requirements_it_will_be_judged_on(simple_model, tmp_path):
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path))
+    orch._requirements = list(_LEDGER)
+    prompt = orch._build_system_prompt(instructions=INSTRUCTIONS)
+    assert "R2. Guests never exceed the rooms' combined capacity" in prompt
+    assert "verified" in prompt.split("R1. Room numbers are unique")[0][-600:].lower()
+
+
+def test_without_a_ledger_the_prompt_is_unchanged(simple_model, tmp_path):
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path))
+    prompt = orch._build_system_prompt(instructions=INSTRUCTIONS)
+    assert "Requirements the user stated" not in prompt
+
+
 def test_the_verdicts_are_written_to_the_recipe(simple_model, tmp_path):
     orch = LLMOrchestrator(
         llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path),

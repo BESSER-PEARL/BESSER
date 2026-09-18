@@ -43,6 +43,10 @@ import re
 from difflib import SequenceMatcher
 
 
+class AmbiguousEdit(ValueError):
+    """More than one eligible window matched at the same apply tier."""
+
+
 def _prep(text: str) -> tuple[str, list[str]]:
     """Normalize to a trailing newline and split keeping line endings."""
     if text and not text.endswith("\n"):
@@ -51,17 +55,25 @@ def _prep(text: str) -> tuple[str, list[str]]:
 
 
 def _perfect_replace(
-    whole_lines: list[str], part_lines: list[str], replace_lines: list[str]
+    whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
 ) -> str | None:
     """Exact line-window match. First occurrence only (same as ``replace(.., 1)``)."""
     part_tup = tuple(part_lines)
     n = len(part_lines)
     if not n:
         return None
+    result = None
     for i in range(len(whole_lines) - n + 1):
-        if tuple(whole_lines[i:i + n]) == part_tup:
-            return "".join(whole_lines[:i] + replace_lines + whole_lines[i + n:])
-    return None
+        if (tuple(whole_lines[i:i + n]) == part_tup
+                and not _protected_window(whole_lines, i, i + n, protected_spans)):
+            if result is not None:
+                raise AmbiguousEdit("Multiple exact line windows")
+            result = "".join(whole_lines[:i] + replace_lines + whole_lines[i + n:])
+            if not require_unique:
+                return result
+    return result
 
 
 def _match_but_for_leading_whitespace(
@@ -87,7 +99,9 @@ def _match_but_for_leading_whitespace(
 
 
 def _replace_with_missing_leading_whitespace(
-    whole_lines: list[str], part_lines: list[str], replace_lines: list[str]
+    whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
 ) -> str | None:
     """Whitespace-flexible tier.
 
@@ -106,20 +120,32 @@ def _replace_with_missing_leading_whitespace(
     n = len(part_lines)
     if not n:
         return None
+    result = None
     for i in range(len(whole_lines) - n + 1):
         add = _match_but_for_leading_whitespace(whole_lines[i:i + n], part_lines)
         if add is None:
             continue
+        if _protected_window(whole_lines, i, i + n, protected_spans):
+            continue
+        if result is not None:
+            raise AmbiguousEdit("Multiple indentation-corrected windows")
         fixed = [add + r if r.strip() else r for r in replace_lines]
-        return "".join(whole_lines[:i] + fixed + whole_lines[i + n:])
-    return None
+        result = "".join(whole_lines[:i] + fixed + whole_lines[i + n:])
+        if not require_unique:
+            return result
+    return result
 
 
 def _perfect_or_whitespace(
-    whole_lines: list[str], part_lines: list[str], replace_lines: list[str]
+    whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
 ) -> str | None:
-    return _perfect_replace(whole_lines, part_lines, replace_lines) or (
-        _replace_with_missing_leading_whitespace(whole_lines, part_lines, replace_lines)
+    result = _perfect_replace(whole_lines, part_lines, replace_lines, protected_spans, require_unique)
+    return result if result is not None else (
+        _replace_with_missing_leading_whitespace(
+            whole_lines, part_lines, replace_lines, protected_spans, require_unique,
+        )
     )
 
 
@@ -140,7 +166,9 @@ def _collapse_blank_runs(lines: list[str]) -> tuple[list[str], list[int]]:
 
 
 def _replace_with_collapsed_blank_runs(
-    whole_lines: list[str], part_lines: list[str], replace_lines: list[str]
+    whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
 ) -> str | None:
     """Tier 4: forgive only the COUNT of blank lines in a run. Every
     non-blank line must match exactly and every blank the model quoted must
@@ -151,13 +179,20 @@ def _replace_with_collapsed_blank_runs(
     whole_c, index = _collapse_blank_runs(whole_lines)
     part_c, _ = _collapse_blank_runs(part_lines)
     n = len(part_c)
+    result = None
     for j in range(len(whole_c) - n + 1):
         if whole_c[j:j + n] != part_c:
             continue
         start = index[j]
         end = index[j + n] if j + n < len(index) else len(whole_lines)
-        return "".join(whole_lines[:start] + replace_lines + whole_lines[end:])
-    return None
+        if _protected_window(whole_lines, start, end, protected_spans):
+            continue
+        if result is not None:
+            raise AmbiguousEdit("Multiple blank-run-normalized windows")
+        result = "".join(whole_lines[:start] + replace_lines + whole_lines[end:])
+        if not require_unique:
+            return result
+    return result
 
 
 _NUMBERED = re.compile(r"^\s*\d+(?:\||:|\t) ?")
@@ -172,26 +207,79 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     return [_NUMBERED.sub("", ln, count=1) if ln.strip() else ln for ln in lines]
 
 
-def replace_most_similar_chunk(whole: str, part: str, replace: str) -> str | None:
+def _protected_window(lines, start, end, protected_spans) -> bool:
+    """Whether a line window is inside an already-completed replacement."""
+    if not protected_spans:
+        return False
+    offset = sum(map(len, lines[:start]))
+    # _prep adds a synthetic final newline. Ignore only that line terminator
+    # when comparing boundaries, just as the apply ladder does.
+    stop = offset + len("".join(lines[start:end]).rstrip("\r\n"))
+    return any(lo <= offset and stop <= hi for lo, hi in protected_spans)
+
+
+def replacement_spans(whole: str, replacement: str) -> tuple[tuple[int, int], ...]:
+    """Locate completed replacement regions, not just replacement text anywhere.
+
+    Used to exclude *enclosed* search anchors from replay. No edit history is
+    needed, so this works after resume and leaves unrelated pending sites
+    editable. Only exact text, uniform indentation and copied line numbers
+    qualify; similarity scoring and arbitrary whitespace stripping do not.
+    """
+    if not replacement.strip():
+        return ()
+    _, lines = _prep(whole)
+    _, quoted = _prep(replacement)
+    stripped = _strip_line_numbers(quoted)
+    if stripped is not None:
+        replacement = "".join(stripped)
+        quoted = stripped
+    spans = set()
+    start = whole.find(replacement)
+    while start >= 0:
+        spans.add((start, start + len(replacement)))
+        start = whole.find(replacement, start + 1)
+    leading = [len(line) - len(line.lstrip()) for line in quoted if line.strip()]
+    indent = min(leading, default=0)
+    unindented = [line[indent:] if line.strip() else line for line in quoted]
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    n = len(quoted)
+    for i in range(len(lines) - n + 1):
+        if _match_but_for_leading_whitespace(lines[i:i + n], unindented) is not None:
+            spans.add((offsets[i], min(offsets[i + n], len(whole))))
+    return tuple(sorted(spans))
+
+
+def replace_most_similar_chunk(
+    whole: str, part: str, replace: str,
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
+) -> str | None:
     """Return the edited file text, or ``None`` when no tier matched.
 
     Pure: never touches disk, never mutates its arguments.
+
+    With require_unique, ambiguity is rejected at every tier, following the
+    candidate/uniqueness contract of OpenCode's edit.ts (MIT). We deliberately
+    retain BESSER's conservative matching tiers, not its similarity fallbacks.
     """
     whole, whole_lines = _prep(whole)
     part, part_lines = _prep(part)
     replace, replace_lines = _prep(replace)
 
-    res = _perfect_or_whitespace(whole_lines, part_lines, replace_lines)
+    res = _perfect_or_whitespace(whole_lines, part_lines, replace_lines, protected_spans, require_unique)
     if res is not None:
         return res
 
     # Models sometimes prepend a blank line to the block (aider issue #25).
     if len(part_lines) > 2 and not part_lines[0].strip():
-        res = _perfect_or_whitespace(whole_lines, part_lines[1:], replace_lines)
+        res = _perfect_or_whitespace(whole_lines, part_lines[1:], replace_lines, protected_spans, require_unique)
         if res is not None:
             return res
 
-    res = _replace_with_collapsed_blank_runs(whole_lines, part_lines, replace_lines)
+    res = _replace_with_collapsed_blank_runs(whole_lines, part_lines, replace_lines, protected_spans, require_unique)
     if res is not None:
         return res
 
@@ -199,7 +287,9 @@ def replace_most_similar_chunk(whole: str, part: str, replace: str) -> str | Non
     if stripped is not None and stripped != part_lines:
         # new_text copied from the same numbered output loses its prefixes too.
         stripped_replace = _strip_line_numbers(replace_lines) or replace_lines
-        return replace_most_similar_chunk(whole, "".join(stripped), "".join(stripped_replace))
+        return replace_most_similar_chunk(
+            whole, "".join(stripped), "".join(stripped_replace), protected_spans, require_unique,
+        )
     return None
 
 
@@ -215,7 +305,8 @@ def locate_chunk(whole: str, part: str) -> int | None:
     file's mostly in indentation.
     """
     whole_lines = [line.strip() for line in whole.split("\n")]
-    part_lines = [line.strip() for line in part.strip("\n").split("\n")]
+    quoted = part.strip("\n").split("\n")
+    part_lines = [line.strip() for line in (_strip_line_numbers(quoted) or quoted)]
     n = len(part_lines)
     for i in range(len(whole_lines) - n + 1):
         if whole_lines[i:i + n] == part_lines:

@@ -156,12 +156,12 @@ def test_modify_file_miss_carries_did_you_mean_and_escalates(tmp_path):
 
 
 def test_modify_file_flags_edit_already_applied(tmp_path):
-    _seed(tmp_path, "app.py", "value = 2\n")
+    _seed(tmp_path, "app.py", "def get_value():\n    return 2\n")
     ex = ToolExecutor(workspace=str(tmp_path))
     res = _call(ex, "modify_file", {
         "path": "app.py",
-        "old_text": "value = 1\n",   # not present
-        "new_text": "value = 2\n",   # already present
+        "old_text": "def get_value():\n    return 1\n",   # not present
+        "new_text": "def get_value():\n    return 2\n",   # substantial block
     })
     assert "error" in res
     assert "already in the file at line 1" in res["error"]

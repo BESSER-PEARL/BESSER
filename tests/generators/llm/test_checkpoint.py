@@ -80,6 +80,28 @@ def test_save_load_round_trip(tmp_path):
     assert loaded.tasks == original.tasks
 
 
+def test_real_provider_blocks_survive_checkpoint_round_trip(tmp_path):
+    from besser.generators.llm.llm_client import _TextBlock, _ToolUseBlock
+
+    arguments = {"path": "app.py", "old_text": "x = 1", "new_text": "y = 2\nx = 1"}
+    original = _make_checkpoint(messages=[
+        {"role": "assistant", "content": [
+            _TextBlock("Updating app.py"),
+            _ToolUseBlock("edit-31", "modify_file", arguments),
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "edit-31", "content": "modified"},
+        ]},
+    ])
+    assert save_checkpoint(str(tmp_path), original)
+    loaded = load_checkpoint(str(tmp_path))
+    assert loaded.messages[0]["content"] == [
+        {"type": "text", "text": "Updating app.py"},
+        {"type": "tool_use", "id": "edit-31", "name": "modify_file", "input": arguments},
+    ]
+    assert loaded.messages[1] == original.messages[1]
+
+
 def test_load_older_checkpoint_without_tasks_is_backward_compatible(tmp_path):
     original = _make_checkpoint().to_dict()
     original.pop("tasks", None)

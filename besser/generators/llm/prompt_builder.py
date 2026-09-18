@@ -45,6 +45,7 @@ def build_system_prompt(
     scaffold_snapshot: str = "",
     endpoint_manifest: str = "",
     modify_mode: bool = False,
+    requirements: str = "",
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -255,6 +256,19 @@ def build_system_prompt(
         endpoint_section = (
             "\n## Backend REST API — the EXACT routes your frontend must call\n\n"
             f"{endpoint_manifest}\n"
+        )
+
+    # The requirements ledger (requirements_ledger.py): the user's request as
+    # numbered, testable items. Phase 3 judges the code against exactly this
+    # list, so the model is told up front what it will be held to.
+    requirements_section = ""
+    if requirements:
+        requirements_section = (
+            "\n## Requirements the user stated\n\n"
+            "Each of these is verified against your code after generation and "
+            "an unmet one is sent back to you as a blocker. Implement every one, "
+            "or close its checklist item honestly with the reason.\n\n"
+            f"{requirements}\n"
         )
 
     # Inline scaffold contents — saves the LLM 2-4 read_file round-trips
@@ -507,7 +521,7 @@ than re-reading or guessing:
     variable_tail = f"""\
 
 ## Variable context (per-run — not cached below this line)
-{inventory_section}{endpoint_section}{snapshot_section}
+{inventory_section}{endpoint_section}{snapshot_section}{requirements_section}
 ## User request
 
 The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to

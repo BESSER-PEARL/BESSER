@@ -20,6 +20,9 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import weakref
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -28,14 +31,33 @@ from besser.BUML.metamodel.structural import DomainModel
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.generators.llm.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.generators.llm.edit_apply import (
+    AmbiguousEdit,
     elided_lines,
     find_elision,
     find_similar_lines,
     locate_chunk,
     replace_most_similar_chunk,
+    replacement_spans,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# OpenCode edit.ts serializes the complete read/validate/write transaction by
+# resolved path. Share locks across executors too; weak references prevent the
+# registry retaining every generated path for the worker's entire lifetime.
+_FILE_LOCKS = weakref.WeakValueDictionary()
+_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def _file_lock(path: str):
+    key = os.path.normcase(os.path.realpath(path))
+    with _FILE_LOCKS_GUARD:
+        lock = _FILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _FILE_LOCKS[key] = lock
+        return lock
 
 
 ToolExecutionStatus = Literal["ok", "error", "skipped"]
@@ -866,7 +888,15 @@ class ToolExecutor:
             payload = {"error": f"Unknown tool: {tool_name}"}
             return ToolExecutionResult("error", payload)
         try:
-            raw_result = handler(self, arguments)
+            file_tool = tool_name in {"read_file", "modify_file", "write_file", "delete_file"}
+            lock = _file_lock(self._safe_path(arguments["path"])) if file_tool else nullcontext()
+            with lock:
+                # Aliases of a file must share rejection/freeze/read state too.
+                if file_tool:
+                    arguments = {**arguments, "path": os.path.relpath(
+                        self._safe_path(arguments["path"]), self.workspace,
+                    ).replace("\\", "/")}
+                raw_result = handler(self, arguments)
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
             return ToolExecutionResult(self._result_status(payload), payload)
         except Exception as e:
@@ -1534,8 +1564,9 @@ class ToolExecutor:
             return {"error": f"File not found: {args['path']}"}
         rel_path = args["path"].replace("\\", "/")
         self.last_repeat = None
-        old_text = args["old_text"]
-        new_text = args["new_text"]
+        # read() normalizes file newlines; normalize quoted text identically.
+        old_text = args["old_text"].replace("\r\n", "\n")
+        new_text = args["new_text"].replace("\r\n", "\n")
         frozen = self._frozen(rel_path)
         if frozen:
             self._note_rejection(rel_path, old_text, new_text)
@@ -1637,7 +1668,15 @@ class ToolExecutor:
         # Only line-anchored hits (or hits after real text: a partial-line
         # edit) count as exact. A hit inside a line's indentation is the quote
         # under-indented - see _anchored_occurrences.
-        starts = _anchored_occurrences(content, old_text)
+        # Insertion edits retain their anchor inside new_text. Reapplying them
+        # used to report success and grow the file forever (f6770633: 75 writes).
+        # Exclude only anchors INSIDE completed replacement regions, not other
+        # sites that still need this edit. Content-based, so resume is safe too.
+        completed = replacement_spans(content, new_text)
+        starts = [
+            i for i in _anchored_occurrences(content, old_text)
+            if not any(lo <= i and i + len(old_text) <= hi for lo, hi in completed)
+        ]
         indent_shifted = not starts and old_text in content
         occurrences = len(starts)
         if occurrences:
@@ -1645,6 +1684,8 @@ class ToolExecutor:
             # silently editing "the first one" can edit the wrong place. Refuse
             # and ask for context instead.
             if occurrences > 1 and not replace_all:
+                self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+                self._note_rejection(rel_path, old_text, new_text)
                 return {
                     "error": (
                         f"old_text occurs {occurrences} times in {args['path']} and is "
@@ -1660,7 +1701,16 @@ class ToolExecutor:
             for i in (reversed(starts) if replace_all else starts[:1]):
                 new_content = new_content[:i] + new_text + new_content[i + len(old_text):]
         else:
-            new_content = replace_most_similar_chunk(content, old_text, new_text)
+            try:
+                new_content = replace_most_similar_chunk(
+                    content, old_text, new_text, completed, require_unique=True,
+                )
+            except AmbiguousEdit:
+                self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+                self._note_rejection(rel_path, old_text, new_text)
+                return {"error": "old_text is ambiguous after whitespace normalization. "
+                                 "Include surrounding lines to identify one location. "
+                                 "replace_all requires exact quoted occurrences."}
             matched_by = "flexible"
 
         if new_content is None:
@@ -1681,7 +1731,13 @@ class ToolExecutor:
             # (2026-09-18) were a shortened quote, and the generic message was
             # what kept it looping. Name the real cause first.
             elision = find_elision(old_text)
-            applied_at = locate_chunk(content, new_text) if new_text.strip() else None
+            # A common single line (pass, return True, an import) elsewhere in
+            # the file is not evidence that this missing-anchor edit happened.
+            # Require a multi-line replacement and a whole-line match before
+            # suggesting completion. Keep this separate from replay protection:
+            # even a short retained anchor must never be inserted twice.
+            substantial_replacement = sum(bool(line.strip()) for line in new_text.splitlines()) > 1
+            applied_at = locate_chunk(content, new_text) if substantial_replacement else None
             if elision:
                 line_no, line = elision
                 err: dict = {
@@ -1698,8 +1754,10 @@ class ToolExecutor:
                 # re-indented on write; "not found" sent it to re-read and
                 # re-send the same text as a no-op.
                 err = {
+                    "status": "already_applied",
+                    "replacements": 0,
                     "error": (
-                        f"old_text not found in {args['path']}, but new_text is "
+                        f"old_text not found outside completed replacements in {args['path']}, but new_text is "
                         f"already in the file at line {applied_at}, so this edit has "
                         "been applied. Do not resend it. For a different change, call "
                         "read_file on that region and copy old_text verbatim from "
@@ -1763,6 +1821,15 @@ class ToolExecutor:
                     + err["error"]
                 )
             return err
+
+        if new_content == content:
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            self._note_rejection(rel_path, old_text, new_text)
+            return {
+                "status": "already_applied", "replacements": 0,
+                "error": "This edit makes no change after normalization. Do not resend it; "
+                         "mark it done or read the current region for a different change.",
+            }
 
         # A valid file must never leave this tool unparseable. Run 57160293 t19
         # wrote a second `try:` at the enclosing level, the executor computed

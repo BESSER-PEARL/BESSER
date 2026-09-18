@@ -91,6 +91,25 @@ def test_the_fourth_repeat_closes_the_file_and_the_sixth_ends_the_phase(simple_m
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == "x = 1\n"
 
 
+def test_successful_insertion_then_replay_is_bounded(simple_model, tmp_path):
+    class RepeatingInsertion(StuckClient):
+        def chat(self, *args, **kwargs):
+            result = super().chat(*args, **kwargs)
+            for block in result["content"]:
+                if block.name == "modify_file":
+                    block.input["new_text"] = "y = 2\nx = 1\n"
+            return result
+
+    (tmp_path / "app.py").write_text("x = 1\n")
+    client = RepeatingInsertion()
+    orch = LLMOrchestrator(llm_client=client, domain_model=simple_model,
+                           output_dir=str(tmp_path), max_turns=100)
+    orch.run("Build an app")
+    assert orch._phase2_stop_reason == "stuck_edit_loop"
+    assert len(client.turns) < 13
+    assert (tmp_path / "app.py").read_text() == "y = 2\nx = 1\n"
+
+
 def test_a_client_without_force_tool_still_gets_the_message_and_the_stop(simple_model, tmp_path):
     class PlainClient(StuckClient):
         def chat(self, system, messages, tools):        # no force_tool parameter

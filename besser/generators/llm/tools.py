@@ -339,7 +339,9 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "parallel; several calls on the SAME file are applied in the "
             "order you list them, so each one must match the file as the "
             "previous one left it. old_text must match exactly, including "
-            "indentation."
+            "indentation. Completed replacement regions are skipped on replay, "
+            "including insertions that retain old_text. An already_applied result "
+            "means no write was needed: mark that change done and do not resend it."
         ),
         "input_schema": {
             "type": "object",

@@ -196,6 +196,14 @@ def _to_wire(obj: Any) -> Any:
     if attrs and "type" in attrs:
         return {k: _to_wire(v) for k, v in attrs.items()
                 if not k.startswith("_") and v is not None}
+    # Our provider-agnostic blocks use __slots__, not __dict__. Stringifying
+    # them dropped every assistant tool call in run f6770633's checkpoint.
+    block_fields = {
+        "text": ("type", "text"),
+        "tool_use": ("type", "id", "name", "input"),
+    }.get(getattr(obj, "type", None))
+    if block_fields and all(hasattr(obj, key) for key in block_fields):
+        return {key: _to_wire(getattr(obj, key)) for key in block_fields}
     return str(obj)
 
 def save_checkpoint(

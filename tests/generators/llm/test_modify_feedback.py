@@ -92,23 +92,32 @@ class TestPostEditEcho:
 class TestUnseenFile:
 
     def test_miss_on_a_never_read_file_says_so_first(self, tmp_path):
-        ex = _executor(tmp_path, **{"m.py": STUB})
-        res = ex._modify_file({"path": "m.py", "old_text": "nope\n", "new_text": "x\n"})
-        assert res["error"].startswith("You have not read m.py this run")
-        assert "read_file" in res["error"]
+        # Neither an incidental substring nor a common whole line proves that
+        # an edit whose search text never existed has already been applied.
+        for new_text in ("x\n", "pass\n", "import x\n"):
+            ex = _executor(tmp_path, **{"m.py": STUB})
+            res = ex._modify_file({"path": "m.py", "old_text": "nope\n", "new_text": new_text})
+            assert res["error"].startswith("You have not read m.py this run"), res
+            assert "read_file" in res["error"]
+            assert res.get("status") != "already_applied"
+            assert (tmp_path / "m.py").read_text(encoding="utf-8") == STUB
 
     @pytest.mark.parametrize("seen_by", ["read_file", "write_file", "mark_known"])
     def test_a_seen_file_gets_the_ordinary_miss_reply(self, tmp_path, seen_by):
-        ex = _executor(tmp_path, **{"m.py": STUB})
-        if seen_by == "read_file":
-            ex._read_file({"path": "m.py"})
-        elif seen_by == "write_file":
-            ex.mark_known(["m.py"])                      # a rewrite needs to have seen it
-            ex._write_file({"path": "m.py", "content": STUB})
-        else:
-            ex.mark_known(["m.py"])
-        res = ex._modify_file({"path": "m.py", "old_text": "nope\n", "new_text": "x\n"})
-        assert res["error"].startswith("old_text not found"), res["error"]
+        for new_text in ("x\n", "pass\n", "import x\n"):
+            ex = _executor(tmp_path, **{"m.py": STUB})
+            if seen_by == "read_file":
+                ex._read_file({"path": "m.py"})
+            elif seen_by == "write_file":
+                ex.mark_known(["m.py"])                  # a rewrite needs to have seen it
+                ex._write_file({"path": "m.py", "content": STUB})
+            else:
+                ex.mark_known(["m.py"])
+            res = ex._modify_file({"path": "m.py", "old_text": "nope\n", "new_text": new_text})
+            assert res["error"].startswith("old_text not found"), res["error"]
+            assert res.get("status") != "already_applied", res
+            assert "so this edit has been applied" not in res["error"]
+            assert (tmp_path / "m.py").read_text(encoding="utf-8") == STUB
 
     def test_write_file_over_an_unseen_existing_file_is_refused(self, tmp_path):
         ex = _executor(tmp_path, **{"m.py": STUB})

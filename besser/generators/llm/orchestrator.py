@@ -4160,12 +4160,23 @@ class LLMOrchestrator:
             self._validation_issues = list(final_issues)
             return False
         self._phase3_rolled_back = True
+        # The tree went back; the checklist did not. Anything whose verifier
+        # no longer passes was undone by this restore and must stop reporting
+        # itself complete.
+        reopened = self.executor.reopen_unverifiable_tasks()
+        if reopened:
+            logger.warning(
+                "Phase 3 rollback discarded the implementation of %d checklist "
+                "item(s), now reopened: %s", len(reopened), reopened,
+            )
         restored = self._collect_validation_issues()
         discarded = sorted({i.message for i in final_blockers})[:10]
+        undone = (f" The restore also undid completed work: {len(reopened)} checklist "
+                  f"item(s) verified during the repair are open again." if reopened else "")
         self._validation_issues = list(restored) + [_classify_issue(
             "validation: the Phase 3 repair was rolled back - it ended with "
             f"{final_hard} hard blockers against {entry_hard} on entry, so the "
-            "pre-repair output is what ships. Findings seen only in the "
+            f"pre-repair output is what ships.{undone} Findings seen only in the "
             "discarded tree (they may still be real): " + "; ".join(discarded)
         )]
         restored_blockers = [i for i in restored if i.severity == "blocker"]

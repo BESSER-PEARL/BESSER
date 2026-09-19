@@ -490,6 +490,31 @@ class ToolExecutor:
                      "attempts": 0, "blocked": False}
                 )
 
+    def reopen_unverifiable_tasks(self) -> list[int]:
+        """Re-run verifiers on completed items and reopen those that now fail.
+
+        Restoring the pre-Phase-3 tree undoes the code but not the checklist.
+        Run uvobkl4u shipped all six action endpoints as done/verified while
+        every one of them was an HTTP 501 stub again: Phase 3 had implemented
+        them, the rollback put the stubs back, and nothing re-checked. Only
+        items with a deterministic verifier can be re-judged; evidence-only
+        completions are left alone rather than guessed at.
+        """
+        reopened = []
+        for task in self._tasks:
+            verify = task.get("verify")
+            if verify is None or not task.get("done") or task.get("dropped"):
+                continue
+            try:
+                still_true = bool(verify())
+            except Exception:
+                still_true = False
+            if not still_true:
+                task.update(done=False, verification="unverified", blocked=False)
+                task.pop("blocked_reason", None)
+                reopened.append(task["id"])
+        return reopened
+
     def task_snapshot(self) -> list[dict]:
         """Return the serializable checklist state for crash recovery.
 

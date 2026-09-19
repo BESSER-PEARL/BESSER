@@ -155,3 +155,51 @@ def test_a_repair_that_wrote_nothing_is_never_rolled_back(orchestrator, monkeypa
     assert orchestrator._rollback_phase3_if_worse(
         _blockers(11), _blockers(45), False) is False
     assert orchestrator._phase3_rolled_back is False
+
+
+def test_a_rollback_reopens_work_it_undid(orchestrator, monkeypatch):
+    """The tree goes back; the checklist must go back with it.
+
+    Run uvobkl4u shipped all six action endpoints as done/verified while every
+    one was an HTTP 501 stub again: Phase 3 implemented them, the rollback put
+    the stubs back, and nothing re-checked. The recipe claimed six endpoints
+    the delivered app did not have.
+    """
+    implemented = {"yes": True}
+    orchestrator.executor.set_tasks([
+        {"text": "Implement POST /booking/{id}/methods/cancel/",
+         "verify": lambda: implemented["yes"]},
+        {"text": "Something with no verifier"},
+    ])
+    orchestrator.executor._task_list({"action": "done", "id": 1})
+    assert orchestrator.executor.task_snapshot()[0]["done"] is True
+
+    def restore():
+        implemented["yes"] = False  # the stub is back on disk
+        return True
+
+    monkeypatch.setattr(orchestrator, "_restore_snapshot", restore)
+    monkeypatch.setattr(orchestrator, "_collect_validation_issues", lambda: _blockers(11))
+
+    orchestrator._rollback_phase3_if_worse(_blockers(11), _blockers(45), True)
+
+    snapshot = {t["id"]: t for t in orchestrator.executor.task_snapshot()}
+    assert snapshot[1]["done"] is False, "a discarded implementation still reported done"
+    assert snapshot[1]["verification"] == "unverified"
+    note = next(i.message for i in orchestrator._validation_issues if "rolled back" in i.message)
+    assert "1 checklist item(s) verified during the repair are open again" in note
+
+
+def test_a_rollback_keeps_work_it_did_not_undo(orchestrator, monkeypatch):
+    """Only items whose verifier now fails are reopened."""
+    orchestrator.executor.set_tasks([
+        {"text": "Still true after the restore", "verify": lambda: True},
+    ])
+    orchestrator.executor._task_list({"action": "done", "id": 1})
+
+    monkeypatch.setattr(orchestrator, "_restore_snapshot", lambda: True)
+    monkeypatch.setattr(orchestrator, "_collect_validation_issues", lambda: _blockers(11))
+
+    orchestrator._rollback_phase3_if_worse(_blockers(11), _blockers(45), True)
+
+    assert orchestrator.executor.task_snapshot()[0]["done"] is True

@@ -347,9 +347,11 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {# OCL Constraint Validators #}
     {%- if constraints_map and class.name in constraints_map %}
     {%- for constraint in constraints_map[class.name] %}
-    {%- if constraint.skipped %}
+    {%- if constraint.skipped or constraint.rejected %}
 
-    # NOTE: OCL constraint '{{ constraint.constraint_name }}' involves collections/relationships and is not enforced by this Create model.
+    {% for comment_line in constraint.comment_lines %}
+    {{ comment_line }}
+    {% endfor -%}
     {%- elif constraint.model_expression is defined %}
 
     @model_validator(mode='after')

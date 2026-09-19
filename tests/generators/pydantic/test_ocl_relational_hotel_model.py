@@ -35,10 +35,14 @@ suite still runs on a checkout that does not have that external file:
    outside the current request. Both need a database session, i.e. the
    router handler, not a Pydantic validator.
 
-No production code changes accompany this file: it exists to record the
-diagnosis that motivated NOT building a relational-OCL transpiler, not to
-verify a fix. Every assertion below already holds against the unmodified
-``ocl_utils.py``.
+This file exists first to record the diagnosis that motivated NOT building a
+relational-OCL transpiler -- finding 2's assertions, and the "never reaches
+ocl_utils.py" half of finding 1, already held before the handoff-comment fix
+and still do. What changed: finding 1 used to end with these two constraints
+leaving no trace anywhere in the generated file (they existed only in
+``conversion_issues`` and the system prompt); the "still has the three
+working validators" test below now also confirms each gets a TODO comment,
+sourced from ``conversion_issues``, on the class its OCL ``context`` names.
 """
 import json
 import os
@@ -149,7 +153,10 @@ class TestRealModelNeverReachesOclUtils:
     def test_real_model_pydantic_output_still_has_the_three_working_validators(self):
         """Confirms the claim that non-relational OCL already works end-to-end
         on this exact model: validEmail/validPhone/arrivalBeforeDeparture are
-        real validators in the generated file, with no involvement from an LLM."""
+        real validators in the generated file, with no involvement from an LLM.
+        The two relational constraints get a TODO comment instead -- on the
+        class their OCL ``context`` names -- handing them to the LLM agent;
+        neither gets a validator, since neither is transpilable."""
         if not os.path.exists(REAL_MODEL_PATH):
             pytest.skip(f"real model fixture not available at {REAL_MODEL_PATH}")
 
@@ -174,10 +181,22 @@ class TestRealModelNeverReachesOclUtils:
         assert "re.fullmatch(r'^[^\\s@]+@[^\\s@]+\\.[A-Za-z]{2,}$', v) is not None" in source
         assert "re.fullmatch(r'^\\+?[0-9]{7,15}$', v) is not None" in source
         assert "if not (self.arrivalDate <= self.departureDate):" in source
-        # Neither relational constraint reached the template at all (they were
-        # dropped upstream), so no trace of them -- correct or broken -- exists.
-        assert "guestsWithinCapacity" not in source
-        assert "noOverlappingBookings" not in source
+
+        # Both relational constraints were rejected upstream (wrong role name)
+        # and never reached domain_model.constraints -- but each now leaves a
+        # TODO comment, sourced from domain_model.conversion_issues, on the
+        # class its OCL ``context`` names. It is a comment only: no validator
+        # exists for either, so nothing enforces them here.
+        booking_block = source.split("class BookingCreate(BaseModel):", 1)[1].split("\nclass ")[0]
+        room_block = source.split("class RoomCreate(BaseModel):", 1)[1].split("\nclass ")[0]
+
+        assert "# TODO: OCL constraint 'guestsWithinCapacity' is NOT enforced in this file." in booking_block
+        assert "did you mean 'self.guest'?" in booking_block
+        assert "# TODO: OCL constraint 'noOverlappingBookings' is NOT enforced in this file." in room_block
+        assert "did you mean 'self.booking'?" in room_block
+
+        assert "guestsWithinCapacity" not in room_block
+        assert "noOverlappingBookings" not in booking_block
 
 
 # ============================================================================
@@ -244,12 +263,10 @@ class TestRelationalConstraintsAreNotPydanticExpressible:
         with open(path, encoding="utf-8") as handle:
             source = handle.read()
 
-        assert (
-            "# NOTE: OCL constraint 'guestsWithinCapacity' involves "
-            "collections/relationships and is not enforced by this Create model."
-        ) in source
-        assert (
-            "# NOTE: OCL constraint 'noOverlappingBookings' involves "
-            "collections/relationships and is not enforced by this Create model."
-        ) in source
-        assert "->" not in source
+        assert "# TODO: OCL constraint 'guestsWithinCapacity' is NOT enforced in this file." in source
+        assert "# TODO: OCL constraint 'noOverlappingBookings' is NOT enforced in this file." in source
+        # The only "->" left is the verbatim OCL quoted inside the comment;
+        # every such line must itself be a comment, never executable code.
+        for line in source.splitlines():
+            if "->" in line:
+                assert line.lstrip().startswith("#"), line

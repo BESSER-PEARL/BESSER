@@ -11,7 +11,7 @@ template branches:
   backslashes can never break the generated file's syntax;
 * constraints over two or more properties of the same class become a
   ``@model_validator(mode='after')`` instead of being dropped;
-* constraints over collections/relationships leave a NOTE comment behind
+* constraints over collections/relationships leave a TODO comment behind
   instead of being dropped silently or emitting broken code;
 * whatever happens, the generated ``pydantic_classes.py`` compiles.
 """
@@ -410,12 +410,14 @@ class TestSkippedConstraints:
         path, source = generate(booking_model, tmpdir.mkdir("output"))
 
         py_compile.compile(path, doraise=True)
-        assert (
-            "# NOTE: OCL constraint 'NumberOfGuestsDoesNotExceedRoomCapacity' involves "
-            "collections/relationships and is not enforced by this Create model."
-        ) in source
-        # Nothing was emitted that could reference the collection at runtime.
-        assert "->" not in source
+        assert "# TODO: OCL constraint 'NumberOfGuestsDoesNotExceedRoomCapacity' is NOT enforced in this file." in source
+        assert "not transpilable" in source
+        assert "router handler" in source
+        # Nothing was emitted that could reference the collection at runtime;
+        # the only "->" left is the verbatim OCL inside the comment.
+        for line in source.splitlines():
+            if "->" in line:
+                assert line.lstrip().startswith("#"), line
         assert "field_validator('nights')" not in source
 
     def test_map_defaults_to_field_validators_only(self, booking_class, booking_model):
@@ -503,7 +505,7 @@ class TestGeneratedFileAlwaysCompiles:
         assert "@model_validator(mode='after')" in source
         assert "re.fullmatch(r'^[0-9]{1,4}$', v) is not None" in source
         assert "if not (v >= 1):" in source
-        assert "# NOTE: OCL constraint 'Capacity'" in source
+        assert "# TODO: OCL constraint 'Capacity' is NOT enforced in this file." in source
 
     @pytest.mark.parametrize("expression", [
         "context Player inv A: self.name.matches('it''s broken')",

@@ -402,27 +402,3 @@ def test_kg_to_buml_handles_conversion_failure(mock_process, mock_post, mock_fil
     with pytest.raises(RuntimeError, match="Failed to process the KG to B-UML conversion"):
         kg_to_buml('fake_path.json', 'fake_token')
 
-#Test kg_to_buml
-test_kg_to_buml_handles_conversion_failure()
-test_kg_to_buml_uses_specified_model()
-test_kg_to_buml_raises_on_file_read_error()       
-test_kg_to_buml_handles_api_failure()
-test_kg_to_buml_handles_invalid_json()
-test_kg_to_buml_handles_empty_response()
-test_kg_to_buml_returns_domain_model()
-
-#Test kg_to_plantuml
-test_kg_to_plantuml_raises_on_file_not_found()
-test_kg_to_plantuml_handles_api_error()
-test_kg_to_plantuml_returns_cleaned_diagram()
-
-#Test utilities
-test_convert_spec_json_to_buml_handles_custom_title()
-test_convert_spec_json_to_buml_creates_relationships()
-test_convert_spec_json_to_buml_handles_void_return_type()
-test_convert_spec_json_to_buml_creates_valid_structure()
-test_parse_json_safely_invalid_json()
-test_parse_json_safely_valid_json()
-test_clean_json_response_strips_markdown_fence()
-test_clean_plantuml_response_removes_markdown()
-

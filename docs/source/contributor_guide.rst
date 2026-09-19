@@ -285,11 +285,7 @@ Run the full suite before pushing, scoped to ``tests/``:
 
    python -m pytest tests/
 
-.. warning::
-   Scope it to ``tests/``. A bare ``python -m pytest`` also collects
-   ``besser/generators/qiskit/test_qiskit_generator.py`` — a stale test module
-   that lives inside the package and currently fails. CI never sees it because
-   CI runs ``python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x``.
+CI runs ``python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x``.
 
 While iterating, target the area you are changing:
 

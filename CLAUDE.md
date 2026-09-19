@@ -45,10 +45,6 @@ python -m pytest tests/BUML/metamodel/structural -k library
 python tests/BUML/metamodel/structural/library/library.py
 ```
 
-A bare `python -m pytest` also collects `besser/generators/qiskit/test_qiskit_generator.py`
-— a stale test module that lives inside the package and currently fails (it calls
-`RXGate(angle=...)`, which the current signature does not accept). Scope to `tests/`.
-
 ### Linting
 ```bash
 # Exactly what CI runs. A bare `ruff check .` uses a different rule set and will disagree.

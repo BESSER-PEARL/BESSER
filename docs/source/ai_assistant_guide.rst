@@ -60,10 +60,7 @@ Repository Boundaries
 Quality Assurance
 -----------------
 
-* Run the automated tests relevant to your change from the repository root.
-  Always scope the run to ``tests/`` — a bare ``python -m pytest`` also picks
-  up a stale test module that lives inside the package
-  (``besser/generators/qiskit/test_qiskit_generator.py``) and fails::
+* Run the automated tests relevant to your change from the repository root::
 
      python -m pytest tests/
 

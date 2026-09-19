@@ -55,3 +55,28 @@ def test_non_string_entries_pass_through():
     payload = [{"text": "something structured"}, 7]
 
     assert _note_model_only_tasks(payload, FILES) == payload
+
+
+# Live task texts from run n_6i2i5r, where the first version of this helper
+# annotated a task that named an editable ORM file and pointed the agent at a
+# different one.
+NAMES_A_REAL_FILE = [
+    "In the model web_app/backend/sql_alchemy.py, add the 'totalPrice' "
+    "attribute to Bill as a float",
+    "In the model web_app/backend/sql_alchemy.py, add the 'settled' attribute "
+    "to Bill as a boolean",
+    "Add a unique constraint on roomNumber in the model sql_alchemy.py",
+]
+
+
+@pytest.mark.parametrize("task", NAMES_A_REAL_FILE)
+def test_a_task_naming_an_orm_source_file_is_left_alone(task):
+    """"the model <path>.py" is a file the agent can edit, not the B-UML model."""
+    assert _note_model_only_tasks([task], FILES) == [task]
+
+
+def test_the_real_model_mutation_is_still_redirected_alongside_it():
+    """The fix must not silence the case it was written for."""
+    noted = _note_model_only_tasks([LIVE_TASKS[0]], FILES)[0]
+
+    assert "read-only in this phase" in noted

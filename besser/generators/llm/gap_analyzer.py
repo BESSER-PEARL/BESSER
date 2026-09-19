@@ -213,10 +213,14 @@ def analyze_gaps_via_llm(
     return cleaned
 
 
-# "to the domain model" as a TARGET, not "as defined in the domain model".
+# "to the domain model" as a TARGET, not "as defined in the domain model",
+# and not "in the model web_app/backend/sql_alchemy.py" — that names an
+# ORM source file, which is editable. Run n_6i2i5r annotated three such
+# tasks and pointed them away from the very file they named.
 _MODEL_TARGET_RE = re.compile(
     r"(?<!as defined )(?<!as described )(?<!as specified )(?<!according to )"
-    r"\b(?:to|in|into|on)\s+the\s+(?:b-?uml\s+|besser\s+)?(?:domain\s+)?model\b",
+    r"\b(?:to|in|into|on)\s+the\s+(?:b-?uml\s+|besser\s+)?(?:domain\s+)?model\b"
+    r"(?!\s+\S*[\w/\\.-]+\.(?:py|ts|tsx|js|jsx|json|sql))",
     re.IGNORECASE,
 )
 _MODEL_MUTATION_RE = re.compile(

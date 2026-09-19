@@ -3623,6 +3623,14 @@ class LLMOrchestrator:
                 raw_loop_path = block.input.get("path")
                 if isinstance(raw_loop_path, str) and raw_loop_path.strip():
                     loop_key = f"{tool_name}:{raw_loop_path.replace(chr(92), '/').strip()}"
+        elif tool_name == "task_list":
+            # Bookkeeping is not a loop when it works, which is why task_list
+            # is read-only for loop purposes. Nine consecutive REFUSED calls
+            # is a loop: run n_6i2i5r spent turns 12-20 marking tasks 9-17
+            # done, one per turn, every one rejected for supplying no evidence
+            # at all. _is_stuck only fires when every call in the window
+            # failed, so a healthy batch still never trips it.
+            loop_key = "task_list"
         else:
             loop_key = None
 
@@ -3686,6 +3694,12 @@ class LLMOrchestrator:
             result_obj["warning"] = (
                 f"'{tool_name}' has failed {self._LOOP_THRESHOLD} times in a row "
                 "on the same target. Do not repeat it; take a different action."
+                if tool_name != "task_list" else
+                f"{self._LOOP_THRESHOLD} task_list calls in a row were refused. "
+                "Marking an item done is bookkeeping, not progress, and the "
+                "checklist will keep refusing items you have not implemented. "
+                "Stop closing items: open the file named by the next unresolved "
+                "task and make the change, then cite it."
             )
             result = json.dumps(result_obj)
 

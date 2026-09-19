@@ -379,7 +379,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         {{ end.name }}_id={{ end.name }}_target,
         {% endfor %}
         {% for attribute in assoc_classes[class.name].attributes %}
-        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %}{% if not loop.last %},{% endif %}
+        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %}{% if not loop.last %},{% endif %}
         {% endfor %}
         )
 
@@ -489,13 +489,18 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {# Collect all constructor arguments. A surrogate `id` is server-owned
        (autoincrement PK) and is absent from the Create schema, so it must never
        be read off the payload. A PK the user declared (is_id) — including one
-       named `id` — is client-supplied and is read like any other field. #}
+       named `id` — is client-supplied and is read like any other field.
+       Enum attributes append `.name`, not `.value`: SQLAlchemy's Enum(PyEnum)
+       binds/persists by the member's name unless values_callable is set (it
+       isn't here), and `.value` in a write context is what taught the LLM to
+       write `.value` in READ-direction comparisons too, where it is always
+       false/true (a loaded Enum column holds the member, never the string). #}
     {% set ns_args = namespace(args=[]) %}
     {% for parent in all_parents %}
     {% for attrparent in parent.attributes %}
     {% if _client_supplied(attrparent) | trim == 'True' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.value') %}
+    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.name') %}
     {% else %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name) %}
     {% endif %}
@@ -505,7 +510,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for attribute in class.attributes %}
     {% if _client_supplied(attribute) | trim == 'True' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.value') %}
+    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.name') %}
     {% else %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name) %}
     {% endif %}
@@ -626,7 +631,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             else:
                 db_{{x[1] | lower}} = {{x[1]}}(
                     {%for attr in lk_class.attributes%}
-                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.name{% endif %}{% if not loop.last %}, {% endif %}
                     {%endfor%}
                 )
             database.add(db_{{x[1] | lower}})
@@ -749,7 +754,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for attrparent in parent.attributes %}
             {% if _client_supplied(attrparent) | trim == 'True' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.value') %}
+            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.name') %}
             {% else %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name) %}
             {% endif %}
@@ -759,7 +764,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for attribute in class.attributes %}
             {% if _client_supplied(attribute) | trim == 'True' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.value') %}
+            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.name') %}
             {% else %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name) %}
             {% endif %}
@@ -869,7 +874,7 @@ async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
     {% for attribute in assoc_classes[class.name].attributes if not attribute.is_id %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %})
     {% endfor %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
@@ -886,17 +891,19 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
        it), and a surrogate `id` (named `id` but not declared is_id) is
        server-owned and absent from the Create schema. -#}
     {# Inherited attributes are part of the entity too (joined-table inheritance):
-       an Employee's last_name lives on Person and must be updatable here #}
+       an Employee's last_name lives on Person and must be updatable here.
+       Enum attributes append `.name` here too - see the create endpoint above
+       for why (not `.value`, even though every literal's value equals its name). #}
     {% for parent in all_parents %}
     {% for attribute in parent.attributes %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
     {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
     {% endif %}
     {% endfor %}
     {# Update foreign key relationships -#}

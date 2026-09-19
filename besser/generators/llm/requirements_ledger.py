@@ -545,6 +545,16 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                                  if isinstance(path, str)][:5]
             if isinstance(item.get("inspection_paths"), list) else [],
         }
+    # Nothing usable came back at all. That is a failed check, not one
+    # unverified verdict per requirement: run lsrnaime (Qwen) filled in "no
+    # verdict returned" for all 104 and reported 104 blockers, burying the
+    # eleven real ones. The caller has a single honest finding for this.
+    if not verdicts and any(req.get("kind") != "verification" for req in by_id.values()):
+        logger.warning(
+            "Requirements ledger: the judge returned no usable verdict for any "
+            "of %d requirements (model %s)", len(by_id), getattr(llm_client, "model", "?"),
+        )
+        return None
     # A requirement the judge skipped is not implemented until shown otherwise.
     for rid, req in by_id.items():
         if req.get("kind") == "verification":

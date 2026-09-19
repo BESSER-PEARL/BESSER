@@ -4880,6 +4880,16 @@ class LLMOrchestrator:
             logger.debug("Acceptance matrix computation failed", exc_info=True)
 
         execution_issues = self._collect_execution_issues()
+        # An enabled ledger that extracted nothing verified nothing. Saying so
+        # is the difference between "the user asked for nothing" and "we never
+        # looked" — run 7aybctis reported the former on an empty extraction.
+        if (self.enable_requirements_ledger and self._requirements is None
+                and self._requirement_extraction_attempts):
+            raw_issues.append(_check_did_not_run(
+                "the requirements ledger",
+                f"{self._requirement_extraction_attempts} extraction attempt(s) on "
+                f"{getattr(self.client, 'model', 'this model')} returned nothing",
+            ))
         if not self.enable_requirements_ledger or not any(_classify_issue(s).severity == "blocker" for s in execution_issues):
             raw_issues.extend(self._collect_requirement_issues())
         else:
@@ -5354,6 +5364,15 @@ class LLMOrchestrator:
             return
         self._requirement_extraction_attempts += 1
         self._requirements = _requirements_ledger.extract_requirements(instructions, self.client)
+        if self._requirements is None:
+            # extract_requirements has five silent None paths. Run 7aybctis
+            # (Qwen) recorded requirements: [] in the recipe, which reads as
+            # "the user asked for nothing" rather than "we never looked".
+            logger.warning(
+                "Requirements ledger: extraction returned nothing on attempt %d "
+                "(model %s); requirement verification will not run",
+                self._requirement_extraction_attempts, getattr(self.client, "model", "?"),
+            )
 
     def _verification_call_allowed(self) -> bool:
         """Do not start a paid extraction/judgment after a stop or spend cap."""

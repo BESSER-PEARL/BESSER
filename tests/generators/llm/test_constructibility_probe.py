@@ -29,7 +29,10 @@ import pytest
 from besser.generators.llm.constructibility import (
     PREFIX,
     UNVERIFIED_PREFIX,
+    _NetworkBlocked,
     _build_payload,
+    _install_network_guard,
+    _is_local_host,
     _issues_from_report,
     _run_probe,
     _sample,
@@ -403,3 +406,77 @@ def test_inherited_unique_identity_and_contact_fixtures_do_not_collide(workspace
     assert _sample("badge", {"type": "integer"}, 1, ordinal=1, unique=True) != _sample(
         "badge", {"type": "integer"}, 1, ordinal=2, unique=True)
     assert orm.read_text(encoding="utf-8") == source
+
+
+# ------------------------------------------------------------- network guard
+#
+# Prevention, not an incident: the probe boots LLM-authored code and nothing
+# stopped it from making a real outbound call. ``_install_network_guard``
+# patches ``socket.socket.connect``/``connect_ex`` for the lifetime of the
+# one-shot probe subprocess. Loopback must stay allowed: on this Windows box,
+# ``asyncio.run()`` itself opens a loopback socket pair for its wakeup
+# self-pipe (no native ``socketpair()`` here - verified: a spy on
+# ``socket.socket.connect`` records a ``('127.0.0.1', <port>)`` call during a
+# bare ``asyncio.run(asyncio.sleep(0))``), so blocking loopback would break
+# the probe's own event loop, not just the app under test.
+
+
+def test_the_guard_allows_loopback_and_blocks_everything_else():
+    import socket
+
+    real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        _install_network_guard()
+        # Loopback reaches the real OS connect: a live listener accepts it.
+        # (One live connect only - the listener's backlog is never drained
+        # with accept(), so a second real connect here would itself stall
+        # for an unrelated reason. Other loopback spellings are checked
+        # directly below instead of via a second live connection.)
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+        assert _is_local_host("localhost")
+        assert _is_local_host("::1")
+        # A real outbound address never reaches the OS connect call at all.
+        with pytest.raises(_NetworkBlocked):
+            socket.create_connection(("93.184.216.34", 80), timeout=2)
+    finally:
+        socket.socket.connect, socket.socket.connect_ex = real_connect, real_connect_ex
+        listener.close()
+
+
+def test_the_guard_fails_open_when_it_cannot_patch(monkeypatch):
+    """A probe that cannot install its guard must still run, not crash."""
+    import socket
+
+    class _Unpatchable:
+        def __getattr__(self, name):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(socket, "socket", _Unpatchable())
+    _install_network_guard()  # must not raise
+
+
+def _add_outbound_call_to_create_room(tmp_path) -> None:
+    router = tmp_path / "web_app" / "backend" / "routers" / "room.py"
+    text = router.read_text(encoding="utf-8")
+    head = re.search(r"async def create_room\(.*\n", text).group(0)
+    called = head + (
+        "    import socket as _socket\n"
+        '    _socket.create_connection(("203.0.113.1", 80), timeout=1)\n'  # RFC 5737 TEST-NET-3
+    )
+    router.write_text(text.replace(head, called, 1), encoding="utf-8")
+
+
+def test_a_create_handler_that_dials_out_is_blocked_inside_the_probe(tmp_path):
+    """End to end: a generated handler that tries a real outbound call is
+    refused by the probe subprocess's own guard, not by chance network
+    unreachability - the finding names the guard, not a timeout or DNS error."""
+    workspace = _scaffold(tmp_path)
+    _add_outbound_call_to_create_room(tmp_path)
+    issues = collect_constructibility_issues(workspace)
+    [issue] = [i for i in issues if "POST /room/" in i]
+    assert issue.startswith(f"{PREFIX} web_app/backend: POST /room/ -")
+    assert "outbound network access blocked" in issue

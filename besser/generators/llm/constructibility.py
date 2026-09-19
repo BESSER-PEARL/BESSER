@@ -44,6 +44,7 @@ the harness interpreter runs the generated code.
 from __future__ import annotations
 
 import datetime as _dt
+import ipaddress
 import itertools
 import json
 import logging
@@ -274,6 +275,68 @@ def _missing_not_null_column(body: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Child: runs inside the app copy (cwd), prints one report line
 # ---------------------------------------------------------------------------
+
+class _NetworkBlocked(OSError):
+    """Raised in place of a real connect() the probe subprocess attempted."""
+
+
+def _is_local_host(host) -> bool:
+    if host in (None, ""):
+        return True
+    if isinstance(host, bytes):
+        try:
+            host = host.decode("idna")
+        except Exception:
+            return False
+    if isinstance(host, str) and host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _install_network_guard() -> None:
+    """Block outbound sockets for the rest of this (one-shot) subprocess.
+
+    The generated app is LLM-authored and this probe executes it - nothing
+    should stop it from making a real outbound call otherwise. Loopback stays
+    allowed: on Windows, ``asyncio.run()`` itself opens a loopback socket pair
+    for its wakeup self-pipe (no native ``socketpair()`` here), so blocking
+    loopback would break the probe's own event loop, not just the app.
+
+    Only ``connect``/``connect_ex`` are patched: ``socket.create_connection``
+    and every higher-level client (httpx, requests, urllib, a raw DB driver)
+    end up calling one of those two on a ``socket.socket`` instance, and the
+    probe's own traffic never goes through a real socket at all - it talks to
+    the app over ``httpx.ASGITransport`` (in-memory) and to SQLite (a file).
+    Fails open: a probe that cannot install its guard should still run.
+    """
+    try:
+        import socket
+
+        real_connect = socket.socket.connect
+        real_connect_ex = socket.socket.connect_ex
+
+        def _check(address) -> None:
+            host = address[0] if isinstance(address, tuple) and address else None
+            if host is not None and not _is_local_host(host):
+                raise _NetworkBlocked(
+                    f"constructibility probe: outbound network access blocked ({host!r})")
+
+        def guarded_connect(self, address):
+            _check(address)
+            return real_connect(self, address)
+
+        def guarded_connect_ex(self, address):
+            _check(address)
+            return real_connect_ex(self, address)
+
+        socket.socket.connect = guarded_connect
+        socket.socket.connect_ex = guarded_connect_ex
+    except Exception:
+        logger.warning("constructibility probe: could not install the network guard", exc_info=True)
+
 
 def _resolve(schema: dict, schemas: dict, _depth: int = 0) -> dict:
     if _depth >= 8:
@@ -716,6 +779,7 @@ async def _probe_actions(app, spec, request, schemas, orm, subclasses, unique_fi
 
 
 def _probe_cwd() -> dict:
+    _install_network_guard()
     sys.path.insert(0, os.getcwd())
     try:
         import main_api

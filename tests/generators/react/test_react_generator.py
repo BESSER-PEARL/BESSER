@@ -352,6 +352,12 @@ def _form_columns(generator):
 def test_form_column_carries_association_class(assoc_class_models):
     """A list lookup backed by an association class exposes its attributes."""
     domain_model, gui_model = assoc_class_models
+    association_class = next(
+        cls for cls in domain_model.get_classes() if isinstance(cls, AssociationClass)
+    )
+    association_class.attributes = association_class.attributes | {
+        Property(name="id", type=StringType),
+    }
     generator = ReactGenerator(model=domain_model, gui_model=gui_model)
 
     form_columns = _form_columns(generator)
@@ -359,6 +365,7 @@ def test_form_column_carries_association_class(assoc_class_models):
 
     assert rooms["column_type"] == "lookup"
     assert rooms["type"] == "list"
+    assert rooms["target_type"] == "str"
     assert rooms["association_class"] == {
         "entity": "ReservedRoom",
         "fields": [
@@ -371,6 +378,25 @@ def test_form_column_carries_association_class(assoc_class_models):
     assert all(
         "association_class" not in col for col in form_columns if col["field"] != "rooms"
     )
+
+    # The standalone association-row form selects one entity per end, even
+    # though the modeled relationship is many-to-many. Its payload must carry
+    # both required endpoint IDs and must not ask for a server-owned link ID.
+    for module in gui_model.modules:
+        for screen in module.screens:
+            for table in screen.view_elements:
+                table.data_binding.domain_concept = association_class
+    standalone_columns = _form_columns(generator)
+    assert "id" not in {column["field"] for column in standalone_columns}
+    endpoints = {column["field"]: column for column in standalone_columns
+                 if column["column_type"] == "lookup"}
+    assert set(endpoints) == {"bookings", "rooms"}
+    assert endpoints["rooms"]["target_field"] == "number"
+    assert endpoints["rooms"]["target_type"] == "str"
+    assert endpoints["bookings"]["target_field"] == "id"
+    assert endpoints["bookings"]["target_type"] == "int"
+    assert all(column["required"] and column["type"] == "str"
+               and "association_class" not in column for column in endpoints.values())
 
 
 def test_form_column_without_association_class_unchanged(plain_nm_models):
@@ -387,6 +413,7 @@ def test_form_column_without_association_class_unchanged(plain_nm_models):
         "field": "rooms",
         "lookup_field": "number",
         "target_field": "number",
+        "target_type": "str",
         "entity": "Room",
         "type": "list",
         "required": False,
@@ -439,7 +466,9 @@ def test_generated_table_component_renders_association_class_inputs(
     # Edit prefill from the `<end>_links` payload
     assert "_links`]" in content
     # Submitted payload shape: [{ target: <id>, <association class attributes> }]
-    assert "{ target: parseInt(v, 10) }" in content
+    assert "{ target: v }" in content
+    assert ".map(v => coerceLookupTarget(col, v))" in content
+    assert "targetType: col.column_type === \"lookup\"" in content
 
 
 def test_table_component_is_model_independent(assoc_class_models, plain_nm_models, tmp_path):
@@ -492,7 +521,7 @@ def _row_key_fields_by_entity(generator):
     return found
 
 
-def test_data_binding_row_key_fields(assoc_class_models):
+def test_data_binding_row_key_fields(assoc_class_models, tmp_path):
     """A table addresses rows by the declared primary key, and an association
     class by both foreign keys in the backend's route order - never by
     guessing the first column of the row."""
@@ -511,13 +540,21 @@ def test_data_binding_row_key_fields(assoc_class_models):
         name="BookingApp", package="com.test.booking", versionCode="1", versionName="1.0",
         modules={Module(name="AdminModule", screens={screen})}, description="Booking GUI",
     )
-    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model, output_dir=str(tmp_path))
 
     assert _row_key_fields_by_entity(generator) == {
         "Booking": ["id"],                          # surrogate key
         "Room": ["number"],                         # declared is_id attribute
         "ReservedRoom": ["bookings_id", "rooms_id"],  # /reservedroom/{bookings_id}/{rooms_id}/
     }
+    generator.generate()
+    component = (tmp_path / "src/components/table/TableComponent.tsx").read_text(encoding="utf-8")
+    assert "selectedRowIndex" not in component
+    assert "getRowKey(row, rowKeyFields)" in component
+    assert "JSON.stringify(parts)" in component  # composite keys cannot alias on '/'
+    assert "rowKey === selectedRowKey" in component
+    assert "setSelectedRow(id, currentRow ?? null)" in component
+    assert "aria-selected={isSelected}" in component
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +573,7 @@ def test_form_columns_carry_attribute_defaults_and_the_form_preselects_them(tmp_
         Property(name="reference", type=StringType),
         Property(name="booking_status", type=status, default_value="pending_payment"),
         Property(name="paid", type=BooleanType, default_value=False),
+        Property(name="accepted", type=BooleanType),
     })
     domain_model = DomainModel(name="DefaultsModel", types={booking, status})
     table = Table(name="BookingTable", title="Bookings", action_buttons=True,
@@ -555,6 +593,10 @@ def test_form_columns_carry_attribute_defaults_and_the_form_preselects_them(tmp_
         component = f.read()
     assert "defaultValue: (col as any).defaultValue ?? (col as any).default_value" in component
     assert "Preselect the model's default" in component
+    # Without a modeled default, unchecked booleans still initialize to false
+    # before required-field validation, not the missing-text sentinel "".
+    assert "An unchecked required checkbox is a valid false value" in component
+    assert "String(col.defaultValue).toLowerCase() === 'true'" in component
     # An enum left unselected is omitted from the payload instead of sent as ""
     assert "col.type === 'enum' && (value === undefined || value === null || value === '')" in component
 

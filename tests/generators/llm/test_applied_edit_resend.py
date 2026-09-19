@@ -1,5 +1,5 @@
-"""A re-send of an edit the ladder has already applied must be answered
-"this change is done", even when the ladder re-indented new_text on write.
+"""A re-send of an edit the ladder has recorded as applied must be recognized,
+even when the ladder re-indented new_text on write. A no-op is not that receipt.
 
 Live run 4efe04ff (2026-09-18, Nebius Qwen3-30B-A3B-Instruct), turns 62-70
 on routers/booking.py. The model quoted the bulk-create validation block at
@@ -118,7 +118,7 @@ def test_resending_the_applied_edit_is_named_done_not_not_found(ex):
     assert _file(ex) == before
 
 
-def test_a_noop_resend_of_the_re_indented_text_says_done(ex):
+def test_a_noop_resend_identifies_the_text_without_claiming_completion(ex):
     """Turn 65: new_text sent as both old_text and new_text. Live the reply
     had no 'already in the file', unlike the same no-op on booking_methods.py
     where the edit had landed byte-exact, and the model sent it again."""
@@ -126,7 +126,9 @@ def test_a_noop_resend_of_the_re_indented_text_says_done(ex):
     res = _modify(ex, T62_NEW, T62_NEW)
     assert "identical" in res["error"]
     assert f"already in the file at line {LANDED_AT}" in res["error"], res["error"]
-    assert "change is done" in res["error"]
+    assert "not evidence of an implemented change" in res["error"]
+    assert "change is done" not in res["error"]
+    assert res.get("status") != "already_applied"
 
 
 def test_a_miss_on_the_pristine_file_is_not_called_applied(ex):

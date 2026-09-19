@@ -18,6 +18,7 @@ from besser.generators.llm.compaction import COMPACT_TOKEN_THRESHOLD
 from besser.generators.llm.history_eviction import (
     evict_stale_file_bodies,
     DEFAULT_PRESERVE_RECENT,
+    without_rejected_edit_drafts,
 )
 from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.generators.llm.llm_client import UsageTracker
@@ -73,10 +74,37 @@ def test_short_history_is_untouched():
     assert out is msgs
 
 
-def test_write_file_body_is_stubbed_in_old_messages():
+def test_recovery_omits_only_rejected_drafts_without_changing_history_or_results():
+    messages = [
+        {"role": "user", "content": "Keep the complete user specification."},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "bad", "name": "modify_file",
+             "input": {"path": "app.py", "old_text": "WRONG ANCHOR", "new_text": "BAD DRAFT"}},
+            _write_use("good", "other.py", "CORRECT SOURCE")]},
+        {"role": "user", "content": [
+            _result("bad", json.dumps({"error": "syntax error", "would_write": "BAD DRAFT",
+                "current_source": "ACTUAL SOURCE", "edit_recovery": {"next_tool": "read_file"}})),
+            _result("good", '{"status":"written"}')]}]
+    before = copy.deepcopy(messages)
+    projected = without_rejected_edit_drafts(messages)
+    rendered = json.dumps(projected)
+    assert "BAD DRAFT" not in rendered and "WRONG ANCHOR" not in rendered
+    assert "ACTUAL SOURCE" in rendered and "CORRECT SOURCE" in rendered
+    assert "syntax error" in rendered and "NOT applied" in rendered
+    assert projected[1]["content"][0]["id"] == "bad"
+    assert projected[2]["content"][0]["tool_use_id"] == "bad"
+    assert projected[0] == messages[0] and messages == before
+
+
+@pytest.mark.parametrize("tool,key", [("write_file", "content"), ("modify_file", "new_text"),
+                                     ("replace_file_lines", "new_text")])
+def test_write_file_body_is_stubbed_in_old_messages(tool, key):
     body = _big()
+    use = _write_use("t1", "app/main.py", body)
+    use["name"] = tool
+    use["input"][key] = use["input"].pop("content")
     msgs = [
-        {"role": "assistant", "content": [_write_use("t1", "app/main.py", body)]},
+        {"role": "assistant", "content": [use]},
         {"role": "user", "content": [_result("t1", '{"status":"written"}')]},
     ] + _padding(DEFAULT_PRESERVE_RECENT)  # push the write outside the window
 
@@ -87,7 +115,8 @@ def test_write_file_body_is_stubbed_in_old_messages():
     assert new_use["type"] == "tool_use"
     assert new_use["id"] == "t1"          # id preserved -> pairing intact
     assert new_use["input"]["path"] == "app/main.py"  # path preserved
-    assert "elided" in new_use["input"]["content"]
+    assert "elided" in new_use["input"][key]
+    assert "does not mean it was applied" in new_use["input"][key]
     assert body not in json.dumps(out)    # the body is gone from the context
 
 

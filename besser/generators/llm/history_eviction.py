@@ -43,9 +43,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # File-writing tools whose tool_use ``input`` carries a large body we can elide.
-_FILE_WRITE_TOOLS = frozenset({"write_file", "modify_file"})
+_FILE_WRITE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines"})
 # Input keys that hold a file body (never elide ``path`` — the model needs it).
-_BODY_INPUT_KEYS = frozenset({"content", "new_content", "file_text", "text", "new_str"})
+_BODY_INPUT_KEYS = frozenset({"content", "new_content", "file_text", "text", "new_str", "old_text", "new_text"})
 
 # Don't bother eliding anything smaller than this — the stub itself costs tokens,
 # and small results (a write ack, a short file) aren't the problem.
@@ -59,6 +59,58 @@ def _block_type(block: Any) -> Any:
     if isinstance(block, dict):
         return block.get("type")
     return getattr(block, "type", None)
+
+
+def without_rejected_edit_drafts(messages: list[dict]) -> list[dict]:
+    """A request-only projection: keep errors/current code, omit refused drafts.
+
+    Replaying an invalid candidate beside each fresh read anchored Qwen to that
+    candidate, even after changing editor tools. Do not make the model copy it
+    again. Preserve IDs, ordering, successful edits and the original trace/history.
+    Nothing is inferred applied; tool results retain their failure and guidance.
+    """
+    index = _index_tool_uses(messages)
+    rejected = set()
+    for message in messages:
+        content = message.get("content")
+        for block in content if isinstance(content, list) else []:
+            bid = _block_get(block, "tool_use_id")
+            if _block_type(block) != "tool_result" or index.get(bid, {}).get("name") not in _FILE_WRITE_TOOLS:
+                continue
+            try:
+                result = json.loads(_block_get(block, "content"))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(result, dict) and result.get("error"):
+                rejected.add(bid)
+    if not rejected:
+        return messages
+    projected = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            projected.append(message)
+            continue
+        blocks = []
+        for block in content:
+            if _block_type(block) == "tool_use" and _block_get(block, "id") in rejected:
+                args = _block_get(block, "input") or {}
+                if not isinstance(args, dict):
+                    blocks.append(block)
+                    continue
+                blocks.append({"type": "tool_use", "id": _block_get(block, "id"),
+                    "name": _block_get(block, "name"), "input": {
+                        key: "[Rejected draft omitted; NOT applied. Read current source and write a corrected replacement.]"
+                        if key in _BODY_INPUT_KEYS else value for key, value in args.items()}})
+            elif _block_type(block) == "tool_result" and _block_get(block, "tool_use_id") in rejected:
+                result = json.loads(_block_get(block, "content"))
+                result.pop("would_write", None)
+                blocks.append({"type": "tool_result", "tool_use_id": _block_get(block, "tool_use_id"),
+                               "content": json.dumps(result), "is_error": True})
+            else:
+                blocks.append(block)
+        projected.append({**message, "content": blocks})
+    return projected
 
 
 def _block_get(block: Any, key: str, default: Any = None) -> Any:
@@ -121,9 +173,9 @@ def _elide_tool_use(block: Any, min_body_chars: int) -> tuple[Any, bool]:
             and len(val) >= min_body_chars
         ):
             new_input[key] = (
-                f"<elided: {len(val)} chars already written to "
-                f"{path or 'this file'}; it is on disk — call read_file to view "
-                f"the current contents>"
+                f"<elided: {len(val)} chars from an earlier edit request for "
+                f"{path or 'this file'}; this does not mean it was applied — "
+                f"check its tool result and call read_file for current contents>"
             )
             elided = True
         else:

@@ -49,6 +49,8 @@ from besser.generators.llm.llm_client import (
     is_free_fallback_choice,
 )
 from besser.generators.llm.orchestrator import LLMOrchestrator
+from besser.generators.llm.tools import get_available_generator_names
+from besser.generators.llm.validation.issues import is_completion_issue, required_check_unverified
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
@@ -981,6 +983,41 @@ class SmartGenerationRunner:
             self._cleanup_temp_dir()
             return
 
+        assembly_issues = getattr(assembled, "assembly_issues", []) or []
+        assembly_warnings = [
+            required_check_unverified(
+                "model assembly",
+                f"{issue['diagram_type']} [{issue['diagram_id']}]: {issue['diagnostic']}; "
+                "correct the project input and regenerate",
+            ) for issue in assembly_issues
+        ]
+        bound_target = getattr(self.request, "target_generator_override", None)
+        will_generate = not self._resume_run_id and not (self._mode == "modify" and self._seeded)
+        if bound_target and will_generate:
+            available_generators = get_available_generator_names(
+                has_domain_model=assembled.domain_model is not None,
+                has_gui_model=assembled.gui_model is not None,
+                has_agent_model=assembled.agent_model is not None,
+                has_state_machines=bool(assembled.state_machines),
+                has_quantum_circuit=assembled.quantum_circuit is not None,
+                has_object_model=assembled.object_model is not None,
+                has_bpmn_model=assembled.bpmn_model is not None,
+                has_nn_model=assembled.nn_model is not None,
+            )
+            if bound_target not in available_generators:
+                details = "; ".join(
+                    f"{item['diagram_type']} [{item['diagram_id']}]: {item['diagnostic']}"
+                    for item in assembly_issues[:5])
+                yield format_sse(ErrorEvent(
+                    code="BAD_REQUEST",
+                    message=(f"The selected generator {bound_target} requires a model that "
+                             "is missing or could not be converted. Correct the project input "
+                             "or choose a compatible generator before starting generation."
+                             + (f" Assembly losses: {details}" if details else "")),
+                ))
+                self._cleanup_temp_dir()
+                return
+
         # A seeded modify/fix run skips Phase 1 (no generator selection) —
         # it loads the previous app and edits it in place. Emitting
         # "Selecting generator" there is untrue, so use truthful copy while
@@ -991,6 +1028,17 @@ class SmartGenerationRunner:
             yield format_sse(PhaseEvent(phase="select", message="Loading your app"))
         else:
             yield format_sse(PhaseEvent(phase="select", message="Selecting generator"))
+        if assembly_issues:
+            yield format_sse(PhaseUpdateEvent(
+                phase="select", details=json.dumps(assembled.summary(), ensure_ascii=True),
+            ))
+            yield format_sse(ErrorEvent(
+                code="INCOMPLETE",
+                message=(f"{len(assembly_issues)} project diagram(s) could not be converted. "
+                         "Generation will preserve the usable models, but the result cannot "
+                         "be verified complete until those project inputs are corrected. "
+                         + assembly_warnings[0]),
+            ))
 
         # ---- 4. Build the LLM client (may raise on invalid key) --------
         try:
@@ -1237,6 +1285,7 @@ class SmartGenerationRunner:
             quantum_circuit=assembled.quantum_circuit,
             bpmn_model=assembled.bpmn_model,
             nn_model=assembled.nn_model,
+            assembly_issues=assembly_issues,
             output_dir=self.temp_dir,
             max_cost_usd=self.request.max_cost_usd,
             max_runtime_seconds=self.request.max_runtime_seconds,
@@ -1660,25 +1709,25 @@ class SmartGenerationRunner:
             exited_cleanly = bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
             stop_reason = getattr(orchestrator, "_phase2_stop_reason", "completed")
 
-            # Phase 3 can DETECT blocker-class issues (syntax / import /
-            # dependency errors — the "won't compile / won't boot" class) that
-            # the bounded auto-fix loop couldn't resolve. Those must also mark
-            # the run incomplete: without this, an app that parsed but has an
-            # unfixed blocker ships as an unqualified green "success" even
-            # though it can't run. (The verdict previously keyed ONLY on Phase 2
-            # emitting end_turn.)
+            # Blockers include unresolved implementation and verification
+            # issues, not only compile/startup failures. An app may run while
+            # still missing requirements or sufficient evidence of completion.
+            # Those findings must keep the result incomplete too.
             _unfixed_blockers = [
                 getattr(i, "message", str(i))
                 for i in (getattr(orchestrator, "_validation_issues", None) or [])
-                if getattr(i, "severity", None) == "blocker"
+                if is_completion_issue(i)
             ]
+            # Preserve input-loss honesty even if a late validator failure or
+            # an alternative orchestrator failed to retain its warning list.
+            _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
 
             _late_err = getattr(self, "_late_internal_error", None)
             # A fix/modify run whose reported failure the orchestrator could
             # not confirm fixed. When set, this is a promoted blocker in
             # ``_validation_issues`` above (so ``incomplete`` is already
             # True) — we surface its honest, target-specific message instead
-            # of the generic compile/boot wording. None on every other run.
+            # of the generic incomplete wording. None on every other run.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
             incomplete = (
                 (not exited_cleanly)
@@ -1691,9 +1740,7 @@ class SmartGenerationRunner:
                 if _fix_msg:
                     # Reported failure not confirmed fixed: the persisting
                     # finding may be structural (e.g. a create form still
-                    # not wired), so the generic "syntax / import /
-                    # dependency" copy would be untrue. Say what we actually
-                    # know instead of claiming a clean success.
+                    # not wired). Preserve the target-specific explanation.
                     incomplete_reason_msg = _fix_msg
                     yield format_sse(ErrorEvent(
                         code="INCOMPLETE",
@@ -1705,16 +1752,16 @@ class SmartGenerationRunner:
                 else:
                     # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
                     incomplete_reason_msg = (
-                        f"The app was built but {len(_unfixed_blockers)} blocker-level "
-                        "issue(s) remain that likely stop it from running "
-                        "(syntax / import / dependency errors). First: "
+                        f"The app was generated, but {len(_unfixed_blockers)} unresolved "
+                        "implementation or verification issue(s) remain. "
+                        "The generated app is not verified complete. First: "
                         + _unfixed_blockers[0][:160]
                     )
                     yield format_sse(ErrorEvent(
                         code="INCOMPLETE",
                         message=(
                             incomplete_reason_msg
-                            + " The downloaded output may not run as-is."
+                            + " The download is available for inspection and further work."
                         ),
                     ))
             if not exited_cleanly:
@@ -1778,7 +1825,7 @@ class SmartGenerationRunner:
                 done_event.incompleteReason = incomplete_reason_msg
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
-                # blocker-severity issues did NOT "stop early". Only set
+                # completion-blocking issues did NOT "stop early". Only set
                 # when the loop exited cleanly — a genuinely cut-short
                 # run keeps 0 so clients use their cut-short copy.
                 done_event.blockerCount = (

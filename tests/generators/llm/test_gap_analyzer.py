@@ -178,6 +178,26 @@ def test_safe_serialize_model_truncation_is_always_valid_json(monkeypatch):
     data = json.loads(payload)  # must never raise
     assert data.get("__truncated__") is True
     assert len(payload) <= gap_analyzer._MAX_MODEL_JSON_CHARS + 100
+    # Model-loss obligations survive the final bare-class fallback, even when
+    # the diagnostics themselves exceed the ordinary model-summary budget.
+    issues = [{"code": "unsupported_ocl", "original_text": "context Room inv: " + "x" * 13_000}]
+    huge["conversion_issues"] = issues
+    reduced = json.loads(_safe_serialize_model(object()))
+    assert reduced["conversion_issues"] == issues
+    assert reduced["__truncated__"] is True
+    assert all(set(cls) == {"name"} for cls in reduced["classes"])
+
+    class BrokenModel:
+        conversion_issues = issues
+
+        def get_classes(self):
+            return [type("C", (), {"name": "Room"})()]
+
+    def broken_serializer(_model):
+        raise ValueError("unsupported element")
+
+    monkeypatch.setattr(gap_analyzer, "serialize_domain_model", broken_serializer)
+    assert json.loads(_safe_serialize_model(BrokenModel()))["conversion_issues"] == issues
 
 
 # ----------------------------------------------------------------------
@@ -670,6 +690,165 @@ def test_system_prompt_denies_the_model_authority_over_the_spec():
     assert "you are the only step that sees" in low
 
 
-def test_spec_fits_the_instruction_budget():
-    """A clipped spec silently removes the requirements being diffed."""
-    assert len(SPEC) < gap_analyzer._MAX_INSTRUCTIONS_CHARS
+def test_full_spec_and_appended_ledger_reach_the_planner():
+    """User-input limits must not silently clip accepted text or derived context."""
+    from besser.generators.llm.specification import MAX_SPECIFICATION_CHARS
+
+    tail = "\nThe final requirement is to release rooms when cancellation succeeds."
+    original = "x" * (MAX_SPECIFICATION_CHARS - len(tail)) + tail
+    augmented = original + "\n\nREQUIREMENTS LEDGER:\nR1. " + tail
+    prompt = gap_analyzer._build_user_prompt(augmented, "generate_web_app", "{}", "")
+    assert f"USER REQUEST:\n{augmented}\n\n" in prompt
+    assert "instructions truncated" not in prompt
+
+
+def test_action_inventory_finds_real_handlers_not_comments_or_orm_names(tmp_path):
+    from besser.generators.llm.action_inventory import (
+        action_gap_tasks, action_implementation_issues, collect_action_endpoints,
+        format_action_inventory,
+    )
+
+    source = tmp_path / "backend" / "routers" / "order_methods.py"
+    source.parent.mkdir(parents=True)
+    source.write_text('''\
+@router.post("/order/{order_id}/methods/approve/")
+async def execute_order_approve(order_id):
+    raise HTTPException(status_code=501, detail="No implementation")
+
+@router.post("/order/{order_id}/methods/archive/")
+def execute_order_archive(order_id):
+    # Previously raised HTTPException(status_code=501).
+    return archive_order(order_id)
+
+@router.post("/order/{order_id}/methods/refund/")
+def execute_order_refund(order_id):
+    raise NotImplementedError
+''', encoding="utf-8")
+    (tmp_path / "sql_alchemy.py").write_text(
+        "class Order:\n    def approve(self):\n        return True\n", encoding="utf-8",
+    )
+
+    endpoints = collect_action_endpoints(tmp_path)
+    assert [(item.action, item.stub_reason) for item in endpoints] == [
+        ("approve", "HTTP 501"), ("archive", None), ("refund", "NotImplementedError"),
+    ]
+    assert "backend/routers/order_methods.py" in format_action_inventory(endpoints)
+    tasks = action_gap_tasks(tmp_path, endpoints)
+    assert len(tasks) == 2
+    assert not any(item["verify"]() for item in tasks)
+    issues = action_implementation_issues(tmp_path, endpoints)
+    assert len(issues) == 2
+    assert all(item.startswith("action contract: backend/routers/order_methods.py line ") for item in issues)
+
+
+def test_action_verifier_rejects_missing_routes_and_invalid_source(tmp_path):
+    from besser.generators.llm.action_inventory import (
+        action_gap_tasks, action_implementation_issues, collect_action_endpoints,
+    )
+
+    path = tmp_path / "order_methods.py"
+    decorator = ('router = APIRouter(prefix="/public")\n'
+                 '@router.post("/order/{order_id}/methods/approve/")\n')
+    signature = "async def execute_order_approve(order_id):\n"
+    path.write_text(decorator + signature + "    pass\n", encoding="utf-8")
+    expected = collect_action_endpoints(tmp_path)
+    task = action_gap_tasks(tmp_path, expected)[0]
+    assert task["verify"]() is False
+    for body in (
+        '    """TODO"""\n    ...\n',
+        "    return JSONResponse(status_code=501, content={})\n",
+        "    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED)\n",
+    ):
+        path.write_text(decorator + signature + body, encoding="utf-8")
+        assert task["verify"]() is False
+    path.write_text(decorator + signature + "    return await approve_order(order_id)\n", encoding="utf-8")
+    assert task["verify"]() is True
+    assert action_implementation_issues(tmp_path, expected) == []
+    for body in (
+        "    if unsupported(order_id):\n        raise HTTPException(status_code=501)\n"
+        "    return await approve_order(order_id)\n",
+        "    if supported(order_id):\n        return await approve_order(order_id)\n"
+        "    raise HTTPException(status_code=501)\n",
+        "    def unused_helper():\n        raise NotImplementedError\n"
+        "    return await approve_order(order_id)\n",
+        "    try:\n        raise HTTPException(status_code=501)\n"
+        "    except HTTPException:\n        return await fallback_approval(order_id)\n",
+    ):
+        path.write_text(decorator + signature + body, encoding="utf-8")
+        assert task["verify"]() is True  # No unconditional placeholder is proven.
+    renamed = (decorator + signature + "    return await approve_order(order_id)\n").replace(
+        "execute_order_approve", "approve_order_action",
+    )
+    path.write_text(renamed, encoding="utf-8")
+    assert task["verify"]() is True  # Renaming Python code preserves the route.
+    path.write_text(renamed.replace('prefix="/public"', 'prefix="/admin"'), encoding="utf-8")
+    assert task["verify"]() is False  # Equal decorator strings are not equal mounted routes.
+    path.write_text(renamed + renamed.replace("approve_order_action", "duplicate_action"), encoding="utf-8")
+    assert task["verify"]() is False  # Never choose between ambiguous replacements.
+    for source in (signature + "    return True\n", decorator + signature + "    invalid !\n"):
+        path.write_text(source, encoding="utf-8")
+        assert task["verify"]() is False
+        assert len(action_implementation_issues(tmp_path, expected)) == 1
+    path.unlink()
+    assert task["verify"]() is False
+
+
+def test_gap_planner_receives_action_handler_inventory_and_corrects_wrong_layer(tmp_path):
+    from besser.generators.llm.action_inventory import (
+        action_gap_tasks, collect_action_endpoints, merge_action_tasks,
+    )
+
+    path = tmp_path / "order_methods.py"
+    path.write_text('''\
+@router.post("/order/{order_id}/methods/approve/")
+async def execute_order_approve(order_id):
+    raise HTTPException(status_code=501)
+''', encoding="utf-8")
+    endpoints = collect_action_endpoints(tmp_path)
+
+    class Planner(_CapturingClient):
+        def chat(self, system, messages, tools):
+            self.prompt = messages[-1]["content"]
+            return {"content": [{"type": "text", "text": json.dumps([
+                "Implement approve in sql_alchemy.py",
+            ])}]}
+
+    planner = Planner()
+    tasks = analyze_gaps_via_llm(
+        instructions="An order may be approved once.", generator_used="generate_web_app",
+        domain_model=None, inventory="order_methods.py", llm_client=planner,
+        workspace_files=["order_methods.py", "sql_alchemy.py"], action_endpoints=endpoints,
+    )
+    assert "UNIMPLEMENTED: HTTP 501" in planner.prompt
+    assert "execute_order_approve" in planner.prompt
+    assert len(tasks) == 1
+    assert "ACTION HANDOFF" in tasks[0] and "order_methods.py" in tasks[0]
+    assert "same-named ORM method alone does not connect" in tasks[0]
+    canonical = action_gap_tasks(tmp_path, endpoints)
+    merged = merge_action_tasks(canonical + tasks, endpoints)
+    assert len(merged) == 1  # Not one task per planner + one per harness.
+    assert merged[0]["text"] == canonical[0]["text"]  # Stable checkpoint key.
+    assert merged[0]["planning_notes"] == tasks  # No requested behavior lost.
+    assert merged[0]["verify"]() is False
+    assert "planning_notes" not in canonical[0]  # Inputs are not mutated.
+
+    # A planner omission must not erase the independently seeded obligation.
+    empty_planner = _CapturingClient()
+    assert analyze_gaps_via_llm(
+        instructions="Approve orders.", generator_used="generate_web_app",
+        domain_model=None, inventory="order_methods.py", llm_client=empty_planner,
+        action_endpoints=endpoints,
+    ) == []
+    assert len(action_gap_tasks(tmp_path, endpoints)) == 1
+
+    # Two entities may have a same-named action: never collapse those tasks
+    # using name similarity, nor discard an unrelated rule or multi-action task.
+    (tmp_path / "invoice_methods.py").write_text(
+        path.read_text(encoding="utf-8").replace("order", "invoice"), encoding="utf-8",
+    )
+    both = collect_action_endpoints(tmp_path)
+    multi = gap_analyzer._note_action_placement(["Implement approve for orders and invoices"], both)
+    other = "Validate an order's contact details"
+    merged = merge_action_tasks(action_gap_tasks(tmp_path, both) + multi + [other], both)
+    assert len(merged) == 4
+    assert multi[0] in merged and other in merged

@@ -1,13 +1,13 @@
 """Model-derived acceptance matrix for generated apps.
 
-For every class in the domain model, three statically-checkable facts
-decide whether the entity actually made it into the app:
+For every class in the domain model, three static discovery signals
+indicate whether the entity appears in the app (not executed acceptance):
 
 * ``route``  — the backend exposes REST routes for it (checked against
   the same static route parse the endpoint manifest uses);
 * ``page``   — some frontend file is about it (name or content match);
-* ``create`` — a frontend file about it issues a POST (a create form
-  that actually submits somewhere).
+* ``create`` — a frontend file about it contains a POST. A false cell is
+  unknown for shared/dynamic form components, not proof of a broken form.
 
 The matrix is deliberately REPORT-ONLY (warnings + a recipe field, never
 blockers): a GUI-model-driven run may legitimately scope the UI to a
@@ -125,7 +125,7 @@ def matrix_issues(matrix: dict[str, dict[str, bool]] | None) -> list[str]:
         detail = {
             "route": "no backend REST route",
             "page": "no frontend page/component references it",
-            "create": "no frontend POST for it (create form not wired)",
+            "create": "entity-specific frontend POST not resolved statically (shared/dynamic forms need runtime verification)",
         }
         issues.append(
             "acceptance: entity "

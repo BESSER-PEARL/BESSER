@@ -18,10 +18,11 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.generators.llm.checkpoint import (
     CHECKPOINT_FILENAME,
+    compute_fingerprint,
     load_checkpoint,
 )
 from besser.generators.llm.llm_client import UsageTracker
-from besser.generators.llm.orchestrator import LLMOrchestrator
+from besser.generators.llm.orchestrator import LLMOrchestrator, ValidationIssue
 from besser.generators.llm.tracing import TRACE_FILENAME
 
 
@@ -276,6 +277,88 @@ def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_p
         max_turns=3,
         use_streaming=False,
     ).resume("Build a blog")
+    # The editing-turn cap must still permit final validation; it must not
+    # force an extra resume when the last allowed turn finishes the work.
+    assert len(third.calls) == 1
+    assert load_checkpoint(str(tmp_path)) is None
+
+
+@pytest.mark.parametrize("external_edit", [False, True])
+def test_repair_resume_retains_corrected_state_but_rechecks_results(simple_model, tmp_path, monkeypatch, external_edit):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    corrected_requests = [{"method": "GET", "path": "/items/", "expected_status": 200}]
+    client = _ScriptedClient([{"stop_reason": "tool_use", "content": [
+        _MockBlock("tool_use", id="edit", name="modify_file", input={
+            "path": "app.py", "old_text": "value = 1\n", "new_text": "value = 2\n"}),
+    ]}, {"stop_reason": "tool_use", "content": [
+        _MockBlock("tool_use", id="task", name="task_list", input={"action": "done", "id": 1}),
+        _MockBlock("tool_use", id="scenario", name="test_api", input={
+            "scenario_id": "items", "requests": corrected_requests,
+            "correction_reason": "Listing existing items returns 200, not creation status 201."}),
+    ]}])
+    client.usage.seed_cost(0.25)
+    first = LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=120, auto_fix_issues=True, use_streaming=False,
+        should_continue=lambda: not first._api_scenarios.get("named:items", {}).get("correction_history"),
+    )
+    first._instructions = "Build a blog"
+    first._project_fingerprint = compute_fingerprint(
+        instructions=first._instructions, primary_kind=first.primary_kind, domain_model=simple_model)
+    first.total_turns = 32
+    first._phase2_exited_cleanly = True
+    first._phase2_stop_reason = "completed"
+    tasks = [{"text": "Correct value", "verify": lambda: "value = 2" in source.read_text()}]
+    first.executor.set_tasks(tasks)
+    first._api_scenarios = {"named:items": {
+        "scenario_id": "items", "scenario": {"backend": None, "requests": [
+            {"method": "GET", "path": "/items/", "expected_status": 201}]},
+        "report": {"status": "failed"}, "revision": None,
+    }}
+    blocker = ValidationIssue("blocker", "api scenario: items has an incorrect expectation")
+    monkeypatch.setattr(first, "_collect_validation_issues", lambda: [blocker])
+    monkeypatch.setattr("besser.generators.llm.api_probe.probe_api_scenario",
+                        lambda *args, **kwargs: {"status": "passed", "boot": "passed"})
+    first._run_phase3_validation()
+    first._finish_checkpoint()
+
+    saved = load_checkpoint(str(tmp_path))
+    assert saved.phase == "phase3" and saved.turn == saved.total_turns == 34
+    assert saved.messages == [] and saved.estimated_cost_usd == pytest.approx(0.25)
+    assert saved.tasks[0]["done"] is True
+    assert saved.api_scenarios[0]["scenario"]["requests"] == corrected_requests
+    assert saved.api_scenarios[0]["correction_history"][0]["previous_status"] == "failed"
+    assert saved.repair_progress["attempts_run"] == 1
+    assert saved.source_revision == first._workspace_revision()
+    assert source.read_text() == "value = 2\n"
+
+    if external_edit:
+        source.write_text("value = 2\n# changed after interruption\n", encoding="utf-8")
+    fresh_client = _ScriptedClient([])
+    resumed = LLMOrchestrator(
+        llm_client=fresh_client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=120, auto_fix_issues=False, use_streaming=False,
+    )
+    monkeypatch.setattr(resumed, "_deterministic_gap_tasks", lambda: tasks)
+    monkeypatch.setattr(resumed, "_run_phase2", lambda *a, **kw: pytest.fail("replayed Phase 2"))
+
+    def fresh_validation():
+        assert resumed._resume_messages is None
+        assert resumed.executor.task_snapshot()[0]["done"] is True
+        record = resumed._api_scenarios["named:items"]
+        assert record["scenario"]["requests"] == corrected_requests
+        assert record["report"]["status"] == "unverified" and record["revision"] is None
+        assert resumed._repair_progress == ({} if external_edit else saved.repair_progress)
+        return [blocker]
+
+    monkeypatch.setattr(resumed, "_collect_validation_issues", fresh_validation)
+    resumed.resume("Build a blog")
+    assert fresh_client.calls == [] and resumed.total_turns == 34
+    assert fresh_client.usage.estimated_cost == pytest.approx(0.25)
+    assert load_checkpoint(str(tmp_path)).phase == "phase3", "unresolved repair must remain resumable"
+    resumed._validation_issues = []
+    resumed._finish_checkpoint()
     assert load_checkpoint(str(tmp_path)) is None
 
 

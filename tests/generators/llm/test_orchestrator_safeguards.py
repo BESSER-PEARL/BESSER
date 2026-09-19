@@ -610,6 +610,7 @@ class TestRuffAndTscValidation:
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
+        orchestrator.enable_toolchain_validation = True
         issues = orchestrator._collect_tsc_issues()
         assert len(issues) == 2
         assert all(i.startswith("tsc ") for i in issues)
@@ -624,6 +625,61 @@ class TestRuffAndTscValidation:
 
 
 class TestPhase2SystemPrompt:
+
+    @pytest.mark.parametrize("inspection", ["new_reads", "new_plans", "repeated_reads", "missing_reads", "only_new_reads"])
+    def test_phase2_inspection_progress_is_novel_bounded_and_nudged_once(
+        self, inspection, simple_model, tmp_path, monkeypatch,
+    ):
+        from besser.generators.llm.checkpoint import load_checkpoint
+        from besser.generators.llm import orchestrator as module
+
+        for number in range(1, 31):
+            (tmp_path / f"file{number}.py").write_text(f"value = {number}\n", encoding="utf-8")
+        calls, reminders = [], set()
+
+        class InspectingClient:
+            model = "mock-model"
+            usage = UsageTracker("mock-model")
+
+            def chat(self, system, messages, tools):
+                calls.append(len(calls) + 1)
+                turn = calls[-1]
+                for message in messages:
+                    for item in message.get("content", []) if isinstance(message.get("content"), list) else []:
+                        if isinstance(item, dict) and "You have inspected/planned" in item.get("text", ""):
+                            reminders.add(item["text"])
+                if inspection in {"new_reads", "new_plans"} and turn >= 13:
+                    return {"stop_reason": "end_turn", "content": []}
+                if inspection in {"new_reads", "new_plans"} and turn == 12:
+                    name, args = "modify_file", {"path": "file1.py", "old_text": "value = 1", "new_text": "value = 99"}
+                elif inspection == "new_plans":
+                    name, args = "task_list", {"action": "add", "texts": [f"Implement specific behavior {turn}"]}
+                else:
+                    filename = "absent.py" if inspection == "missing_reads" else f"file{1 if inspection == 'repeated_reads' else turn}.py"
+                    name, args = "read_file", {"path": filename}
+                return {"stop_reason": "tool_use", "content": [MockBlock("tool_use", name=name, input=args, id=f"call{turn}")]}
+
+        orch = LLMOrchestrator(llm_client=InspectingClient(), domain_model=simple_model,
+                               output_dir=str(tmp_path), max_turns=30)
+        monkeypatch.setattr(module, "analyze_gaps_via_llm", lambda **kw: None)
+        monkeypatch.setattr(orch, "_deterministic_gap_tasks", lambda: [])
+        monkeypatch.setattr(orch, "_validate_app", lambda: {"issues": [], "blocker_count": 0})
+        monkeypatch.setattr(orch, "_build_system_prompt", lambda **kw: "Inspect then implement")
+        monkeypatch.setattr(orch, "_maybe_compact", lambda messages: messages)
+        monkeypatch.setattr(orch.executor, "open_tasks", lambda: [])
+        orch._run_phase2("Set the supported behavior to 99.")
+
+        if inspection in {"new_reads", "new_plans"}:
+            assert len(calls) == 13 and orch._phase2_stop_reason == "completed"
+            assert (tmp_path / "file1.py").read_text(encoding="utf-8") == "value = 99\n"
+            assert len(reminders) == 1
+        else:
+            expected = {"repeated_reads": 11, "missing_reads": 10, "only_new_reads": 20}[inspection]
+            assert len(calls) == expected and orch._phase2_stop_reason == "validation_required"
+            assert "inspection handoff, not verification" in orch._phase2_inspection_handoff
+            checkpoint = load_checkpoint(str(tmp_path))
+            assert checkpoint.turn == expected and checkpoint.messages[-1]["role"] == "user"
+            assert len(reminders) <= 1
 
     def test_user_request_appears_verbatim(self, simple_model, tmp_path):
         orchestrator = LLMOrchestrator(

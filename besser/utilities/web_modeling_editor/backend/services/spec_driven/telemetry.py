@@ -174,7 +174,7 @@ def llm_touched_paths(tool_calls_log: Optional[Iterable[Any]]) -> set[str]:
         for call in tool_calls_log or []:
             if not isinstance(call, dict):
                 continue
-            if call.get("tool") not in ("write_file", "modify_file"):
+            if call.get("tool") not in ("write_file", "modify_file", "replace_file_lines"):
                 continue
             if call.get("success") is False:
                 continue

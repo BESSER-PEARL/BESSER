@@ -155,17 +155,26 @@ def test_modify_file_miss_carries_did_you_mean_and_escalates(tmp_path):
     assert "advice" in second and "read_file" in second["advice"]
 
 
-def test_modify_file_flags_edit_already_applied(tmp_path):
+def test_modify_file_needs_a_success_receipt_not_incidental_multiline_text(tmp_path):
     _seed(tmp_path, "app.py", "def get_value():\n    return 2\n")
     ex = ToolExecutor(workspace=str(tmp_path))
-    res = _call(ex, "modify_file", {
+    args = {
         "path": "app.py",
         "old_text": "def get_value():\n    return 1\n",   # not present
         "new_text": "def get_value():\n    return 2\n",   # substantial block
-    })
+    }
+    res = _call(ex, "modify_file", args)
     assert "error" in res
-    assert "already in the file at line 1" in res["error"]
-    assert "applied" in res["error"]
+    assert "old_text not found" in res["error"]
+    assert res.get("status") != "already_applied"
+    # Once this exact request really changes the file, its receipt is trusted.
+    _seed(tmp_path, "app.py", args["old_text"])
+    assert _call(ex, "modify_file", args)["status"] == "modified"
+    assert _call(ex, "modify_file", args)["status"] == "already_applied"
+    # Any intervening change invalidates the receipt, even if the replacement
+    # chunk remains present. An unrecorded match must not report success.
+    _seed(tmp_path, "app.py", args["new_text"] + "other = 3\n")
+    assert _call(ex, "modify_file", args).get("status") != "already_applied"
 
 
 def test_modify_file_refuses_short_ambiguous_anchor(tmp_path):

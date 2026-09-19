@@ -94,7 +94,7 @@ class TestUnseenFile:
     def test_miss_on_a_never_read_file_says_so_first(self, tmp_path):
         # Neither an incidental substring nor a common whole line proves that
         # an edit whose search text never existed has already been applied.
-        for new_text in ("x\n", "pass\n", "import x\n"):
+        for new_text in ("x\n", "pass\n", "import x\n", "    except Exception:\n        pass\n"):
             ex = _executor(tmp_path, **{"m.py": STUB})
             res = ex._modify_file({"path": "m.py", "old_text": "nope\n", "new_text": new_text})
             assert res["error"].startswith("You have not read m.py this run"), res
@@ -104,7 +104,7 @@ class TestUnseenFile:
 
     @pytest.mark.parametrize("seen_by", ["read_file", "write_file", "mark_known"])
     def test_a_seen_file_gets_the_ordinary_miss_reply(self, tmp_path, seen_by):
-        for new_text in ("x\n", "pass\n", "import x\n"):
+        for new_text in ("x\n", "pass\n", "import x\n", "    except Exception:\n        pass\n"):
             ex = _executor(tmp_path, **{"m.py": STUB})
             if seen_by == "read_file":
                 ex._read_file({"path": "m.py"})
@@ -117,6 +117,8 @@ class TestUnseenFile:
             assert res["error"].startswith("old_text not found"), res["error"]
             assert res.get("status") != "already_applied", res
             assert "so this edit has been applied" not in res["error"]
+            assert "will not help" not in res["error"]
+            assert "Read the target region" in res["error"]
             assert (tmp_path / "m.py").read_text(encoding="utf-8") == STUB
 
     def test_write_file_over_an_unseen_existing_file_is_refused(self, tmp_path):
@@ -129,6 +131,17 @@ class TestUnseenFile:
         ex = _executor(tmp_path)
         assert ex._write_file({"path": "new.py", "content": "a = 1\n"})["status"] == "written"
         assert ex._write_file({"path": "new.py", "content": "a = 2\n"})["status"] == "written"
+
+    def test_missing_file_suggests_existing_paths_without_reading_them(self, tmp_path):
+        backend = tmp_path / "web_app" / "backend"
+        backend.mkdir(parents=True)
+        (backend / "sql_alchemy.py").write_text("class Booking: pass\n", encoding="utf-8")
+        ex = ToolExecutor(workspace=str(tmp_path))
+        result = ex._read_file({"path": "web_app/backend/models/booking.py"})
+        assert "File not found" in result["error"]
+        assert "web_app/backend/sql_alchemy.py" in result["suggested_paths"]
+        assert "content" not in result
+        assert ex._known_paths == set()
 
 
 class TestNumberedQuotes:

@@ -20,6 +20,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from besser.generators.llm.specification import MAX_SPECIFICATION_CHARS
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_DEFAULT_MAX_COST_USD,
     LLM_DEFAULT_MAX_RUNTIME_SECONDS,
@@ -64,7 +65,7 @@ class SmartGenerateRequest(BaseModel):
     """
 
     project: ProjectInput
-    instructions: str = Field(..., min_length=1, max_length=8000)
+    instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
     # Optional: the ``"free"`` provider needs no key (the server injects a
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.
@@ -377,7 +378,7 @@ class SmartPreviewRequest(BaseModel):
     """
 
     project: ProjectInput
-    instructions: str = Field(..., min_length=1, max_length=8000)
+    instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
     max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
     max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
     mode: Literal["generate", "modify"] = "generate"

@@ -85,3 +85,78 @@ def test_findings_are_bounded():
     source = "\n".join(f"value_{i} = missing_{i}" for i in range(30))
     findings = diagnose_written_content("many.py", source)
     assert len(findings) == 10
+
+
+def test_generated_backend_contract_failures_are_reported_same_turn(tmp_path):
+    """The 772298cb failures must reach the editor before a final sweep."""
+    executor = ToolExecutor(workspace=str(tmp_path))
+    _call(executor, "write_file", {
+        "path": "backend/database.py", "content": "DATABASE_URL = 'sqlite:///test.db'\n",
+    })
+    broken = (
+        "from enum import Enum\n"
+        "from sqlalchemy import CheckConstraint, Integer\n"
+        "from sqlalchemy.orm import mapped_column\n"
+        "class Status(Enum):\n    READY = 'READY'\n"
+        "class Booking:\n"
+        "    id = mapped_column(Integer, primary_key=True)\n"
+        "    status = mapped_column(default=Status.ready)\n"
+        "    __table_args__ = (CheckConstraint('agreedPrice > 0'),)\n"
+        "    __table_args__ = (CheckConstraint('NOT EXISTS (SELECT 1 FROM room)'),)\n"
+        "    def validate_capacity(self):\n        return self\n"
+        "    def validate_capacity(self):\n        return self\n"
+    )
+    result = _call(executor, "write_file", {"path": "backend/sql_alchemy.py", "content": broken})
+    assert result["status"] == "written"
+    findings = result["diagnostics"]
+    assert {"invalid-enum-member", "duplicate-declaration", "shadowed-declaration",
+            "invalid-sqlite-check"} <= {item["code"] for item in findings}
+    assert any("agreedPrice" in item["message"] for item in findings)
+    assert any("subqueries prohibited" in item["message"] for item in findings)
+    assert any("validate_capacity" in item["message"] for item in findings)
+    assert all(item.get("line", 0) > 0 for item in findings)
+    assert (tmp_path / "backend" / "sql_alchemy.py").read_text() == broken
+
+    # Replacing the declarations with valid ones clears the immediate errors.
+    repaired = broken[:broken.index("    status =")] + (
+        "    status = mapped_column(default=Status.READY)\n"
+        "    __table_args__ = (CheckConstraint('id > 0'),)\n"
+        "    def validate_capacity(self):\n        return self\n"
+    )
+    result = _call(executor, "modify_file", {
+        "path": "backend/sql_alchemy.py", "old_text": broken, "new_text": repaired,
+    })
+    assert result["status"] == "modified"
+    assert not result.get("diagnostics"), result
+
+    schemas = (
+        "from pydantic import BaseModel\n"
+        "class PersonCreate(BaseModel):\n"
+        "    phone: str\n    booking: list[int] = []\n"
+        "class EmployeeCreate(PersonCreate):\n    pass\n"
+    )
+    _call(executor, "write_file", {"path": "backend/pydantic_classes.py", "content": schemas})
+    for entity in ("person", "employee"):
+        result = _call(executor, "write_file", {
+            "path": f"backend/routers/{entity}.py",
+            "content": f"def create_{entity}({entity}_data):\n    return {entity}_data.booking\n",
+        })
+        assert not result.get("diagnostics"), result
+    result = _call(executor, "modify_file", {
+        "path": "backend/pydantic_classes.py",
+        "old_text": "    booking: list[int] = []\n", "new_text": "",
+    })
+    assert result["status"] == "modified"
+    mismatches = [item for item in result["diagnostics"] if item["code"] == "schema-consumer-mismatch"]
+    assert len(mismatches) == 2
+    assert all("does not define `booking`" in item["message"] for item in mismatches)
+    assert any("routers/person.py" in item["message"] for item in mismatches)
+    assert any("routers/employee.py" in item["message"] for item in mismatches)
+
+    # The supported verification tool must not report success when unwired,
+    # and must surface the orchestrator's actual execution report when wired.
+    unavailable = _call(executor, "validate_app", {})
+    assert "unavailable" in unavailable["error"]
+    report = {"blocker_count": 2, "issues": [item["message"] for item in mismatches]}
+    executor.app_validator = lambda: report
+    assert _call(executor, "validate_app", {}) == report

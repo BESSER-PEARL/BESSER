@@ -122,6 +122,19 @@ def test_a_valid_file_never_becomes_unparseable_through_modify_file(ex):
     assert "unparseable" in res["error"]
     assert "line" in res["error"]
     assert "would_write" in res
+    assert res["rejection_kind"] == "syntax_error"
+    assert res["syntax_line"] > 0
+    assert res["would_write"].startswith("PROPOSED ONLY - NOT APPLIED")
+    assert res["current_source"].startswith("CURRENT ON-DISK CONTENT")
+    assert "# Booking.computeAmountOwed: no body" in res["current_source"]
+    assert "calculate total price" not in res["current_source"]
+    assert _file(ex) == before
+
+    # Quoting that rejected draft must remain a miss, not a completed edit.
+    retry = _modify(ex, T19_NEW, T19_NEW + "\n    finally:\n        pass")
+    assert "error" in retry
+    assert "not a proposed edit that was refused" in retry["error"]
+    assert "will not help" not in retry["error"]
     assert _file(ex) == before
 
 
@@ -131,6 +144,9 @@ def test_a_valid_file_never_becomes_unparseable_through_write_file(ex):
         _modify(ex, "nomatch-1", "x")
     res = json.loads(ex.execute("write_file", {"path": ROUTER, "content": "def broken(:\n    pass\n"}))
     assert "error" in res, res
+    assert res["rejection_kind"] == "syntax_error"
+    assert res["would_write"].startswith("PROPOSED ONLY - NOT APPLIED")
+    assert "CURRENT ON-DISK CONTENT" in res["current_source"]
     assert _file(ex) == before
 
 

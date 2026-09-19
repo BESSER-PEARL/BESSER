@@ -65,7 +65,14 @@ def test_save_load_round_trip(tmp_path):
     original = _make_checkpoint(tasks=[
         {"id": 1, "text": "Build the frontend", "done": False},
         {"id": 2, "text": "Write the README", "done": True},
-    ])
+    ], api_scenarios=[{
+        "scenario_id": "room-create",
+        "scenario": {"backend": None, "requests": [{"method": "GET", "path": "/room/"}]},
+        "correction_history": [{"reason": "corrected response field", "previous_status": "failed"}],
+    }], phase="phase3", messages=[], source_revision="source-sha",
+        phase2_stop_reason="validation_required", phase2_exited_cleanly=False,
+        repair_progress={"attempts_run": 3, "no_progress_streak": 1,
+                         "seen_states": [["sha", "obligations", ["syntax error"]]]})
     path = save_checkpoint(str(tmp_path), original)
     assert path is not None
     assert os.path.isfile(path)
@@ -78,6 +85,12 @@ def test_save_load_round_trip(tmp_path):
     assert loaded.messages == original.messages
     assert loaded.project_fingerprint == original.project_fingerprint
     assert loaded.tasks == original.tasks
+    assert loaded.api_scenarios == original.api_scenarios
+    assert loaded.phase == "phase3"
+    assert loaded.source_revision == "source-sha"
+    assert loaded.phase2_stop_reason == "validation_required"
+    assert loaded.phase2_exited_cleanly is False
+    assert loaded.repair_progress == original.repair_progress
 
 
 def test_real_provider_blocks_survive_checkpoint_round_trip(tmp_path):
@@ -104,7 +117,11 @@ def test_real_provider_blocks_survive_checkpoint_round_trip(tmp_path):
 
 def test_load_older_checkpoint_without_tasks_is_backward_compatible(tmp_path):
     original = _make_checkpoint().to_dict()
+    original["schema_version"] = 1
     original.pop("tasks", None)
+    original.pop("api_scenarios", None)
+    for key in ("phase", "source_revision", "phase2_stop_reason", "phase2_exited_cleanly", "repair_progress"):
+        original.pop(key, None)
     (tmp_path / CHECKPOINT_FILENAME).write_text(
         json.dumps(original), encoding="utf-8"
     )
@@ -113,6 +130,9 @@ def test_load_older_checkpoint_without_tasks_is_backward_compatible(tmp_path):
 
     assert loaded is not None
     assert loaded.tasks == []
+    assert loaded.api_scenarios == []
+    assert loaded.phase == "phase2"
+    assert loaded.repair_progress == {}
 
 
 def test_load_missing_returns_none(tmp_path):
@@ -130,6 +150,16 @@ def test_load_wrong_schema_version_rejected(tmp_path):
     # Refusing to parse an unknown version is the desired behaviour —
     # better to start fresh than to silently corrupt state.
     assert load_checkpoint(str(tmp_path)) is None
+
+    for invalid in (
+        {"phase": "unknown"}, {"schema_version": 1, "phase": "phase3"},
+        {"repair_progress": {"attempts_run": -1}},
+        {"repair_progress": {"seen_states": [["missing", "messages"]]}},
+    ):
+        data = _make_checkpoint().to_dict()
+        data.update(invalid)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        assert load_checkpoint(str(tmp_path)) is None
 
 
 def test_delete_checkpoint_is_idempotent(tmp_path):

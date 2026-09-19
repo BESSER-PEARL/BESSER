@@ -43,7 +43,27 @@ def test_the_live_mismatch_is_a_blocker_naming_both_entities(tmp_path):
 
 
 def test_the_correctly_bound_page_is_clean(tmp_path):
-    _write(tmp_path, "web_app/frontend/src/pages/Bill.tsx", _BILL_PAGE)
+    # 8efe8fd4: the first entity belongs to a lookup column, not this table.
+    page = _BILL_PAGE.replace(
+        'dataBinding=',
+        'columns={[{"lookup": {"entity": "Booking"}, "label": "Amount > 0"}]} dataBinding=',
+    )
+    _write(tmp_path, "web_app/frontend/src/pages/Bill.tsx", page)
+    assert _method_button_source_issues(str(tmp_path)) == []
+
+
+def test_dynamic_table_bindings_are_not_guessed_from_lookup_columns(tmp_path):
+    page = _BILL_PAGE.replace(
+        'dataBinding={{"entity": "Bill", "endpoint": "/bill/", "row_key_fields": ["id"]}}',
+        'columns={[{"entity": "Booking"}]} dataBinding={binding}',
+    )
+    _write(tmp_path, "frontend/src/pages/Bill.tsx", page)
+    assert _method_button_source_issues(str(tmp_path)) == []
+    examples = (
+        '/* <TableBlock id="example" dataBinding={{"entity": "Booking"}} /> */\n'
+        'const example = \'<MethodButton endpoint="/bill/1/methods/pay/" instanceSourceTableId="example" />\';\n'
+    )
+    _write(tmp_path, "frontend/src/pages/Bill.tsx", examples + _BILL_PAGE)
     assert _method_button_source_issues(str(tmp_path)) == []
 
 

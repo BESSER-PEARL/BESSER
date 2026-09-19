@@ -41,6 +41,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Update,
 )
 from besser.BUML.metamodel.structural import AssociationClass, Class, Enumeration
+from besser.generators.structural_utils import is_server_owned_attribute
 from besser.utilities import sort_by_timestamp
 
 
@@ -580,6 +581,8 @@ class GuiSerializationMixin:
                 attributes = list(domain_concept.all_attributes())
                 attributes = sort_by_timestamp(attributes) if attributes else []
                 for attr in attributes:
+                    if is_server_owned_attribute(attr):
+                        continue
                     field_type = getattr(attr, "type", None)
                     column_dict = {
                         "column_type": "field",
@@ -612,10 +615,14 @@ class GuiSerializationMixin:
                     if c.get("column_type") == "lookup" and c.get("path") and c.get("field")
                 }
 
-                ends = list(domain_concept.all_association_ends())
+                is_association_row = isinstance(domain_concept, AssociationClass)
+                ends = list(
+                    domain_concept.association.ends if is_association_row
+                    else domain_concept.all_association_ends()
+                )
                 ends = sort_by_timestamp(ends) if ends else []
                 for end in ends:
-                    if hasattr(end, "is_navigable") and not end.is_navigable:
+                    if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
                         continue
 
                     target = getattr(end, "type", None)
@@ -632,9 +639,17 @@ class GuiSerializationMixin:
                     target_field = next(
                         (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
                     )
+                    target_attribute = next(
+                        (attr for attr in target_attrs if attr.name == target_field), None
+                    )
+                    target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
 
                     max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
-                    is_list = max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+                    # One association-class row always selects exactly one entity
+                    # at each end, irrespective of the relationship multiplicity.
+                    is_list = not is_association_row and (
+                        max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+                    )
 
                     column_dict = {
                         "column_type": "lookup",
@@ -642,13 +657,14 @@ class GuiSerializationMixin:
                         "field": end.name,
                         "lookup_field": lookup_field,
                         "target_field": target_field,
+                        "target_type": target_type,
                         "entity": getattr(target, "name", "") if target else "",
                         "type": "list" if is_list else "str",
                         "required": False,
                     }
 
                     multiplicity = getattr(end, "multiplicity", None)
-                    if multiplicity and getattr(multiplicity, "min", 0) > 0:
+                    if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
                         column_dict["required"] = True
 
                     # List ends whose association is materialized by an association class
@@ -1336,6 +1352,8 @@ class GuiSerializationMixin:
 
         fields: List[Dict[str, Any]] = []
         for attr in attributes:
+            if is_server_owned_attribute(attr):
+                continue
             attr_type = getattr(attr, "type", None)
             field_dict: Dict[str, Any] = {"name": attr.name, "type": "str"}
 

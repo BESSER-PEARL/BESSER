@@ -1,77 +1,102 @@
 # `besser.generators.llm` — the Spec-Driven Agent
 
-The hybrid generator. It produces a deterministic, model-faithful scaffold and
-then drives an LLM to customise it from a natural-language request. The model
-stays the source of truth: the LLM edits a correct baseline rather than writing
-from a blank page.
+The hybrid generator produces a deterministic structural baseline from BESSER
+models, then uses an LLM to complete the user's natural-language specification.
+The verbatim request remains authoritative: a model, summary, or scaffold may
+not capture every requested behavior.
 
-> **User & API docs** are published under `docs/source/spec_driven_agent/`:
-> - How it works: `docs/source/spec_driven_agent/how_it_works.rst`
-> - HTTP / SSE contract: `docs/source/spec_driven_agent/api.rst`
-> - Validation and severities: `docs/source/spec_driven_agent/validation.rst`
->
-> This README is the **developer** entry point to the package.
+User and API docs live under `docs/source/spec_driven_agent/`:
+`how_it_works.rst`, `api.rst`, and `validation.rst`. This README is the developer
+entry point.
 
 ## Pipeline
 
+```text
+select → generate → plan → customize → validate/repair
 ```
-select → generate → gap → customize → validate
-```
 
-1. **select** — pick the deterministic Phase-1 generator (or honour an approved target).
-2. **generate** — run it to produce the baseline scaffold.
-3. **gap** — a cheap planning LLM call (`gpt-4o-mini`) computes the task list, or decides the scaffold suffices (Phase 2 skipped).
-4. **customize** — the main LLM loop edits files through a constrained tool surface.
-5. **validate** — Phase 3 always runs, and its blockers drive a bounded auto-fix loop.
-   What is off by default is only the part that *shells out* to a compiler
-   (`tsc` / `cargo` / `kotlinc`): `enable_toolchain_validation=False`. The
-   in-process checks — ruff, pyflakes, the data contract, the frontend
-   contract — run regardless.
+1. Select a deterministic generator using the available models and approved
+   target. Selection may use the configured provider.
+2. Generate the structural baseline and inventory files and action endpoints.
+3. Plan remaining work with the provider's planning model when available,
+   alongside deterministic obligations and the original requirement ledger.
+4. Customize through bounded file/model tools. Track implementation evidence
+   separately from verified acceptance.
+5. Collect findings and, when `auto_fix_issues` is enabled, repair and recheck
+   within the remaining budgets. Unresolved defects or missing required
+   verification remain incomplete.
 
-## Module map
+Static/source checks and execution checks are distinct. The orchestrator defaults
+to `enable_import_smoke_check=True` for generated Python startup/constructibility
+checks; this also gates the disposable API-scenario tool. Compiler checks (`tsc`,
+`cargo`, `kotlinc`) require `enable_toolchain_validation=True`, which defaults to
+false. Missing tools or exhausted budgets can limit validation; skipped checks
+are not passes. Shell tools have a separate opt-in. Executing generated code is
+not an OS sandbox.
 
-| File | Responsibility |
-|---|---|
-| `orchestrator.py` | Drives the phases; owns the customize loop, checkpoints, recipe. |
-| `llm_generator.py` | `GeneratorInterface` entry point. |
-| `llm_client.py` | Provider clients (Anthropic / OpenAI / Mistral), pricing, `DEFAULT_MODELS`, usage tracking. |
-| `prompt_builder.py` | Builds the system prompt; serialises the models; frames the GUI model as a hint vs. spec. |
-| `gap_analyzer.py` | The planning pass. Contract: `None` = failure, `[]` = scaffold sufficient, `[...]` = task list. |
-| `tools.py` / `tool_executor.py` | The LLM's tool specs and their sandboxed execution. |
-| `model_serializer.py` | Serialises BUML models (domain / GUI / agent / object / state machine / quantum) into the prompt. |
-| `checkpoint.py` / `compaction.py` | Run checkpointing (for resume) and context compaction. |
-| `errors.py` | Typed exceptions mapped to SSE error codes (`INVALID_KEY`, `UPSTREAM_LLM`, …). |
+Frontend production builds require both toolchain validation and shell permission.
+Only a harness-observed successful build against unchanged sources discharges that
+check; generic shell-success logs are not build evidence. The mutation inventory
+exposes reverse relationship inputs, native association roles, and public write
+paths so a test's descriptive name is not mistaken for exercising those paths.
 
-The web runner, SSE event schema, and request model live under
-`besser/utilities/web_modeling_editor/backend/services/smart_generation/` and
-`.../routers/smart_generation_router.py`.
+## Responsibility map
 
-## Models
+| Area | Modules |
+| --- | --- |
+| Public entry and coordination | `__init__.py`, `llm_generator.py`, `orchestrator.py` |
+| Planning, prompts, discovery | `gap_analyzer.py`, `action_inventory.py`, `mutation_inventory.py`, `prompt_builder.py`, `model_serializer.py`, `stack_metadata.py` |
+| Authoritative request | `specification.py`, `user_request.py` |
+| Tool contracts and execution | `tools.py`, `tool_executor.py`, `edit_apply.py` |
+| Shared subprocess environment | `execution/process.py` |
+| Shared findings and source contracts | `validation/issues.py`, `validation/python_source.py`, `validation/frontend_schema.py`, `validation/frontend_build.py` |
+| Immediate source/model contracts | `write_diagnostics.py`, `contract_checks.py`, `frontend_bindings.py`, `endpoint_coherence.py` |
+| Runtime probes | `constructibility.py`, `api_probe.py` |
+| Requirements and scoped acceptance | `requirements_ledger.py`, `acceptance.py`, `fix_target.py` |
+| Persistence, tracing, context | `checkpoint.py`, `tracing.py`, `compaction.py`, `history_eviction.py`, `errors.py` |
+| Providers, routing, usage | `llm_client.py` |
 
-- Provider defaults: `claude-sonnet-4-6` (anthropic), `gpt-4o` (openai), `mistral-large-latest` (mistral); override per run via `llm_model`.
-- Planning (gap phase) always uses `gpt-4o-mini`.
-- BYOK — the user's key is held as a `SecretStr`, read once, never logged or persisted.
+The shared `validation/` and `execution/` modules do not import the orchestrator
+or executor. Existing imports from `orchestrator.py` and `tool_executor.py` remain
+available as compatibility aliases. New shared checks belong below their callers,
+not in a coordinator imported by its own helpers.
 
-> Note: the **modeling-agent** repo has its own separate model routing table
-> (`modeling-agent/src/model_config.py`) for diagram generation in the editor.
-> That is distinct from this package's model selection.
+Runtime probes execute themselves by file path in a child interpreter where
+BESSER need not be installed. Keep BESSER imports inside parent-only functions;
+the worker paths must remain standalone.
 
-## Design notes & roadmap
+The web runner/event handling live in
+`besser/utilities/web_modeling_editor/backend/services/spec_driven/`, the HTTP
+router in `.../routers/spec_driven_router.py`, and request models in
+`.../models/spec_driven.py`.
 
-- `notes/ARCHITECTURE.md`
-- `notes/llm_augmented_generation_architecture.md`
-- `notes/llm_generator_roadmap.md`
-- `notes/gui_export_simplification_plan.md`
+## Providers and compatibility
 
-## Known gaps
+Provider defaults and accounting are defined in `llm_client.py`; callers may
+override the run model. Planning uses `llm_client.planning_model` when supported,
+with the configured fallback behavior. The modeling-agent repository has separate
+model routing for editor/diagram generation.
 
-- **Round-trip preservation** — re-generation does not yet carry forward
-  hand-written edits. This is the biggest planned improvement; see the
-  `ROUND_TRIP_PRESERVATION.md` design doc in the workspace root.
-- **No build gate in prod** — the validate phase is off by default.
+Preserve public entry points, tool names/result shapes, checkpoint/recipe/trace
+formats, edit receipts, per-path locking, and the single checklist state when
+extracting modules. Existing implementation evidence is not a successful new
+write. File organization must not change provider, retry, or validation policy.
 
-## Benchmark
+Edit recovery is shared across phases: two text-edit refusals request a fresh
+read, then a revision-bound `replace_file_lines` call. This avoids repeatedly
+quoting an inaccurate `old_text`; syntax/replay safeguards remain in place.
+Read handles authorize only displayed lines and are not persisted in checkpoints.
+Rejected drafts are omitted from subsequent provider requests while their errors
+and current-source excerpts remain; full original edit inputs stay in the trace
+sidecar. This prevents a refused proposal becoming the agent's presumed source.
+The OpenAI-compatible adapter recognizes complete native tool calls returned with
+a normal `stop` label (observed with Nebius Qwen forced calls), in both streaming
+and non-streaming paths. Explicit truncation/filter stops are not promoted to
+tool execution. Never infer a tool call from prose.
 
-`vibe-bench` (sibling repo, `BESSER-PEARL/vibe-bench`) compares this generator
-against a naive LLM on the same task spec, and `probe_evolution.py` measures
-drift / file loss across modification chains.
+## Verification scope
+
+Use the relevant existing tests under `tests/generators/llm/`, then the full
+offline suite for refactors. No paid generation is needed for import organization.
+Source checks, startup checks, and submitted API scenarios cover different failure
+modes; passing them is not complete specification or benchmark acceptance.

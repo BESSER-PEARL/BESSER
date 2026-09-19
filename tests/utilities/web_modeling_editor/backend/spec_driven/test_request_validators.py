@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from besser.generators.llm.specification import MAX_SPECIFICATION_CHARS, validate_specification
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_MAX_COST_USD_HARD_CAP,
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
@@ -10,6 +11,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 )
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
+    SmartPreviewRequest,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _build_request,
@@ -25,9 +27,25 @@ class TestRequestValidators:
         with pytest.raises(ValidationError, match="api_key"):
             _build_request(api_key="   ")
 
-    def test_whitespace_instructions_rejected(self):
-        with pytest.raises(ValidationError, match="instructions"):
-            _build_request(instructions="   \n\t  ")
+    def test_instruction_size_bound_preserves_long_specs_without_truncation(self):
+        request = _build_request()
+        # Exact boundary, including non-ASCII and meaningful content at the tail.
+        suffix = "\nThe booking must refuse a second payment.\n  "
+        instructions = "  " + "é" * (MAX_SPECIFICATION_CHARS - len(suffix) - 2) + suffix
+        assert validate_specification(instructions) == instructions
+        for model in (SmartGenerateRequest, SmartPreviewRequest):
+            payload = {"project": request.project, "instructions": instructions}
+            if model is SmartGenerateRequest:
+                payload["api_key"] = request.api_key
+            accepted = model(**payload)
+            assert accepted.instructions == instructions
+            assert model.model_json_schema()["properties"]["instructions"]["maxLength"] == MAX_SPECIFICATION_CHARS
+            with pytest.raises(ValidationError, match="instructions"):
+                model(**{**payload, "instructions": instructions + "!"})
+            with pytest.raises(ValidationError, match="instructions"):
+                model(**{**payload, "instructions": "   \n\t  "})
+        with pytest.raises(ValueError, match="not truncated"):
+            validate_specification(instructions + "!")
 
     def test_nan_max_cost_rejected(self):
         # Pydantic's `gt=0` constraint rejects NaN before our custom

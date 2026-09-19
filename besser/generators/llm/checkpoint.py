@@ -1,6 +1,6 @@
 """Per-turn checkpoint persistence for crash-recovery.
 
-After every successful Phase 2 turn, the orchestrator calls
+After each completed customization/repair turn, the orchestrator calls
 :func:`save_checkpoint` to write a snapshot of its mutable conversation
 state to ``.besser_checkpoint.json`` in the output directory. If the
 backend process crashes (OOM, container restart, Ctrl-C), the caller
@@ -44,6 +44,7 @@ then ``os.replace`` so partial writes don't corrupt the checkpoint.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import logging
 import os
@@ -53,7 +54,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = ".besser_checkpoint.json"
-CHECKPOINT_SCHEMA_VERSION = 1
+# Version 2 distinguishes a state-only repair checkpoint from a Phase 2
+# conversation. Older runners must reject it, not replay repairs as Phase 2.
+CHECKPOINT_SCHEMA_VERSION = 2
+# Shared by snapshot persistence and source scans that must exclude old output.
+_SNAPSHOT_DIR = ".besser_snapshot"
 
 
 @dataclass
@@ -64,9 +69,9 @@ class Checkpoint:
     run_id: str
     instructions: str
     primary_kind: str
-    turn: int                          # last completed Phase 2 turn
+    turn: int                          # last completed turn in the saved phase
     total_turns: int
-    messages: list[dict]               # Phase 2 conversation state
+    messages: list[dict]               # Phase 2 conversation only; empty for repair
     tool_calls_log: list[dict]
     validation_issues: list[dict]
     inventory: str
@@ -78,6 +83,15 @@ class Checkpoint:
     # Serialized executor checklist. Added compatibly to schema v1 so older
     # checkpoints load with an empty list and newer resumes retain their gate.
     tasks: list[dict] = field(default_factory=list)
+    # Scenario definitions survive crashes; reports are deliberately not trusted
+    # on resume and are re-established against a fresh runtime copy.
+    api_scenarios: list[dict] = field(default_factory=list)
+    phase: str = "phase2"
+    source_revision: str = ""
+    phase2_stop_reason: str = "max_turns"
+    phase2_exited_cleanly: bool = False
+    # Scheduling/progress only, never cached validation or API success.
+    repair_progress: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,7 +111,70 @@ class Checkpoint:
             "project_fingerprint": self.project_fingerprint,
             "saved_at": self.saved_at,
             "tasks": self.tasks,
+            "api_scenarios": self.api_scenarios,
+            "phase": self.phase,
+            "source_revision": self.source_revision,
+            "phase2_stop_reason": self.phase2_stop_reason,
+            "phase2_exited_cleanly": self.phase2_exited_cleanly,
+            "repair_progress": self.repair_progress,
         }
+
+
+def api_scenario_snapshot(records, *, include_reports: bool = False) -> list[dict]:
+    """Bounded, detached workflow definitions for checkpoints and recipes."""
+    from besser.generators.llm.api_probe import _validate_requests
+
+    records = list(records)
+    if len(records) > 10:
+        raise ValueError("At most ten retained API scenarios may be saved/restored")
+    output, identifiers = [], set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("Invalid saved API scenario record")
+        identifier, scenario = record.get("scenario_id"), record.get("scenario")
+        if (not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 80
+                or identifier in identifiers or not isinstance(scenario, dict)):
+            raise ValueError("Saved API scenarios need distinct nonempty IDs and declarative definitions")
+        _validate_requests(scenario.get("requests"))
+        backend = scenario.get("backend")
+        if backend is not None and (
+            not isinstance(backend, str) or backend.startswith(("/", "\\"))
+            or ":" in backend or ".." in backend.replace("\\", "/").split("/")
+        ):
+            raise ValueError("Saved API scenario backend must be an in-workspace relative path")
+        identifiers.add(identifier)
+        saved = {"scenario_id": identifier,
+                 "scenario": copy.deepcopy({"requests": scenario["requests"], "backend": backend})}
+        history = record.get("correction_history", [])
+        if not isinstance(history, list):
+            raise ValueError("Saved API correction_history must be a list")
+        history = list(history)
+        correction = (record.get("report") or {}).get("correction")
+        if correction and (not history or history[-1] != correction):
+            history.append(correction)
+        saved["correction_history"] = [
+            {"reason": str(item.get("reason", ""))[:1000],
+             "previous_status": str(item.get("previous_status", ""))[:40]}
+            for item in history[-10:] if isinstance(item, dict)
+        ]
+        if include_reports:
+            saved["report"] = copy.deepcopy(record.get("report") or {"status": "unverified"})
+        output.append(saved)
+    return output
+
+
+def restore_api_scenarios(entries: list[dict]) -> dict[str, dict]:
+    """Validate definitions, never restore a cached success as fresh evidence."""
+    if not isinstance(entries, list):
+        raise ValueError("Saved api_scenarios must be a list")
+    restored = {}
+    for saved in api_scenario_snapshot(entries):
+        restored["named:" + saved["scenario_id"]] = {
+            **saved, "revision": None,
+            "report": {"status": "unverified", "boot": "not_checked",
+                       "error": "Restored API workflow must be rerun against the current source."},
+        }
+    return restored
 
 
 def compute_fingerprint(
@@ -250,7 +327,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
         logger.warning("Failed to read checkpoint at %s: %s", path, exc)
         return None
 
-    if data.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
+    if data.get("schema_version") not in {1, CHECKPOINT_SCHEMA_VERSION}:
         logger.warning(
             "Checkpoint at %s has schema version %s, expected %s — "
             "refusing to load to avoid silent corruption",
@@ -259,6 +336,27 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
         return None
 
     try:
+        phase = data.get("phase", "phase2")
+        if phase not in {"phase2", "phase3"}:
+            raise ValueError("Unknown checkpoint phase")
+        if data["schema_version"] == 1 and phase != "phase2":
+            raise ValueError("Legacy checkpoints cannot contain repair-phase state")
+        progress = data.get("repair_progress", {})
+        revision = data.get("source_revision", "")
+        if not isinstance(progress, dict) or not isinstance(revision, str):
+            raise ValueError("Invalid repair progress or source revision")
+        for key in ("attempts_run", "no_progress_streak"):
+            if type(progress.get(key, 0)) is not int or progress.get(key, 0) < 0:
+                raise ValueError("Invalid repair progress counter")
+        states = progress.get("seen_states", [])
+        if not isinstance(states, list) or any(
+            not isinstance(item, list) or len(item) != 3
+            or not isinstance(item[0], str) or not isinstance(item[1], str)
+            or not isinstance(item[2], list)
+            or any(not isinstance(message, str) for message in item[2])
+            for item in states
+        ):
+            raise ValueError("Invalid repair progress states")
         return Checkpoint(
             schema_version=data["schema_version"],
             run_id=data.get("run_id", ""),
@@ -276,6 +374,12 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             project_fingerprint=data.get("project_fingerprint", ""),
             saved_at=float(data.get("saved_at", 0.0)),
             tasks=data.get("tasks") or [],
+            api_scenarios=data.get("api_scenarios", []),
+            phase=phase,
+            source_revision=revision,
+            phase2_stop_reason=str(data.get("phase2_stop_reason", "max_turns")),
+            phase2_exited_cleanly=data.get("phase2_exited_cleanly") is True,
+            repair_progress=progress,
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

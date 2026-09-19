@@ -81,7 +81,8 @@ def test_page_without_post_is_flagged_create_missing(tmp_path):
     matrix = build_acceptance_matrix(str(tmp_path), _model("Book"))
     assert matrix["Book"] == {"route": True, "page": True, "create": False}
     issues = matrix_issues(matrix)
-    assert "create form not wired" in issues[0]
+    assert "POST not resolved statically" in issues[0]
+    assert "create form not wired" not in issues[0]
 
 
 def test_plural_y_form_is_matched(tmp_path):

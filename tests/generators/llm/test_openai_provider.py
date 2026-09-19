@@ -172,14 +172,15 @@ class TestOpenAIResponseToCommon:
         assert result["content"][0].type == "text"
         assert result["content"][0].text == "Hello world"
 
-    def test_tool_call_response(self):
+    @pytest.mark.parametrize("finish_reason", ["tool_calls", "stop", None, "length", "content_filter"])
+    def test_tool_call_response(self, finish_reason):
         tc = SimpleNamespace(
             id="call_xyz",
             function=SimpleNamespace(name="read_file", arguments='{"path": "main.py"}'),
         )
-        resp = self._make_response(content=None, tool_calls=[tc], finish_reason="tool_calls")
+        resp = self._make_response(content=None, tool_calls=[tc], finish_reason=finish_reason)
         result = _openai_response_to_common(resp)
-        assert result["stop_reason"] == "tool_use"
+        assert result["stop_reason"] == (finish_reason if finish_reason in {"length", "content_filter"} else "tool_use")
         assert len(result["content"]) == 1
         block = result["content"][0]
         assert block.type == "tool_use"
@@ -199,14 +200,16 @@ class TestOpenAIResponseToCommon:
         assert result["content"][0].type == "text"
         assert result["content"][1].type == "tool_use"
 
-    def test_malformed_tool_arguments(self):
+    @pytest.mark.parametrize("finish_reason", ["tool_calls", "stop"])
+    def test_malformed_tool_arguments(self, finish_reason):
         tc = SimpleNamespace(
             id="call_bad",
             function=SimpleNamespace(name="some_tool", arguments="not-json"),
         )
-        resp = self._make_response(tool_calls=[tc], finish_reason="tool_calls")
+        resp = self._make_response(tool_calls=[tc], finish_reason=finish_reason)
         result = _openai_response_to_common(resp)
         assert result["content"][0].input == {}
+        assert result["stop_reason"] == ("tool_use" if finish_reason == "tool_calls" else "end_turn")
 
     def test_empty_response(self):
         resp = self._make_response(content=None, tool_calls=None, finish_reason="stop")
@@ -296,8 +299,8 @@ class TestOpenAIPricing:
         ("model", "input_rate", "output_rate"),
         [
             ("gpt-5.6-sol", 5.0, 30.0),
-            ("gpt-5.6-terra", 2.5, 15.0),
-            ("gpt-5.6-luna", 1.0, 6.0),
+            ("gpt-5.6-terra", 2.0, 12.0),
+            ("gpt-5.6-luna", 0.2, 1.2),
         ],
     )
     def test_gpt56_variant_pricing(self, model, input_rate, output_rate):
@@ -559,6 +562,21 @@ class TestOpenAIProviderChat:
 
 
 class TestOpenAIProviderStream:
+
+    @pytest.mark.parametrize("finish_reason", ["tool_calls", "stop", None, "length", "content_filter"])
+    def test_complete_streamed_calls_survive_normal_stop_labels(self, finish_reason):
+        provider = _make_openai_provider()
+        chunks = [SimpleNamespace(usage=None, choices=[SimpleNamespace(
+            delta=SimpleNamespace(content=None, tool_calls=[SimpleNamespace(index=0, id="call_x",
+                function=SimpleNamespace(name="read_file", arguments='{"path":'))]), finish_reason=None)]),
+            SimpleNamespace(usage=None, choices=[SimpleNamespace(
+                delta=SimpleNamespace(content=None, tool_calls=[SimpleNamespace(index=0, id=None,
+                    function=SimpleNamespace(name=None, arguments='"app.py"}'))]), finish_reason=finish_reason)])]
+        provider._client.chat.completions.create.return_value = iter(chunks)
+        result = list(provider.chat_stream(system="sys", messages=[], tools=[]))[-1]
+        assert result["stop_reason"] == (finish_reason if finish_reason in {"length", "content_filter"} else "tool_use")
+        assert result["content"][0].input == {"path": "app.py"}
+        assert result["provider_finish_reason"] == finish_reason
 
     def test_stream_text(self):
         provider = _make_openai_provider()

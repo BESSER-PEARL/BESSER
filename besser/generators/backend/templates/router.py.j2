@@ -7,7 +7,7 @@
 {{ not ((attr.name == 'id' and not attr.is_id)
         or (not attr.is_id and (attr.name | lower | replace('_','')) in ['createdat','updatedat'])) }}
 {%- endmacro -%}
-{% macro link_attr_names(assoc_class_name) %}({% for attribute in assoc_classes[assoc_class_name].attributes %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
+{% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in
    the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
    assoc_by_association. Mirrors the per-class block that used to live inline in the
@@ -678,6 +678,28 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 @router.post("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
 async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create], database: Session = Depends(get_db)) -> dict:
     """Create multiple {{ class.name }} entities at once"""
+    {# Bulk construction below only persists scalar attributes and owned FKs.
+       Never silently discard required or supplied collections/link rows. Run
+       this preflight before adding any item so refusal cannot partially write. #}
+    {% set bulk_relations = namespace(required=false, fields=[]) %}
+    {% for x in ns.end_name_multiple %}
+        {% if x[5] > 0 %}{% set bulk_relations.required = true %}{% endif %}
+        {% do bulk_relations.fields.append(x[3]) %}
+    {% endfor %}
+    {% for x in ns.assoc_links %}
+        {% if x[6] > 1 and x[5] > 0 %}{% set bulk_relations.required = true %}{% endif %}
+        {% do bulk_relations.fields.append(x[3]) %}
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+        {% do bulk_relations.fields.append(x[2]) %}
+    {% endfor %}
+    {% if bulk_relations.required %}
+    if items:
+        raise HTTPException(status_code=422, detail="Bulk creation of {{ class.name }} with required relationships is not supported; use POST /{{ class.name | lower }}/ to validate and persist its relationships")
+    {% elif bulk_relations.fields %}
+    if any(getattr(item, field, None) for item in items for field in {{ bulk_relations.fields | unique | list }}):
+        raise HTTPException(status_code=422, detail="Bulk creation of {{ class.name }} with relationships is not supported; use POST /{{ class.name | lower }}/ to validate and persist its relationships")
+    {% endif %}
     created_items = []
     errors = []
 
@@ -804,6 +826,12 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
 @router.delete("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
 async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.name, 'int') }}], database: Session = Depends(get_db)) -> dict:
     """Delete multiple {{ class.name }} entities at once"""
+    {% if ns.lower_bound_guards %}
+    # Aggregate deletion must account for every related lower bound. Until it
+    # shares that validation, use the guarded individual delete endpoint.
+    if ids:
+        raise HTTPException(status_code=409, detail="Bulk deletion of {{ class.name }} can violate required relationships and is not supported; use the individual DELETE /{{ class.name | lower }}/ endpoint")
+    {% endif %}
     deleted_count = 0
     not_found = []
 
@@ -838,7 +866,7 @@ async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.
     if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    {% for attribute in assoc_classes[class.name].attributes %}
+    {% for attribute in assoc_classes[class.name].attributes if not attribute.is_id %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %})
     {% endfor %}
     database.commit()
@@ -957,7 +985,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
                     **link_attrs(link, {{ link_attr_names(x[4]) }})
                 ))
             else:
-                for link_attr_name, link_attr_value in link_attrs(link, {{ link_attr_names(x[4]) }}).items():
+                for link_attr_name, link_attr_value in link_attrs(link, {{ link_attr_names(x[4], include_ids=false) }}).items():
                     setattr(link_row, link_attr_name, link_attr_value)
     {% endfor %}
     {% endif %}

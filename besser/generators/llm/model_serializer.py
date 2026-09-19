@@ -9,6 +9,7 @@ A typical 10-class model serializes to ~2-3 KB of JSON.
 """
 
 import json
+from copy import deepcopy
 from enum import Enum
 from typing import Any
 
@@ -56,6 +57,15 @@ def _attribute_entry(attr) -> dict[str, Any]:
     return entry
 
 
+def _constraint_entry(constraint) -> dict[str, Any]:
+    entry: dict[str, Any] = {"name": constraint.name}
+    if constraint.context:
+        entry["context"] = constraint.context.name
+    if constraint.expression:
+        entry["expression"] = constraint.expression
+    return entry
+
+
 def _method_entry(method) -> dict[str, Any]:
     """Produce the compact dict representation of a single ``Method``."""
     entry: dict[str, Any] = {"name": method.name}
@@ -77,6 +87,10 @@ def _method_entry(method) -> dict[str, Any]:
     code = getattr(method, "code", None) or getattr(method, "body", None)
     if isinstance(code, str) and code.strip():
         entry["body"] = code
+    for kind in ("pre", "post"):
+        constraints = getattr(method, kind, None)
+        if constraints:
+            entry[kind] = [_constraint_entry(c) for c in constraints]
     return entry
 
 
@@ -229,12 +243,7 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
     # Constraints
     constraints = []
     for c in sorted(model.constraints, key=lambda c: c.name):
-        c_data: dict[str, Any] = {"name": c.name}
-        if c.context:
-            c_data["context"] = c.context.name
-        if c.expression:
-            c_data["expression"] = c.expression
-        constraints.append(c_data)
+        constraints.append(_constraint_entry(c))
 
     # Build output — only include non-empty sections
     result: dict[str, Any] = {"name": model.name}
@@ -250,6 +259,11 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
         result["generalizations"] = generalizations
     if constraints:
         result["constraints"] = constraints
+    # Rejected OCL is an unresolved obligation, not an executable constraint.
+    # Preserve its source and original text for planners and model tools.
+    conversion_issues = getattr(model, "conversion_issues", None)
+    if conversion_issues:
+        result["conversion_issues"] = deepcopy(conversion_issues)
     return result
 
 

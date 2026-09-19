@@ -32,6 +32,7 @@ import pytest
 
 from besser.generators.llm.orchestrator import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
+    _PHASE3_FIX_TURNS,
     LLMOrchestrator,
     ValidationIssue,
 )
@@ -135,11 +136,18 @@ def _main_py(tmp_path) -> str:
 # ------------------------------------------------------------ the attempt acts
 
 
-def test_a_prose_reply_is_re_prompted_with_modify_file_forced(tmp_path):
+@pytest.mark.parametrize("verification_only", [False, "requirement unverified:", "verification setup:"])
+def test_a_prose_reply_is_re_prompted_with_modify_file_forced(tmp_path, verification_only):
     client = _StructuredClient(_prose)
     orch = _build(tmp_path, client)
 
-    orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
+    blocker = ValidationIssue("blocker", f"{verification_only} verification is required") if verification_only else BLOCKER
+    orch._invoke_phase3_fix_loop([blocker], is_first_attempt=True)
+
+    if verification_only:
+        assert _main_py(tmp_path) == "x = 1\n", "evidence correction must not force a gratuitous source edit"
+        assert [force for force, _ in client.calls] == [None]
+        return
 
     assert _main_py(tmp_path) == "x = 2\n"
     # Prose, the forced edit, then the model's own next turn (prose again,
@@ -157,7 +165,10 @@ def test_reading_until_the_turn_cap_gets_one_forced_edit_turn(tmp_path):
     orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
 
     assert _main_py(tmp_path) == "x = 2\n"
-    assert [force for force, _ in client.calls] == [None] * 5 + ["modify_file"]
+    assert [force for force, _ in client.calls] == [None] * _PHASE3_FIX_TURNS + ["modify_file"]
+    assert orch.total_turns == _PHASE3_FIX_TURNS + 1
+    edits = [call for call in orch.tool_calls_log if call["tool"] == "modify_file"]
+    assert len(edits) == 1 and edits[0]["success"]
 
 
 def test_a_client_that_ignores_the_re_prompt_ends_the_attempt(tmp_path):
@@ -189,15 +200,55 @@ def test_an_attempt_that_edited_is_not_re_prompted(tmp_path):
     assert _main_py(tmp_path) == "x = 2\n"
     assert [force for force, _ in client.calls] == [None, None]
 
+    # The last permitted edit turn must still be verified, not treated as an
+    # in-flight cancellation merely because no further editing turns remain.
+    boundary_client = _StructuredClient(edit_then_stop)
+    boundary = _build(tmp_path, boundary_client, max_turns=1, auto_fix_issues=True)
+    boundary._phase2_stop_reason = "validation_required"
+    with patch.object(boundary, "_collect_validation_issues", side_effect=[[BLOCKER], []]) as checks:
+        boundary._run_phase3_validation()
+    assert _main_py(tmp_path) == "x = 2\n" and checks.call_count == 2
+    assert [force for force, _ in boundary_client.calls] == [None]
+    assert not boundary._phase3_interrupted and boundary._phase2_exited_cleanly
+    assert boundary._validation_issues == []
+
 
 def test_the_fix_prompt_asks_for_an_edit_up_front(tmp_path):
+    from besser.BUML.metamodel.structural import Class, DomainModel
+
     client = _PlainClient()
     orch = _build(tmp_path, client)
-    with patch.object(client, "chat", wraps=client.chat) as spy:
+    orch._instructions = "Bookings must enforce combined room capacity."
+    orch.domain_model = DomainModel(name="Hotel", types={Class(name="Booking")})
+    expression = "context Booking inv capacity: self.guests->size() <= 4"
+    orch.domain_model.conversion_issues = [{
+        "id": "ocl-capacity", "expression": expression,
+        "reason": "Property 'guests' not found in context 'Booking'",
+    }]
+    orch._recent_tool_failures = [{"tool": "read_file", "path": "models/booking.py", "error": "File not found"}]
+    with patch.object(client, "chat", wraps=client.chat) as spy, patch(
+        "besser.generators.llm.orchestrator.build_mutation_manifest",
+        return_value="Relationship mutation coverage: reverse create, update and unlink paths",
+    ):
         orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
     first_prompt = spy.call_args_list[0].kwargs["messages"][0]["content"]
     assert "modify_file" in first_prompt
     assert "do not stop" in first_prompt.lower() or "not done" in first_prompt.lower()
+    assert orch._instructions in first_prompt
+    assert "app/main.py" in first_prompt and "Current files and symbols" in first_prompt
+    assert "models/booking.py" in first_prompt and "Recent rejected operations" in first_prompt
+    assert "Domain model and conversion losses" in first_prompt
+    assert expression in first_prompt and "ocl-capacity" in first_prompt
+    assert "Requirements to verify (including conversion recovery)" in first_prompt
+    assert "Relationship mutation coverage: reverse create, update and unlink paths" in first_prompt
+
+
+def test_repair_excerpts_accept_real_finding_formats_and_reject_escape(tmp_path):
+    orch = _build(tmp_path, _PlainClient())
+    for location in ("frontend contract: app/main.py line 1", "ruff: app/main.py:1:2", "tsc [.]: app/main.py(1,2)"):
+        excerpts = orch._excerpts_for([ValidationIssue("blocker", location)])
+        assert len(excerpts) == 1 and "x = 1" in excerpts[0]
+    assert orch._excerpts_for([ValidationIssue("blocker", "syntax error in ../escape.py line 1")]) == []
 
 
 # ------------------------------------------------------- the attempt is seen
@@ -211,10 +262,24 @@ def test_phase3_tool_calls_are_recorded_like_phase2_ones(tmp_path):
 
     logged = [(e["tool"], e["success"]) for e in orch.tool_calls_log]
     assert ("modify_file", True) in logged, logged
+
+    # A validation request in the same batch must observe the completed edit,
+    # even when the model lists validation first; response IDs keep input order.
+    orch.executor.app_validator = lambda: {"blocker_count": 0, "source": _main_py(tmp_path)}
+    results = orch._execute_tool_blocks([
+        _Block("tool_use", id="validate", name="validate_app", input={}),
+        _Block("tool_use", id="edit-again", name="modify_file", input={
+            "path": "app/main.py", "old_text": "x = 2\n", "new_text": "x = 3\n",
+        }),
+    ], turn=orch.total_turns)
+    assert [result["tool_use_id"] for result in results] == ["validate", "edit-again"]
+    assert json.loads(results[0]["content"])["source"] == "x = 3\n"
     trace = (tmp_path / ".besser_trace.jsonl").read_text(encoding="utf-8")
     events = [json.loads(line) for line in trace.splitlines()]
     assert any(e["event"] == "tool_call" and e["payload"]["tool"] == "modify_file"
                for e in events), [e["event"] for e in events]
+    assert any(e["event"] == "tool_call" and e["payload"]["tool"] == "validate_app"
+               for e in events)
 
 
 def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):

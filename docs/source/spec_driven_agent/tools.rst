@@ -13,12 +13,12 @@ would immediately fail.
    * - Group
      - Tools
    * - Files
-     - ``list_files``, ``read_file``, ``write_file``, ``modify_file``,
+     - ``list_files``, ``read_file``, ``write_file``, ``modify_file``, ``replace_file_lines``,
        ``search_in_files``, ``delete_file``
    * - Model queries
      - ``query_class``, ``list_classes_with``, ``get_constraints_for``
    * - Validation / bookkeeping
-     - ``validate_model``, ``check_syntax``, ``task_list``
+     - ``validate_app``, ``test_api``, ``validate_model``, ``check_syntax``, ``task_list``
    * - Generators
      - The 20 generator tools listed below.
    * - Shell
@@ -27,6 +27,70 @@ would immediately fail.
 The model-query tools give the LLM random access into your domain model
 (attributes, flattened inherited methods, association ends, OCL constraints)
 without holding the whole serialized model in context.
+
+File edits and checklist evidence
+---------------------------------
+
+``modify_file`` refuses ambiguous anchors, identical no-ops and duplicate-looking
+insertions. ``already_applied`` requires a receipt for that exact successful edit
+and an unchanged post-edit file hash. After restart, matching replacement-shaped
+content may instead produce ``possible_replay``: no write is made, but no success
+is claimed. Missing-file responses suggest existing paths without substituting
+them for the requested path.
+
+After two rejected text edits on a file, the executor provides an explicit
+recovery sequence: ``read_file`` followed by ``replace_file_lines``. This applies
+in customization and validation repair. Repeated quotation failures do not
+permanently freeze the file; an agent that ignores recovery is still bounded by
+the loop and run budgets.
+
+``read_file`` returns a ``read_id`` tied to the resolved path, whole-file content
+hash, and actually displayed lines. ``replace_file_lines`` accepts that ID,
+1-based inclusive ``start_line``/``end_line``, and complete ``new_text``. It does
+not require reproducing the old text. Unread/truncated ranges, stale IDs,
+no-ops, new elisions, and changes that break previously valid Python syntax are
+refused without writing. After a successful edit, read again before another
+same-file range edit. IDs are session-local and expire on resume. The tool shares
+path containment, per-file locking, diagnostics, and successful-write evidence
+with the other editors. An accepted edit is not proof of business correctness.
+
+``task_list(action='done')`` runs an attached verifier. A verifier exception is a
+failed check, not success. Without a verifier, supply
+``evidence=[{"id": N, "path": "...", "quote": "..."}]`` from a successful current
+write; this records implementation, with acceptance still unverified.
+Already-correct scaffold code can instead use ``existing=true`` after reading
+the file and citing executable evidence. This records an existing implementation,
+not a fabricated write or a passing business test.
+``action='blocked'`` requires a reason and retains required unresolved work.
+A later successful check/evidence submission can clear the block. ``drop`` is
+only for work outside the user's request. Task outcomes are retained in the recipe.
+
+Application checks during editing
+---------------------------------
+
+``validate_app`` reports source contracts, startup and create-request failures
+after a coherent edit. Validation runs after writes in the same tool batch.
+
+``test_api`` executes up to 20 declarative requests against a disposable copy of
+one generated FastAPI backend and a fresh SQLite database. Requests share state
+within a scenario; later requests may reference response JSON using
+``{{0.room.id}}``. Assertions specify expected statuses and dotted JSON fields.
+Named scenarios are retained during the run and replayed after source changes;
+failures block completion. Correcting a mistaken test requires an explicit
+``correction_reason``. Model-authored scenarios are supplemental checks, not an
+independent proof of specification coverage.
+
+Use ``test_api(action="list")`` to discover retained workflows and
+``test_api(action="get", scenario_id="...")`` to inspect their exact inputs,
+expectations and last report without executing them. ``action="run"`` with
+only a scenario ID replays its saved definition. The original specification
+remains authoritative: a generated assertion can be wrong and must not force
+correct application behavior to regress.
+
+Both runtime probes honor ``enable_import_smoke_check``. The API tool accepts no
+shell commands or external URLs. It runs generated Python code with ordinary
+side-effect guards, **not an OS security sandbox**; hosted untrusted execution
+still requires deployment-level isolation.
 
 Generator tools
 ---------------

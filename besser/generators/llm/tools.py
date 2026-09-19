@@ -290,7 +290,8 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "keeps the prefix is accepted too. "
             "For large files (>200 lines), use offset and limit to read specific "
             "line ranges instead of the whole file. "
-            "Example: offset=50, limit=30 reads lines 50-79."
+            "Returns read_id for revision-bound replace_file_lines edits. "
+            "Example: offset=50, limit=30 displays lines 51-80."
         ),
         "input_schema": {
             "type": "object",
@@ -341,7 +342,11 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "previous one left it. old_text must match exactly, including "
             "indentation. Completed replacement regions are skipped on replay, "
             "including insertions that retain old_text. An already_applied result "
-            "means no write was needed: mark that change done and do not resend it."
+            "requires a receipt for this exact edit and unchanged post-edit file; "
+            "it confirms the edit only, not the whole requirement. A possible_replay "
+            "result refuses a duplicate-looking insertion without claiming success. "
+            "After matching failures, read the target block and use replace_file_lines; "
+            "do not keep retyping a failing old_text."
         ),
         "input_schema": {
             "type": "object",
@@ -359,6 +364,32 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["path", "old_text", "new_text"],
+        },
+    },
+    {
+        "name": "replace_file_lines",
+        "description": (
+            "Replace a specific range of an existing file WITHOUT quoting old_text. "
+            "Use this after modify_file matching failures or for a complete function/block replacement. "
+            "First call read_file on the target block; copy its read_id and select the displayed "
+            "1-based start_line and end_line (both inclusive). new_text is the complete literal "
+            "replacement, with correct indentation and no numbered prefixes or omitted code. "
+            "Use an empty new_text to delete the selected lines. For insertion, include the selected "
+            "anchor line in new_text. Only the selected lines change. Unread ranges, stale reads "
+            "and syntax-breaking replacements are refused. After each successful edit, read again "
+            "before another range edit on the same file; do not batch same-file edits using one read_id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Relative path within the workspace"},
+                "read_id": {"type": "string", "description": "Exact read_id returned by read_file for this file"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+                "new_text": {"type": "string", "description": "Complete replacement for the selected inclusive lines"},
+            },
+            "required": ["path", "read_id", "start_line", "end_line", "new_text"],
+            "additionalProperties": False,
         },
     },
     {
@@ -466,6 +497,61 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
 
 VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
+        "name": "test_api",
+        "description": (
+            "Exercise a real generated FastAPI workflow in an isolated copy with a fresh SQLite "
+            "database. Submit up to 20 requests; state is shared within this call only. "
+            "Use prior response JSON via {{0.room.id}} in later JSON values or paths. "
+            "Omitted expected_status means 2xx. Assert business results with expected_fields "
+            "(dotted JSON path -> literal). Test happy paths AND invalid input/state transitions "
+            "from the original specification. Valid scenarios are retained and rerun after code "
+            "changes; failures block completion. Give each workflow a scenario_id; to correct "
+            "a mistaken test payload/assertion reuse that ID with correction_reason, never "
+            "weaken the specification to make broken code pass. Derive expected values from the "
+            "original specification, not the current implementation. action='list' lists retained "
+            "scenarios; action='get' with scenario_id reads its exact requests, expectations and "
+            "last report without executing it. action='run' (default) with just scenario_id replays "
+            "the saved definition. Inspect failed tests before changing either code or expectations. "
+            "No shell, credentials, or external URLs. "
+            "Passing proves only the submitted scenario, not every requirement."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["run", "list", "get"], "description": "Default run; list/get inspect saved workflow definitions without execution"},
+                "scenario_id": {"type": "string", "description": "Stable workflow name (max 80 characters); reuse to correct the same test"},
+                "correction_reason": {"type": "string", "description": "Required when changing a saved scenario; explain why the previous test was wrong"},
+                "backend": {"type": "string", "description": "Optional relative generated backend directory"},
+                "requests": {
+                    "type": "array", "minItems": 1, "maxItems": 20,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+                            "path": {"type": "string", "description": "Local API path beginning with /"},
+                            "json": {},
+                            "expected_status": {"anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
+                            "expected_fields": {"type": "object", "additionalProperties": True},
+                        },
+                        "required": ["method", "path"], "additionalProperties": False,
+                    },
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "validate_app",
+        "description": (
+            "Run the harness's application checks now: Python declarations, schema/router "
+            "contracts, and (when enabled) isolated backend startup and create requests. "
+            "No arbitrary shell commands or package installation. Call after a coherent "
+            "change and before claiming completion. Fix the returned blockers, then rerun. "
+            "A passing result covers these checks only, not all business requirements."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "validate_model",
         "description": "Run structural validation on the domain model. Returns errors and warnings.",
         "input_schema": {"type": "object", "properties": {}},
@@ -494,6 +580,12 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "for SEVERAL AT ONCE, or `text` for one. "
             "action='drop' closes an item the user did NOT ask for (pass `id` and "
             "`reason`) — never mark such an item done. "
+            "action='blocked' records required but unresolved work (pass `id` or "
+            "`ids` and `reason`); use this when you cannot implement or verify it. "
+            "For done without an attached verifier, supply evidence=[{id, path, quote}] "
+            "from your successful writes. For an already-existing implementation, read the "
+            "source first and set existing=true with exact executable evidence; do not make "
+            "unnecessary edits just to close a task. This records implementation only, not verified acceptance. "
             "Mark items done as you complete them — the run does not finish "
             "while items are open. Batch them: one task per call wastes a turn "
             "each, and you have a limited number of turns. Some items are "
@@ -506,9 +598,10 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "done", "add", "drop"],
-                    "description": "list | done | add | drop",
+                    "enum": ["list", "done", "add", "drop", "blocked"],
+                    "description": "list | done | add | drop | blocked",
                 },
+                "existing": {"type": "boolean", "description": "For done: cite an already-existing implementation that you have read, without claiming you wrote it. Acceptance remains unverified."},
                 "id": {
                     "type": "integer",
                     "description": (
@@ -518,7 +611,21 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                 },
                 "reason": {
                     "type": "string",
-                    "description": "For action='drop': why the user did not ask for this item.",
+                    "description": "For drop: why not requested. For blocked: what remains unresolved and why.",
+                },
+                "evidence": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "description": "For done without a verifier: current exact quotes from files you successfully changed; not acceptance proof.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "path": {"type": "string"},
+                            "quote": {"type": "string", "maxLength": 4000},
+                        },
+                        "required": ["id", "path", "quote"],
+                    },
                 },
                 "ids": {
                     "type": "array",

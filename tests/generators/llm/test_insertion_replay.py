@@ -36,11 +36,16 @@ def test_actual_run_replayed_75_times_writes_once(tmp_path, restart):
     executor = ToolExecutor(str(tmp_path), per_write_diagnostics=False)
     assert edit(executor, BOOKING_OLD, BOOKING_NEW)["status"] == "modified"
     expected = path.read_bytes()
+    first_replay = edit(executor, BOOKING_OLD, BOOKING_NEW)
+    assert first_replay["status"] == "already_applied"
     for _ in range(74):
         if restart:
             executor = ToolExecutor(str(tmp_path), per_write_diagnostics=False)
         result = edit(executor, BOOKING_OLD, BOOKING_NEW)
         assert "error" in result, result
+        if restart:
+            assert result["status"] == "possible_replay"
+            assert "No successful-edit receipt" in result["error"]
         assert path.read_bytes() == expected
     assert path.read_text().count("db_booking.totalPrice =") == 1
 

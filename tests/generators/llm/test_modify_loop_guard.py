@@ -127,6 +127,24 @@ def _streak_turn4_text(simple_model, tmp_path, target: str, old_text) -> str:
 
 class TestPerFileModifyGuard:
 
+    def test_syntax_refusals_are_not_reported_as_failed_text_matches(self, simple_model, tmp_path):
+        source = "def action():\n    try:\n        return True\n    except ValueError:\n        return False\n"
+        (tmp_path / "action.py").write_text(source, encoding="utf-8")
+        orch = LLMOrchestrator(llm_client=type("Client", (), {"model": "mock-model", "usage": UsageTracker("mock-model")})(),
+                               domain_model=simple_model, output_dir=str(tmp_path))
+        for number in range(3):
+            block = MockBlock("tool_use", name="modify_file", id=f"bad{number}", input={
+                "path": "action.py", "old_text": "        return True",
+                "new_text": f"    return {number}",
+            })
+            orch._execute_tool_blocks([block], number)
+        assert orch._consecutive_modify_on_same_file() == "action.py"
+        reminder = orch._build_modify_loop_reminder("action.py")
+        assert "syntax guard" in reminder and "NOT applied" in reminder
+        assert "CURRENT ON-DISK" in reminder and "try/except" in reminder
+        assert "all failed to match" not in reminder and "write_file" not in reminder
+        assert (tmp_path / "action.py").read_text(encoding="utf-8") == source
+
     def test_three_successful_edits_to_one_file_do_not_trigger(self, simple_model, tmp_path):
         """Three edits that each match and apply are ordinary work on one
         file, not a flail. Live 2026-09-17: the reminder fired here and
@@ -152,7 +170,7 @@ class TestPerFileModifyGuard:
         # LLM treats it as a meta-instruction, not user content.
         assert "<system-reminder>" in joined, joined
         assert target in joined
-        assert "read_file" in joined and "verbatim" in joined, joined
+        assert "read_file" in joined and "replace_file_lines" in joined and "read_id" in joined, joined
         # Never points the model at a rewrite - that is what lost scaffold code.
         assert "write_file" not in joined, joined
         assert "complete new contents" not in joined, joined

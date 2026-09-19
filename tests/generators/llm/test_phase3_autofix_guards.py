@@ -6,10 +6,10 @@ issues (Python syntax errors, broken Dockerfile refs, dependency conflicts)
 were logged and the broken artifact was shipped as a green success. The agent
 detected its own errors and never got to fix them.
 
-Enabling the (already bounded: 3 rounds x 5 turns, snapshot/rollback) fix loop
+Enabling the budgeted fix loop
 for web runs required one hardening step this file pins down: the inner fix
 loop must honour the SAME per-turn guards as the Phase 2 loop — cooperative
-cancellation, the runtime cap, and the cost cap — because 15 worst-case turns
+cancellation, the runtime cap, the turn cap and the cost cap — because repair turns
 on an expensive model is not negligible spend.
 """
 
@@ -66,11 +66,42 @@ _BLOCKER = ValidationIssue(severity="blocker", message="syntax [app/main.py]: in
 # ---------------------------------------------------------------------------
 
 
-def test_fix_loop_stops_on_cancellation_before_any_llm_call(tmp_path) -> None:
+def test_fix_loop_stops_on_cancellation_before_any_llm_call(tmp_path, monkeypatch) -> None:
     client = _CountingClient()
     orch = _build(tmp_path, client, should_continue=lambda: False)
     orch._invoke_phase3_fix_loop([_BLOCKER], is_first_attempt=True)
     assert client.calls == 0
+    monkeypatch.setattr(orch, "_collect_validation_issues", lambda: pytest.fail("cancelled run started validation"))
+    orch._run_phase3_validation()
+    assert orch._phase3_interrupted and orch._validation_issues
+
+    allowed = [True]
+    repairing = _build(tmp_path, client, should_continue=lambda: allowed[0], auto_fix_issues=True)
+    checks = []
+    def collect_once():
+        checks.append(True)
+        assert len(checks) == 1, "stop during repair must not trigger another coverage judgment"
+        return [_BLOCKER]
+    def cancelled_repair(*args):
+        allowed[0] = False
+        return 0
+    monkeypatch.setattr(repairing, "_collect_validation_issues", collect_once)
+    monkeypatch.setattr(repairing, "_invoke_phase3_fix_loop", cancelled_repair)
+    repairing._run_phase3_validation()
+    assert repairing._phase3_interrupted and repairing._validation_issues == [_BLOCKER]
+    assert client.calls == 0
+
+    # A stop received during an in-flight provider call must prevent its returned
+    # tool batch from being applied; no actual mutation is needed for this test.
+    allowed[0] = True
+    inflight = _build(tmp_path, client, should_continue=lambda: allowed[0])
+    def stopped_chat(**kwargs):
+        allowed[0] = False
+        return {"stop_reason": "tool_use", "content": []}
+    monkeypatch.setattr(client, "chat", stopped_chat)
+    monkeypatch.setattr(inflight, "_execute_tool_blocks", lambda *args: pytest.fail("executed tools after stop"))
+    inflight._invoke_phase3_fix_loop([_BLOCKER], is_first_attempt=True)
+    assert inflight._phase3_interrupted
 
 
 def test_fix_loop_stops_on_cost_cap_before_any_llm_call(tmp_path) -> None:
@@ -102,6 +133,12 @@ def test_fix_loop_runs_when_under_all_budgets(tmp_path) -> None:
     # the attempt ends: two calls, both accounted as fix turns.
     assert client.calls == 2
     assert orch.total_turns == turns_before + 2
+
+    # Repair continuation is budgeted by the run's total turns too; it must
+    # never get a fresh allowance after Phase 2 has spent that budget.
+    orch.total_turns = orch.max_turns
+    assert orch._invoke_phase3_fix_loop([_BLOCKER], is_first_attempt=False) == 0
+    assert client.calls == 2
 
 
 # ---------------------------------------------------------------------------

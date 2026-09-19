@@ -31,11 +31,13 @@ Why keep this when Phase 2 has a frontier model?
       so the customise loop deletes them via the ``delete_file`` tool
       (e.g. a leftover ``main_api.py`` after a switch to Flask).
 
-Inputs are soft-clipped to the ``_MAX_*_CHARS`` budgets below (a
+Inventories are soft-clipped to the ``_MAX_*_CHARS`` budgets below (a
 runaway 100k-line inventory would otherwise burn the context window
 before the customise phase gets a chance). The serialized domain model
 is pruned progressively but is ALWAYS valid JSON — the planner never
-receives a raw character clip.
+receives a raw character clip. Accepted user instructions are preserved in
+full, including any harness-added requirement ledger. The user-input size
+limit is enforced at the API/core entry points, before adding derived context.
 """
 
 import inspect
@@ -44,6 +46,7 @@ import logging
 import re
 from typing import Any, Callable
 
+from besser.generators.llm.action_inventory import ActionEndpoint, format_action_inventory
 from besser.generators.llm.model_serializer import serialize_domain_model
 
 logger = logging.getLogger(__name__)
@@ -51,9 +54,9 @@ logger = logging.getLogger(__name__)
 
 # Soft budgets — generous, but a runaway 100k-line inventory would burn
 # the whole context window before the customise phase gets a chance.
-_MAX_INSTRUCTIONS_CHARS = 8_000
 _MAX_INVENTORY_CHARS = 8_000
 _MAX_MODEL_JSON_CHARS = 12_000
+_MAX_ACTION_INVENTORY_CHARS = 8_000
 _MAX_TASKS = 16
 
 
@@ -97,6 +100,7 @@ def analyze_gaps_via_llm(
     generator_failure: str | None = None,
     modify_mode: bool = False,
     workspace_files: list[str] | None = None,
+    action_endpoints: list[ActionEndpoint] | None = None,
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -127,6 +131,9 @@ def analyze_gaps_via_llm(
             passed through unchanged. The full list on purpose — the
             ``inventory`` string is capped at 30 entries, so the paths a
             planner most often invents are the ones missing from it.
+        action_endpoints: Source-derived operation routes and their handler
+            locations. Presence in the domain model is not an implementation;
+            this inventory identifies the actual executable extension points.
 
     Returns:
         ``None`` on failure, ``[]`` when no work is needed, otherwise
@@ -187,6 +194,9 @@ def analyze_gaps_via_llm(
         generator_used=generator_used,
         model_json=model_json,
         inventory=inventory,
+        action_inventory=(format_action_inventory(action_endpoints)
+                          if action_endpoints is not None
+                          else "Action handlers were not inventoried; inspect their implementations."),
     )
 
     tasks = _call_planner(llm_client, user_prompt)
@@ -197,8 +207,37 @@ def analyze_gaps_via_llm(
     cleaned = _drop_present_enumerations(cleaned, domain_model)
     cleaned = _resolve_task_paths(cleaned, workspace_files or [])
     cleaned = _note_dependent_rule_placement(cleaned, domain_model)
+    cleaned = _dedupe(_note_action_placement(cleaned, action_endpoints or []))
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
+
+
+def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) -> list[str]:
+    """Keep planning prose anchored to the handlers which actually serve it.
+
+    Run 8efe8fd4 put every action task in sql_alchemy.py; all six action
+    endpoints remained 501. Annotate explicit action references without
+    discarding requirements or guessing that an ORM method is connected.
+    Harness-owned action tasks enforce omissions independently of this hint.
+    """
+    noted = []
+    for task in tasks:
+        matches = [item for item in endpoints if re.search(
+            rf"\b{_class_name_pattern(item.action)}\b", task, re.IGNORECASE,
+        )]
+        if matches:
+            locations = "; ".join(
+                f"{item.http_method} {item.route} is served by {item.path} "
+                f"function {item.function}"
+                for item in matches
+            )
+            task = (
+                f"{task.rstrip().rstrip('.')}. ACTION HANDOFF: {locations}. "
+                "Implement or wire the behavior there; adding a same-named ORM "
+                "method alone does not connect the action endpoint."
+            )
+        noted.append(task)
+    return noted
 
 
 # Scaffold families for the task sanitizer (mirrors the orchestrator's
@@ -697,10 +736,19 @@ _SYSTEM_PROMPT = (
     "leftover file that is unused within that SAME stack, and ONLY when the "
     "user's own words asked for a different stack than the scaffold's.\n"
     "  * Skip anything the generator already provided correctly.\n"
+    "  * Use the ACTION IMPLEMENTATION INVENTORY to locate actual operation "
+    "handlers. A modeled method may still be an HTTP 501 placeholder. Put "
+    "action work in its real handler (or wire the handler to a service), not "
+    "only in the ORM. Preserve bodies already supplied by the model unless "
+    "the request requires changing them. Unresolved handlers also receive "
+    "harness-owned tasks independently of your list.\n"
     "  * CRITICAL — what the deterministic generator does NOT produce: it "
-    "emits ONLY the data model's structure and basic CRUD endpoints/screens. "
+    "cannot invent behavior from method signatures alone. It emits the data "
+    "model's structure, basic CRUD endpoints/screens, and any explicit method "
+    "bodies supplied in the model. "
     "If, and only if, the user's own words asked for one of the following, "
-    "it is missing from the scaffold — emit concrete tasks for it and do NOT "
+    "check whether it is missing from the scaffold — emit concrete tasks for "
+    "missing behavior and do NOT "
     "return an empty array: authentication, login/registration, "
     "JWT/session/token handling, authorization, roles/permissions, security, "
     "payments, email, file upload, custom business logic, custom UI "
@@ -733,15 +781,17 @@ def _build_user_prompt(
     generator_used: str,
     model_json: str,
     inventory: str,
+    action_inventory: str = "",
 ) -> str:
-    # bounded: planning-call budget; _clip marks the cut for the planner
-    instructions_clipped = _clip(instructions, _MAX_INSTRUCTIONS_CHARS, "instructions")
+    # Only derived inventories are clipped; user requirements must not disappear.
     inventory_clipped = _clip(inventory, _MAX_INVENTORY_CHARS, "inventory")
+    actions_clipped = _clip(action_inventory, _MAX_ACTION_INVENTORY_CHARS, "action inventory")
     return (
-        f"USER REQUEST:\n{instructions_clipped}\n\n"
+        f"USER REQUEST:\n{instructions}\n\n"
         f"DETERMINISTIC GENERATOR THAT RAN: {generator_used}\n\n"
         f"DOMAIN MODEL (JSON):\n{model_json}\n\n"
         f"FILE INVENTORY (paths + sizes):\n{inventory_clipped}\n\n"
+        f"ACTION IMPLEMENTATION INVENTORY (source-derived):\n{actions_clipped}\n\n"
         "Work in two passes.\n\n"
         "PASS 1 — USER REQUEST vs DOMAIN MODEL. Re-read the request and "
         "enumerate every concrete thing it names:\n"
@@ -810,11 +860,16 @@ def _safe_serialize_model(domain_model) -> str:
     except Exception:
         logger.warning("Gap analyzer: serialize_domain_model failed", exc_info=True)
         # Fall back to bare class names — better than nothing.
+        fallback = {}
+        issues = getattr(domain_model, "conversion_issues", None)
+        if issues:
+            fallback["conversion_issues"] = issues
         try:
             names = [c.name for c in domain_model.get_classes()]
-            return json.dumps({"classes": [{"name": n} for n in names]})
+            fallback["classes"] = [{"name": n} for n in names]
         except Exception:
-            return "{}"
+            pass
+        return json.dumps(fallback, default=str)
 
     def _dump(payload: Any) -> str:
         return json.dumps(payload, default=str, separators=(",", ":"))
@@ -865,7 +920,12 @@ def _safe_serialize_model(domain_model) -> str:
         ]
     except Exception:
         names = []
-    return _dump({"classes": [{"name": n} for n in names], "__truncated__": True})
+    fallback = {"classes": [{"name": n} for n in names], "__truncated__": True}
+    # Explicit model-loss diagnostics are obligations, not expendable summary.
+    # Preserve them even when that means exceeding the model-summary budget.
+    if data.get("conversion_issues"):
+        fallback["conversion_issues"] = data["conversion_issues"]
+    return _dump(fallback)
 
 
 # ----------------------------------------------------------------------

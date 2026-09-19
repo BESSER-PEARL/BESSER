@@ -1,13 +1,15 @@
 """F2: the run's success/incomplete verdict must respect Phase-3 blockers.
 
 Before this, `incomplete` keyed ONLY on Phase 2 emitting `end_turn`, so an app
-that parsed but had an unfixed blocker-class issue (syntax/import/dependency —
-the "won't compile / won't boot" class) shipped as a green success. Now an
-unfixed blocker-severity ValidationIssue marks the run incomplete with a reason.
+that parsed but had an unfixed blocker-class issue shipped as a green success.
+Now unresolved implementation or verification issues mark the run incomplete,
+without assuming every blocker means the application cannot start.
 """
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 
 from besser.generators.llm.orchestrator import ValidationIssue
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
@@ -32,7 +34,7 @@ class _BlockerOrchestrator(_StubOrchestrator):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._validation_issues = [
-            ValidationIssue(severity="blocker", message="syntax [main_api.py]: invalid syntax"),
+            ValidationIssue(severity="blocker", message="requirements: R1 has no implementation evidence"),
             ValidationIssue(severity="style", message="ruff: unused import"),  # ignored
         ]
 
@@ -61,19 +63,78 @@ def test_unfixed_phase3_blocker_marks_run_incomplete(monkeypatch):
         done = _done_event(SmartGenerationRunner(_build_request()))
         assert done["incomplete"] is True
         reason = (done.get("incompleteReason") or "").lower()
-        assert "blocker" in reason
+        assert "unresolved implementation or verification" in reason
+        assert "not verified complete" in reason
+        assert "likely stop it from running" not in reason
     finally:
         _cleanup()
 
 
-def test_no_blockers_stays_complete(monkeypatch):
-    # Regression guard: the plain stub (no _validation_issues) stays complete —
-    # the new blocker check must not make clean runs report incomplete.
-    monkeypatch.setattr(runner_module, "LLMOrchestrator", _StubOrchestrator)
+@pytest.mark.parametrize("required_check", [False, True])
+def test_no_blockers_stays_complete(monkeypatch, required_check):
+    from besser.generators.llm.validation.issues import _check_did_not_run, required_check_unverified
+
+    class SkippedCheck(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            message = (required_check_unverified("frontend build [.]", "disabled") if required_check
+                       else _check_did_not_run("ruff", "unavailable"))
+            self._validation_issues = [ValidationIssue("warning", message)]
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", SkippedCheck)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
         done = _done_event(SmartGenerationRunner(_build_request()))
-        assert done["incomplete"] is False
+        assert done["incomplete"] is required_check
+        assert done["blockerCount"] == int(required_check)
+        if required_check:
+            assert "not verified complete" in done["incompleteReason"]
+    finally:
+        _cleanup()
+
+
+@pytest.mark.parametrize("bound_target", [None, "generate_web_app", "generate_fastapi_backend"])
+def test_failed_diagram_is_visible_and_bound_missing_inputs_fail_before_client(monkeypatch, bound_target):
+    from besser.utilities.web_modeling_editor.backend.models.diagram import DiagramInput
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven import model_assembly
+
+    request = _build_request(target_generator_override=bound_target)
+    request.project.diagrams["GUINoCodeDiagram"] = [DiagramInput(
+        id="failed-gui", title="Screen specification", model={"type": "GUINoCodeDiagram"},
+    )]
+    def reject_gui(*args):
+        raise ValueError("secret-api-key=NEVER-PUBLISH-THIS")
+    monkeypatch.setattr(model_assembly, "process_gui_diagram", reject_gui)
+    clients, observed = [], []
+    def client(**kwargs):
+        clients.append(True)
+        return _FakeClient()
+    class CaptureAssembly(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            observed.extend(kwargs["assembly_issues"])
+            # Even an implementation ignoring the new field cannot cause the
+            # runner to announce complete after dropping project input.
+            self._validation_issues = []
+    monkeypatch.setattr(runner_module, "create_llm_client", client)
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", CaptureAssembly)
+    try:
+        events = [_parse(frame) for frame in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        assert "NEVER-PUBLISH-THIS" not in repr(events)
+        if bound_target == "generate_web_app":
+            assert clients == [] and observed == [], "missing required models must stop before paid generation"
+            assert not any(event["event"] == "done" for event in events)
+            rejection = next(event for event in events if event.get("code") == "BAD_REQUEST")
+            assert "generate_web_app" in rejection["message"] and "failed-gui" in rejection["message"]
+        else:
+            assert clients == [True]
+            assert observed == [{"diagram_id": "failed-gui", "diagram_type": "GUINoCodeDiagram",
+                                 "diagnostic": "processor_failed: ValueError"}]
+            assert any(event.get("code") == "INCOMPLETE" and "failed-gui" in event["message"] for event in events)
+            assert any(event["event"] == "phase_update" and "assembly_issues" in event["details"] for event in events)
+            done = next(event for event in events if event["event"] == "done")
+            assert done["incomplete"] is True and done["blockerCount"] == 1
+            assert "validation unverified: model assembly" in done["incompleteReason"]
     finally:
         _cleanup()
 

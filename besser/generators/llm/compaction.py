@@ -542,7 +542,7 @@ def _file_operations(tool_calls_log: list[dict]) -> tuple[list, list]:
         if not isinstance(path, str) or not path:
             continue
         tool = tc.get("tool")
-        if tool in ("write_file", "modify_file"):
+        if tool in ("write_file", "modify_file", "replace_file_lines"):
             written.add(path)
         elif tool == "read_file":
             read.add(path)

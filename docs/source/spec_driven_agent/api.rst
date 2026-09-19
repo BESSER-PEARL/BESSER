@@ -73,7 +73,11 @@ Request body
      - The full project payload (same shape as ``/generate-output-from-project``).
    * - ``instructions``
      - string
-     - Natural-language description of what to build (1–8000 chars).
+     - Natural-language description of what to build (1–64,000 characters).
+       This limit includes any modeling-agent summary and appended original
+       request. Longer input is rejected before generation, not truncated.
+       Accepted instructions reach planning and requirement extraction in full;
+       inventories and model summaries have separate context budgets.
    * - ``api_key``
      - string (secret)
      - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``;

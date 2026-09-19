@@ -245,7 +245,8 @@ class TestAssembleModels:
         assert result.state_machines == []
         assert result.quantum_circuit is None
 
-    def test_malformed_state_machine_diagram_does_not_abort(self):
+    @pytest.mark.parametrize("returns_none", [False, True])
+    def test_malformed_state_machine_diagram_does_not_abort(self, monkeypatch, caplog, returns_none):
         """A broken StateMachineDiagram must never block a run whose
         ClassDiagram is valid. Whether the processor returns ``None`` or
         an empty shell is an implementation detail of the upstream
@@ -264,15 +265,40 @@ class TestAssembleModels:
                     "id": "sm1",
                     "title": "Broken",
                     "model": {"type": "StateMachineDiagram", "garbage": True},
-                }
+                },
+                {"id": "sm2", "title": "Valid", "model": {"type": "StateMachineDiagram"}},
             ],
         })
+        survivor = object()
+        def convert(payload):
+            if payload["id"] == "sm2":
+                return survivor
+            if returns_none:
+                return None
+            raise ValueError("secret-api-key=NEVER-PUBLISH-THIS " + "sensitive " * 100)
+        monkeypatch.setattr(model_assembly_module, "process_state_machine", convert)
 
         result = assemble_models_from_project(project)
         assert result.domain_model is not None
-        # The list is either empty (processor raised) or contains
-        # a degenerate entry (processor returned an empty shell).
-        assert isinstance(result.state_machines, list)
+        assert result.state_machines == [survivor], "one failed diagram must not discard a successful sibling"
+        assert result.assembly_issues == [{
+            "diagram_id": "sm1", "diagram_type": "StateMachineDiagram",
+            "diagnostic": "no_model_returned" if returns_none else "processor_failed: ValueError",
+        }]
+        assert result.summary()["assembly_issues"] == result.assembly_issues
+        assert "NEVER-PUBLISH-THIS" not in repr(result.summary()) + caplog.text
+        # Bounding an identity must not merge two distinct failed diagrams.
+        original = project.diagrams["StateMachineDiagram"][0]
+        long_ids = [original.model_copy(update={"id": "shared-prefix-" * 12 + suffix}) for suffix in ("a", "b")]
+        identities = [model_assembly_module._assembly_issue(item, "StateMachineDiagram", "no_model_returned")["diagram_id"]
+                      for item in long_ids]
+        assert identities[0] != identities[1] and all(len(item) <= 120 for item in identities)
+
+        # A total conversion failure also names the lost input safely rather
+        # than implying that the submitted project contained no diagrams.
+        monkeypatch.setattr(model_assembly_module, "process_class_diagram", lambda payload: None)
+        with pytest.raises(ValueError, match=r"Model assembly failed: ClassDiagram \[cd1\]: no_model_returned"):
+            assemble_models_from_project(_project_with({"ClassDiagram": project.diagrams["ClassDiagram"]}))
 
     def test_malformed_object_diagram_does_not_abort(self):
         project = _project_with({

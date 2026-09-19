@@ -464,7 +464,10 @@ def _regex_literal(regex: str) -> str:
 
 def _translate_matches(text: str) -> str:
     """
-    Translate OCL ``<target>.matches('<regex>')`` calls into Python ``re.match`` calls.
+    Translate OCL ``matches`` as a whole-string match, not a prefix match.
+
+    ``re.match`` also permits a trailing newline when a regex ends with ``$``;
+    ``re.fullmatch`` enforces the entire value without rewriting its pattern.
     """
     def replace(match: "re.Match") -> str:
         raw = match.group('sq')
@@ -472,7 +475,7 @@ def _translate_matches(text: str) -> str:
             raw = match.group('dq')
         regex = _unescape_ocl_string(raw)
         target = re.sub(r"\s+", "", match.group('target'))
-        return f"re.match({_regex_literal(regex)}, {target}) is not None"
+        return f"re.fullmatch({_regex_literal(regex)}, {target}) is not None"
 
     return _MATCHES_CALL.sub(replace, text)
 
@@ -645,7 +648,7 @@ def _build_compound_message(property_name: str, body: str, python_expression: st
             raw = pure_match.group('dq')
         return f"{property_name} must match '{_unescape_ocl_string(raw)}'"
 
-    if 're.match(' in python_expression:
+    if 're.fullmatch(' in python_expression:
         readable = _collapse_whitespace_outside_quotes(body)
         return f"{property_name} must satisfy: {readable}"
 
@@ -727,13 +730,13 @@ def _is_safe_expression(expression: str, allow_self: bool) -> bool:
                 return False
         elif isinstance(node, ast.Call):
             func = node.func
-            is_re_match = (
+            is_re_fullmatch = (
                 isinstance(func, ast.Attribute)
-                and func.attr == 'match'
+                and func.attr == 'fullmatch'
                 and isinstance(func.value, ast.Name)
                 and func.value.id == 're'
             )
-            if not is_re_match:
+            if not is_re_fullmatch:
                 return False
         elif not isinstance(node, _ALLOWED_NODES):
             return False
@@ -775,5 +778,5 @@ def _finalize_result(
         return {'skipped': True}
 
     result['message_repr'] = repr(result['message'])
-    result['uses_re'] = 're.match(' in stripped
+    result['uses_re'] = 're.fullmatch(' in stripped
     return result

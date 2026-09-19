@@ -49,7 +49,7 @@ class {{ enum.name }}(Enum):
 
 {% for link in assoc_link_meta %}
 class {{ link.link_class }}(BaseModel):
-    target: int  # primary key of the linked entity
+    target: {{ link.target_type }}  # primary key of the linked entity
 {% for attr in link.attributes %}
 {% set link_attr_type = 'Any' if attr.type_name == 'any' else attr.type_name %}
     {{ attr.name }}: {{ ('Optional[' ~ link_attr_type ~ '] = None') if attr.optional else link_attr_type }}
@@ -121,14 +121,14 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- if end.type.name != class.name %}
                     {%- if end.multiplicity.max > 1 %}
                         {%- if end.multiplicity.min == 0 %}
-    {{ end.name }}: Optional[List[Union["{{ link_class }}", int]]] = None  # via association class (optional)
+    {{ end.name }}: Optional[List[Union["{{ link_class }}", {{ pk_types.get(end.type.name, 'int') }}]]] = None  # via association class (optional)
     {% set ns.has_field = true %}
                         {%- else %}
-    {{ end.name }}: List[Union["{{ link_class }}", int]]  # via association class
+    {{ end.name }}: List[Union["{{ link_class }}", {{ pk_types.get(end.type.name, 'int') }}]]  # via association class
     {% set ns.has_field = true %}
                         {%- endif %}
                     {%- else %}
-    {{ end.name }}: Optional[Union["{{ link_class }}", int]] = None  # via association class (link is created from the other side or via its own endpoint)
+    {{ end.name }}: Optional[Union["{{ link_class }}", {{ pk_types.get(end.type.name, 'int') }}]] = None  # via association class (link is created from the other side or via its own endpoint)
     {% set ns.has_field = true %}
                     {%- endif %}
                 {%- endif %}

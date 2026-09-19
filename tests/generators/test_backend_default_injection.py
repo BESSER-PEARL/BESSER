@@ -34,7 +34,9 @@ DOCSTRING_ESCAPE = '"""\n    import os; os.system("id")\n    """'
 def _model_with_param_default(default, param_type=STR):
     param = Parameter(name="note", type=param_type)
     param.default_value = default
-    method = Method(name="annotate", parameters={param})
+    # Exercise executable default handling, not an intentionally inert 501 stub.
+    method = Method(name="annotate", parameters={param},
+                    code="def annotate(self, note):\n    return note\n")
     book = Class(name="Book")
     book.attributes = {Property(name="id", type=INT, is_id=True)}
     book.methods = {method}

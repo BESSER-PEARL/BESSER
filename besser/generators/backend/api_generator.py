@@ -46,6 +46,7 @@ from besser.generators.structural_utils import (
     get_deferred_fk_associations,
     get_foreign_keys,
     get_pk_py_types,
+    is_server_owned_attribute,
     normalize_method_code,
 )
 from besser.utilities.utils import sort_by_timestamp
@@ -124,8 +125,10 @@ def get_association_classes(model: DomainModel) -> Dict[str, dict]:
                 {
                     "name": attribute.name,
                     "is_enum": attribute.type.__class__.__name__ == "Enumeration",
+                    "is_id": attribute.is_id,
                 }
                 for attribute in sort_by_timestamp(cls.attributes)
+                if not is_server_owned_attribute(attribute)
             ],
         }
     return assoc_classes

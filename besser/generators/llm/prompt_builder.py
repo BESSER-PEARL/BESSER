@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from besser.generators.llm.contract_checks import build_data_contract
+from besser.generators.llm.mutation_inventory import build_mutation_manifest
 from besser.generators.llm.model_serializer import (
     serialize_agent_model,
     serialize_bpmn_model,
@@ -96,6 +97,18 @@ def build_system_prompt(
             json.dumps(serialize_domain_model(domain_model), indent=2),
             "```",
         ])
+        if getattr(domain_model, "conversion_issues", None):
+            model_sections.extend([
+                "",
+                "### Model conversion losses — required recovery work",
+                "The conversion_issues above retain original model expressions "
+                "that could not be converted or attached. They are NOT enforced "
+                "by the scaffold. Inspect the actual model roles and generated "
+                "code, then implement and verify their intended behavior. The "
+                "original user specification takes precedence if an expression "
+                "conflicts with it. Do not treat a conversion warning, a comment, "
+                "or a closed checklist item as successful implementation.",
+            ])
 
     gui_json = serialize_gui_model(gui_model)
     if gui_json:
@@ -374,7 +387,9 @@ def build_system_prompt(
             "   mentions them."
         )
     stable_header = f"""\
-You are an expert full-stack developer. You EXTEND an already-working codebase — you never rebuild it.
+You are an expert full-stack developer extending a deterministic scaffold.
+Preserve working code and verify its actual behavior; generated code is a
+starting point, not proof that the application satisfies the specification.
 
 ## HARD CONSTRAINTS — breaking any of these FAILS the task
 - **Keep the existing tech stack and framework.** The scaffold below is already
@@ -407,14 +422,20 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 
 1. **Keep changes scoped to the user request.** Don't rewrite generated files
    or add features the user didn't ask for.
-2. **Pick the right write tool.** Use `modify_file` for every change to an
-   existing file - several targeted edits to the same file are fine; issue
-   them together in the SAME turn. Use `write_file` only for new files, or
+2. **Pick the right write tool.** Start with `modify_file` for small changes to an
+   existing file. After matching failures, switch strategy: `read_file` the target
+   block, then `replace_file_lines` with its `read_id`, inclusive line numbers,
+   and complete replacement. This avoids re-quoting old code; never repeat a
+   rejected edit or treat a refused edit as done. A successful range edit expires
+   the read, so re-read before the next same-file range edit.
+   Use `write_file` only for new files, or
    to replace a file you have just read in full.
    Never rewrite a file from memory.
-3. **Model is truth.** Never invent entities not in the models above. If a
-   detail is missing from the JSON, query it with the tools above before
-   guessing.
+3. **The user's original specification is the behavior authority.** The models
+   define the existing structure, names and relationships; inspect them instead
+   of guessing. Preserve that structure unless completing an explicit requirement
+   needs a change. Rejected conversion expressions and generator defaults are
+   not implemented behavior, and must not override the original specification.
 4. **State machines drive code.** When a state machine governs a class
    (see Cross-model links), generate a state field + transition guards +
    event handlers that respect the declared transitions. Do not invent
@@ -424,7 +445,12 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    generated code, not as new domain rules.
 6. **OCL constraints must run.** For every constraint listed under the
    class, emit a runtime check in the language idiomatic to the target
-   (Pydantic `@field_validator`, Zod refine, SQL CHECK, etc.).
+   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
+   Cross-record/relationship invariants need shared transactional enforcement
+   across every mutation path that can break them: create, update, link/unlink,
+   related-entity edits and deletion. SQLite CHECK constraints cannot contain
+   subqueries or refer to another table's columns. Reject invalid changes
+   atomically; do not partially persist an aggregate before validation succeeds.
 {hygiene_rule}
 8. **Read before modify.** Read the relevant section of a file before editing it.
    Use offset/limit for large files (>200 lines).
@@ -443,7 +469,10 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     declaring done, verify that every Class's declared attributes and
     methods appear in your output (under whatever name the target
     language uses). If anything is missing, add it. Do not silently
-    drop attributes the LLM judges "not needed" — the model is the spec.
+    drop attributes the LLM judges "not needed". A computed attribute belongs in
+    persisted/returned data and read-only displays, not in writable request
+    schemas or required create/edit controls. Recompute it on the mutations
+    that affect it; a separate compute action does not excuse a stale value.
 12. **Implement every explicit request FULLY — no stubs, no token mentions.**
     When the user asks for a feature, behaviour, or styling, build it
     completely and wire it end-to-end. A requested feature that's only
@@ -487,6 +516,9 @@ Keep the plan short (a few lines), then proceed with surgical edits.
       cohesive modern look, not unstyled browser-default HTML.
     - Internal consistency: `package.json` dependencies match the imports; the
       dev/build scripts actually run the app.
+    - Request/form consistency: when a field becomes server-owned, remove its
+      writable controls and client validation too, while keeping its read-only
+      display. Update shared entity/form metadata, not only a page's payload.
     AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
     - An empty or no-op form submit handler (an onSubmit that does nothing).
       A form's submit MUST call the backend (create -> POST, edit -> PUT)
@@ -640,15 +672,25 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
     """
     if not gap_tasks:
         return ""
-    bullets = "\n".join(f"  {i + 1}. {t}" for i, t in enumerate(gap_tasks))
+    items = []
+    for index, task in enumerate(gap_tasks, 1):
+        text = task.get("text", "") if isinstance(task, dict) else task
+        items.append(f"  {index}. {text}")
+        if isinstance(task, dict):
+            items.extend(f"     Plan detail: {note}" for note in task.get("planning_notes", []))
+    bullets = "\n".join(items)
     return (
         "\n\n### Focused checklist (from gap analysis)\n"
         "This list is loaded into the `task_list` tool. Work through it "
         "and mark each item done with task_list(action='done', id=N) as "
-        "you complete it — the run does NOT finish while items are open. "
+        "you complete it — include evidence=[{id, path, quote}] from successful "
+        "writes when no verifier is attached. Write evidence is not behavioral "
+        "verification. The run does NOT finish while items are open. "
         "If an item is wrong or out of scope for the user request, close "
         "it with task_list(action='drop', id=N, reason=...) - never mark "
-        "undone work done; track newly discovered work with "
+        "undone work done. For required work you cannot finish or verify, use "
+        "task_list(action='blocked', id=N, reason=...) so it remains unresolved. "
+        "Track newly discovered work with "
         "task_list(action='add').\n\n"
         f"{bullets}\n"
     )
@@ -852,7 +894,8 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
     body = "\n".join(lines)
     if truncated:
         body += f"\n\n  ... and {truncated} more routes (same conventions)."
-    return f"{header}\n\n{body}"
+    mutations = build_mutation_manifest(output_dir)
+    return f"{header}\n\n{body}" + (f"\n\n{mutations}" if mutations else "")
 
 
 def build_scaffold_snapshot(

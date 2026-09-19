@@ -5,8 +5,8 @@ Two live runs on 2026-09-18 (0c537a4e: 13 identical misses; 57160293: 16
 identical no-op calls) alternated read_file / modify_file for ~30 turns each
 while every guard either never fired or was ignored. Aider's answer is
 ``max_reflections = 3`` and then the human decides; headless, the runtime
-has to decide: force the task list, then close the file, then stop the phase
-and deliver what exists.
+has to offer a different editing strategy, then stop only if the model
+continues ignoring recovery. A failed quotation must not freeze the file.
 """
 from __future__ import annotations
 
@@ -75,19 +75,20 @@ def _run(simple_model, tmp_path, max_turns=20):
     return orch, client
 
 
-def test_the_second_repeat_forces_the_task_list_on_the_next_turn(simple_model, tmp_path):
+def test_two_refusals_force_a_fresh_read_on_the_next_turn(simple_model, tmp_path):
     orch, client = _run(simple_model, tmp_path)
-    forced = [n for n, f in client.turns if f == "task_list"]
+    forced = [n for n, f in client.turns if f == "read_file"]
     assert forced, client.turns
-    assert forced[0] == 4, "rejections at turns 1,2,3 (2nd repeat at 3) -> forced at 4"
-    assert any("task_list" in t and "app.py" in t for t in client.texts_seen)
+    assert forced[0] == 3, "two rejected text edits -> fresh read -> range edit"
+    assert any("replace_file_lines" in t and "app.py" in t for t in client.texts_seen)
 
 
-def test_the_fourth_repeat_closes_the_file_and_the_sixth_ends_the_phase(simple_model, tmp_path):
+def test_ignoring_recovery_is_bounded_but_does_not_freeze_the_file(simple_model, tmp_path):
     orch, client = _run(simple_model, tmp_path)
     assert orch._phase2_stop_reason == "stuck_edit_loop"
     assert len(client.turns) < 12, f"the loop ran {len(client.turns)} turns"
-    assert any("closed" in t and "app.py" in t for t in client.texts_seen)
+    assert not orch.executor._frozen("app.py")
+    assert any("remains editable" in t and "app.py" in t for t in client.texts_seen)
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == "x = 1\n"
 
 
@@ -122,7 +123,7 @@ def test_a_client_without_force_tool_still_gets_the_message_and_the_stop(simple_
                            output_dir=str(tmp_path), max_turns=20)
     orch.run("Build an app")
     assert orch._phase2_stop_reason == "stuck_edit_loop"
-    assert any("task_list" in t for t in client.texts_seen)
+    assert any("replace_file_lines" in t for t in client.texts_seen)
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):

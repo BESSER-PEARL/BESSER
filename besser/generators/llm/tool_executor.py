@@ -14,6 +14,7 @@ them intelligently — e.g., read the error, fix the code, retry.
 
 import ast
 import fnmatch
+import hashlib
 import json
 import logging
 import os
@@ -24,12 +25,20 @@ import threading
 import weakref
 from contextlib import nullcontext
 from dataclasses import dataclass
+from difflib import SequenceMatcher
+from itertools import count
 from typing import Any, Literal
+from uuid import uuid4
 
 from besser.BUML.metamodel.structural import DomainModel
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.generators.llm.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
+from besser.generators.llm.execution.process import (
+    _safe_subprocess_env,
+    _SAFE_ENV_ALLOWLIST as _SAFE_ENV_ALLOWLIST,
+    _SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
+)
 from besser.generators.llm.edit_apply import (
     AmbiguousEdit,
     elided_lines,
@@ -152,33 +161,6 @@ MAX_OUTPUT_SIZE = 15_000
 # against an 80k compaction threshold.
 MAX_FILE_READ = 60_000
 
-# Environment variables that are safe to expose to LLM-invoked subprocesses.
-# These are needed for basic tooling to work (PATH for binaries, HOME for
-# tool caches, LANG/LC_* for locale-aware tools, TMPDIR for scratch space,
-# SystemRoot/USERPROFILE on Windows). Everything else — including provider
-# API keys, deployment credentials, SMTP passwords, OAuth secrets — is
-# stripped so the LLM cannot `printenv` them into generated code.
-_SAFE_ENV_ALLOWLIST: frozenset[str] = frozenset({
-    "PATH", "HOME", "USER", "LOGNAME", "SHELL",
-    "LANG", "LC_ALL", "LC_CTYPE",
-    "TMPDIR", "TMP", "TEMP",
-    # Windows
-    "SystemRoot", "SYSTEMROOT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
-    "COMSPEC", "PATHEXT", "ProgramFiles", "ProgramData",
-    # Python (harmless, often needed by tools)
-    "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
-    # Node (harmless, often needed by tools)
-    "NODE_PATH",
-})
-
-# Variable-name substrings that identify secret-like env vars. Even if
-# a variable is accidentally in the allowlist, names matching these
-# patterns are always stripped.
-_SECRET_SUBSTRINGS: tuple[str, ...] = (
-    "KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "PRIVATE",
-    "API_", "AUTH", "CERT", "SESSION",
-)
-
 
 def _normalize_path_for_comparison(path: str) -> str:
     """Strip the Windows ``\\\\?\\`` extended-path prefix.
@@ -229,29 +211,6 @@ def _looks_like_command_not_found(stderr: str) -> bool:
     return any(pat in lowered for pat in _RUNTIME_NOT_INSTALLED_PATTERNS)
 
 
-def _safe_subprocess_env() -> dict[str, str]:
-    """Return a minimal subprocess environment with secrets stripped.
-
-    Never pass the full ``os.environ`` to an LLM-invoked subprocess —
-    that would leak provider API keys, OAuth secrets, SMTP credentials,
-    and any other server-side configuration. This helper constructs a
-    new environment by copying only allowlisted variables and
-    deliberately drops anything whose name contains a secret-like
-    substring, even if it's in the allowlist.
-    """
-    safe: dict[str, str] = {}
-    for name, value in os.environ.items():
-        if name not in _SAFE_ENV_ALLOWLIST:
-            continue
-        upper = name.upper()
-        if any(substr in upper for substr in _SECRET_SUBSTRINGS):
-            continue
-        safe[name] = value
-    # Ensure PATH exists even if the parent somehow didn't have it.
-    safe.setdefault("PATH", os.defpath)
-    # Suppress .pyc writes — same behaviour as the old `env={**os.environ,...}`.
-    safe["PYTHONDONTWRITEBYTECODE"] = "1"
-    return safe
 
 
 _DEF_HEADER_RE = re.compile(r"^\s*(?:async\s+)?(def|class)\s+(\w+)", re.MULTILINE)
@@ -419,6 +378,20 @@ class ToolExecutor:
         # or inlined in the scaffold snapshot. A miss on any other path is a
         # quote from memory, and the reply says so first.
         self._known_paths: set[str] = set()
+        # Finding replacement text in a file is not proof that an edit happened.
+        # Receipts bind the exact request to the entire successful post-write
+        # state. They are intentionally not inferred from resumed file contents.
+        self._edit_receipts: dict[tuple[str, str, str, bool], str] = {}
+        self._successful_writes: dict[str, str] = {}
+        # A range edit names a server-issued read, not model-reconstructed old
+        # code. Bind the visible lines to the resolved file and its full digest.
+        # These capabilities deliberately expire on resume (read again).
+        self._read_sequence = count(1)
+        self._read_epoch = uuid4().hex[:12]
+        self._read_views: dict[str, tuple[str, str, int, int]] = {}
+        self._edit_recovery: dict[str, int] = {}
+        self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
+        self.api_tester = None
         # When True (weak / free-tier models only), the deterministic Phase-1
         # scaffold is IMMUTABLE to delete_file: the model may edit those files
         # in place but cannot tear them down and rebuild in another framework.
@@ -486,22 +459,28 @@ class ToolExecutor:
         """Seed the checklist (one entry per gap-analysis task).
 
         An entry may be a plain string, or a dict ``{"text": ...,
-        "verify": callable}``. A verifier makes the item CHEAT-PROOF:
-        ``task_list(action='done')`` is refused while it returns False
-        (Devstral marked 'build the frontend' done without writing a
-        single file — trust was the bug).
+        "verify": callable}``. A deterministic verifier must pass before the
+        item is verified. Without one, explicit current write evidence can
+        record implementation only; acceptance remains unverified.
         """
         self._tasks = []
         for i, t in enumerate(tasks or []):
             if isinstance(t, dict):
                 text = str(t.get("text", "")).strip()
                 verify = t.get("verify")
+                kind = t.get("kind")
+                planning_notes = [note for note in (t.get("planning_notes") or []) if isinstance(note, str)]
             else:
                 text, verify = str(t).strip(), None
+                kind = None
+                planning_notes = []
             if text:
                 self._tasks.append(
                     {"id": len(self._tasks) + 1, "text": text,
                      "done": False, "verify": verify,
+                     "verification": "unverified",
+                     **({"kind": kind} if isinstance(kind, str) and kind else {}),
+                     **({"planning_notes": planning_notes} if planning_notes else {}),
                      "attempts": 0, "blocked": False}
                 )
 
@@ -515,7 +494,9 @@ class ToolExecutor:
         return [
             {"id": t["id"], "text": t["text"], "done": bool(t["done"]),
              "attempts": int(t.get("attempts") or 0),
-             "blocked": bool(t.get("blocked"))}
+             "blocked": bool(t.get("blocked")),
+             "verification": t.get("verification", "unverified"),
+             **{key: t[key] for key in ("blocked_reason", "dropped", "implementation_evidence", "planning_notes", "kind") if key in t}}
             for t in self._tasks
         ]
 
@@ -550,6 +531,8 @@ class ToolExecutor:
                 "verify": verifiers.get(text),
                 "attempts": int(item.get("attempts") or 0),
                 "blocked": item.get("blocked") is True,
+                "verification": item.get("verification", "unverified"),
+                **{key: item[key] for key in ("blocked_reason", "dropped", "implementation_evidence", "planning_notes", "kind") if key in item},
             })
         self._tasks = restored
 
@@ -564,8 +547,68 @@ class ToolExecutor:
         return [t for t in self._tasks if not t["done"] and not t.get("blocked")]
 
     def blocked_tasks(self) -> list[dict]:
-        """Items whose verifier refused too many times, with their text."""
+        """Unresolved items, explicitly blocked or refused too many times."""
         return [t for t in self._tasks if t.get("blocked")]
+
+    def unverified_tasks(self) -> list[dict]:
+        """Implemented checklist items whose acceptance has not been checked."""
+        return [t for t in self._tasks if t["done"] and not t.get("dropped")
+                and t.get("verification", "unverified") != "verified"]
+
+    def _task_implementation_evidence(self, task_id: int, args: dict) -> tuple[list[dict], str | None]:
+        """Validate modification evidence, never treat it as acceptance proof."""
+        evidence = args.get("evidence")
+        if not isinstance(evidence, list) or not evidence or len(evidence) > 20:
+            return [], "no verifier is attached; provide evidence=[{id, path, quote}] from actual successful writes, or mark blocked with a reason"
+        accepted = []
+        for item in evidence:
+            if not isinstance(item, dict) or item.get("id") != task_id:
+                continue
+            rel, quote = item.get("path"), item.get("quote")
+            if not isinstance(rel, str) or not isinstance(quote, str) or not quote.strip() or len(quote) > 4000:
+                return [], "each evidence item requires a path and a non-empty exact quote of at most 4000 characters"
+            try:
+                path = self._safe_path(rel)
+                with open(path, "r", encoding="utf-8") as source:
+                    content = source.read()
+            except (ValueError, OSError, UnicodeError):
+                return [], f"evidence path is not a readable workspace file: {rel}"
+            digest = self._content_digest(content)
+            origin = "written"
+            if self._successful_writes.get(os.path.normcase(path)) != digest:
+                if args.get("existing") is not True:
+                    return [], (f"no successful write matches the current contents of {rel}; "
+                                "if this implementation already exists, read it and submit "
+                                "existing=true with exact executable evidence (acceptance remains unverified)")
+                if os.path.relpath(path, self.workspace).replace("\\", "/") not in self._known_paths:
+                    return [], f"read {rel} before citing an existing implementation"
+                from besser.generators.llm.requirements_ledger import verify_evidence
+                task = next((t for t in self._tasks if t["id"] == task_id), {})
+                evidence_kind = task.get("kind")
+                if not isinstance(evidence_kind, str) or evidence_kind not in (
+                    "validation", "uniqueness", "rule", "computed", "transition", "action", "ui",
+                ):
+                    evidence_kind = "implementation"
+                checked = verify_evidence([{
+                    "id": task_id, "text": task.get("text", ""),
+                    # An untyped planning task is not necessarily an action:
+                    # unique columns, defaults and declarative UI bindings can
+                    # already implement it. Evidence is not acceptance proof.
+                    "kind": evidence_kind,
+                    "status": "implemented", "evidence": f"{rel}: {quote}",
+                }], self.workspace)
+                if not checked or checked[0]["status"] != "implemented":
+                    detail = checked[0].get("note", "") if checked else "no valid citation"
+                    return [], ("existing implementation evidence could not be verified: "
+                                f"{detail}; cite the actual implementation; acceptance remains unverified")
+                origin = "existing"
+            if quote not in content:
+                return [], f"evidence quote is not present in {rel}"
+            accepted.append({"path": os.path.relpath(path, self.workspace).replace("\\", "/"),
+                             "quote": quote, "sha256": digest, "origin": origin})
+        if not accepted:
+            return [], f"no implementation evidence supplied for task {task_id}"
+        return accepted, None
 
     @staticmethod
     def _requested_task_ids(args: dict) -> tuple[list[int], list]:
@@ -604,11 +647,17 @@ class ToolExecutor:
             return {
                 "tasks": [
                     {"id": t["id"], "text": t["text"],
-                     "status": "dropped" if t.get("dropped") else ("done" if t["done"] else "open"),
-                     **({"reason": t["dropped"]} if t.get("dropped") else {})}
+                     "status": ("dropped" if t.get("dropped") else "blocked" if t.get("blocked")
+                                else "done" if t["done"] and t.get("verification") == "verified"
+                                else "implemented" if t["done"] else "open"),
+                     "verification": t.get("verification", "unverified"),
+                     **({"planning_notes": t["planning_notes"]} if t.get("planning_notes") else {}),
+                     **({"reason": t["dropped"]} if t.get("dropped") else
+                        {"reason": t["blocked_reason"]} if t.get("blocked_reason") else {})}
                     for t in self._tasks
                 ],
                 "open": len(self.open_tasks()),
+                "unverified": len(self.unverified_tasks()),
             }
         if action == "done":
             ids, bad = self._requested_task_ids(args)
@@ -622,6 +671,7 @@ class ToolExecutor:
             done: list[int] = []
             refused: list[dict] = []
             blocked: list[dict] = []
+            already_blocked: list[dict] = []
             unknown: list[int] = []
             by_id = {t["id"]: t for t in self._tasks}
 
@@ -630,48 +680,71 @@ class ToolExecutor:
                 if t is None:
                     unknown.append(task_id)
                     continue
-                if t["done"] or t.get("blocked"):
+                was_blocked = bool(t.get("blocked"))
+                if t["done"]:
                     done.append(task_id)
                     continue
                 verify = t.get("verify")
+                reason = None
                 if verify is not None:
                     try:
                         verified = bool(verify())
-                    except Exception:
-                        verified = True  # never wedge the run on a broken check
-                    if not verified:
-                        # Bound the retries: an unbounded refusal loop cost one
-                        # live run 62 CONSECUTIVE turns, dying on the turn cap
-                        # with 87% of its time budget unused (2026-09-11).
-                        t["attempts"] = int(t.get("attempts") or 0) + 1
-                        if t["attempts"] >= _MAX_TASK_VERIFY_ATTEMPTS:
-                            # NOT marked done: the verifier exists because a
-                            # model once marked "build the frontend" complete
-                            # without writing a file. Record it as blocked so
-                            # the run can finish and the reason is reported.
-                            t["blocked"] = True
-                            blocked.append({"id": task_id, "text": t["text"]})
-                        else:
-                            refused.append({
-                                "id": task_id,
-                                "attempts": t["attempts"],
-                                "remaining_attempts":
-                                    _MAX_TASK_VERIFY_ATTEMPTS - t["attempts"],
-                                "reason": f"its check still fails: {t['text']}",
-                            })
+                    except Exception as exc:
+                        verified = False
+                        reason = f"verification could not run ({type(exc).__name__}): {str(exc)[:300]}"
+                    if verified:
+                        t["verification"] = "verified"
+                    elif reason is None:
+                        reason = f"its check still fails: {t['text']}"
+                else:
+                    evidence, reason = self._task_implementation_evidence(task_id, args)
+                    if reason is None:
+                        t["implementation_evidence"] = evidence
+                        t["verification"] = "unverified"
+                if reason is not None:
+                    if was_blocked:
+                        # A later repair may make the check pass. Re-evaluate
+                        # it, but do not reopen another retry budget on failure.
+                        already_blocked.append({"id": task_id, "text": t["text"],
+                                                "reason": t.get("blocked_reason", reason)})
                         continue
+                    # Bound retries, including broken/missing verifiers.
+                    t["attempts"] = int(t.get("attempts") or 0) + 1
+                    if t["attempts"] >= _MAX_TASK_VERIFY_ATTEMPTS:
+                        # Preserve the unresolved requirement without livelock.
+                        t["blocked"] = True
+                        t["blocked_reason"] = reason
+                        blocked.append({"id": task_id, "text": t["text"], "reason": reason})
+                    else:
+                        refused.append({
+                            "id": task_id,
+                            "attempts": t["attempts"],
+                            "remaining_attempts": _MAX_TASK_VERIFY_ATTEMPTS - t["attempts"],
+                            "reason": reason,
+                        })
+                    continue
                 t["done"] = True
+                t["blocked"] = False
+                t.pop("blocked_reason", None)
                 done.append(task_id)
 
             remaining = self.open_tasks()
             result: dict = {
                 "status": "done" if done else "refused",
                 "done_ids": done,
+                "verified_ids": [task_id for task_id in done if by_id[task_id].get("verification") == "verified"],
+                "unverified_ids": [task_id for task_id in done if by_id[task_id].get("verification") != "verified"],
                 "open_remaining": len(remaining),
                 "open_items": [{"id": r["id"], "text": r["text"]} for r in remaining],
             }
             if len(ids) == 1:
                 result["id"] = ids[0]
+            if result["unverified_ids"]:
+                result["verification_note"] = "Write evidence records implementation only; requirement acceptance is still unverified."
+            if already_blocked:
+                result["already_blocked"] = already_blocked
+                if not done and not refused and not blocked and not unknown:
+                    result["status"] = "blocked"
             if refused:
                 result["refused"] = refused
                 result["advice"] = (
@@ -714,6 +787,19 @@ class ToolExecutor:
                 if parts:
                     result["error"] = " ".join(parts)
             return result
+        if action == "blocked":
+            ids, bad = self._requested_task_ids(args)
+            reason = str(args.get("reason") or "").strip()
+            if not ids or bad or not reason:
+                return {"error": "action='blocked' requires id or ids and a non-empty reason explaining what remains unresolved."}
+            by_id = {t["id"]: t for t in self._tasks}
+            if any(task_id not in by_id for task_id in ids):
+                return {"error": "Unknown task id. Use action='list' to see ids."}
+            for task_id in ids:
+                task = by_id[task_id]
+                task.pop("dropped", None)
+                task.update(done=False, blocked=True, blocked_reason=reason[:2000], verification="unverified")
+            return {"status": "blocked", "blocked_ids": ids, "reason": reason[:2000], "open": len(self.open_tasks())}
         if action == "drop":
             # The honest exit for an item the user never asked for. Without
             # it the end-turn gate leaves only a false 'done' (live 2026-09-17:
@@ -732,6 +818,8 @@ class ToolExecutor:
                     return {"error": f"Task {task_id} is already closed."}
                 t["done"] = True
                 t["dropped"] = reason
+                t["blocked"] = False
+                t.pop("blocked_reason", None)
                 logger.info("Checklist item %d dropped (%s): %r", task_id, reason, t["text"][:80])
                 return {"status": "dropped", "id": task_id, "open": len(self.open_tasks())}
             return {"error": f"Unknown task id {task_id}. Use action='list' to see ids."}
@@ -780,7 +868,7 @@ class ToolExecutor:
                 "id": only,
                 "open": len(self.open_tasks()),
             }
-        return {"error": f"Unknown action '{action}'. Use list | done | add."}
+        return {"error": f"Unknown action '{action}'. Use list | done | add | drop | blocked."}
 
     def _contract_warnings(self, rel_path: str, content: str) -> str | None:
         """Lint freshly-written content against the model's data contract."""
@@ -817,8 +905,28 @@ class ToolExecutor:
             from besser.generators.llm.write_diagnostics import diagnose_written_content
 
             diagnostics = diagnose_written_content(rel_path, content, workspace=self.workspace)
+            if rel_path.endswith(".py"):
+                # A schema edit can break untouched routers. Report those
+                # consumers immediately, not only at final validation.
+                from besser.generators.llm.validation.python_source import _create_schema_router_mismatches
+
+                diagnostics.extend({
+                    "source": "project-contract", "severity": "error",
+                    "code": "schema-consumer-mismatch", "message": message,
+                } for message in _create_schema_router_mismatches(self.workspace)[:10])
         except Exception:
             diagnostics = []
+        if rel_path.endswith((".py", ".js", ".jsx", ".ts", ".tsx")):
+            try:
+                from besser.generators.llm.validation.frontend_schema import collect_frontend_schema_diagnostics
+
+                diagnostics.extend(collect_frontend_schema_diagnostics(
+                    self.workspace, changed_path=rel_path, content=content,
+                )[:10])
+            except Exception:
+                # An optional cross-file check must not erase parser findings
+                # already collected for the successful write.
+                logger.debug("Frontend/schema write diagnostics failed", exc_info=True)
         if diagnostics:
             result["diagnostics"] = diagnostics
             result["diagnostic_message"] = (
@@ -888,7 +996,7 @@ class ToolExecutor:
             payload = {"error": f"Unknown tool: {tool_name}"}
             return ToolExecutionResult("error", payload)
         try:
-            file_tool = tool_name in {"read_file", "modify_file", "write_file", "delete_file"}
+            file_tool = tool_name in {"read_file", "modify_file", "replace_file_lines", "write_file", "delete_file"}
             lock = _file_lock(self._safe_path(arguments["path"])) if file_tool else nullcontext()
             with lock:
                 # Aliases of a file must share rejection/freeze/read state too.
@@ -897,6 +1005,8 @@ class ToolExecutor:
                         self._safe_path(arguments["path"]), self.workspace,
                     ).replace("\\", "/")}
                 raw_result = handler(self, arguments)
+                if file_tool and isinstance(raw_result, dict):
+                    self._add_edit_recovery(tool_name, arguments, raw_result)
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
             return ToolExecutionResult(self._result_status(payload), payload)
         except Exception as e:
@@ -1361,7 +1471,7 @@ class ToolExecutor:
         """
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
-            return {"error": f"File not found: {args['path']}"}
+            return self._missing_file_result(args["path"])
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -1373,6 +1483,9 @@ class ToolExecutor:
         total_lines = len(lines)
         offset = args.get("offset", 0) or 0
         limit = args.get("limit")
+        if (type(offset) is not int or offset < 0
+                or (limit is not None and (type(limit) is not int or limit < 1))):
+            return {"error": "offset must be a non-negative integer and limit a positive integer."}
 
         # Apply line-based slicing if offset or limit specified
         start = min(offset, total_lines)
@@ -1388,11 +1501,29 @@ class ToolExecutor:
             for n, line in enumerate(lines[start:end], start=start + 1)
         )
 
-        # Truncate AFTER numbering, so the marker is not itself numbered.
+        # Only complete, actually displayed lines are eligible for a range
+        # edit. Never authorize the unseen tail of a truncated read.
+        truncated = len(selected) > MAX_FILE_READ
         if len(selected) > MAX_FILE_READ:
-            selected = self._truncate(selected, MAX_FILE_READ)
+            boundary = selected.rfind("\n", 0, MAX_FILE_READ)
+            selected = selected[:boundary] if boundary >= 0 else ""
+            end = start + (selected.count("\n") + 1 if selected else 0)
 
         result = {"content": selected}
+        read_id = f"{self._read_epoch}:{next(self._read_sequence)}"
+        self._read_views[read_id] = (
+            os.path.normcase(path), self._content_digest(content), start + 1,
+            end,
+        )
+        if len(self._read_views) > 128:
+            del self._read_views[next(iter(self._read_views))]
+        result["read_id"] = read_id
+        result["start_line"] = start + 1
+        result["end_line"] = end
+        if truncated:
+            result["truncated"] = True
+            result["content"] += "\n... [truncated; read the next range to continue]"
+            result["hint"] = f"Read continues at offset={end}; unseen lines cannot be edited with this read_id."
         self._known_paths.add(args["path"].replace("\\", "/").strip())
 
         # Include metadata so the LLM knows about pagination
@@ -1407,6 +1538,153 @@ class ToolExecutor:
             result["hint"] = "Large file. Use offset/limit to read specific sections."
 
         return result
+
+    def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
+        """Change strategy after two refusals, in every orchestration phase.
+
+        Keep this in the typed execution path so a reworded/no-op/ambiguous
+        failure cannot escape recovery. A read does not count as a write.
+        """
+        path = args["path"].replace("\\", "/")
+        if tool in {"modify_file", "replace_file_lines", "write_file", "delete_file"}:
+            if self._result_status(result) == "ok":
+                self._edit_recovery.pop(path, None)
+                self._failed_modifies.pop(path, None)
+                self._last_missed_old_text.pop(path, None)
+                self._clear_rejections(path)
+                self.last_repeat = None
+            elif (tool in {"modify_file", "replace_file_lines"}
+                    and result.get("status") not in {"already_applied", "possible_replay"}):
+                self._edit_recovery[path] = self._edit_recovery.get(path, 0) + 1
+                if tool == "replace_file_lines":
+                    # A range edit carries no old_text for _modify_file's own
+                    # fingerprinting, so key the rejection on the selected
+                    # range. Without this, eight identical refused range edits
+                    # left last_repeat None: nothing counted, and neither
+                    # _REPEAT_STOP_AT nor the per-file streak guard could fire.
+                    self._failed_modifies[path] = self._failed_modifies.get(path, 0) + 1
+                    self._note_rejection(
+                        path, f"lines {args.get('start_line')}-{args.get('end_line')}",
+                        args.get("new_text") or "",
+                    )
+        if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
+            return
+        if tool == "read_file" and "read_id" in result:
+            result["edit_recovery"] = {
+                "next_tool": "replace_file_lines", "path": path,
+                "read_id": result["read_id"],
+                "instruction": "Select the exact 1-based inclusive lines shown here and supply their complete replacement. "
+                               "Do not quote old_text again. Keep surrounding code unchanged; a read is not an implementation.",
+            }
+        elif tool in {"modify_file", "replace_file_lines"} and self._result_status(result) == "error":
+            result["edit_recovery"] = {
+                "next_tool": "read_file", "path": path,
+                "instruction": "Read the target function/block with offset/limit, then use replace_file_lines with its "
+                               "read_id and line numbers. Stop retrying the same text replacement. "
+                               "No rejected edit was applied; do not mark the requirement done.",
+            }
+
+    def _replace_file_lines(self, args: dict) -> dict:
+        """Replace a deliberately selected range from an unchanged, visible read.
+
+        No fuzzy targeting and no re-quotation of old code. Stale handles cannot
+        overwrite intervening edits or replay an insertion, including on resume.
+        """
+        path = self._safe_path(args["path"])
+        frozen = self._frozen(args["path"])
+        if frozen:
+            return frozen
+        view = self._read_views.get(args.get("read_id", ""))
+        if view is None or view[0] != os.path.normcase(path):
+            return {"error": "Unknown read_id for this file. Call read_file on the target region first.",
+                    "rejection_kind": "unread_range"}
+        if not os.path.isfile(path):
+            return self._missing_file_result(args["path"])
+        with open(path, encoding="utf-8") as source:
+            before = source.read()
+        if self._content_digest(before) != view[1]:
+            return {"error": "Stale read_id: the file changed after this read. No edit applied. "
+                             "Read the region again; do not reuse old line numbers or mark the task done.",
+                    "rejection_kind": "stale_read"}
+        start, end = args.get("start_line"), args.get("end_line")
+        if (type(start) is not int or type(end) is not int
+                or not view[2] <= start <= end <= view[3]):
+            return {"error": f"Select 1-based inclusive lines within the displayed range {view[2]}-{view[3]}. "
+                             "Unseen or truncated lines cannot be replaced. Read the complete target block first.",
+                    "rejection_kind": "unread_range"}
+        replacement = args.get("new_text")
+        if not isinstance(replacement, str):
+            return {"error": "new_text must be a string containing the complete replacement."}
+        replacement = replacement.replace("\r\n", "\n")
+        # Match read_file's newline-only numbering (splitlines would also
+        # split form feeds / Unicode separators inside a source line).
+        parts = before.split("\n")
+        # Keep the terminal empty line if read_file displayed it. It is an
+        # explicit zero-width EOF anchor, not an unseen/out-of-range line.
+        lines = [line + "\n" for line in parts[:-1]] + [parts[-1]]
+        old = "".join(lines[start - 1:end])
+        elision = find_elision(replacement)
+        if elision and elision[1].strip() not in elided_lines(old):
+            return {"error": "new_text abbreviates the code. Write every replacement line in full; no '...' placeholders.",
+                    "rejection_kind": "elision"}
+        # Preserve the boundary to the next line, not the caller's indentation.
+        if replacement and not replacement.endswith("\n") and old.endswith("\n"):
+            replacement += "\n"
+        after = "".join(lines[:start - 1]) + replacement + "".join(lines[end:])
+        if after == before:
+            return {"error": "This range edit makes no change; it is not evidence of implementation.",
+                    "status": "no_change", "replacements": 0}
+        broke = _new_syntax_error(args["path"], before, after)
+        if broke:
+            message, line = broke
+            return {"error": f"Refused: replacement would make the file unparseable ({message} at line {line}). "
+                             "The file was left unchanged. Correct new_text or select the complete enclosing block.",
+                    "rejection_kind": "syntax_error", "syntax_line": line,
+                    "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after),
+                    "current_source": "CURRENT ON-DISK CONTENT:\n" + _changed_region(after, before)}
+        with open(path, "w", encoding="utf-8", newline="\n") as target:
+            target.write(after)
+        self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
+        result = {"status": "modified", "path": args["path"], "replacements": 1,
+                  "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
+        self._append_write_feedback(result, args["path"], after)
+        return result
+
+    def _missing_file_result(self, requested: str) -> dict:
+        """Suggest real workspace paths, without guessing or remapping the read."""
+        requested = requested.replace("\\", "/")
+        result = {
+            "error": f"File not found: {requested}",
+            "advice": "Use list_files or read one of the existing paths below; no path was substituted.",
+        }
+        candidates: list[tuple[float, str]] = []
+        ignored = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build"}
+        inspected = 0
+        for root, dirs, names in os.walk(self.workspace):
+            dirs[:] = sorted(d for d in dirs if d not in ignored and not d.startswith("."))
+            for name in sorted(names):
+                if name.startswith("."):
+                    continue
+                rel = os.path.relpath(os.path.join(root, name), self.workspace).replace("\\", "/")
+                try:
+                    self._safe_path(rel)  # Do not expose outside-workspace symlink targets.
+                except ValueError:
+                    continue
+                score = SequenceMatcher(None, requested.lower(), rel.lower()).ratio()
+                if name.lower() == requested.rsplit("/", 1)[-1].lower():
+                    score += 1
+                candidates.append((score, rel))
+                inspected += 1
+                if inspected >= 2000:
+                    break
+            if inspected >= 2000:
+                break
+        result["suggested_paths"] = [rel for _, rel in sorted(candidates, reverse=True)[:8]]
+        return result
+
+    @staticmethod
+    def _content_digest(content: str) -> str:
+        return hashlib.sha256(content.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
     def _write_file(self, args: dict) -> dict:
         rel_path = args["path"].replace("\\", "/")
@@ -1473,6 +1751,7 @@ class ToolExecutor:
                 rel_path, existing_lines, self._modify_counts.get(rel_path, 0),
             )
 
+        before = None
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 before = f.read()
@@ -1485,10 +1764,18 @@ class ToolExecutor:
                         f"({msg} at line {line_no}); the file was left unchanged. Fix "
                         "the syntax and resend the full content."
                     ),
+                    "rejection_kind": "syntax_error",
+                    "syntax_line": line_no,
+                    "would_write": "PROPOSED ONLY - NOT APPLIED; these are not current file contents:\n"
+                    + _changed_region(before, args["content"]),
+                    "current_source": "CURRENT ON-DISK CONTENT - unchanged by this refused rewrite:\n"
+                    + _changed_region(args["content"], before),
                 }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])
+        if before != args["content"]:
+            self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
         self._known_paths.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
@@ -1561,7 +1848,7 @@ class ToolExecutor:
         """
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
-            return {"error": f"File not found: {args['path']}"}
+            return self._missing_file_result(args["path"])
         rel_path = args["path"].replace("\\", "/")
         self.last_repeat = None
         # read() normalizes file newlines; normalize quoted text identically.
@@ -1575,11 +1862,30 @@ class ToolExecutor:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
+        receipt_key = (os.path.normcase(path), old_text, new_text, replace_all)
         if not old_text.strip():
             return {
                 "error": "old_text is empty or whitespace only. To create a file "
                          "or append to it, use write_file instead.",
             }
+        if self._edit_receipts.get(receipt_key) == self._content_digest(content):
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            self._note_rejection(rel_path, old_text, new_text)
+            line_no = locate_chunk(content, new_text) if new_text.strip() else None
+            result = {
+                "status": "already_applied", "replacements": 0,
+                "error": (
+                    f"This exact edit was successfully applied to {args['path']} and "
+                    "the file still matches its recorded post-edit state. "
+                    + (f"The replacement is already in the file at line {line_no}. " if line_no else "")
+                    + "Do not resend it. "
+                    "This confirms the edit only, not completion of the requirement."
+                ),
+            }
+            hint = find_similar_lines(new_text, content) if new_text.strip() else None
+            if hint:
+                result["did_you_mean"] = "Current file lines for a different edit:\n" + hint
+            return result
         # Sticky stop. After three misses a call the executor has ALREADY
         # rejected is refused without running the ladder, and only a
         # successful edit on this path clears it (the old refusal popped its
@@ -1611,15 +1917,15 @@ class ToolExecutor:
             line_no = locate_chunk(content, new_text) if new_text.strip() else None
             if line_no:
                 where = (
-                    f" new_text is already in the file at line {line_no}, so this "
-                    "change is done."
+                    f" The identical text is already in the file at line {line_no}; "
+                    "this is not evidence of an implemented change."
                 )
             if seen > 1:
                 return {
                     "error": (
                         f"This identical no-op call was already rejected {seen - 1} "
                         f"time(s) on {args['path']} and cannot succeed.{where} Do not "
-                        "send it again: mark the task done or drop it, and move on."
+                        "send it again. Make a real change or mark the task blocked with a reason."
                     ),
                 }
             return {
@@ -1671,7 +1977,8 @@ class ToolExecutor:
         # Insertion edits retain their anchor inside new_text. Reapplying them
         # used to report success and grow the file forever (f6770633: 75 writes).
         # Exclude only anchors INSIDE completed replacement regions, not other
-        # sites that still need this edit. Content-based, so resume is safe too.
+        # sites that still need this edit. This guards against duplication after
+        # resume, but existing content alone must NEVER claim a successful edit.
         completed = replacement_spans(content, new_text)
         starts = [
             i for i in _anchored_occurrences(content, old_text)
@@ -1731,13 +2038,13 @@ class ToolExecutor:
             # (2026-09-18) were a shortened quote, and the generic message was
             # what kept it looping. Name the real cause first.
             elision = find_elision(old_text)
-            # A common single line (pass, return True, an import) elsewhere in
-            # the file is not evidence that this missing-anchor edit happened.
-            # Require a multi-line replacement and a whole-line match before
-            # suggesting completion. Keep this separate from replay protection:
-            # even a short retained anchor must never be inserted twice.
-            substantial_replacement = sum(bool(line.strip()) for line in new_text.splitlines()) > 1
-            applied_at = locate_chunk(content, new_text) if substantial_replacement else None
+            # A retained anchor inside matching replacement content warrants a
+            # safe refusal, not a success claim. Multi-line incidental matches
+            # are no stronger evidence than a single `pass` or `return True`.
+            retained_anchor = any(
+                locate_chunk(content[lo:hi], old_text)
+                for lo, hi in completed
+            )
             if elision:
                 line_no, line = elision
                 err: dict = {
@@ -1748,20 +2055,16 @@ class ToolExecutor:
                         "copy the full lines verbatim."
                     ),
                 }
-            elif applied_at:
-                # The anchor is gone because this edit already landed. Run
-                # 4efe04ff t63 re-sent a call whose new_text the ladder had
-                # re-indented on write; "not found" sent it to re-read and
-                # re-send the same text as a no-op.
+            elif retained_anchor:
                 err = {
-                    "status": "already_applied",
+                    "status": "possible_replay",
                     "replacements": 0,
                     "error": (
-                        f"old_text not found outside completed replacements in {args['path']}, but new_text is "
-                        f"already in the file at line {applied_at}, so this edit has "
-                        "been applied. Do not resend it. For a different change, call "
-                        "read_file on that region and copy old_text verbatim from "
-                        "the output."
+                        f"Refused possible duplicate insertion in {args['path']}: "
+                        "the matching anchor is already inside replacement-shaped content. "
+                        "No successful-edit receipt proves this request was applied. "
+                        "The file was not changed; do not mark the task done on this basis. "
+                        "Read the region and use a distinct surrounding anchor for a different change."
                     ),
                 }
             elif resent:
@@ -1785,15 +2088,17 @@ class ToolExecutor:
                     ),
                 }
             elif not hint:
-                # Nothing in the file is even similar: the model is quoting
-                # code that was never there. Live, a stub for a helper it had
-                # only ever CALLED; "check your whitespace" sent it to re-read
-                # the file 16 times and resend the same quote.
+                # No close match, including when the model quotes a rejected
+                # draft as though it was applied. Re-read CURRENT code rather
+                # than claiming that re-reading cannot help and then asking
+                # for exactly that in the recovery advice below.
                 err = {
                     "error": (
-                        unread + f"old_text not found in {args['path']}, and no region of "
-                        "the file resembles it, so re-reading and re-quoting will not "
-                        "help. " + _missing_definition(old_text, content) + _ANCHOR_ADVICE
+                        unread + f"old_text not found in {args['path']}, and no region "
+                        "of the current source closely resembles it. The file was not changed. "
+                        "Read the target region and quote existing lines verbatim, "
+                        "not a proposed edit that was refused. "
+                        + _missing_definition(old_text, content) + _ANCHOR_ADVICE
                     ),
                 }
             else:
@@ -1826,9 +2131,9 @@ class ToolExecutor:
             self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
             self._note_rejection(rel_path, old_text, new_text)
             return {
-                "status": "already_applied", "replacements": 0,
+                "status": "no_change", "replacements": 0,
                 "error": "This edit makes no change after normalization. Do not resend it; "
-                         "mark it done or read the current region for a different change.",
+                         "this is not evidence of completion. Read the current region for a different change.",
             }
 
         # A valid file must never leave this tool unparseable. Run 57160293 t19
@@ -1846,7 +2151,12 @@ class ToolExecutor:
                     "Check the indentation of new_text against the surrounding code "
                     "and that every block you open is closed."
                 ),
-                "would_write": _changed_region(content, new_content),
+                "rejection_kind": "syntax_error",
+                "syntax_line": line_no,
+                "would_write": "PROPOSED ONLY - NOT APPLIED; these are not current file contents:\n"
+                + _changed_region(content, new_content),
+                "current_source": "CURRENT ON-DISK CONTENT - unchanged by this refused edit:\n"
+                + _changed_region(new_content, content),
             }
 
         # newline="\n": a text-mode write translates "\n" to os.linesep, which
@@ -1854,6 +2164,9 @@ class ToolExecutor:
         # generator copies some templates verbatim out of a CRLF checkout.
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new_content)
+        digest = self._content_digest(new_content)
+        self._edit_receipts[receipt_key] = digest
+        self._successful_writes[os.path.normcase(path)] = digest
         self._failed_modifies.pop(rel_path, None)
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)
@@ -2079,6 +2392,16 @@ class ToolExecutor:
         except Exception as e:
             return {"error": f"Validation failed: {e}"}
 
+    def _validate_app(self, args: dict) -> dict:
+        if self.app_validator is None:
+            return {"error": "Application verification is unavailable in this executor; do not claim the app was verified."}
+        return self.app_validator()
+
+    def _test_api(self, args: dict) -> dict:
+        if self.api_tester is None:
+            return {"error": "API workflow verification is unavailable; do not claim workflows were tested."}
+        return self.api_tester(args)
+
     def _check_syntax(self, args: dict) -> dict:
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
@@ -2248,6 +2571,7 @@ class ToolExecutor:
         "list_files": _list_files,
         "read_file": _read_file,
         "write_file": _write_file,
+        "replace_file_lines": _replace_file_lines,
         "modify_file": _modify_file,
         "search_in_files": _search_in_files,
         "delete_file": _delete_file,
@@ -2260,6 +2584,8 @@ class ToolExecutor:
         "get_constraints_for": _get_constraints_for,
         # Validation
         "validate_model": _validate_model,
+        "validate_app": _validate_app,
+        "test_api": _test_api,
         "check_syntax": _check_syntax,
         # Work checklist
         "task_list": _task_list,

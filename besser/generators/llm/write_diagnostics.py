@@ -12,6 +12,7 @@ import ast
 import json
 import logging
 import os
+import sqlite3
 import tomllib
 from typing import Any
 
@@ -22,6 +23,119 @@ MAX_WRITE_DIAGNOSTICS = 10
 
 
 _WARNED_PYFLAKES_MISSING = False
+
+
+def workspace_uses_sqlite(workspace: str | None) -> bool:
+    """Detect the generated database dialect without importing application code."""
+    if not workspace:
+        return False
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if d not in {
+            "node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build",
+        } and not d.startswith(".besser_")]
+        if "database.py" in files:
+            try:
+                with open(os.path.join(root, "database.py"), encoding="utf-8-sig") as fh:
+                    if "sqlite:" in fh.read():
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+def _bound_names(statement: ast.stmt) -> list[str]:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [statement.name]
+    targets = statement.targets if isinstance(statement, ast.Assign) else (
+        [statement.target] if isinstance(statement, ast.AnnAssign) else []
+    )
+    return [target.id for target in targets if isinstance(target, ast.Name)]
+
+
+def python_structural_diagnostics(tree: ast.Module, *, sqlite: bool = False) -> list[dict]:
+    """Provable declaration errors; no application imports, execution, or guessing.
+
+    SQLite CHECK expressions are compiled against an in-memory table containing
+    only the mapped column names. No generated Python or user database is used.
+    """
+    findings: list[dict] = []
+
+    def add(node, code, message):
+        finding = _finding("python-contract", message, code=code, line=node.lineno)
+        finding["end_line"] = node.end_lineno
+        findings.append(finding)
+
+    enums = {}
+    enum_bases = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "enum":
+            enum_bases.update(a.asname or a.name for a in node.names if a.name in enum_bases)
+    for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        if any(getattr(base, "id", getattr(base, "attr", "")) in enum_bases for base in cls.bases):
+            if cls in tree.body:
+                enums[cls.name] = {name for stmt in cls.body for name in _bound_names(stmt)}
+        seen: dict[str, ast.stmt] = {}
+        columns = []
+        for stmt in cls.body:
+            for name in _bound_names(stmt):
+                if name in seen:
+                    # Property setters and overload signatures intentionally reuse names.
+                    decorators = getattr(stmt, "decorator_list", [])
+                    intentional = any(
+                        (isinstance(d, ast.Attribute) and d.attr in {"setter", "deleter"})
+                        or getattr(d, "id", getattr(d, "attr", "")) == "overload"
+                        for d in decorators + getattr(seen[name], "decorator_list", [])
+                    )
+                    if not intentional and (
+                        name in {"__table_args__", "__mapper_args__"}
+                        or isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    ):
+                        add(seen[name], "shadowed-declaration", f"{cls.name}.{name} is overwritten by its second declaration at line {stmt.lineno}; merge the declarations instead of silently discarding behavior.")
+                        add(stmt, "duplicate-declaration", f"{cls.name}.{name} duplicates line {seen[name].lineno}; only this last declaration takes effect.")
+                seen[name] = stmt
+            value = getattr(stmt, "value", None)
+            if isinstance(value, ast.Call) and getattr(value.func, "id", getattr(value.func, "attr", "")).rstrip("_") in {"mapped_column", "Column"}:
+                names = _bound_names(stmt)
+                if value.args and isinstance(value.args[0], ast.Constant) and isinstance(value.args[0].value, str):
+                    names = [value.args[0].value]
+                columns.extend(names)
+        # Do not guess inherited columns. A concrete inherited mapping is
+        # checked by the isolated application/DDL probe instead.
+        local_classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+        inherits_columns = any(
+            isinstance(base, ast.Name) and base.id in local_classes
+            and any(isinstance(n, ast.Call) and getattr(n.func, "id", "").rstrip("_") in {"Column", "mapped_column"}
+                    for n in ast.walk(local_classes[base.id]))
+            for base in cls.bases
+        )
+        if sqlite and columns and not inherits_columns:
+            table = next((stmt.value.value for stmt in cls.body if isinstance(stmt, ast.Assign)
+                          and "__tablename__" in _bound_names(stmt)
+                          and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)), cls.name)
+            def quote(name):
+                return '"' + name.replace('"', '""') + '"'
+            definitions = ", ".join(quote(name) + " NUMERIC" for name in dict.fromkeys(columns))
+            for call in (n for n in ast.walk(cls) if isinstance(n, ast.Call)
+                         and getattr(n.func, "id", getattr(n.func, "attr", "")) == "CheckConstraint"):
+                if not call.args or not isinstance(call.args[0], ast.Constant) or not isinstance(call.args[0].value, str):
+                    continue
+                connection = sqlite3.connect(":memory:")
+                try:
+                    connection.execute(f"CREATE TABLE {quote(table)} ({definitions}, CHECK ({call.args[0].value}))")
+                except sqlite3.Error as exc:
+                    # Custom SQL functions may be registered by the app; their absence
+                    # in this scratch database is not proof of a broken constraint.
+                    if "no such function" not in str(exc).lower():
+                        add(call, "invalid-sqlite-check", f"SQLite cannot create {cls.name}'s CHECK constraint: {exc}. Cross-row rules must be enforced transactionally in the mutation paths, not in SQLite CHECK subqueries.")
+                finally:
+                    connection.close()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+            continue
+        members = enums.get(node.value.id)
+        if members is not None and node.attr not in members and not node.attr.startswith("_"):
+            add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {', '.join(sorted(members))}. Use an actual member, not an invented spelling.")
+    return findings
 
 
 def _finding(
@@ -260,7 +374,9 @@ def _python_diagnostics(
             column=exc.offset,
         )]
 
-    unawaited = _unawaited_coroutines(tree)
+    unawaited = python_structural_diagnostics(
+        tree, sqlite=workspace_uses_sqlite(workspace),
+    ) + _unawaited_coroutines(tree)
 
     # Pyflakes is a small, in-process AST checker. Keep this collector focused
     # on undefined-name failures; unused-import style feedback is noisy during

@@ -6,8 +6,8 @@ then best-effort processes every other editor diagram type the LLM can
 benefit from: GUI, agent, object (instance data), state machines,
 quantum circuits.
 
-Any optional processor failure degrades gracefully to ``None`` for that
-model — the spec-driven generation run continues with whatever succeeded.
+Processor failures preserve successful models and record structured input
+losses. A surviving model is not proof that the entire project was converted.
 
 Lives in its own module (not inside ``generation_router``) so that the
 spec-driven generation router does not import from the generation router and
@@ -17,6 +17,8 @@ vice-versa — no circular deps between routers.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
@@ -91,6 +93,7 @@ class AssembledModels:
     quantum_circuit: Optional[Any] = None               # QuantumCircuit or None
     bpmn_model: Optional[Any] = None                    # BPMNModel or None
     nn_model: Optional[Any] = None                      # NN model or None
+    assembly_issues: List[dict[str, str]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         """Shape suitable for the preview endpoint response.
@@ -130,7 +133,8 @@ class AssembledModels:
             present.append({"kind": "bpmn"})
         if self.nn_model is not None:
             present.append({"kind": "nn"})
-        return {"primary": self.primary_kind, "present": present}
+        return {"primary": self.primary_kind, "present": present,
+                "assembly_issues": [dict(issue) for issue in self.assembly_issues]}
 
 
 def _safe_count(fn) -> int:
@@ -141,6 +145,48 @@ def _safe_count(fn) -> int:
         return 0
 
 
+def _assembly_issue(diagram: DiagramInput, diagram_type: str, diagnostic: str) -> dict[str, str]:
+    """Public provenance without model bodies, titles or exception messages."""
+    identifier = getattr(diagram, "id", None)
+    if not identifier:
+        # Legacy diagrams may lack IDs. A digest is stable across retries and
+        # distinguishes them without publishing potentially sensitive content.
+        source = json.dumps(diagram.model, sort_keys=True, default=str)
+        identifier = "anonymous-" + hashlib.sha256(source.encode()).hexdigest()[:16]
+    identifier = "".join(c for c in str(identifier) if c.isprintable())
+    if len(identifier) > 120:
+        identifier = identifier[:103] + "-" + hashlib.sha256(identifier.encode()).hexdigest()[:16]
+    return {"diagram_id": identifier,
+            "diagram_type": diagram_type, "diagnostic": diagnostic[:160]}
+
+
+def _convert_diagram(diagram, diagram_type, issues, convert):
+    """Keep conversion failures explicit; never expose arbitrary exception text."""
+    diagnostic = "no_model_returned"
+    try:
+        result = convert()
+    except Exception as exc:
+        category = type(exc).__name__
+        safe_categories = {"ValueError", "TypeError", "KeyError", "AttributeError",
+                           "ValidationError", "ConversionError", "RuntimeError",
+                           "NotImplementedError", "IndexError"}
+        diagnostic = "processor_failed: " + (category if category in safe_categories else "ConversionError")
+        result = None
+    issue = _assembly_issue(diagram, diagram_type, diagnostic)
+    if issues is not None:
+        # The GUI-associated agent may be retried as a standalone agent. Clear
+        # a loss only when that exact diagram actually converts successfully.
+        issues[:] = [item for item in issues if
+                     (item["diagram_type"], item["diagram_id"]) !=
+                     (issue["diagram_type"], issue["diagram_id"])]
+        if result is None:
+            issues.append(issue)
+    if result is None:
+        logger.warning("Model assembly failed: %s [%s]: %s", diagram_type,
+                       issue["diagram_id"], diagnostic)
+    return result
+
+
 def assemble_models_from_project(
     project: ProjectInput,
     primary_kind_override: Optional[str] = None,
@@ -148,7 +194,8 @@ def assemble_models_from_project(
     """Build BUML models from a ``ProjectInput``.
 
     Every diagram type is processed best-effort: a processor failure
-    logs and continues rather than blocking the whole run. The assembler
+    records a structured assembly issue and continues with usable models.
+    The assembler
     does NOT require any particular diagram — it accepts any combination
     so users can drive smart generation from a state machine alone, a
     GUI alone, an agent alone, etc. It raises only when no usable model
@@ -182,33 +229,26 @@ def assemble_models_from_project(
     ValueError
         If the project contains no usable modeling artifacts at all.
     """
+    assembly_issues: List[dict[str, str]] = []
     class_diagram = _pick_class_diagram(project)
     domain_model = None
     if class_diagram is not None:
-        try:
-            domain_model = process_class_diagram(class_diagram.model_dump())
-        except Exception:
-            # Class diagram exists but won't parse. Log and continue —
-            # we may still have other models to work with.
-            logger.exception(
-                "Failed to process ClassDiagram for smart generation; "
-                "continuing without domain model"
-            )
-            domain_model = None
+        domain_model = _convert_diagram(class_diagram, "ClassDiagram", assembly_issues,
+                                       lambda: process_class_diagram(class_diagram.model_dump()))
 
     gui_model, agent_model, agent_config = _assemble_gui_and_agent(
-        project, class_diagram, domain_model
+        project, class_diagram, domain_model, assembly_issues
     )
     if agent_model is None:
         agent_model, agent_config = _assemble_standalone_agent(
-            project, agent_config
+            project, agent_config, assembly_issues
         )
 
-    object_model = _assemble_object_model(project, domain_model)
-    state_machines = _assemble_state_machines(project)
-    quantum_circuit = _assemble_quantum_circuit(project)
-    bpmn_model = _assemble_bpmn_model(project)
-    nn_model = _assemble_nn_model(project)
+    object_model = _assemble_object_model(project, domain_model, assembly_issues)
+    state_machines = _assemble_state_machines(project, assembly_issues)
+    quantum_circuit = _assemble_quantum_circuit(project, assembly_issues)
+    bpmn_model = _assemble_bpmn_model(project, assembly_issues)
+    nn_model = _assemble_nn_model(project, assembly_issues)
 
     primary_kind = _resolve_primary_kind(
         override=primary_kind_override,
@@ -222,11 +262,14 @@ def assemble_models_from_project(
         quantum_circuit=quantum_circuit,
     )
     if primary_kind is None:
+        loss_details = "; ".join(
+            f"{item['diagram_type']} [{item['diagram_id']}]: {item['diagnostic']}"
+            for item in assembly_issues[:5])
         raise ValueError(
             "Smart generation requires at least one modeling artifact "
             "(ClassDiagram, GUINoCodeDiagram, AgentDiagram, "
             "StateMachineDiagram, ObjectDiagram, BPMN, NNDiagram, "
-            "or QuantumCircuitDiagram)"
+            "or QuantumCircuitDiagram)" + (f". Model assembly failed: {loss_details}" if loss_details else "")
         )
 
     return AssembledModels(
@@ -240,6 +283,7 @@ def assemble_models_from_project(
         quantum_circuit=quantum_circuit,
         bpmn_model=bpmn_model,
         nn_model=nn_model,
+        assembly_issues=assembly_issues,
     )
 
 
@@ -288,6 +332,7 @@ def _resolve_primary_kind(
 def _assemble_standalone_agent(
     project: ProjectInput,
     agent_config: Optional[dict],
+    issues: Optional[list[dict[str, str]]] = None,
 ) -> tuple[Optional[Any], Optional[dict]]:
     """Process an AgentDiagram even when no GUI is present.
 
@@ -298,14 +343,10 @@ def _assemble_standalone_agent(
     agent_diagram = project.get_active_diagram("AgentDiagram")
     if agent_diagram is None or not getattr(agent_diagram, "model", None):
         return None, agent_config
-    try:
-        agent_diagram_dict = agent_diagram.model_dump()
-        agent_model = process_agent_diagram(agent_diagram_dict)
-    except Exception:
-        logger.exception(
-            "Failed to process standalone AgentDiagram for smart "
-            "generation; continuing without agent model"
-        )
+    agent_diagram_dict = agent_diagram.model_dump()
+    agent_model = _convert_diagram(agent_diagram, "AgentDiagram", issues,
+                                   lambda: process_agent_diagram(agent_diagram_dict))
+    if agent_model is None:
         return None, agent_config
 
     # Reuse the same config-resolution logic as the GUI-paired path so
@@ -329,6 +370,7 @@ def _assemble_gui_and_agent(
     project: ProjectInput,
     class_diagram: DiagramInput,
     domain_model: Any,
+    issues: Optional[list[dict[str, str]]] = None,
 ) -> tuple[Optional[Any], Optional[Any], Optional[dict]]:
     """Process GUI and (conditionally) agent diagrams.
 
@@ -343,19 +385,12 @@ def _assemble_gui_and_agent(
     if gui_diagram is None:
         return gui_model, agent_model, agent_config
 
-    try:
-        gui_model = process_gui_diagram(
-            gui_diagram.model, class_diagram.model, domain_model
-        )
-    except Exception:
-        # GUI processing can fail if the class diagram and GUI are
-        # out of sync. Degrade gracefully to class-only rather than
-        # blocking the whole spec-driven generation run.
-        logger.exception(
-            "Failed to process GUINoCodeDiagram for smart generation; "
-            "continuing with class diagram only"
-        )
-        gui_model = None
+    if class_diagram is None or domain_model is None:
+        if issues is not None:
+            issues.append(_assembly_issue(gui_diagram, "GUINoCodeDiagram", "missing_domain_model"))
+    else:
+        gui_model = _convert_diagram(gui_diagram, "GUINoCodeDiagram", issues,
+                                     lambda: process_gui_diagram(gui_diagram.model, class_diagram.model, domain_model))
 
     if gui_model is not None and _check_for_agent_components(gui_model):
         agent_diagram = project.get_referenced_diagram(gui_diagram, "AgentDiagram")
@@ -364,9 +399,10 @@ def _assemble_gui_and_agent(
             # explicitly reference one.
             agent_diagram = project.get_active_diagram("AgentDiagram")
         if agent_diagram is not None and agent_diagram.model:
-            try:
-                agent_diagram_dict = agent_diagram.model_dump()
-                agent_model = process_agent_diagram(agent_diagram_dict)
+            agent_diagram_dict = agent_diagram.model_dump()
+            agent_model = _convert_diagram(agent_diagram, "AgentDiagram", issues,
+                                           lambda: process_agent_diagram(agent_diagram_dict))
+            if agent_model is not None:
                 project_settings = project.settings if isinstance(project.settings, dict) else {}
                 project_config = project_settings.get("config") if isinstance(project_settings, dict) else None
                 project_agent_config = (
@@ -379,19 +415,12 @@ def _assemble_gui_and_agent(
                     or project_agent_config
                     or project_config
                 )
-            except Exception:
-                logger.exception(
-                    "Failed to process AgentDiagram for smart generation; "
-                    "continuing without agent model"
-                )
-                agent_model = None
-                agent_config = None
 
     return gui_model, agent_model, agent_config
 
 
 def _assemble_object_model(
-    project: ProjectInput, domain_model: Any
+    project: ProjectInput, domain_model: Any, issues: Optional[list[dict[str, str]]] = None,
 ) -> Optional[Any]:
     """Process the active ObjectDiagram into an ObjectModel.
 
@@ -401,47 +430,27 @@ def _assemble_object_model(
     object_diagram = project.get_active_diagram("ObjectDiagram")
     if object_diagram is None or not getattr(object_diagram, "model", None):
         return None
-    try:
-        return process_object_diagram(object_diagram.model_dump(), domain_model)
-    except Exception:
-        logger.exception(
-            "Failed to process ObjectDiagram for smart generation; "
-            "continuing without object model"
-        )
-        return None
+    return _convert_diagram(object_diagram, "ObjectDiagram", issues,
+                            lambda: process_object_diagram(object_diagram.model_dump(), domain_model))
 
 
-def _assemble_bpmn_model(project: ProjectInput) -> Optional[Any]:
+def _assemble_bpmn_model(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> Optional[Any]:
     """Process the active BPMN diagram into a ``BPMNModel`` (best-effort)."""
     diagram = project.get_active_diagram("BPMN")
     if diagram is None or not getattr(diagram, "model", None):
         return None
-    try:
-        return process_bpmn_diagram(diagram.model_dump())
-    except Exception:
-        logger.exception(
-            "Failed to process BPMN for smart generation; "
-            "continuing without BPMN model"
-        )
-        return None
+    return _convert_diagram(diagram, "BPMN", issues, lambda: process_bpmn_diagram(diagram.model_dump()))
 
 
-def _assemble_nn_model(project: ProjectInput) -> Optional[Any]:
+def _assemble_nn_model(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> Optional[Any]:
     """Process the active NNDiagram into a BUML NN model (best-effort)."""
     diagram = project.get_active_diagram("NNDiagram")
     if diagram is None or not getattr(diagram, "model", None):
         return None
-    try:
-        return process_nn_diagram(diagram.model_dump())
-    except Exception:
-        logger.exception(
-            "Failed to process NNDiagram for smart generation; "
-            "continuing without NN model"
-        )
-        return None
+    return _convert_diagram(diagram, "NNDiagram", issues, lambda: process_nn_diagram(diagram.model_dump()))
 
 
-def _assemble_state_machines(project: ProjectInput) -> List[Any]:
+def _assemble_state_machines(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> List[Any]:
     """Process every StateMachineDiagram in the project.
 
     Unlike the other single-active-diagram types, state machines are
@@ -453,32 +462,20 @@ def _assemble_state_machines(project: ProjectInput) -> List[Any]:
     for diagram in diagrams:
         if not getattr(diagram, "model", None):
             continue
-        try:
-            sm = process_state_machine(diagram.model_dump())
-        except Exception:
-            logger.exception(
-                "Failed to process StateMachineDiagram %r; skipping",
-                getattr(diagram, "title", "<unnamed>"),
-            )
-            continue
+        sm = _convert_diagram(diagram, "StateMachineDiagram", issues,
+                              lambda: process_state_machine(diagram.model_dump()))
         if sm is not None:
             results.append(sm)
     return results
 
 
-def _assemble_quantum_circuit(project: ProjectInput) -> Optional[Any]:
+def _assemble_quantum_circuit(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> Optional[Any]:
     """Process the active QuantumCircuitDiagram into a QuantumCircuit."""
     diagram = project.get_active_diagram("QuantumCircuitDiagram")
     if diagram is None or not getattr(diagram, "model", None):
         return None
-    try:
-        return process_quantum_diagram(diagram.model_dump())
-    except Exception:
-        logger.exception(
-            "Failed to process QuantumCircuitDiagram for smart generation; "
-            "continuing without quantum circuit"
-        )
-        return None
+    return _convert_diagram(diagram, "QuantumCircuitDiagram", issues,
+                            lambda: process_quantum_diagram(diagram.model_dump()))
 
 
 def _collect_diagrams_of_type(

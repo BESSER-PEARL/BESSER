@@ -93,8 +93,9 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
     "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
     "gpt-5.6-sol":   {"input": 5.0, "output": 30.0, "cache_write": 0, "cache_read": 0.5},
-    "gpt-5.6-terra": {"input": 2.5, "output": 15.0, "cache_write": 0, "cache_read": 0.25},
-    "gpt-5.6-luna":  {"input": 1.0, "output": 6.0,  "cache_write": 0, "cache_read": 0.1},
+    # Official model pages, verified 2026-09-19 (standard requests <=272K input).
+    "gpt-5.6-terra": {"input": 2.0, "output": 12.0, "cache_write": 0, "cache_read": 0.2},
+    "gpt-5.6-luna":  {"input": 0.2, "output": 1.2,  "cache_write": 0, "cache_read": 0.02},
     "gpt-5.5":     {"input": 5.0,  "output": 30.0, "cache_write": 0, "cache_read": 0.5},
     "gpt-5":       {"input": 1.25, "output": 10.0, "cache_write": 0, "cache_read": 0.125},
     "o3-mini":     {"input": 1.1,  "output": 4.4,  "cache_write": 0, "cache_read": 0},
@@ -1065,6 +1066,20 @@ class _ToolUseBlock:
         self.input = arguments
 
 
+def _openai_stop_reason(finish_reason: str | None, complete_tool_calls: bool) -> str:
+    """Native complete calls beat a normal stop label, never a safety/length stop.
+
+    Observed with Nebius Qwen forced tool_choice: a valid read_file call plus
+    finish_reason='stop'. Treating that as end_turn silently discarded the call.
+    Do not infer calls from prose or execute a truncated/refused response.
+    """
+    if finish_reason == "tool_calls":
+        return "tool_use"
+    if finish_reason in (None, "stop"):
+        return "tool_use" if complete_tool_calls else "end_turn"
+    return finish_reason
+
+
 def _openai_response_to_common(response) -> dict[str, Any]:
     """
     Convert an OpenAI chat completion response to the common format
@@ -1082,6 +1097,7 @@ def _openai_response_to_common(response) -> dict[str, Any]:
         content.append(_TextBlock(text=message.content))
 
     # Tool calls
+    complete_tool_calls = bool(message.tool_calls)
     if message.tool_calls:
         import json as _json
         for tc in message.tool_calls:
@@ -1089,6 +1105,9 @@ def _openai_response_to_common(response) -> dict[str, Any]:
                 arguments = _json.loads(tc.function.arguments)
             except (ValueError, TypeError):
                 arguments = {}
+                complete_tool_calls = False
+            if not isinstance(arguments, dict) or not tc.id or not tc.function.name:
+                complete_tool_calls = False
             content.append(_ToolUseBlock(
                 tool_id=tc.id,
                 name=tc.function.name,
@@ -1097,14 +1116,9 @@ def _openai_response_to_common(response) -> dict[str, Any]:
 
     # Map OpenAI finish_reason to our stop_reason
     finish_reason = choice.finish_reason
-    if finish_reason == "tool_calls":
-        stop_reason = "tool_use"
-    elif finish_reason == "stop":
-        stop_reason = "end_turn"
-    else:
-        stop_reason = finish_reason or "end_turn"
+    stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
 
-    return {"stop_reason": stop_reason, "content": content}
+    return {"stop_reason": stop_reason, "content": content, "provider_finish_reason": finish_reason}
 
 
 # ======================================================================
@@ -1461,6 +1475,7 @@ class OpenAIProvider(LLMProvider):
                 content: list[Any] = []
                 if collected_text:
                     content.append(_TextBlock(text=collected_text))
+                complete_tool_calls = bool(tool_calls_accum)
                 for _idx in sorted(tool_calls_accum.keys()):
                     tc_data = tool_calls_accum[_idx]
                     import json as _json
@@ -1468,6 +1483,9 @@ class OpenAIProvider(LLMProvider):
                         arguments = _json.loads(tc_data["arguments"])
                     except (ValueError, TypeError):
                         arguments = {}
+                        complete_tool_calls = False
+                    if not isinstance(arguments, dict) or not tc_data["id"] or not tc_data["name"]:
+                        complete_tool_calls = False
                     content.append(_ToolUseBlock(
                         tool_id=tc_data["id"],
                         name=tc_data["name"],
@@ -1475,17 +1493,13 @@ class OpenAIProvider(LLMProvider):
                     ))
 
                 # Map finish_reason
-                if finish_reason == "tool_calls":
-                    stop_reason = "tool_use"
-                elif finish_reason == "stop":
-                    stop_reason = "end_turn"
-                else:
-                    stop_reason = finish_reason or "end_turn"
+                stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
 
                 yield {
                     "type": "message_done",
                     "stop_reason": stop_reason,
                     "content": content,
+                    "provider_finish_reason": finish_reason,
                 }
                 return  # Success — exit retry loop
 

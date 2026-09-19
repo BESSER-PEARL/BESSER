@@ -170,12 +170,20 @@ class TestSerializeDomainModel:
 
     def test_methods_serialized(self):
         model = self._build_blog_model()
+        post_model = model.get_class_by_name("Post")
+        method = next(iter(post_model.methods))
+        method.pre = [Constraint(name="readable", context=post_model,
+                                 expression="self.content.size() > 0", language="OCL")]
+        method.post = [Constraint(name="nonnegative", context=post_model,
+                                  expression="result >= 0", language="OCL")]
         result = serialize_domain_model(model)
 
         post = next(c for c in result["classes"] if c["name"] == "Post")
         assert "methods" in post
         wc = next(m for m in post["methods"] if m["name"] == "word_count")
         assert wc["return_type"] == "int"
+        assert wc["pre"] == [{"name": "readable", "context": "Post", "expression": "self.content.size() > 0"}]
+        assert wc["post"] == [{"name": "nonnegative", "context": "Post", "expression": "result >= 0"}]
 
     def test_enumerations(self):
         model = self._build_blog_model()
@@ -211,12 +219,23 @@ class TestSerializeDomainModel:
 
     def test_constraints(self):
         model = self._build_blog_model()
+        model.conversion_issues = [{
+            "id": "ocl-conversion-example", "category": "ocl", "code": "parse_error",
+            "source": {"diagram_id": "blog", "element_id": "bad-rule", "block_index": 1},
+            "context": "User", "method": None, "name": "missingRole", "kind": "invariant",
+            "expression": "context User inv missingRole: self.missing->size() > 0",
+            "original_text": "context User inv missingRole: self.missing->size() > 0",
+            "reason": "Property missing not found",
+        }]
         result = serialize_domain_model(model)
 
         assert len(result["constraints"]) == 1
         c = result["constraints"][0]
         assert c["context"] == "User"
         assert "email" in c["expression"]
+        assert result["conversion_issues"] == model.conversion_issues
+        result["conversion_issues"][0]["source"]["element_id"] = "changed-copy"
+        assert model.conversion_issues[0]["source"]["element_id"] == "bad-rule"
 
     def test_metadata_included(self):
         model = self._build_blog_model()

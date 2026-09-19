@@ -33,20 +33,32 @@ def _done(executor, **kwargs):
     return executor._task_list(dict(action="done", **kwargs))
 
 
+def _record_changes(executor, ids):
+    """Real modification receipts for tests of batching, not acceptance proof."""
+    evidence = []
+    for task_id in ids:
+        path, content = f"task_{task_id}.py", f"completed_item_{task_id} = True\n"
+        assert executor._write_file({"path": path, "content": content})["status"] == "written"
+        evidence.append({"id": task_id, "path": path, "quote": content})
+    return evidence
+
+
 # ----------------------------------------------------------- batching
 
 
 def test_many_items_are_marked_done_in_one_call(executor):
     executor.set_tasks(["one", "two", "three", "four"])
-    result = _done(executor, ids=[1, 2, 3, 4])
+    result = _done(executor, ids=[1, 2, 3, 4], evidence=_record_changes(executor, [1, 2, 3, 4]))
     assert result["done_ids"] == [1, 2, 3, 4]
     assert result["open_remaining"] == 0
+    assert result["verified_ids"] == []
+    assert result["unverified_ids"] == [1, 2, 3, 4]
 
 
 def test_a_single_id_still_works(executor):
     """The old shape is what existing prompts and checkpoints use."""
     executor.set_tasks(["one", "two"])
-    result = _done(executor, id=1)
+    result = _done(executor, id=1, evidence=_record_changes(executor, [1]))
     assert result["done_ids"] == [1]
     assert result["id"] == 1
     assert result["open_remaining"] == 1
@@ -63,7 +75,7 @@ def test_batching_is_what_the_tool_advertises(executor):
 
 def test_unknown_and_duplicate_ids_do_not_derail_the_batch(executor):
     executor.set_tasks(["one", "two"])
-    result = _done(executor, ids=[1, 1, 99])
+    result = _done(executor, ids=[1, 1, 99], evidence=_record_changes(executor, [1]))
     assert result["done_ids"] == [1]
     assert result["unknown_ids"] == [99]
 
@@ -122,7 +134,7 @@ def test_a_blocked_item_lets_the_run_finish(executor):
         {"text": "build the frontend", "verify": lambda: False},
         "write the readme",
     ])
-    _done(executor, id=2)
+    _done(executor, id=2, evidence=_record_changes(executor, [2]))
     for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
         _done(executor, id=1)
     assert executor.open_tasks() == []
@@ -149,13 +161,31 @@ def test_a_check_that_starts_failing_and_then_passes_is_accepted(executor):
     state["written"] = True
     assert _done(executor, id=1)["done_ids"] == [1]
     assert executor.blocked_tasks() == []
+    # Repairs performed after automatic blocking can still satisfy the check.
+    state["written"] = False
+    executor.set_tasks([{"text": "write it", "verify": lambda: state["written"]}])
+    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
+        _done(executor, id=1)
+    assert executor.blocked_tasks()
+    state["written"] = True
+    assert _done(executor, id=1)["verified_ids"] == [1]
+    assert executor.blocked_tasks() == []
+    assert "blocked_reason" not in executor.task_snapshot()[0]
 
 
 def test_a_broken_verifier_never_wedges_the_run(executor):
     def explode():
         raise RuntimeError("verifier bug")
     executor.set_tasks([{"text": "x", "verify": explode}])
-    assert _done(executor, id=1)["done_ids"] == [1]
+    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
+        result = _done(executor, id=1)
+        assert result["done_ids"] == []
+        assert "error" in result
+    assert "verification could not run" in result["blocked"][0]["reason"]
+    assert executor.blocked_tasks()[0]["done"] is False
+    repeated = _done(executor, id=1)
+    assert repeated["status"] == "blocked"
+    assert repeated["done_ids"] == []
 
 
 # ------------------------------------------------------- crash recovery
@@ -220,11 +250,112 @@ def test_blocking_is_reported_as_an_error_exactly_once(executor):
 def test_a_partial_batch_counts_as_progress(executor):
     """Some work was accepted, so the turn is not a failure."""
     executor.set_tasks(["real", {"text": "unverifiable", "verify": lambda: False}])
-    payload = _done(executor, ids=[1, 2])
+    payload = _done(executor, ids=[1, 2], evidence=_record_changes(executor, [1]))
     assert payload["done_ids"] == [1]
     assert payload["refused"][0]["id"] == 2
     assert "error" not in payload
     assert executor._result_status(payload) == "ok"
+
+
+def test_unverified_completion_needs_current_write_evidence(executor, tmp_path):
+    executor.set_tasks(["Implement payment"])
+    (tmp_path / "payment.py").write_text("paid = True\n", encoding="utf-8")
+    evidence = [{"id": 1, "path": "payment.py", "quote": "paid = True"}]
+    # Existing source and read-only activity do not prove this task was worked on.
+    executor._read_file({"path": "payment.py"})
+    assert _done(executor, id=1, evidence=evidence)["done_ids"] == []
+    executor._modify_file({"path": "payment.py", "old_text": "paid = True", "new_text": "paid = False"})
+    evidence[0]["quote"] = "paid = False"
+    result = _done(executor, id=1, evidence=evidence)
+    assert result["done_ids"] == [1]
+    assert result["verified_ids"] == []
+    assert executor._task_list({"action": "list"})["tasks"][0]["status"] == "implemented"
+    restored = ToolExecutor(workspace=str(tmp_path))
+    restored.restore_tasks(executor.task_snapshot())
+    assert restored.unverified_tasks()[0]["implementation_evidence"] == executor.unverified_tasks()[0]["implementation_evidence"]
+
+
+def test_existing_completion_requires_read_executable_evidence(executor, tmp_path):
+    source = (
+        "# Payment is implemented\n"
+        "def register_payment(bill, db):\n"
+        "    if bill.paid:\n"
+        "        return False\n"
+        "    bill.paid = True\n"
+        "    db.commit()\n"
+        "    return True\n\n"
+        "def placeholder():\n"
+        "    raise NotImplementedError\n"
+        "\nclass Room:\n"
+        "    roomNumber = mapped_column(String(100), unique=True)\n"
+    )
+    path = tmp_path / "payment.py"
+    path.write_text(source, encoding="utf-8")
+    evidence = [{"id": 1, "path": "payment.py", "quote": "bill.paid = True"}]
+    executor.set_tasks(["Implement payment"])
+    unread = _done(executor, id=1, existing=True, evidence=evidence)
+    assert unread["done_ids"] == []
+    assert "read payment.py" in unread["refused"][0]["reason"]
+    executor._read_file({"path": "payment.py"})
+
+    for quote in ("# Payment is implemented", "raise NotImplementedError", "def placeholder():", "bill.total = 0"):
+        executor.set_tasks(["Implement payment"])
+        refused = _done(executor, id=1, existing=True, evidence=[
+            {"id": 1, "path": "payment.py", "quote": quote},
+        ])
+        assert refused["done_ids"] == [], (quote, refused)
+        assert executor.open_tasks()
+
+    executor.set_tasks(["Implement payment"])
+    accepted = _done(executor, id=1, existing=True, evidence=evidence)
+    assert accepted["done_ids"] == [1]
+    assert accepted["verified_ids"] == []
+    assert accepted["unverified_ids"] == [1], "source evidence is not behavioral acceptance"
+    receipt = executor.unverified_tasks()[0]["implementation_evidence"][0]
+    assert receipt["origin"] == "existing"
+    assert receipt["quote"] == evidence[0]["quote"]
+    assert not executor._successful_writes
+    assert path.read_text(encoding="utf-8") == source
+    # Planning prose is not automatically an action. Database declarations
+    # are existing implementation evidence, never behavioral acceptance.
+    for task in ("Enforce unique room numbers",
+                 {"text": "Enforce unique room numbers", "kind": "uniqueness"}):
+        executor.set_tasks([task])
+        accepted = _done(executor, id=1, existing=True, evidence=[{
+            "id": 1, "path": "payment.py",
+            "quote": "roomNumber = mapped_column(String(100), unique=True)",
+        }])
+        assert accepted["done_ids"] == [1], accepted
+        assert accepted["verified_ids"] == []
+        assert accepted["unverified_ids"] == [1]
+        restored = ToolExecutor(workspace=str(tmp_path))
+        restored.restore_tasks(executor.task_snapshot())
+        assert restored.task_snapshot() == executor.task_snapshot()
+    executor.set_tasks([{"text": "Implement payment", "kind": "action"}])
+    refused = _done(executor, id=1, existing=True, evidence=[{
+        "id": 1, "path": "payment.py", "quote": "roomNumber = mapped_column(String(100), unique=True)",
+    }])
+    assert refused["done_ids"] == []
+    assert "does not perform the required behaviour" in refused["refused"][0]["reason"]
+
+
+def test_explicit_blocked_reason_survives_listing_and_resume(executor, tmp_path):
+    executor.set_tasks(["Implement payment"])
+    assert "reason" in executor._task_list({"action": "blocked", "id": 1})["error"]
+    result = executor._task_list({"action": "blocked", "ids": [1], "reason": "Payment adapter is unavailable"})
+    assert result["blocked_ids"] == [1]
+    assert _done(executor, id=1)["done_ids"] == []
+    restored = ToolExecutor(workspace=str(tmp_path))
+    restored.restore_tasks(executor.task_snapshot())
+    listing = restored._task_list({"action": "list"})["tasks"][0]
+    assert listing["status"] == "blocked"
+    assert listing["verification"] == "unverified"
+    assert listing["reason"] == "Payment adapter is unavailable"
+    # An explicit block also closes only on fresh implementation evidence.
+    repaired = _done(restored, id=1, evidence=_record_changes(restored, [1]))
+    assert repaired["done_ids"] == [1]
+    assert repaired["unverified_ids"] == [1]
+    assert restored.blocked_tasks() == []
 
 
 # ======================================================================

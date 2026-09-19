@@ -5,6 +5,14 @@ from typing import Dict, List
 from besser.BUML.metamodel.structural import DomainModel
 
 
+def is_server_owned_attribute(attribute) -> bool:
+    """Whether backend create/update payloads omit this generated attribute."""
+    return not attribute.is_id and (
+        attribute.name == "id"
+        or attribute.name.lower().replace("_", "") in {"createdat", "updatedat"}
+    )
+
+
 def _sorted_association_ends(association) -> list:
     """Return association ends in a deterministic order."""
     return sorted(association.ends, key=lambda end: (end.type.name, end.name or ""))

@@ -103,7 +103,7 @@ and the error messages are displayed in the frontend web application.
 OCL constraint support details
 ------------------------------
 
-- ``self.<attr>.matches('<regex>')`` becomes a ``re.match(...)`` field validator
+- ``self.<attr>.matches('<regex>')`` becomes a ``re.fullmatch(...)`` field validator
   (the module imports ``re`` automatically).
 - Constraints comparing two attributes of the same class (e.g.
   ``self.check_in <= self.check_out``) become ``@model_validator(mode='after')``

@@ -2,8 +2,10 @@
 Class diagram processing for converting JSON to BUML format.
 """
 
+import hashlib
+import json
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -691,6 +693,7 @@ def _ocl_box_to_full_text(
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
     warnings: list[str],
+    on_rejection: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[str]:
     """Coerce a ``ClassOCLConstraint`` element to its canonical full-text form.
 
@@ -708,6 +711,11 @@ def _ocl_box_to_full_text(
     if not raw:
         return None
 
+    def reject(code: str, reason: str) -> None:
+        warnings.append(reason)
+        if on_rejection is not None:
+            on_rejection(code, reason)
+
     # Already canonical full text — fast path.
     if raw.lstrip().lower().startswith("context"):
         return raw
@@ -717,13 +725,13 @@ def _ocl_box_to_full_text(
     legacy_kind = element.get("kind")
     if not legacy_kind:
         # No header and no legacy metadata: nothing we can do.
-        warnings.append(
+        reject("unsupported_shape",
             f"Warning: OCL constraint {element_id} has no recognisable header "
             f"and no legacy 'kind' field; skipping."
         )
         return None
     if legacy_kind not in ("invariant", "precondition", "postcondition"):
-        warnings.append(
+        reject("unsupported_shape",
             f"Warning: OCL constraint {element_id} has unknown kind {legacy_kind!r}; skipping."
         )
         return None
@@ -742,13 +750,13 @@ def _ocl_box_to_full_text(
             linked_class_id = source_id
             break
     if linked_class_id is None:
-        warnings.append(
+        reject("detached",
             f"Warning: legacy body-only OCL constraint {element_id} is not linked to a class; skipping."
         )
         return None
     linked_class = class_id_to_class.get(linked_class_id)
     if linked_class is None:
-        warnings.append(
+        reject("detached",
             f"Warning: legacy body-only OCL constraint {element_id} links to non-class element "
             f"{linked_class_id}; skipping."
         )
@@ -758,13 +766,13 @@ def _ocl_box_to_full_text(
     if legacy_kind in ("precondition", "postcondition"):
         target_method_id = element.get("targetMethodId")
         if not target_method_id:
-            warnings.append(
+            reject("unknown_method",
                 f"Warning: legacy {legacy_kind} constraint {element_id} has no targetMethodId; skipping."
             )
             return None
         method = method_id_to_method.get(target_method_id)
         if method is None:
-            warnings.append(
+            reject("unknown_method",
                 f"Warning: legacy {legacy_kind} constraint {element_id} targets missing method "
                 f"{target_method_id}; skipping."
             )
@@ -779,7 +787,7 @@ def _ocl_box_to_full_text(
             method=method,
         )
     except ValueError as e:
-        warnings.append(f"Warning: legacy {legacy_kind} constraint {element_id}: {e}")
+        reject("unsupported_shape", f"Warning: legacy {legacy_kind} constraint {element_id}: {e}")
         return None
 
 
@@ -790,6 +798,9 @@ def _process_constraints(
     all_warnings: list[str],
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
+    *,
+    diagram_id: Optional[str] = None,
+    diagram_title: str = "",
 ) -> None:
     """Parse every ``ClassOCLConstraint`` element and attach the results.
 
@@ -803,8 +814,48 @@ def _process_constraints(
     transparently lifted to full text via :func:`_ocl_box_to_full_text`.
 
     Malformed OCL, unresolved methods, and duplicate names are skipped
-    with a warning rather than aborting conversion.
+    with a warning rather than aborting conversion. Their original text is
+    retained as a structured conversion issue, never inserted into executable
+    constraints or silently treated as an implemented rule.
     """
+    conversion_issues: list[dict[str, Any]] = []
+    domain_model.conversion_issues = conversion_issues
+
+    def provenance(element_id: str, element: dict, details: Optional[dict] = None) -> dict:
+        details = details or {}
+        original_text = element.get("constraint") or ""
+        context = details.get("context")
+        if context is None:
+            for rel in relationships.values():
+                if rel.get("type") != "ClassOCLLink":
+                    continue
+                ends = [(rel.get(end) or {}).get("element") for end in ("source", "target")]
+                if element_id not in ends:
+                    continue
+                linked = next((class_id_to_class[e] for e in ends if e in class_id_to_class), None)
+                if linked is not None:
+                    context = linked.name
+                    break
+        target_method = method_id_to_method.get(element.get("targetMethodId"))
+        source = {
+            "diagram_id": diagram_id,
+            "diagram_title": diagram_title or domain_model.name,
+            "element_id": element_id,
+            "block_index": details.get("block_index", 1),
+        }
+        expression = details.get("expression", original_text)
+        identity = json.dumps([source, expression], sort_keys=True, ensure_ascii=False)
+        return {
+            "id": "ocl-conversion-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20],
+            "category": "ocl",
+            "source": source,
+            "context": context,
+            "method": details.get("method") or (target_method.name if target_method else None),
+            "name": details.get("name") or element.get("constraintName"),
+            "kind": details.get("kind") or element.get("kind"),
+            "expression": expression,
+            "original_text": original_text,
+        }
     # Build ``(class_name, method_name) -> Method`` index for pre/post
     # routing. Walks the inheritance chain so a constraint written as
     # ``context Sub::base_method() pre: ...`` can still resolve to a
@@ -853,7 +904,7 @@ def _process_constraints(
     # the order constraints were encountered in ``elements.items()``. With
     # a set, "first wins" would silently become "any-wins" on Python
     # versions whose set ordering differs from the insertion order.
-    extra_invariants: list = []
+    extra_invariants: list[tuple[Any, dict]] = []
     counter = 0
     for element_id, element in elements.items():
         if element.get("type") != "ClassOCLConstraint":
@@ -862,6 +913,9 @@ def _process_constraints(
         text = _ocl_box_to_full_text(
             element, element_id, elements, relationships,
             class_id_to_class, method_id_to_method, all_warnings,
+            on_rejection=lambda code, reason: conversion_issues.append({
+                **provenance(element_id, element), "code": code, "reason": reason,
+            }),
         )
         if not text:
             continue
@@ -873,9 +927,12 @@ def _process_constraints(
         description = element.get("description")
 
         counter += 1
+        parser_issues: list[dict] = []
+        source_blocks: dict[int, dict] = {}
         try:
             routing, warnings = process_ocl_constraints(
                 text, domain_model, counter, default_description=description,
+                issues=parser_issues, source_blocks=source_blocks,
             )
         except (BOCLSyntaxError, ValueError) as e:
             # ``process_ocl_constraints`` already swallows most parse errors
@@ -883,28 +940,40 @@ def _process_constraints(
             # narrow set (header-resolve errors, malformed BOCL the
             # inner parser re-raised). Programmer errors (KeyError,
             # AttributeError, etc.) deliberately propagate.
-            all_warnings.append(f"Warning: Error processing OCL element {element_id}: {e}")
+            reason = f"Warning: Error processing OCL element {element_id}: {e}"
+            all_warnings.append(reason)
+            conversion_issues.append({**provenance(element_id, element), "code": "parse_error", "reason": reason})
             continue
         all_warnings.extend(warnings)
+        for issue in parser_issues:
+            conversion_issues.append({
+                **provenance(element_id, element, issue),
+                "code": issue["code"], "reason": issue["reason"],
+            })
 
         for kind, constraint, class_name, method_name in routing:
+            origin = provenance(element_id, element, source_blocks.get(id(constraint)))
             try:
                 if kind == "invariant":
-                    extra_invariants.append(constraint)
+                    extra_invariants.append((constraint, origin))
                 else:
                     method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
                     if method is None:
-                        all_warnings.append(
+                        reason = (
                             f"Warning: {kind} '{constraint.name}' targets unknown method "
                             f"{class_name}::{method_name}; skipping."
                         )
+                        all_warnings.append(reason)
+                        conversion_issues.append({**origin, "code": "unknown_method", "reason": reason})
                         continue
                     if kind == "precondition":
                         method.add_pre(constraint)
                     else:  # postcondition
                         method.add_post(constraint)
             except ValueError as e:
-                all_warnings.append(f"Warning: Could not attach {kind} '{constraint.name}': {e}")
+                reason = f"Warning: Could not attach {kind} '{constraint.name}': {e}"
+                all_warnings.append(reason)
+                conversion_issues.append({**origin, "code": "attachment_error", "reason": reason})
 
     # Combine with any existing constraints already on the domain model.
     # ``DomainModel.constraints`` rejects duplicate names with a ``ValueError``,
@@ -914,12 +983,14 @@ def _process_constraints(
     # occurrence and emit a warning for each subsequent collision rather
     # than crashing the whole conversion.
     by_name: dict[str, Any] = {c.name: c for c in domain_model.constraints}
-    for c in extra_invariants:
+    for c, origin in extra_invariants:
         if c.name in by_name and by_name[c.name] is not c:
-            all_warnings.append(
+            reason = (
                 f"Warning: duplicate constraint name {c.name!r} across OCL boxes; "
                 f"keeping the first occurrence."
             )
+            all_warnings.append(reason)
+            conversion_issues.append({**origin, "code": "duplicate_name", "reason": reason})
             continue
         by_name[c.name] = c
     domain_model.ocl_warnings = all_warnings
@@ -1142,6 +1213,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     _process_constraints(
         elements, relationships, domain_model, all_warnings,
         class_id_to_class, method_id_to_method,
+        diagram_id=json_data.get("id"), diagram_title=json_data.get("title", ""),
     )
 
     # Process comments and apply them to class or domain model metadata

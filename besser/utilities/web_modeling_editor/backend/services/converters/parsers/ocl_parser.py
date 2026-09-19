@@ -161,6 +161,9 @@ def process_ocl_constraints(
     domain_model: DomainModel,
     counter: int,
     default_description: Optional[str] = None,
+    *,
+    issues: Optional[list[dict]] = None,
+    source_blocks: Optional[dict[int, dict]] = None,
 ) -> tuple[list[tuple[str, OCLConstraint, Optional[str], Optional[str]]], list[str]]:
     """Split a textarea blob on ``context`` boundaries and parse each block.
 
@@ -177,6 +180,11 @@ def process_ocl_constraints(
     Returns:
         ``(routing_tuples, warnings)`` where each routing tuple has the
         same shape as :func:`parse_constraint_text`'s return value.
+
+    Optional collectors preserve rejected block text and successful block
+    provenance for the converter without changing the legacy return shape.
+    ``source_blocks`` is indexed by ``id(constraint)`` (not its possibly
+    colliding name), so a later attachment failure retains the right source.
     """
     if not ocl_text:
         return [], []
@@ -203,14 +211,29 @@ def process_ocl_constraints(
         line_for_parse = cleaned_block.replace("\n", " ").strip()
         line_canonical = block.replace("\n", " ").strip()
         block_idx += 1
+        header = _HEADER_RE.search(block)
+        details = {
+            "block_index": block_idx,
+            "expression": block,
+            "context": header.group("class") if header else None,
+            "method": header.group("method") if header else None,
+            "kind": _KIND_FROM_KW[header.group("kw").lower()] if header else None,
+            "name": header.group("name") if header else None,
+        }
 
         try:
             kind, constraint, class_name, method_name = parse_constraint_text(line_for_parse, domain_model)
         except BOCLSyntaxError as e:
-            warnings.append(f"Warning: Invalid OCL syntax in '{line_for_parse}': {e}")
+            reason = f"Warning: Invalid OCL syntax in '{line_for_parse}': {e}"
+            warnings.append(reason)
+            if issues is not None:
+                issues.append({**details, "code": "parse_error", "reason": reason})
             continue
         except ValueError as e:
-            warnings.append(f"Warning: Could not parse OCL constraint '{line_for_parse}': {e}")
+            reason = f"Warning: Could not parse OCL constraint '{line_for_parse}': {e}"
+            warnings.append(reason)
+            if issues is not None:
+                issues.append({**details, "code": "parse_error", "reason": reason})
             continue
 
         # Auto-generate a fallback name only when the user didn't supply one.
@@ -249,6 +272,8 @@ def process_ocl_constraints(
         if description:
             constraint.description = description
 
+        if source_blocks is not None:
+            source_blocks[id(constraint)] = {**details, "name": constraint.name}
         routing.append((kind, constraint, class_name, method_name))
 
     return routing, warnings

@@ -31,6 +31,7 @@ import os
 import shutil
 import subprocess
 import textwrap
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -187,17 +188,20 @@ def test_collect_tsc_issues_returns_structured_error(tmp_path) -> None:
 
 
 def test_collect_tsc_issues_soft_skips_when_binary_missing(tmp_path) -> None:
-    """When ``tsc`` isn't on PATH the collector must return an empty
-    list — never raise. This mirrors the bench's soft-skip pattern so
-    hosts without the toolchain installed still complete cleanly.
-    """
+    """A required compiler that is unavailable is unverified, not broken code."""
     _write_broken_typescript_project(tmp_path)
     orch = _build_orchestrator(tmp_path)
 
     # Force a "binary not found" outcome by patching the resolver
     # rather than mutating PATH (cleaner across platforms).
     with patch("besser.generators.llm.orchestrator.shutil.which", return_value=None):
-        assert orch._collect_tsc_issues() == []
+        from besser.generators.llm.validation.issues import is_completion_issue
+        findings = orch._collect_tsc_issues()
+        assert len(findings) == 1 and "unavailable" in findings[0]
+        assert _classify_issue(findings[0]).severity == "warning"
+        assert is_completion_issue(_classify_issue(findings[0]))
+        orch.enable_toolchain_validation = False
+        assert "disabled" in orch._collect_tsc_issues()[0]
 
 
 def test_collect_cargo_issues_soft_skips_when_binary_missing(tmp_path) -> None:
@@ -412,12 +416,16 @@ def test_toolchain_fix_iteration_cap_bounded(tmp_path) -> None:
     # And we DID at least call the LLM once — otherwise the test
     # would pass vacuously.
     assert len(client.calls) >= 1
+    assert call_count["n"] == 3  # initial sweep plus two genuinely unchanged attempts
 
 
-def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path) -> None:
-    """When the first fix-loop pass clears the blockers, the outer
-    loop must exit immediately rather than burning the rest of the
-    iteration budget on a passing project.
+@pytest.mark.parametrize("reveals_crud_errors", [False, True])
+def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path, reveals_crud_errors) -> None:
+    """Keep a working import repair even if it exposes more downstream errors.
+
+    The loop must continue from the changed source, not roll it back because
+    one startup blocker became three previously unreachable CRUD blockers.
+    It still stops immediately when the resulting source passes validation.
     """
     client = _RecordingClient()
     orch = LLMOrchestrator(
@@ -429,26 +437,51 @@ def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path) -> None:
         enable_checkpointing=False,
     )
 
-    first = [
-        ValidationIssue(
-            "blocker",
-            "tsc [.]: a.ts(1,1): error TS2322: bad type",
-        )
-    ]
-    states = [first, []]
+    source = tmp_path / "app.py"
+    source.write_text("status = MissingStatus.ready\n", encoding="utf-8")
+    first = [ValidationIssue("blocker", "application startup: app.py line 1: invalid enum default")]
+    downstream = [ValidationIssue("blocker", f"data contract: app.py line 2: missing field {field}")
+                  for field in ("total", "booking", "id")]
+    final_source = "status = 'READY'\ncontracts_fixed = True\n"
+    intermediate_source = "status = 'READY'\ncontracts_fixed = False\n"
+    changes = [intermediate_source, final_source] if reveals_crud_errors else [final_source]
+    responses = []
+    previous_source = source.read_text(encoding="utf-8")
+    for index, content in enumerate(changes):
+        responses.extend([
+            {"stop_reason": "tool_use", "content": [SimpleNamespace(
+                type="tool_use", name="modify_file", id=f"repair-{index}",
+                input={"path": "app.py", "old_text": previous_source, "new_text": content},
+            )]},
+            {"stop_reason": "end_turn", "content": []},
+        ])
+        previous_source = content
+    observed = []
 
     def stub_collect():
-        return states.pop(0) if states else []
+        current = source.read_text(encoding="utf-8")
+        observed.append(current)
+        if "MissingStatus" in current:
+            return list(first)
+        if "contracts_fixed = False" in current:
+            return list(downstream)
+        assert current == final_source
+        return []
 
     with patch.object(orch, "_collect_validation_issues", side_effect=stub_collect), \
          patch.object(orch, "_create_snapshot"), \
-         patch.object(orch, "_restore_snapshot"), \
+         patch.object(orch, "_restore_snapshot") as rollback, \
+         patch.object(client, "chat", side_effect=responses) as chat, \
          patch.object(orch, "_invoke_phase3_fix_loop",
                       wraps=orch._invoke_phase3_fix_loop) as attempts:
         orch._run_phase3_validation()
 
-    # Exactly one attempt: it cleared the blockers, so the outer loop
-    # returned without spinning up a second one. (The attempt itself makes
-    # two calls: an end_turn with no edit is re-prompted once.)
-    assert attempts.call_count == 1
-    assert len(client.calls) >= 1
+    assert attempts.call_count == len(changes)
+    assert chat.call_count == 2 * len(changes)
+    assert orch.total_turns == chat.call_count
+    assert source.read_text(encoding="utf-8") == final_source
+    assert orch._validation_issues == []
+    rollback.assert_not_called()
+    if reveals_crud_errors:
+        assert intermediate_source in observed
+        assert attempts.call_args_list[1].args[0] == downstream

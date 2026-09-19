@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useCallback, useContext, useState } from "react";
 
 interface TableContextValue {
   selectedRows: Record<string, any>;
@@ -14,12 +14,12 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedRows, setSelectedRows] = useState<Record<string, any>>({});
   const [tableRefreshFunctions, setTableRefreshFunctions] = useState<Record<string, () => void>>({});
 
-  const setSelectedRow = (tableId: string, row: any) => {
-    setSelectedRows((prev) => ({
+  const setSelectedRow = useCallback((tableId: string, row: any) => {
+    setSelectedRows((prev) => prev[tableId] === row ? prev : ({
       ...prev,
       [tableId]: row,
     }));
-  };
+  }, []);
 
   const getSelectedRow = (tableId: string) => {
     return selectedRows[tableId];

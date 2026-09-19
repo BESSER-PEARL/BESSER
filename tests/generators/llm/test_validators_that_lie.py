@@ -145,6 +145,7 @@ def test_collector_demotes_only_when_deps_are_absent(
     blocker on an installed tree and advisory on an uninstalled one."""
     import shutil
     import subprocess
+    orch.enable_toolchain_validation = True
 
     project = tmp_path / "frontend"
     project.mkdir()

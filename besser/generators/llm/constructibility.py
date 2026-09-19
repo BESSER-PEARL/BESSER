@@ -14,18 +14,17 @@ and reachability of a ``raise`` depends on data flow. So this check runs the
 app. In a subprocess, on a temp copy with a temp SQLite database, it boots
 ``main_api`` in-process (no server, no network), derives one create payload
 per entity from the app's own OpenAPI schema plus the ORM's relationships,
-creates entities in dependency order, and reports an entity only when EVERY
-schema-valid request for it is refused. "Every" is the point - a 400 can
-mean "this request was wrong"; the defect is that no request can be right.
-So each entity is tried with its enum literals, its booleans flipped and its
-dates reversed before it is reported, and a 422 (our payload, not the app's
-rule) never counts. Calibrated on nine delivered apps: the broken one is the
-single finding; eight healthy ones yield nothing, one of them only because
-the date-reversed variant is tried.
+creates entities in dependency order, and reports what those requests actually
+establish. Samples are NOT exhaustive: a 400/409/422 can be a correct refusal
+of our guessed input. Such routes remain explicitly unverified, with a path
+to verification through a valid API scenario; they are not declared broken.
+Observed server failures remain concrete findings. Samples use distinct
+identity/contact values across entities and retries, including subclasses
+sharing one parent table, so the probe does not manufacture uniqueness errors.
 
 Deliberately silent where another check owns the defect: a mapper that
-fails to configure is ``mapper config:``; a model-level creation cycle is
-``model contract:`` (the probe simply finds nothing it can create first).
+fails to configure is ``mapper config:``. Unresolved creation dependencies
+are reported as unverified; they are not proof that no valid workflow exists.
 
 A finding names its fix site - the function serving the create route, the
 file and the line inside it that constructs the entity - because run
@@ -45,8 +44,10 @@ the harness interpreter runs the generated code.
 from __future__ import annotations
 
 import datetime as _dt
+import itertools
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -57,6 +58,7 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 PREFIX = "create contract:"
+UNVERIFIED_PREFIX = "create unverified:"
 
 _PROBE_TIMEOUT_SECONDS = 90
 _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
@@ -65,6 +67,7 @@ _SKIP_DIRS = frozenset({
 })
 _BODY_CHARS = 160
 _PAYLOAD_CHARS = 300
+_MAX_VARIANTS = 20
 _NOT_NULL_PATTERNS = (
     re.compile(r"NOT NULL constraint failed: \w+\.(\w+)"),   # SQLite
     re.compile(r'null value in column "(\w+)"'),              # PostgreSQL
@@ -76,8 +79,8 @@ _NOT_NULL_PATTERNS = (
 # ---------------------------------------------------------------------------
 
 def collect_constructibility_issues(output_dir: str) -> list[str]:
-    """``create contract:`` blockers, one per entity no request can create."""
-    from besser.generators.llm.tool_executor import _safe_subprocess_env
+    """Observed server defects and explicit gaps in create-route verification."""
+    from besser.generators.llm.execution.process import _safe_subprocess_env
 
     issues: list[str] = []
     for folder in _fastapi_backends(output_dir):
@@ -137,42 +140,34 @@ def _run_probe(folder: str, env: dict) -> dict:
 
 
 def _not_checked(reason: str) -> str:
-    from besser.generators.llm.orchestrator import _check_did_not_run
+    from besser.generators.llm.validation.issues import _check_did_not_run
     return _check_did_not_run("the constructibility probe", reason)
 
 
 def _issues_from_report(report: dict, rel: str) -> list[str]:
     boot = report.get("boot")
+    if boot in {"import_error", "no_app"}:
+        site = report.get("site") or {}
+        location = f"{rel}/{site['file']} line {site['line']}" if site.get("file") else rel
+        return [f"application startup: {location}: {report.get('error', boot)}"]
     if boot == "mapper_error":
         return []  # the import smoke check reports this one
     if boot != "ok":
         return [_not_checked(f"{rel}: {report.get('error', boot)}")]
 
     entities: dict = report.get("entities") or {}
-    verdicts = {name: e.get("verdict") for name, e in entities.items()}
-    created = [n for n, v in verdicts.items() if v == "created"]
-    probed = [v for v in verdicts.values() if v != "unresolved"]
-    if probed and not created and all(v == "unauthorized" for v in probed):
-        return [_not_checked(f"{rel}: every create endpoint requires authentication")]
-    failed = sorted(n for n, v in verdicts.items() if v in ("rejected", "crashed"))
-    if not failed:
-        return []
-    if not created and all(verdicts[n] == "crashed" for n in failed):
-        # Nothing at all works: the app does not serve in this environment
-        # (unreachable database, startup hook) - not evidence about entities.
-        first = entities[failed[0]]["attempts"][0]
-        return [_not_checked(
-            f"{rel}: no create endpoint answered - "
-            f"{failed[0]} got {first.get('status')} {first.get('body', '')[:_BODY_CHARS]}"
-        )]
-
     issues: list[str] = []
-    for name in failed:
-        entry = entities[name]
-        attempt = next(
-            (a for a in entry["attempts"] if a.get("outcome") == entry["verdict"]),
-            entry["attempts"][0],
-        )
+    for name, entry in sorted(entities.items()):
+        attempts = entry.get("attempts") or []
+        # A later success does not erase an observed unhandled exception. Nor
+        # may a 400 hide a 500 merely because it came first in a verdict list.
+        failure = next((a for a in attempts if a.get("outcome") == "crashed"), None)
+        if failure is None and entry.get("verdict") != "created":
+            failure = next((a for a in attempts if a.get("missing_column")), None)
+        if entry.get("verdict") == "created" and failure is None:
+            continue
+        attempt = failure or next((a for a in attempts if a.get("outcome") == "rejected"),
+                                  attempts[0] if attempts else {})
         dependents = sorted(
             other for other, e in entities.items()
             if e.get("verdict") == "unresolved"
@@ -180,14 +175,30 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
         )
         body = (attempt.get("body") or "")[:_BODY_CHARS]
         payload = json.dumps(attempt.get("payload", {}), sort_keys=True)[:_PAYLOAD_CHARS]
-        if entry["verdict"] == "rejected":
-            how = f"every schema-valid request is rejected ({attempt.get('status')}: {body})"
+        if failure:
+            text = (
+                f"{PREFIX} {rel}: POST {entry['path']} - observed a server/persistence "
+                f"failure creating {name} ({attempt.get('status')}: {body}); "
+                f"attempted input: {payload}. This is one observed failure, not proof "
+                "that every valid request fails. Preserve business constraints; "
+                "handle invalid input without an unhandled server failure"
+            )
         else:
-            how = f"every schema-valid request fails with a server error ({attempt.get('status')}: {body})"
-        text = (
-            f"{PREFIX} {rel}: POST {entry['path']} cannot create a {name} - {how}; "
-            f"a valid payload that was refused: {payload}"
-        )
+            if attempt:
+                reason = (f"autogenerated input was refused ({attempt.get('status')}: {body}); "
+                          f"attempted input: {payload}")
+                if attempt.get("outcome") == "unauthorized":
+                    reason += "; this endpoint requires authentication"
+            else:
+                unresolved = entry.get("unresolved") or []
+                reason = ("no request could be constructed; unresolved related IDs: "
+                          + json.dumps(unresolved, sort_keys=True))
+            text = (
+                f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - {reason}. "
+                "These guessed inputs do not prove this endpoint is broken. Use test_api "
+                "with valid specification-based fixtures and read the persisted result; "
+                "do not remove business validation to satisfy guessed samples"
+            )
         site = entry.get("site")
         column = attempt.get("missing_column")
         if site:
@@ -198,19 +209,20 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
         if column:
             text += (
                 f" - the row is inserted without `{column}`, which the table declares "
-                f"NOT NULL: set `{column}` there before the insert, or make the column "
-                f"nullable / give it a default"
+                f"NOT NULL: populate/derive `{column}` before inserting, or reject "
+                "invalid input explicitly; do not remove a required constraint to "
+                "accept a probe fixture"
             )
         if dependents:
-            names = " or ".join(dependents)
-            text += f". {', '.join(dependents)} require a {name} id, so they cannot be created either"
-            if not column:
-                text += (
-                    f". No {names} row can exist before the {name} it "
-                    f"requires, so a create-time rule that needs them can never pass - "
-                    f"enforce it where those rows are created, updated or deleted (or "
-                    f"when the {name} is updated), or create them inline in the same request"
-                )
+            text += (f". Dependent create probes for {', '.join(dependents)} could not "
+                     f"run without a {name} id")
+        if not failure and entry.get("deferred_relationships") and attempt.get("status") == 400:
+            text += (
+                ". Creation-order check: " + ", ".join(entry["deferred_relationships"])
+                + f" accept existing child IDs, but those children require a {name} first. "
+                "If the refusing rule needs those children, provide an atomic valid "
+                "aggregate-creation workflow (such as nested creation), retaining the rule"
+            )
         issues.append(text)
     return issues
 
@@ -227,16 +239,53 @@ def _missing_not_null_column(body: str) -> str | None:
 # Child: runs inside the app copy (cwd), prints one report line
 # ---------------------------------------------------------------------------
 
-def _resolve(schema: dict, schemas: dict) -> dict:
+def _resolve(schema: dict, schemas: dict, _depth: int = 0) -> dict:
+    if _depth >= 8:
+        return {}
     if "$ref" in schema:
-        return schemas.get(schema["$ref"].rsplit("/", 1)[-1], {})
-    for alt in schema.get("anyOf", []):
-        if alt.get("type") != "null":
-            return _resolve(alt, schemas)
+        return _resolve(schemas.get(schema["$ref"].rsplit("/", 1)[-1], {}), schemas, _depth + 1)
+    for keyword in ("anyOf", "oneOf"):
+        for alt in schema.get(keyword, []):
+            if alt.get("type") != "null":
+                return _resolve(alt, schemas, _depth + 1)
+    if "allOf" in schema:
+        merged = {k: v for k, v in schema.items() if k != "allOf"}
+        for part in schema["allOf"]:
+            part = _resolve(part, schemas, _depth + 1)
+            props = {**merged.get("properties", {}), **part.get("properties", {})}
+            required = list(dict.fromkeys([*merged.get("required", []), *part.get("required", [])]))
+            merged.update(part)
+            merged.update(properties=props, required=required)
+        return merged
     return schema
 
 
-def _sample(field: str, schema: dict, day_offset: int):
+def _association_link_schema(schema: dict, schemas: dict, _depth: int = 0) -> dict | None:
+    """Find the scaffold's native association object, even in int|object unions."""
+    if _depth >= 8:
+        return None
+    if "$ref" in schema:
+        return _association_link_schema(
+            schemas.get(schema["$ref"].rsplit("/", 1)[-1], {}), schemas, _depth + 1)
+    for keyword in ("anyOf", "oneOf"):
+        for alt in schema.get(keyword, []):
+            found = _association_link_schema(alt, schemas, _depth + 1)
+            if found is not None:
+                return found
+    resolved = _resolve(schema, schemas)
+    if "target" in resolved.get("properties", {}):
+        return resolved
+    return None
+
+
+def _sample(field: str, schema: dict, day_offset: int, *,
+            entity: str = "entity", ordinal: int = 1, unique: bool = False):
+    """Best-effort fixture, never a claim of business-valid input.
+
+    The ordinal is global to this probe, not local to an entity: subclasses
+    often share their parent's unique columns. Retries need fresh values too,
+    since an unsuccessful endpoint may already have persisted a partial row.
+    """
     low = field.lower()
     if "enum" in schema:
         return schema["enum"][0]
@@ -248,17 +297,38 @@ def _sample(field: str, schema: dict, day_offset: int):
             return (_dt.datetime.now() + _dt.timedelta(days=day_offset)).isoformat()
         if fmt == "time":
             return "12:00:00"
-        if "email" in low:
-            return "probe@example.com"
+        if "email" in low or fmt == "email":
+            return f"probe-{ordinal}-{entity.lower()}@example.com"
         if "phone" in low:
-            return "+12345678901"
+            return f"+1{ordinal:010d}"
+        if fmt == "uuid":
+            import uuid
+            return str(uuid.UUID(int=ordinal))
         if "url" in low or "link" in low:
-            return "https://example.com"
-        return f"probe-{field}"
-    if kind == "integer":
-        return 1
-    if kind == "number":
-        return 1.0
+            return f"https://example.com/probe/{ordinal}"
+        value = f"p{ordinal}-{entity.lower()}-{field}"
+        if isinstance(schema.get("minLength"), int):
+            value = value.ljust(schema["minLength"], "x")
+        if isinstance(schema.get("maxLength"), int):
+            value = value[:schema["maxLength"]]
+        return value
+    if kind in {"integer", "number"}:
+        step = schema.get("multipleOf", 1)
+        if not isinstance(step, (int, float)) or step <= 0:
+            step = 1
+        lower = schema.get("minimum", 1)
+        if isinstance(schema.get("exclusiveMinimum"), (int, float)):
+            lower = max(lower, schema["exclusiveMinimum"] + step)
+        value = math.ceil(lower / step) * step
+        if unique or low.endswith(("number", "code")) or low in {"id", "identifier"}:
+            value += (ordinal - 1) * step
+        upper = schema.get("maximum")
+        if isinstance(schema.get("exclusiveMaximum"), (int, float)):
+            exclusive = schema["exclusiveMaximum"] - step
+            upper = min(upper, exclusive) if upper is not None else exclusive
+        if upper is not None and value > upper:
+            value = math.floor(upper / step) * step
+        return int(value) if kind == "integer" else float(value)
     if kind == "boolean":
         return True
     if kind == "array":
@@ -278,8 +348,50 @@ def _relationship_for(field: str, relationships: dict):
     return None
 
 
+def _deferred_relationships(entity: str, schema: dict, schemas: dict, orm: dict) -> list[str]:
+    """Describe reciprocal ID dependencies, without calling them impossible.
+
+    A rejected aggregate may need its child rows before those rows can obtain
+    the aggregate's ID. This is a useful investigation hint, not a reason to
+    remove a capacity/multiplicity/business rule.
+    """
+    found = []
+    for field in schema.get("properties", {}):
+        rel = _relationship_for(field, orm.get(entity, {}))
+        if rel is None:
+            continue
+        target, _ = rel
+        child = schemas.get(target + "Create", {})
+        for required in child.get("required", []):
+            back = _relationship_for(required, orm.get(target, {}))
+            if back is not None and back[0] == entity:
+                found.append(f"{field} -> {target}.{required}")
+                break
+    return found[:10]
+
+
+def _leaf_reference(entity: str, schema: dict, schemas: dict, orm: dict,
+                    creates: dict, ids: dict) -> str | None:
+    """One already-constructible leaf whose fresh ID can avoid a reused link.
+
+    No recursive fixture search: nested/aggregate prerequisites stay unverified
+    when we do not know a valid replacement workflow.
+    """
+    for field in schema.get("required", []):
+        rel = _relationship_for(field, orm.get(entity, {}))
+        if rel is None or rel[1] or rel[0] not in creates or ids.get(rel[0]) is None:
+            continue
+        target = rel[0]
+        leaf_schema = schemas[creates[target][1]]
+        if not any(_relationship_for(f, orm.get(target, {})) is not None
+                   for f in leaf_schema.get("required", [])):
+            return target
+    return None
+
+
 def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
-                   subclasses: dict, variant: tuple) -> tuple[dict, list]:
+                   subclasses: dict, variant: tuple, *, entity: str = "entity",
+                   ordinal: int = 1, unique_fields: frozenset = frozenset()) -> tuple[dict, list]:
     """Minimal payload: required fields only, relationships from created ids."""
     props = schema.get("properties", {})
     required = [f for f in props if f in set(schema.get("required", []))]
@@ -297,7 +409,21 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
             if chosen is None:
                 unresolved.append([field, target])
                 continue
-            payload[field] = [chosen] if uselist else chosen
+            # Native association classes carry attributes on each link. A raw
+            # ID may be schema-accepted for legacy compatibility but omit the
+            # required price/quantity/etc. Prefer the advertised object form.
+            relation_schema = _resolve(props[field], schemas)
+            item_schema = relation_schema.get("items", {}) if uselist else props[field]
+            link_schema = _association_link_schema(item_schema, schemas)
+            linked = chosen
+            if link_schema is not None:
+                linked = {"target": chosen}
+                for attribute in link_schema.get("required", []):
+                    if attribute != "target":
+                        linked[attribute] = _sample(
+                            attribute, _resolve(link_schema.get("properties", {}).get(attribute, {}), schemas),
+                            1, entity=entity, ordinal=ordinal)
+            payload[field] = [linked] if uselist else linked
             continue
         resolved = _resolve(props[field], schemas)
         if variant[0] in ("enum", "bool") and variant[1] == field:
@@ -307,20 +433,23 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
         if field in date_fields:
             index = date_fields.index(field)
             offset = 1 + (len(date_fields) - 1 - index if variant[0] == "dates" else index)
-        payload[field] = _sample(field, resolved, offset)
+        payload[field] = _sample(field, resolved, offset, entity=entity,
+                                 ordinal=ordinal, unique=field in unique_fields)
     return payload, unresolved
 
 
 def _variants(schema: dict, schemas: dict):
     yield ("base",)
     props = schema.get("properties", {})
+    if sum(_resolve(props.get(f, {}), schemas).get("format") == "date"
+           for f in schema.get("required", [])) > 1:
+        yield ("dates",)
     for field in schema.get("required", []):
         resolved = _resolve(props.get(field, {}), schemas)
         for literal in resolved.get("enum", [])[1:]:
             yield ("enum", field, literal)
         if resolved.get("type") == "boolean":
             yield ("bool", field, False)
-    yield ("dates",)
 
 
 def _extract_id(body):
@@ -347,7 +476,7 @@ def _outcome(status) -> str:
     return "rejected"
 
 
-_VERDICT_ORDER = ("created", "rejected", "crashed", "unauthorized", "invalid")
+_VERDICT_ORDER = ("created", "crashed", "rejected", "unauthorized", "invalid")
 
 
 def _handler_site(app, path: str, entity: str) -> dict | None:
@@ -393,7 +522,17 @@ def _probe_cwd() -> dict:
     except ModuleNotFoundError as exc:
         return {"boot": "missing_dependency", "error": f"{type(exc).__name__}: {exc}"}
     except BaseException as exc:
-        return {"boot": "import_error", "error": f"{type(exc).__name__}: {exc}"}
+        import traceback
+        frames = []
+        for frame in traceback.extract_tb(exc.__traceback__):
+            try:
+                if os.path.commonpath([os.path.abspath(frame.filename), os.getcwd()]) == os.getcwd():
+                    frames.append(frame)
+            except ValueError:
+                continue  # dependency/interpreter frames may live on another drive
+        site = ({"file": os.path.relpath(frames[-1].filename, os.getcwd()).replace("\\", "/"),
+                 "line": frames[-1].lineno} if frames else {})
+        return {"boot": "import_error", "error": f"{type(exc).__name__}: {exc}"[:1200], "site": site}
     try:
         import sql_alchemy
         from sqlalchemy import inspect as sa_inspect
@@ -421,15 +560,37 @@ def _probe_cwd() -> dict:
     schemas = spec.get("components", {}).get("schemas", {})
 
     orm: dict = {}
+    unique_fields: dict = {}
+    composite_links: set = set()
     for value in vars(sql_alchemy).values():
         if isinstance(value, type) and hasattr(value, "__mapper__"):
             try:
+                mapper = sa_inspect(value)
                 orm[value.__name__] = {
                     r.key: (r.mapper.class_.__name__, bool(r.uselist))
-                    for r in sa_inspect(value).relationships
+                    for r in mapper.relationships
                 }
+                unique_columns = {
+                    col for table in mapper.tables
+                    for constraint in (*table.constraints, *table.indexes)
+                    if constraint.__class__.__name__ in {"UniqueConstraint", "PrimaryKeyConstraint"}
+                    or getattr(constraint, "unique", False)
+                    for col in constraint.columns
+                }
+                unique_fields[value.__name__] = frozenset(
+                    prop.key for prop in mapper.column_attrs
+                    if any(col.unique or col.primary_key or col in unique_columns
+                           for col in prop.columns)
+                )
+                if any(
+                    sum(bool(getattr(col, "foreign_keys", ())) for col in constraint.columns) >= 2
+                    for table in mapper.tables for constraint in (*table.constraints, *table.indexes)
+                    if constraint.__class__.__name__ in {"UniqueConstraint", "PrimaryKeyConstraint"}
+                    or getattr(constraint, "unique", False)
+                ):
+                    composite_links.add(value.__name__)
             except Exception:
-                orm[value.__name__] = {}
+                orm.setdefault(value.__name__, {})
     subclasses: dict = {}
     for name in orm:
         for base in getattr(sql_alchemy, name).__mro__[1:]:
@@ -450,8 +611,29 @@ def _probe_cwd() -> dict:
         ids: dict = {}
         entities: dict = {}
         pending = dict(creates)
+        ordinal = 0
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://probe") as client:
+            async def request(path, payload, variant):
+                try:
+                    response = await client.post(path, json=payload)
+                    status, text = response.status_code, response.text or ""
+                except Exception as exc:
+                    response, status = None, "EXC"
+                    text = f"{type(exc).__name__}: {exc}"
+                attempt = {
+                    "variant": " ".join(str(v) for v in variant),
+                    "status": status, "outcome": _outcome(status),
+                    "body": text[:_BODY_CHARS], "payload": payload,
+                }
+                column = _missing_not_null_column(text)
+                if column:
+                    attempt["missing_column"] = column
+                if status == 409 and ("UNIQUE constraint failed" in text
+                                      or "duplicate key value violates unique constraint" in text):
+                    attempt["unique_collision"] = True
+                return response, attempt
+
             progress = True
             while pending and progress:
                 progress = False
@@ -464,25 +646,45 @@ def _probe_cwd() -> dict:
                     if unresolved:
                         continue
                     attempts: list = []
-                    for variant in _variants(schema, schemas):
+                    leaf_retry_used = False
+                    for variant in itertools.islice(_variants(schema, schemas), _MAX_VARIANTS):
+                        ordinal += 1
                         payload, _ = _build_payload(
-                            schema, schemas, orm[entity], ids, subclasses, variant)
-                        try:
-                            response = await client.post(path, json=payload)
-                            status, text = response.status_code, response.text or ""
-                        except Exception as exc:
-                            response, status = None, "EXC"
-                            text = f"{type(exc).__name__}: {exc}"
-                        outcome = _outcome(status)
-                        attempts.append({
-                            "variant": " ".join(str(v) for v in variant),
-                            "status": status, "outcome": outcome,
-                            "body": text[:_BODY_CHARS], "payload": payload,
-                        })
-                        column = _missing_not_null_column(text)
-                        if column:
-                            attempts[-1]["missing_column"] = column
-                        if outcome == "created":
+                            schema, schemas, orm[entity], ids, subclasses, variant,
+                            entity=entity, ordinal=ordinal,
+                            unique_fields=unique_fields.get(entity, frozenset()))
+                        response, attempt = await request(path, payload, variant)
+                        attempts.append(attempt)
+                        if (attempt.get("unique_collision") and entity in composite_links
+                                and not leaf_retry_used):
+                            leaf_retry_used = True
+                            target = _leaf_reference(entity, schema, schemas, orm, creates, ids)
+                            if target is not None:
+                                leaf_path, leaf_schema_name = creates[target]
+                                ordinal += 1
+                                leaf_payload, _ = _build_payload(
+                                    schemas[leaf_schema_name], schemas, orm[target], ids, subclasses,
+                                    ("base",), entity=target, ordinal=ordinal,
+                                    unique_fields=unique_fields.get(target, frozenset()))
+                                leaf_response, leaf_attempt = await request(
+                                    leaf_path, leaf_payload, ("fresh reference for", entity))
+                                # Keep all observed server failures visible, including
+                                # failures in the counterexample fixture itself.
+                                entities[target]["attempts"].append(leaf_attempt)
+                                try:
+                                    fresh_id = (_extract_id(leaf_response.json())
+                                                if leaf_attempt["outcome"] == "created" else None)
+                                except Exception:
+                                    fresh_id = None
+                                if fresh_id is not None:
+                                    ordinal += 1
+                                    payload, _ = _build_payload(
+                                        schema, schemas, orm[entity], {**ids, target: fresh_id}, subclasses,
+                                        variant, entity=entity, ordinal=ordinal,
+                                        unique_fields=unique_fields.get(entity, frozenset()))
+                                    response, attempt = await request(path, payload, ("fresh reference", target))
+                                    attempts.append(attempt)
+                        if attempt["outcome"] == "created":
                             try:
                                 ids[entity] = _extract_id(response.json())
                             except Exception:
@@ -495,6 +697,8 @@ def _probe_cwd() -> dict:
                     entities[entity] = {"path": path, "verdict": verdict, "attempts": attempts}
                     if verdict in ("rejected", "crashed"):
                         entities[entity]["site"] = _handler_site(app, path, entity)
+                    entities[entity]["deferred_relationships"] = _deferred_relationships(
+                        entity, schema, schemas, orm)
                     del pending[entity]
                     progress = True
             for entity, (path, schema_name) in pending.items():

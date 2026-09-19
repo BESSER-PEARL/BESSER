@@ -199,12 +199,14 @@ class TestFileSplit:
         log = [
             {"tool": "write_file", "input": {"path": "a\\b.py"}, "success": True},
             {"tool": "modify_file", "input": {"path": "c.py"}, "success": True},
+            {"tool": "replace_file_lines", "input": {"path": "range.py"}, "success": True},
+            {"tool": "replace_file_lines", "input": {"path": "stale.py"}, "success": False},
             # Guardrail rejection — changed nothing on disk.
             {"tool": "write_file", "input": {"path": "rejected.py"}, "success": False},
             {"tool": "read_file", "input": {"path": "ignored.py"}, "success": True},
             "not-a-dict",
         ]
-        assert telemetry.llm_touched_paths(log) == {"a/b.py", "c.py"}
+        assert telemetry.llm_touched_paths(log) == {"a/b.py", "c.py", "range.py"}
 
 
 # ---------------------------------------------------------------------

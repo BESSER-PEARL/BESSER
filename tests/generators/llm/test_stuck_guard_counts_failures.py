@@ -79,6 +79,9 @@ def test_four_failed_edits_to_one_path_are(simple_model, tmp_path):
     with open(os.path.join(tmp_path, "app.py"), "w", encoding="utf-8") as f:
         f.write("x = 1\n")
     results = _run(simple_model, tmp_path, lambda n: MockBlock(
-        "tool_use", name="modify_file", id=f"m{n}",
-        input={"path": "app.py", "old_text": f"nomatch{n}", "new_text": "y"}))
+        "tool_use", name="modify_file" if n <= 4 else "read_file", id=f"m{n}",
+        input={"path": "app.py", "old_text": f"nomatch{n}", "new_text": "y"}), turns=6)
     assert any("in a row" in r for r in results), results
+    warned = [json.loads(r) for r in results if "in a row" in r]
+    assert all("error" in r for r in warned), "loop wrapping must retain the actual error"
+    assert "in a row" not in results[-1], "successful reads must not inherit stale failures"

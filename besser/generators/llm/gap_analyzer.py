@@ -209,6 +209,10 @@ def analyze_gaps_via_llm(
     cleaned = _note_dependent_rule_placement(cleaned, domain_model)
     cleaned = _note_model_only_tasks(cleaned, workspace_files or [])
     cleaned = _dedupe(_note_action_placement(cleaned, action_endpoints or []))
+    # Harness-owned, prepended: a spec-vs-model gap the planner may miss or
+    # (worse) judge "nothing to do" — this must survive even an empty list,
+    # since [] can short-circuit Phase 2 entirely (see the module docstring).
+    cleaned = _dedupe(_note_derived_enum_initial_state(domain_model, instructions) + cleaned)
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
 
@@ -437,6 +441,139 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
                 continue
         kept.append(task)
     return kept
+
+
+# Sentences that plausibly name a starting/initial state ("begins",
+# "starts out", "initially", "by default", "not set by hand").
+_INITIAL_STATE_MARKER_RE = re.compile(
+    r"\b(?:starts?|begins?|beginning|initial(?:ly)?|by\s+default|"
+    r"default(?:s)?\s+to|not\s+set\s+by\s+hand)\b",
+    re.IGNORECASE,
+)
+
+# Types the generator (sql_alchemy/templates/helpers.py.j2, commit 143b7656)
+# already defaults a required derived attribute to on INSERT, because the
+# type has an unambiguous zero. An enum is deliberately excluded there —
+# there is no zero state to pick — so it is the only type this helper flags.
+_SERVER_DEFAULTABLE_TYPES = {"int", "float", "str", "string", "bool"}
+
+
+def _sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text or "") if s.strip()]
+
+
+def _literal_tokens(literal: str) -> list[str]:
+    return re.findall(r"[a-z]+", literal.lower())
+
+
+def _find_initial_state_quote(
+    instructions: str, literals: list[str],
+) -> tuple[str, str] | None:
+    """The spec's own sentence naming one of ``literals`` as the starting value.
+
+    Requires BOTH an initial-state marker word and every token of the
+    literal's name (``NOT_ARRIVED`` -> "not", "arrived") in the same
+    sentence — loose enough to match "not yet arrived" against NOT_ARRIVED,
+    strict enough that an unrelated mention of e.g. "cancelled" elsewhere in
+    the spec is not mistaken for the starting state.
+    """
+    for sentence in _sentences(instructions):
+        if not _INITIAL_STATE_MARKER_RE.search(sentence):
+            continue
+        low_tokens = set(re.findall(r"[a-z]+", sentence.lower()))
+        for literal in literals:
+            tokens = _literal_tokens(literal)
+            if tokens and all(tok in low_tokens for tok in tokens):
+                return sentence, literal
+    return None
+
+
+def _derived_enum_task_text(
+    cls_name: str, attr_name: str, enum_name: str, literals: list[str],
+    found: tuple[str, str] | None,
+) -> str:
+    lits = ", ".join(literals)
+    if found:
+        sentence, literal = found
+        resolution = (
+            f"THE SPEC NAMES IT: \"{sentence}\" — set the initial value to "
+            f"{enum_name}.{literal}."
+        )
+    else:
+        resolution = (
+            "Re-read the user's specification for the sentence that names "
+            f"the starting state of {cls_name}.{attr_name} and use that "
+            "value — do not guess."
+        )
+    return (
+        f"{cls_name}.{attr_name} is a derived, required {enum_name} "
+        "attribute with no default and no server-side initial value: an "
+        f"enum has no unambiguous zero, so {enum_name}'s first-declared "
+        f"literal ({literals[0]}) is only declaration order, not a "
+        "decision, and the generator deliberately left it unset — every "
+        "create request will otherwise violate NOT NULL. THE SPEC DECIDES "
+        f"the initial value here, NOT the model. {resolution} Close this "
+        f"in the generated code: give {cls_name}.{attr_name} that value "
+        f"wherever a {cls_name} row is created (ORM column default or the "
+        f"creation service), so every new {cls_name} starts in that state "
+        f"without the client sending {attr_name}. Available literals: {lits}."
+    )
+
+
+def _note_derived_enum_initial_state(domain_model, instructions: str) -> list[str]:
+    """Harness-owned tasks for a derived enum attribute the generator left unset.
+
+    The owner's directive: when the model and the user's spec disagree, the
+    Spec-Driven Agent closes the gap in the GENERATED CODE — it does not
+    wait for a planner call to notice, and it does not ship the model's
+    silence as if it were a decision.
+
+    Commit 143b7656 made a required derived attribute with an unambiguous
+    zero (int/float/str/bool) get a server-side default at INSERT time, and
+    deliberately did NOT do the same for an enum: this hotel model declares
+    BookingPhysicalStatus.CHECKED_IN first (alphabetically — the order every
+    layer here sorts literals in), while the spec says a booking "starts out
+    with the guests not yet arrived", so "use the first literal" would have
+    shipped every new booking already checked in. The generator cannot know
+    the initial state; the spec can, and this is the only stage that holds
+    both the spec text and the model side by side to say so.
+
+    Only the genuinely open case is flagged: derived, required (not
+    optional, not the id), no explicit default already on the model, and
+    typed as an enumeration — the one type the generator could not default
+    to a zero. A derived int/float/str/bool attribute needs nothing here.
+    """
+    if domain_model is None:
+        return []
+    try:
+        classes = list(domain_model.get_classes())
+        enums = {e.name: e for e in domain_model.get_enumerations()}
+    except Exception:
+        return []
+    if not enums:
+        return []
+
+    tasks: list = []
+    for cls in sorted(classes, key=lambda c: c.name):
+        for attr in sorted(getattr(cls, "attributes", None) or [], key=lambda a: a.name):
+            if not getattr(attr, "is_derived", False):
+                continue
+            if getattr(attr, "is_id", False) or getattr(attr, "is_optional", False):
+                continue
+            if getattr(attr, "default_value", None) is not None:
+                continue
+            type_name = getattr(getattr(attr, "type", None), "name", None)
+            if type_name in _SERVER_DEFAULTABLE_TYPES:
+                continue
+            enum = enums.get(type_name)
+            if enum is None:
+                continue
+            literals = sorted(lit.name for lit in enum.literals)
+            if not literals:
+                continue
+            found = _find_initial_state_quote(instructions, literals)
+            tasks.append(_derived_enum_task_text(cls.name, attr.name, type_name, literals, found))
+    return tasks
 
 
 # File paths named inside a task: a dotted basename, optionally preceded

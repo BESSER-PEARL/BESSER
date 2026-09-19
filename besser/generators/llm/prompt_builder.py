@@ -440,6 +440,12 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    of guessing. Preserve that structure unless completing an explicit requirement
    needs a change. Rejected conversion expressions and generator defaults are
    not implemented behavior, and must not override the original specification.
+   The specification OUTRANKS the model wherever the two disagree or the model
+   is silent — an initial/default value, a status vocabulary, a rule, anything
+   else. Resolve the conflict by implementing what the SPECIFICATION says, in
+   the generated code (never by editing the model — no tool does that), and
+   say so in your plan: name the model element and the spec text that decided
+   it. Do not silently ship the model's version and do not leave it open.
 4. **State machines drive code.** When a state machine governs a class
    (see Cross-model links), generate a state field + transition guards +
    event handlers that respect the declared transitions. Do not invent

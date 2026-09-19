@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 PREFIX = "create contract:"
 UNVERIFIED_PREFIX = "create unverified:"
+ACTION_PREFIX = "action call:"
+ACTION_UNVERIFIED_PREFIX = "action unverified:"
 
 _PROBE_TIMEOUT_SECONDS = 90
 _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
@@ -224,7 +226,41 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                 "aggregate-creation workflow (such as nested creation), retaining the rule"
             )
         issues.append(text)
+    issues.extend(_action_issue_text(entry, rel) for entry in report.get("actions") or [])
     return issues
+
+
+def _action_issue_text(entry: dict, rel: str) -> str:
+    """Render one action-endpoint finding (see ``_probe_actions``)."""
+    site = entry.get("site")
+    if entry["verdict"] == "crashed":
+        attempt = entry["attempt"]
+        body = (attempt.get("body") or "")[:_BODY_CHARS]
+        text = (
+            f"{ACTION_PREFIX} {rel}: POST {entry['route']} - observed a server/persistence "
+            f"failure calling {entry['action']} on a {entry['entity']} in state "
+            f"{entry['state']} ({attempt.get('status')}: {body}). This is one observed "
+            "failure, not proof that every call fails. Handle invalid/unexpected state "
+            "without an unhandled server failure"
+        )
+    else:
+        states = ", ".join(entry.get("states", []))
+        statuses = ", ".join(str(s) for s in entry.get("statuses", []))
+        text = (
+            f"{ACTION_UNVERIFIED_PREFIX} {rel}: POST {entry['route']} - {entry['action']} on "
+            f"{entry['entity']} refused every state this probe could construct via the "
+            f"entity's own create fields ({states}; statuses {statuses}). A correctly "
+            "implemented state-guarded action may legitimately refuse some states; this "
+            "probe found none, among the states it can select, where the call succeeded. "
+            "This can mean a defect in the guard/state comparison (e.g. comparing an enum "
+            "member to its raw string value), or a precondition this probe cannot reach "
+            "through this entity's own create fields. Not proof the action is broken; "
+            "inspect the handler directly or exercise it with test_api once the reachable "
+            "state is known"
+        )
+    if site:
+        text += f". Fix site: {site['function']} in {rel}/{site['file']} line {site['line']}"
+    return text
 
 
 def _missing_not_null_column(body: str) -> str | None:
@@ -515,6 +551,170 @@ def _handler_site(app, path: str, entity: str) -> dict | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Action/method endpoints: ``POST /<entity>/{id}/methods/<action>/``
+#
+# A create probe proves nothing about these - they carry the app's actual
+# behaviour and a static stub-scan (action_inventory.py) only catches an
+# empty/placeholder body, not a handler with real code that is wrong. Live
+# case: run iw82zzoc's registerArrival/registerDeparture/cancel each compare
+# a loaded enum column to `SomeEnum.LITERAL.value` (a raw string) - that
+# comparison is never true, in ANY state, so the handler refuses every call.
+#
+# A 4xx from one call is NOT evidence of a defect: refusing in the wrong
+# state is the entire point of a guarded action. The only way to tell
+# "refuses in every state" from "correctly refuses in THIS state" without a
+# spec is to construct more than one state and see whether the same action
+# ever succeeds anywhere. That is only possible for entities whose own
+# create schema exposes the state-carrying field, and only names fields that
+# read as the entity's own lifecycle ("status"/"state"/"stage"/"phase") -
+# see Bill.settled in iw82zzoc, a required boolean that is NOT what
+# registerPayment's guard reads (it reads the *linked Booking's*
+# commercialStatus): varying it would have produced misleading evidence.
+# Each action is probed against its OWN fresh batch of instances, never
+# shared with another action, so one action's side effects can never taint
+# another's evidence.
+# ---------------------------------------------------------------------------
+
+_ACTION_ROUTE_RE = re.compile(r"^/(?P<entity_seg>[^/{}]+)/\{[^/{}]+\}/methods/(?P<action>[^/{}]+)/?$")
+_STATUS_FIELD_TOKENS = ("status", "state", "stage", "phase")
+_MAX_STATE_LITERALS = 6      # literals sampled per status-like field
+_MAX_ACTION_PROBE_REQUESTS = 200  # extra creates + action calls, combined
+
+
+def _status_like_fields(schema: dict, schemas: dict) -> list[tuple[str, list]]:
+    """Required enum fields named like the entity's own lifecycle state."""
+    found = []
+    props = schema.get("properties", {})
+    for field in schema.get("required", []):
+        if not any(token in field.lower() for token in _STATUS_FIELD_TOKENS):
+            continue
+        literals = _resolve(props.get(field, {}), schemas).get("enum") or []
+        if len(literals) >= 2:
+            found.append((field, literals[:_MAX_STATE_LITERALS]))
+    return found
+
+
+def _action_routes(spec: dict, creates: dict) -> dict:
+    """entity -> [(action, route)], matching each route's leading path
+    segment to the ``creates`` entity that owns it. Only plain
+    ``/<entity>/{id}/methods/<action>/`` POST routes are handled; anything
+    else is left to the static action inventory."""
+    segment_to_entity = {}
+    for entity, (path, _schema) in creates.items():
+        segment_to_entity.setdefault(path.strip("/").split("/", 1)[0].lower(), entity)
+    found: dict = {}
+    for path, ops in spec.get("paths", {}).items():
+        if "post" not in ops:
+            continue
+        match = _ACTION_ROUTE_RE.match(path)
+        if not match:
+            continue
+        entity = segment_to_entity.get(match.group("entity_seg").lower())
+        if entity is not None:
+            found.setdefault(entity, []).append((match.group("action"), path))
+    return found
+
+
+def _action_handler_site(app, path: str) -> dict | None:
+    """File/function/line of the POST handler serving ``path``."""
+    import inspect
+    for route in getattr(app, "routes", []):
+        if getattr(route, "path", None) != path or "POST" not in (getattr(route, "methods", None) or ()):
+            continue
+        fn = inspect.unwrap(route.endpoint)
+        try:
+            file = inspect.getsourcefile(fn)
+            _, start = inspect.getsourcelines(fn)
+        except (OSError, TypeError):
+            return None
+        if not file:
+            return None
+        return {"file": os.path.relpath(file, os.getcwd()).replace("\\", "/"),
+                "function": fn.__name__, "line": start}
+    return None
+
+
+async def _probe_actions(app, spec, request, schemas, orm, subclasses, unique_fields,
+                         creates, entities, ids, ordinal) -> tuple[list, int]:
+    """One best-effort call per constructed state; never chained across actions."""
+    reports: list = []
+    budget = [_MAX_ACTION_PROBE_REQUESTS]
+
+    def spend() -> bool:
+        budget[0] -= 1
+        return budget[0] >= 0
+
+    for entity, actions in _action_routes(spec, creates).items():
+        if entities.get(entity, {}).get("verdict") != "created":
+            continue  # the create probe already reports this entity, if broken
+        path, schema_name = creates[entity]
+        schema = schemas[schema_name]
+        status_fields = _status_like_fields(schema, schemas)
+        if not status_fields:
+            continue  # no own-field lever to vary state; stay silent
+        for action, route in actions:
+            if not spend():
+                break
+            samples: list[tuple[str, object]] = []
+            for field, literals in status_fields:
+                for literal in literals:
+                    if not spend():
+                        break
+                    ordinal += 1
+                    payload, unresolved = _build_payload(
+                        schema, schemas, orm.get(entity, {}), ids, subclasses,
+                        ("enum", field, literal), entity=entity, ordinal=ordinal,
+                        unique_fields=unique_fields.get(entity, frozenset()))
+                    if unresolved:
+                        continue
+                    response, attempt = await request(path, payload, ("action-state", field, literal))
+                    if attempt["outcome"] == "created":
+                        try:
+                            new_id = _extract_id(response.json())
+                        except Exception:
+                            new_id = None
+                        if new_id is not None:
+                            samples.append((f"{field}={literal}", new_id))
+            if not samples:
+                continue
+            call_path_template = route
+            attempts: list = []
+            crashed = None
+            stub = False
+            for label, sample_id in samples:
+                if not spend():
+                    break
+                call_path = re.sub(r"\{[^/{}]+\}", str(sample_id), call_path_template, count=1)
+                _, attempt = await request(call_path, {"params": {}}, ("action-call", action, label))
+                if attempt.get("status") == 501:
+                    # The deterministic scaffold's own "no body in the model" marker
+                    # (router_methods.py.j2) - action_inventory.py's static scan
+                    # already reports this precisely. Reporting it again here as a
+                    # "server failure" would be redundant and mislabel an honest stub.
+                    stub = True
+                    break
+                attempts.append((label, attempt))
+                if crashed is None and attempt["outcome"] == "crashed":
+                    crashed = (label, attempt)
+            if stub:
+                continue
+            if crashed is not None:
+                reports.append({
+                    "route": route, "action": action, "entity": entity, "verdict": "crashed",
+                    "state": crashed[0], "attempt": crashed[1],
+                    "site": _action_handler_site(app, route),
+                })
+            elif len(attempts) >= 2 and not any(a["outcome"] == "created" for _, a in attempts):
+                reports.append({
+                    "route": route, "action": action, "entity": entity, "verdict": "unverified",
+                    "states": [label for label, _ in attempts],
+                    "statuses": [a.get("status") for _, a in attempts],
+                    "site": _action_handler_site(app, route),
+                })
+    return reports, ordinal
+
+
 def _probe_cwd() -> dict:
     sys.path.insert(0, os.getcwd())
     try:
@@ -705,13 +905,17 @@ def _probe_cwd() -> dict:
                 _, unresolved = _build_payload(
                     schemas[schema_name], schemas, orm.get(entity, {}), ids, subclasses, ("base",))
                 entities[entity] = {"path": path, "verdict": "unresolved", "unresolved": unresolved}
-        return entities
+
+            actions, _ordinal = await _probe_actions(
+                app, spec, request, schemas, orm, subclasses, unique_fields,
+                creates, entities, ids, ordinal)
+        return {"entities": entities, "actions": actions}
 
     try:
-        entities = asyncio.run(run())
+        result = asyncio.run(run())
     except Exception as exc:
         return {"boot": "probe_error", "error": f"{type(exc).__name__}: {exc}"[:300]}
-    return {"boot": "ok", "entities": entities}
+    return {"boot": "ok", "entities": result["entities"], "actions": result["actions"]}
 
 
 if __name__ == "__main__":

@@ -203,3 +203,55 @@ def test_a_rollback_keeps_work_it_did_not_undo(orchestrator, monkeypatch):
     orchestrator._rollback_phase3_if_worse(_blockers(11), _blockers(45), True)
 
     assert orchestrator.executor.task_snapshot()[0]["done"] is True
+
+
+def _startup(message="mapper config: sql_alchemy.py line 107: Mapper has no property 'bill'"):
+    return ValidationIssue("blocker", message)
+
+
+def test_a_repair_that_trades_a_blocker_for_a_dead_app_is_rolled_back(orchestrator, monkeypatch):
+    """A count cannot see a trade.
+
+    Run mbzbzhq9 held 13 blockers flat across six Phase 3 attempts while
+    swapping one hard blocker for a broken ORM mapper. "Not more than we
+    started with" was true, the rollback stayed silent, and the delivered app
+    returned 500 on every endpoint - 0/4 on the live workflow probe.
+    """
+    monkeypatch.setattr(orchestrator, "_restore_snapshot", lambda: True)
+    monkeypatch.setattr(orchestrator, "_collect_validation_issues", lambda: _blockers(1))
+
+    # Same hard count on both sides: one in, one out.
+    rolled = orchestrator._rollback_phase3_if_worse(_blockers(1), [_startup()], True)
+
+    assert rolled is True
+    assert orchestrator._phase3_rolled_back is True
+
+
+def test_a_startup_blocker_already_present_on_entry_is_not_a_new_trade(orchestrator, monkeypatch):
+    """Failing to FIX a broken mapper is not the same as breaking one."""
+    monkeypatch.setattr(orchestrator, "_restore_snapshot",
+                        lambda: pytest.fail("the repair did not introduce this"))
+
+    assert orchestrator._rollback_phase3_if_worse(
+        [_startup()], [_startup()], True) is False
+
+
+@pytest.mark.parametrize("message", [
+    "mapper config: x", "application startup: x", "python contract: x",
+    "missing module: x", "undefined name: x",
+])
+def test_every_startup_class_counts(orchestrator, monkeypatch, message):
+    monkeypatch.setattr(orchestrator, "_restore_snapshot", lambda: True)
+    monkeypatch.setattr(orchestrator, "_collect_validation_issues", lambda: [])
+
+    assert orchestrator._rollback_phase3_if_worse(
+        [], [ValidationIssue("blocker", message)], True) is True
+
+
+def test_a_missing_feature_is_still_not_worth_a_rollback(orchestrator, monkeypatch):
+    """Only startup-class blockers get the count-independent treatment."""
+    monkeypatch.setattr(orchestrator, "_restore_snapshot",
+                        lambda: pytest.fail("an ordinary blocker traded flat is not a regression"))
+
+    assert orchestrator._rollback_phase3_if_worse(
+        _blockers(3), _blockers(3, prefix="action contract"), True) is False

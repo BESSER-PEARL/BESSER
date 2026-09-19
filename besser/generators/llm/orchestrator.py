@@ -4102,6 +4102,20 @@ class LLMOrchestrator:
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
 
+    # Blocker classes that mean the application does not start at all: the
+    # ORM will not map, a module will not import, a name is undefined. Unlike
+    # a missing feature these are never a reasonable price for a repair.
+    _STARTUP_BLOCKER_PREFIXES = (
+        "mapper config:", "application startup:", "python contract:",
+        "missing module:", "undefined name:",
+    )
+
+    @classmethod
+    def _startup_blockers(cls, issues: list[ValidationIssue]) -> set[str]:
+        """The startup-class blocker messages present in ``issues``."""
+        return {i.message for i in issues
+                if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
+
     def _rollback_phase3_if_worse(
         self, entry_blockers: list[ValidationIssue],
         final_issues: list[ValidationIssue],
@@ -4133,8 +4147,20 @@ class LLMOrchestrator:
         final_blockers = [i for i in final_issues if i.severity == "blocker"]
         entry_hard = len(_hard_blockers(entry_blockers))
         final_hard = len(_hard_blockers(final_blockers))
-        if final_hard <= entry_hard:
+        # A count cannot see a TRADE. Run mbzbzhq9 held 13 blockers flat across
+        # six attempts while swapping a hard blocker for a broken ORM mapper,
+        # so "not more than we started with" was true and the run shipped an
+        # app whose every endpoint returned 500. Introducing a blocker that
+        # stops the app starting is never an acceptable trade, at any count.
+        broke_startup = (self._startup_blockers(final_blockers)
+                         - self._startup_blockers(entry_blockers))
+        if final_hard <= entry_hard and not broke_startup:
             return False
+        if broke_startup:
+            logger.warning(
+                "Phase 3 introduced %d blocker(s) that stop the app starting: %s",
+                len(broke_startup), "; ".join(sorted(broke_startup))[:300],
+            )
         logger.warning(
             "Phase 3 ended worse than it began (%d -> %d hard blockers); "
             "restoring the pre-Phase-3 tree.", entry_hard, final_hard,

@@ -26,8 +26,14 @@ def test_each_501_stub_names_its_method(tmp_path):
 
     content = open(os.path.join(str(tmp_path), "routers", "booking_methods.py"), encoding="utf-8").read()
     for method in ("produceBill", "cancel"):
-        assert f"# Booking.{method}: no body in the model" in content, method
+        assert f"# Booking.{method}" in content, method
+        assert f"Method '{method}' of Booking is modeled but has no implementation" in content, method
     assert "# Method body not defined in the model" not in content
+    # 2026-09-19: the rationale used to sit in the standalone comment itself
+    # ("...: no body in the model - be honest..."), so an agent that replaced
+    # the raise but left the comment shipped a self-contradicting claim above
+    # real code. It now lives only in detail=, deleted along with the raise.
+    assert "no body in the model" not in content
     assert content.count("status_code=501") == 2       # still honest stubs
 
 

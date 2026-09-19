@@ -142,11 +142,11 @@ async def {{ class.name | lower }}_{{ clean_name }}(
             "output": output if output else None
         }
         {% else %}
-        # {{ class.name }}.{{ clean_name }}: no body in the model - be honest: 501, never a fake "executed" success.
+        # {{ class.name }}.{{ clean_name }}
         sys.stdout = sys.__stdout__
         raise HTTPException(
             status_code=501,
-            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation - 501, never a fake success",
         )
         {% endif %}
     except HTTPException:
@@ -183,11 +183,16 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     {% if not method_code %}
     {# No executable body means no parameter evaluation, stdout capture, or
        exception wrapper is needed. Keep a small, uniquely named edit target
-       for the spec-driven implementation while preserving the route contract. #}
-    # {{ class.name }}.{{ clean_name }}: no body in the model - be honest: 501, never a fake "executed" success.
+       for the spec-driven implementation while preserving the route contract.
+       The comment below is identity-only, not a claim about implementation
+       status, so it stays true if the agent replaces the raise but leaves the
+       comment above it. The 501 rationale lives in detail= instead, so it is
+       deleted along with the raise that it explains rather than surviving as
+       a stale "no body" comment above a real implementation. #}
+    # {{ class.name }}.{{ clean_name }}
     raise HTTPException(
         status_code=501,
-        detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+        detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation - 501, never a fake success",
     )
     {% else %}
     # {{ class.name }}.{{ clean_name }}: parameters
@@ -234,11 +239,11 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
             "output": output if output else None
         }
         {% else %}
-        # {{ class.name }}.{{ clean_name }}: no body in the model - be honest: 501, never a fake "executed" success.
+        # {{ class.name }}.{{ clean_name }}
         sys.stdout = sys.__stdout__
         raise HTTPException(
             status_code=501,
-            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
+            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation - 501, never a fake success",
         )
         {% endif %}
     except HTTPException:

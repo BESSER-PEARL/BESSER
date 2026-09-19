@@ -139,7 +139,9 @@ Validation
 ^^^^^^^^^^
 
 - ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
-
+- ``POST /semantic-consistency-check`` -- SAT-based semantic diagram validation (class diagram + OCL constraints)
+- ``POST /generate-object-diagram`` -- SAT-based generation of a witness of semantic consistency (class diagram + OCL constraints) 
+ 
 Deployment
 ^^^^^^^^^^
 

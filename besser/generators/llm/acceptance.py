@@ -6,8 +6,12 @@ indicate whether the entity appears in the app (not executed acceptance):
 * ``route``  — the backend exposes REST routes for it (checked against
   the same static route parse the endpoint manifest uses);
 * ``page``   — some frontend file is about it (name or content match);
-* ``create`` — a frontend file about it contains a POST. A false cell is
-  unknown for shared/dynamic form components, not proof of a broken form.
+* ``create`` — a frontend file about it contains a POST, OR a
+  ``<TableBlock>`` bound to it: ``dataBinding`` naming this entity and an
+  endpoint, plus a non-empty ``options.formColumns``. The GUI-model
+  scaffold's only generated create path issues its POST from a shared
+  runtime component (``TableComponent``), never a literal call in the
+  page file itself, so the binding — not the call site — is the signal.
 
 The matrix is deliberately REPORT-ONLY (warnings + a recipe field, never
 blockers): a GUI-model-driven run may legitimately scope the UI to a
@@ -27,6 +31,47 @@ _SKIP_DIRS = ("node_modules", "dist", "build", "__pycache__")
 # A POST issued from frontend code — axios/api `.post(`, fetch with
 # method POST, or a generated api-layer helper.
 _POST_RE = re.compile(r"\.post\s*\(|method\s*:\s*['\"]POST['\"]", re.IGNORECASE)
+
+# The GUI-model scaffold's runtime-bound create path: a <TableBlock> whose
+# dataBinding names the entity + endpoint and whose options carry at least
+# one editable formColumns entry. Its POST is issued by the shared
+# TableComponent it delegates to (axios.post gated on modalMode === 'add'),
+# not by a literal call in the page file — a `.post(` scan is structurally
+# blind to it. DOTALL: the scaffold sometimes pretty-prints this tag across
+# many lines; dataBinding's own body never contains `}` so `[^}]*` closes on
+# the real end without needing DOTALL there.
+_TABLE_BLOCK_RE = re.compile(r"<TableBlock\b.*?/>", re.DOTALL)
+_DATA_BINDING_RE = re.compile(r"dataBinding\s*=\s*\{\{([^}]*)\}\}")
+_ENTITY_RE = re.compile(r'"entity"\s*:\s*"([^"]*)"')
+_ENDPOINT_RE = re.compile(r'"endpoint"\s*:\s*"([^"]*)"')
+_NONEMPTY_FORM_COLUMNS_RE = re.compile(r'"formColumns"\s*:\s*\[\s*[^\]\s]')
+
+
+def _table_block_create_wired(content: str, cls: str) -> bool:
+    """True if a <TableBlock> in ``content`` is a wired create form for ``cls``.
+
+    dataBinding.entity must equal ``cls`` (case-insensitive) with a real
+    endpoint, and options.formColumns must carry at least one entry. A
+    file can embed TableBlocks for other entities (a lookup column's own
+    ``entity`` key, or an unrelated table on the same page) — scoping to
+    each tag's own dataBinding, rather than a whole-file search, is what
+    keeps this attributed to the right entity.
+    """
+    for tag in _TABLE_BLOCK_RE.findall(content):
+        db_match = _DATA_BINDING_RE.search(tag)
+        if not db_match:
+            continue
+        entity_match = _ENTITY_RE.search(db_match.group(1))
+        endpoint_match = _ENDPOINT_RE.search(db_match.group(1))
+        if not entity_match or not endpoint_match:
+            continue
+        if entity_match.group(1).strip().lower() != cls.lower():
+            continue
+        if not endpoint_match.group(1).strip():
+            continue
+        if _NONEMPTY_FORM_COLUMNS_RE.search(tag):
+            return True
+    return False
 
 
 def _entity_forms(name: str) -> list[str]:
@@ -106,7 +151,7 @@ def build_acceptance_matrix(
             if not about:
                 continue
             page = True
-            if _POST_RE.search(content):
+            if _POST_RE.search(content) or _table_block_create_wired(content, cls):
                 create = True
                 break
         matrix[cls] = {"route": route, "page": page, "create": create}
@@ -125,7 +170,7 @@ def matrix_issues(matrix: dict[str, dict[str, bool]] | None) -> list[str]:
         detail = {
             "route": "no backend REST route",
             "page": "no frontend page/component references it",
-            "create": "entity-specific frontend POST not resolved statically (shared/dynamic forms need runtime verification)",
+            "create": "no frontend create path found (no POST call, and no TableBlock bound to it with editable form fields)",
         }
         issues.append(
             "acceptance: entity "

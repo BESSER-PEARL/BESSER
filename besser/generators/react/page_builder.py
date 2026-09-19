@@ -214,6 +214,8 @@ class PageBuilderMixin:
         )
 
         indent_str = " " * indent
+        # Continuation lines of a multi-line prop align under this component.
+        self._prop_indent = indent
 
         # Containers
         if comp_type in {"container", "wrapper", "component"}:
@@ -1028,14 +1030,29 @@ class PageBuilderMixin:
 
         return "".join(props)
 
-    @staticmethod
-    def _format_prop(name: str, value: Any) -> str:
+    # A structured prop longer than this is written across lines. Generated
+    # Booking.tsx line 25 was 3,762 characters holding the whole table
+    # options dict, and the frontend-contract blocker the agent kept trying
+    # to fix lived on it: across four live runs every attempt on that line
+    # came back "old_text and new_text are identical", because nothing can
+    # retype 3.7k characters and change one field. One key per line is what
+    # makes it editable. The contract checker scans braces and uses
+    # json.raw_decode, both newline-tolerant, so it reads either form.
+    _MAX_INLINE_PROP_CHARS = 160
+
+    def _format_prop(self, name: str, value: Any) -> str:
         if isinstance(value, bool):
             return f"{name}={{{str(value).lower()}}}"
         if isinstance(value, (int, float)):
             return f"{name}={{{value}}}"
         if isinstance(value, (list, dict)):
-            return f"{name}={{{json.dumps(value, ensure_ascii=False)}}}"
+            compact = json.dumps(value, ensure_ascii=False)
+            if len(compact) <= self._MAX_INLINE_PROP_CHARS:
+                return f"{name}={{{compact}}}"
+            pad = " " * (getattr(self, "_prop_indent", 0) + 2)
+            body = ("\n" + pad).join(
+                json.dumps(value, ensure_ascii=False, indent=2).splitlines())
+            return f"{name}={{{body}}}"
         return f"{name}={json.dumps(value, ensure_ascii=False)}"
 
     # ------------------------------------------------------------------ #

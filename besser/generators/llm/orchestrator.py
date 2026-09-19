@@ -4154,11 +4154,15 @@ class LLMOrchestrator:
             "pre-repair output is what ships. Findings seen only in the "
             "discarded tree (they may still be real): " + "; ".join(discarded)
         )]
+        restored_blockers = [i for i in restored if i.severity == "blocker"]
         self._trace.write(
             EVENT_ROLLBACK, phase="phase3",
-            blockers_on_entry=entry_hard,
-            blockers_after_repair=final_hard,
-            blockers_after_rollback=len([i for i in restored if i.severity == "blocker"]),
+            # All three are HARD counts so they compare; the totals include
+            # ledger/checklist verdicts the decision deliberately ignores.
+            hard_blockers_on_entry=entry_hard,
+            hard_blockers_after_repair=final_hard,
+            hard_blockers_after_rollback=len(_hard_blockers(restored_blockers)),
+            total_blockers_after_rollback=len(restored_blockers),
         )
         return True
 

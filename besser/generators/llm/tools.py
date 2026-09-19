@@ -288,10 +288,16 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "its line number, as 'N| '. When quoting a region as modify_file's "
             "old_text, drop that prefix and quote the code itself; a quote that "
             "keeps the prefix is accepted too. "
-            "For large files (>200 lines), use offset and limit to read specific "
-            "line ranges instead of the whole file. "
+            "Read the WHOLE function or class you intend to change in one call. "
+            "A 600-line file fits in a single read; crawling it in 10-line windows "
+            "spends one turn per window and still leaves you without the enclosing "
+            "block. Only paginate a file too large to read at once, and then in "
+            "large slices. "
             "Returns read_id for revision-bound replace_file_lines edits. "
-            "Example: offset=50, limit=30 displays lines 51-80."
+            "offset is a 0-BASED SKIP; the numbers printed beside each line are "
+            "1-based. offset=50, limit=30 displays lines 51-80, so a following "
+            "replace_file_lines uses start_line=51, not 50 - or simply copy the "
+            "start_line/end_line this call returns."
         ),
         "input_schema": {
             "type": "object",
@@ -299,11 +305,14 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "path": {"type": "string", "description": "Relative path within the workspace"},
                 "offset": {
                     "type": "integer",
-                    "description": "Starting line number (0-indexed). Default: 0 (start of file)",
+                    "description": "Lines to SKIP before the first displayed line (0-based). "
+                                   "offset=50 makes line 51 the first one shown. Default: 0",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max number of lines to read. Default: all remaining lines",
+                    "description": "Max lines to read. Default: all remaining lines, which is "
+                                   "usually what you want. Prefer the whole enclosing block over "
+                                   "a narrow window",
                 },
             },
             "required": ["path"],

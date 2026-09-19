@@ -389,6 +389,8 @@ class ToolExecutor:
         # These capabilities deliberately expire on resume (read again).
         self._read_sequence = count(1)
         self._read_epoch = uuid4().hex[:12]
+        # Reads per path, to catch a model crawling one file in tiny windows.
+        self._read_counts: dict[str, int] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
         self._edit_recovery: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
@@ -1542,9 +1544,26 @@ class ToolExecutor:
             result["total_lines"] = total_lines
             result["lines_read"] = end - start
         elif total_lines > 200:
-            # Hint for large files: tell the LLM it can paginate
+            # A whole large file still fits in MAX_FILE_READ; pagination is for
+            # the ones that do not. Inviting it unconditionally is what taught
+            # run trilraak to crawl a 598-line router in 10-line windows.
             result["total_lines"] = total_lines
-            result["hint"] = "Large file. Use offset/limit to read specific sections."
+
+        # Crawling: run trilraak read routers/booking.py 36 times across 29
+        # distinct 10-line spans, about a third of its 80-turn budget, on a
+        # file that fits in one read. Prose in the tool description did not
+        # stop it, so say it where the behaviour happens.
+        rel = args["path"].replace("\\", "/").strip()
+        self._read_counts[rel] = self._read_counts.get(rel, 0) + 1
+        window = end - start
+        if (self._read_counts[rel] >= 3 and not truncated
+                and 0 < window < 40 and total_lines > 2 * window):
+            result["hint"] = (
+                f"This is read {self._read_counts[rel]} of {rel}, covering {window} "
+                f"of {total_lines} lines. Read the whole function or class you intend "
+                "to change in one call - a file this size fits in a single read. "
+                "Each narrow window costs a turn and still omits the enclosing block."
+            )
 
         return result
 

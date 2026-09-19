@@ -107,13 +107,19 @@ class TestFileTools:
         assert "line 14" in result["content"]
         assert "line 15" not in result["content"]
 
-    def test_read_file_large_hint(self, executor):
-        """Large files get a pagination hint."""
+    def test_read_file_large_reports_size_without_urging_pagination(self, executor):
+        """A large file still fits in MAX_FILE_READ, so report its size only.
+
+        The old unconditional "Large file. Use offset/limit to read specific
+        sections." hint is what taught run trilraak to crawl a 598-line router
+        in 10-line windows - 36 reads, a third of its turn budget. Pagination
+        advice now appears only when a read is actually truncated.
+        """
         content = "\n".join(f"x = {i}" for i in range(300))
         _call(executor, "write_file", {"path": "large.py", "content": content})
         result = _call(executor, "read_file", {"path": "large.py"})
         assert result["total_lines"] == 300
-        assert "hint" in result
+        assert "hint" not in result
 
     def test_read_file_numbers_lines_from_one(self, executor):
         """Numbered in the post-edit echo's format, so a quote copied out of a

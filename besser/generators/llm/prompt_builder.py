@@ -100,14 +100,14 @@ def build_system_prompt(
         if getattr(domain_model, "conversion_issues", None):
             model_sections.extend([
                 "",
-                "### Model conversion losses — required recovery work",
-                "The conversion_issues above retain original model expressions "
-                "that could not be converted or attached. They are NOT enforced "
-                "by the scaffold. Inspect the actual model roles and generated "
-                "code, then implement and verify their intended behavior. The "
-                "original user specification takes precedence if an expression "
-                "conflicts with it. Do not treat a conversion warning, a comment, "
-                "or a closed checklist item as successful implementation.",
+                "### Where the model disagrees with your specification",
+                "The conversion_issues above are model expressions the converter "
+                "dropped or could not attach — none of them run; the scaffold "
+                "enforces none of them. For each one: check the generated code "
+                "yourself and report what you found. Do not take an absent "
+                "complaint, a code comment, or a closed checklist item as proof "
+                "it's handled — verify, then close the gap in code (Rule 3: the "
+                "specification decides, not the model).",
             ])
 
     gui_json = serialize_gui_model(gui_model)

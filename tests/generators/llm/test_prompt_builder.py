@@ -265,3 +265,72 @@ def test_bpmn_and_nn_models_are_serialized_into_agent_context():
     assert "## Neural Network Model" in prompt
     assert "Risk classifier" in prompt
     assert '"out_features": 4' in prompt
+
+
+def _make_domain_with_conversion_issue() -> DomainModel:
+    """A domain model carrying one rejected OCL constraint, the same shape
+    ``class_diagram_processor._process_constraints`` attaches to
+    ``domain_model.conversion_issues`` — including the converter's
+    "did you mean" suggestion in the reason text."""
+    domain_model = _make_minimal_domain()
+    domain_model.conversion_issues = [{
+        "id": "ocl-conversion-deadbeef",
+        "category": "ocl",
+        "context": "Order",
+        "code": "parse_error",
+        "reason": (
+            "Warning: Invalid OCL syntax in 'context Order inv: gust.age > 0': "
+            "unresolved attribute reference 'gust' (did you mean 'self.guest'?)"
+        ),
+        "original_text": "context Order inv: gust.age > 0",
+    }]
+    return domain_model
+
+
+def test_model_disagreement_section_present_with_conversion_issues():
+    """A rejected OCL constraint must surface under a section headed for
+    what it is - a model/spec disagreement - not the old generic
+    "conversion losses" heading."""
+    prompt = build_system_prompt(
+        domain_model=_make_domain_with_conversion_issue(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build the app",
+        max_turns=20,
+    )
+    assert "### Where the model disagrees with your specification" in prompt
+    assert "### Model conversion losses" not in prompt
+    # The converter's suggestion travels through unmodified.
+    assert "did you mean 'self.guest'?" in prompt
+
+
+def test_model_disagreement_instructs_agent_to_verify_itself():
+    """The section must tell the agent it OWNS the verification: check the
+    generated code and report, don't assume a closed checklist item or the
+    absence of a complaint means the gap is already closed."""
+    prompt = build_system_prompt(
+        domain_model=_make_domain_with_conversion_issue(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build the app",
+        max_turns=20,
+    )
+    assert "check the generated code yourself and report what you found" in prompt
+    assert "closed checklist item as proof" in prompt
+
+
+def test_model_disagreement_section_absent_when_no_conversion_issues():
+    """Clean degrade: a domain model with no conversion_issues must not
+    emit either the old or the new section heading."""
+    prompt = build_system_prompt(
+        domain_model=_make_minimal_domain(),
+        gui_model=None,
+        agent_model=None,
+        inventory="",
+        instructions="Build the app",
+        max_turns=20,
+    )
+    assert "Where the model disagrees with your specification" not in prompt
+    assert "Model conversion losses" not in prompt

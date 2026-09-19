@@ -9,7 +9,10 @@ which must therefore FAIL to match rather than guess.
 import json
 import os
 
+import pytest
+
 from besser.generators.llm.edit_apply import (
+    AmbiguousEdit,
     find_similar_lines,
     replace_most_similar_chunk,
 )
@@ -357,3 +360,52 @@ def test_a_crlf_file_is_read_and_written_back_as_lf(tmp_path):
     assert res.get("status") == "modified", res
     with open(path, "rb") as f:
         assert b"\r" not in f.read()
+
+
+# ----------------------------------------------------------------------
+# New tiers vs. sst/opencode's edit.ts (MIT): trailing-whitespace tolerance
+# (LineTrimmedReplacer)
+# (WhitespaceNormalizedReplacer), and a symmetric blank-boundary trim
+# (TrimmedBoundaryReplacer, extending aider issue #25 to both ends).
+# ----------------------------------------------------------------------
+
+def test_trailing_whitespace_only_difference_still_matches():
+    """Tier 2 only lstrip()s, so a quoted line differing from the file ONLY
+    in trailing whitespace (Jinja-generated scaffolds carry it) matched no
+    tier at all and the edit was refused outright."""
+    whole = "def foo():\n    x = 1  \n    return x\n"
+    out = replace_most_similar_chunk(whole, "    x = 1\n", "    x = 2\n")
+    assert out == "def foo():\n    x = 2\n    return x\n"
+
+
+def test_spurious_blank_lines_at_both_ends_are_dropped():
+    """Aider issue #25 (tier 3) only drops a spurious LEADING blank line; a
+    model can just as easily pad the TRAILING end, or both."""
+    whole = "    line1\n    line2\n    line3\n"
+    out = replace_most_similar_chunk(whole, "\n  line1\n  line2\n\n", "  new1\n  new2\n")
+    assert out == "    new1\n    new2\n    line3\n"
+
+
+def test_spurious_trailing_blank_line_alone_is_dropped():
+    whole = "    line1\n    line2\n    line3\n"
+    out = replace_most_similar_chunk(whole, "  line1\n  line2\n\n", "  new1\n  new2\n")
+    assert out == "    new1\n    new2\n    line3\n"
+
+
+def test_new_tiers_do_not_match_genuinely_different_text():
+    """Whitespace normalization must not paper over a real content mismatch:
+    'item' vs 'items' survives the full-trim comparison."""
+    whole = "def compute_total(items):\n    return sum(items)\n"
+    part = "def   compute_total(item):\n    return   sum(item)\n"
+    assert replace_most_similar_chunk(whole, part, "x\n") is None
+
+
+def test_trim_tier_ambiguous_match_is_refused():
+    """Two windows equal only after a full trim - and equal to each other
+    only there - must still raise, not silently pick one. require_unique is
+    what the real modify_file tool always passes (tool_executor.py); without
+    it, any tier legitimately takes the first occurrence (see
+    test_exact_match_replaces_first_occurrence_only)."""
+    whole = "    x = 1  \n    y = 2\n    x = 1\t\n"
+    with pytest.raises(AmbiguousEdit):
+        replace_most_similar_chunk(whole, "    x = 1\n", "    x = 9\n", require_unique=True)

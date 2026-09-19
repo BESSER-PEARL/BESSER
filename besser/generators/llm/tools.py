@@ -591,6 +591,15 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "`reason`) — never mark such an item done. "
             "action='blocked' records required but unresolved work (pass `id` or "
             "`ids` and `reason`); use this when you cannot implement or verify it. "
+            "action='mixed' does SEVERAL OF THE ABOVE IN ONE CALL — the turn "
+            "you finish two items AND discover a new one AND drop one you didn't "
+            "need should be ONE task_list call, not four. Pass any combination of "
+            "`done_ids` (+ `evidence`/`existing`, same as action='done'), "
+            "`add_texts` (same as action='add' `texts`), `drop` (a list of "
+            "{id, reason} objects), and `blocked` (a list of {id, reason} objects). "
+            "The reply nests each verb's own result under `results` — check every "
+            "key you used; a mixed call can succeed on one verb and be refused on "
+            "another in the same response. "
             "For done without an attached verifier, supply evidence=[{id, path, quote}] "
             "from your successful writes. For an already-existing implementation, read the "
             "source first and set existing=true with exact executable evidence; do not make "
@@ -607,8 +616,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "done", "add", "drop", "blocked"],
-                    "description": "list | done | add | drop | blocked",
+                    "enum": ["list", "done", "add", "drop", "blocked", "mixed"],
+                    "description": "list | done | add | drop | blocked | mixed",
                 },
                 "existing": {"type": "boolean", "description": "For done: cite an already-existing implementation that you have read, without claiming you wrote it. Acceptance remains unverified."},
                 "id": {
@@ -658,6 +667,44 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                         "Several new items to append in ONE call. Use this "
                         "instead of one call per item."
                     ),
+                },
+                "done_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": (
+                        "For action='mixed': item ids to mark done, together "
+                        "with top-level `evidence` (and optional `existing`) "
+                        "exactly as action='done' uses them."
+                    ),
+                },
+                "add_texts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "For action='mixed': new items to append, same as action='add' `texts`.",
+                },
+                "drop": {
+                    "type": "array",
+                    "description": "For action='mixed': items to drop, each with its own reason.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "reason": {"type": "string", "description": "Why the user did not ask for it."},
+                        },
+                        "required": ["id", "reason"],
+                    },
+                },
+                "blocked": {
+                    "type": "array",
+                    "description": "For action='mixed': items to record as blocked, each with its own reason.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "reason": {"type": "string", "description": "What remains unresolved and why."},
+                        },
+                        "required": ["id", "reason"],
+                    },
                 },
             },
             "required": ["action"],

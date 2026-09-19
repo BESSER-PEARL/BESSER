@@ -52,11 +52,18 @@ def _bound_names(statement: ast.stmt) -> list[str]:
     return [target.id for target in targets if isinstance(target, ast.Name)]
 
 
-def python_structural_diagnostics(tree: ast.Module, *, sqlite: bool = False) -> list[dict]:
+def python_structural_diagnostics(
+    tree: ast.Module, *, sqlite: bool = False,
+    rel_path: str | None = None, workspace: str | None = None,
+) -> list[dict]:
     """Provable declaration errors; no application imports, execution, or guessing.
 
     SQLite CHECK expressions are compiled against an in-memory table containing
     only the mapped column names. No generated Python or user database is used.
+
+    ``rel_path``/``workspace`` additionally resolve star-imported ORM modules
+    to catch ``obj.enum_column != SomeEnum.MEMBER.value`` comparisons; without
+    both, that check is skipped rather than guessed at.
     """
     findings: list[dict] = []
 
@@ -135,6 +142,7 @@ def python_structural_diagnostics(tree: ast.Module, *, sqlite: bool = False) -> 
         members = enums.get(node.value.id)
         if members is not None and node.attr not in members and not node.attr.startswith("_"):
             add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {', '.join(sorted(members))}. Use an actual member, not an invented spelling.")
+    findings.extend(_enum_column_value_misuse(tree, rel_path, workspace))
     return findings
 
 
@@ -360,6 +368,197 @@ def _star_import_scope(
     return modules, exported
 
 
+_VALUE_COMPARABLE_ENUM_MIXINS = {"IntEnum", "StrEnum", "IntFlag", "str", "int"}
+
+
+def _attr_access(node: ast.expr) -> str | None:
+    """``obj.attr`` -> ``"attr"``, else ``None``."""
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return node.attr
+    return None
+
+
+def _enum_member_value_ref(node: ast.expr) -> tuple[str, str] | None:
+    """``EnumClass.MEMBER.value`` -> ``("EnumClass", "MEMBER")``, else ``None``."""
+    if (isinstance(node, ast.Attribute) and node.attr == "value"
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)):
+        return node.value.value.id, node.value.attr
+    return None
+
+
+def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | None:
+    """One module's ``Column(Enum(X))`` / ``mapped_column(Enum(X))`` columns.
+
+    Returns ``(column name -> enum class name, every locally-declared enum
+    class name, the subset of those that mix in str/int and so compare equal
+    to their own .value)``. ``None`` when the file cannot be parsed - nothing
+    can be judged against it.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read(), filename=path)
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+        return None
+
+    enum_bases = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
+    value_comparable_bases = set(_VALUE_COMPARABLE_ENUM_MIXINS)
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "enum":
+            for alias in node.names:
+                bound = alias.asname or alias.name
+                if alias.name in enum_bases:
+                    enum_bases.add(bound)
+                if alias.name in value_comparable_bases:
+                    value_comparable_bases.add(bound)
+
+    enum_classes: dict[str, bool] = {}
+    columns: dict[str, str] = {}
+    for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        base_names = {getattr(b, "id", getattr(b, "attr", "")) for b in cls.bases}
+        if base_names & enum_bases:
+            enum_classes[cls.name] = bool(base_names & value_comparable_bases)
+        for stmt in cls.body:
+            value = getattr(stmt, "value", None)
+            if not (isinstance(value, ast.Call) and getattr(
+                    value.func, "id", getattr(value.func, "attr", "")
+            ).rstrip("_") in {"mapped_column", "Column"}):
+                continue
+            enum_arg = next(
+                (arg for arg in value.args if isinstance(arg, ast.Call)
+                 and getattr(arg.func, "id", getattr(arg.func, "attr", "")).rstrip("_") == "Enum"
+                 and arg.args and isinstance(arg.args[0], ast.Name)),
+                None,
+            )
+            if enum_arg is None:
+                continue
+            names = _bound_names(stmt)
+            if value.args and isinstance(value.args[0], ast.Constant) and isinstance(value.args[0].value, str):
+                names = [value.args[0].value]
+            for name in names:
+                columns[name] = enum_arg.args[0].id
+    return columns, set(enum_classes), {name for name, comparable in enum_classes.items() if comparable}
+
+
+def _star_import_paths(tree: ast.Module, rel_path: str, workspace: str) -> list[str] | None:
+    """Resolved file paths of the written file's star-imported modules, or
+    ``None`` when any of them cannot be found on disk. Same resolution rule
+    as ``_star_import_scope``, but returns paths rather than export names."""
+    start_dir = os.path.dirname(os.path.join(workspace, rel_path))
+    paths: list[str] = []
+    for node in _module_scope_statements(tree.body):
+        if not isinstance(node, ast.ImportFrom) or not any(a.name == "*" for a in node.names):
+            continue
+        if node.level or not node.module:
+            return None
+        target = _resolve_module(node.module, start_dir, workspace)
+        if target is None:
+            return None
+        paths.append(target)
+    return paths
+
+
+def _enum_column_value_misuse(
+    tree: ast.Module, rel_path: str | None, workspace: str | None
+) -> list[dict]:
+    """``obj.col != SomeEnum.MEMBER.value`` where ``col`` is a ``Column(Enum(...))``
+    ORM attribute.
+
+    SQLAlchemy's ORM returns the enum *member* for such a column, not its
+    ``.value``, and a plain ``enum.Enum`` (no str/int mixin) never compares
+    equal to its own ``.value`` under Python's default equality - confirmed
+    live (run iw82zzoc): ``stored == MEMBER`` is True, ``stored ==
+    MEMBER.value`` is False. So the guard, or its inverse, can never fire.
+
+    ``col``'s type is established from an actual ``Column(Enum(X))`` /
+    ``mapped_column(Enum(X))`` declaration in the file's star-imported ORM
+    module(s), never guessed from the attribute name alone; an enum whose
+    class mixes in ``str``/``int`` (``StrEnum``, ``IntEnum``, ``IntFlag``,
+    or an explicit mixin base) is excluded, since those members do compare
+    equal to their own ``.value``. If any star-imported module cannot be
+    resolved and parsed, this reports nothing for the file.
+    """
+    if not rel_path or not workspace:
+        return []
+    paths = _star_import_paths(tree, rel_path, workspace)
+    if not paths:
+        return []
+
+    columns: dict[str, str] = {}
+    known_enums: set[str] = set()
+    value_comparable: set[str] = set()
+    for path in paths:
+        scanned = _scan_orm_module(path)
+        if scanned is None:
+            return []
+        module_columns, module_enums, module_value_comparable = scanned
+        columns.update(module_columns)
+        known_enums |= module_enums
+        value_comparable |= module_value_comparable
+
+    eligible = {
+        col: enum_cls for col, enum_cls in columns.items()
+        if enum_cls in known_enums and enum_cls not in value_comparable
+    }
+    if not eligible:
+        return []
+
+    def match(attr_side, value_side):
+        col = _attr_access(attr_side)
+        if col is None or col not in eligible:
+            return None
+        ref = _enum_member_value_ref(value_side)
+        if ref is None or ref[0] != eligible[col]:
+            return None
+        return col, eligible[col], ref[1]
+
+    findings: list[dict] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        operands = [node.left, *node.comparators]
+        for i, op in enumerate(node.ops):
+            left, right = operands[i], operands[i + 1]
+            if isinstance(op, (ast.Eq, ast.NotEq)):
+                found = match(left, right) or match(right, left)
+                if found is None:
+                    continue
+                col, enum_cls, member = found
+                comparator = "!=" if isinstance(op, ast.NotEq) else "=="
+                findings.append(_finding(
+                    "python-contract",
+                    f"'{col}' is a Column(Enum({enum_cls})) attribute; SQLAlchemy's ORM "
+                    f"returns the enum member for it, not its .value, and a plain Enum "
+                    f"member never equals its own .value. "
+                    f"'{col} {comparator} {enum_cls}.{member}.value' is always "
+                    f"{'True' if comparator == '!=' else 'False'}, regardless of the actual "
+                    f"state. Compare against '{enum_cls}.{member}' directly, without '.value'.",
+                    code="enum-column-compared-to-value",
+                    line=node.lineno,
+                ))
+            elif isinstance(op, (ast.In, ast.NotIn)):
+                col = _attr_access(left)
+                if col is None or col not in eligible or not isinstance(right, (ast.Tuple, ast.List, ast.Set)):
+                    continue
+                enum_cls = eligible[col]
+                members = [ref[1] for elt in right.elts
+                           if (ref := _enum_member_value_ref(elt)) and ref[0] == enum_cls]
+                if not members:
+                    continue
+                comparator = "not in" if isinstance(op, ast.NotIn) else "in"
+                findings.append(_finding(
+                    "python-contract",
+                    f"'{col}' is a Column(Enum({enum_cls})) attribute; SQLAlchemy's ORM "
+                    f"returns the enum member for it, not its .value, so it can never be "
+                    f"{comparator} a container of .value strings "
+                    f"({', '.join(f'{enum_cls}.{m}.value' for m in members)}). Compare against "
+                    f"the members directly, without '.value'.",
+                    code="enum-column-compared-to-value",
+                    line=node.lineno,
+                ))
+    return findings
+
+
 def _python_diagnostics(
     rel_path: str, content: str, workspace: str | None = None
 ) -> list[dict[str, Any]]:
@@ -376,6 +575,7 @@ def _python_diagnostics(
 
     unawaited = python_structural_diagnostics(
         tree, sqlite=workspace_uses_sqlite(workspace),
+        rel_path=rel_path, workspace=workspace,
     ) + _unawaited_coroutines(tree)
 
     # Pyflakes is a small, in-process AST checker. Keep this collector focused

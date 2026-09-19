@@ -22,7 +22,25 @@ similarity-scored:
    non-blank quoted line is stripped - the quote was copied from numbered
    output (modify_file's own post-edit snippet, ``cat -n``).
 
-Two of aider's tiers are deliberately NOT ported:
+Tiers 6-7 port one comparator and one boundary rule from sst/opencode's
+``edit.ts`` (github.com/sst/opencode, MIT) that aider does not have - found by
+direct comparison against it, 2026-09-19:
+
+6. leading AND trailing whitespace forgiven per line, not just leading -
+   opencode's ``LineTrimmedReplacer``. Tier 2's ``lstrip()`` leaves a quoted
+   line that differs from the file ONLY in trailing whitespace unmatched at
+   every tier; Jinja-generated scaffold lines often carry it.
+7. the spurious-blank-line tolerance of tier 3 is symmetric - a model pads
+   the TRAILING end of the block, or both, just as often as the leading end
+   that aider issue #25 covers - opencode's ``TrimmedBoundaryReplacer``.
+
+Three tiers are deliberately NOT ported. Opencode's
+``WhitespaceNormalizedReplacer`` collapses runs of internal whitespace, which
+also collapses them inside a string literal: quoting ``BANNER = "Room 101"``
+against ``BANNER = "Room    101"`` matches, and the replacement then rewrites
+the literal the model never saw. Measured against 34 refused ``old_text``
+values from eleven live Qwen runs, it rescued none of them, so it carries a
+real corruption risk for no observed gain here. And two of aider's own:
 
 * Its ``SequenceMatcher`` similarity tier (0.8 ratio) — aider disabled it in
   v0.11.2 because silently applying an 80%-similar edit is worse than a clean
@@ -136,17 +154,85 @@ def _replace_with_missing_leading_whitespace(
     return result
 
 
+def _uniform_indent_prefix(whole_lines: list[str], part_lines: list[str]) -> str | None:
+    """The single common extra-indent prefix ``whole_lines`` carries over
+    ``part_lines``, given a match already known to be equal up to whitespace.
+
+    Shared by the trim tier below - same rule as
+    ``_match_but_for_leading_whitespace``: exactly one uniform prefix, widening
+    only (the file has never LESS indent than the quote), else ``None``.
+    """
+    prefixes = set()
+    for w, p in zip(whole_lines, part_lines):
+        if not w.strip():
+            continue
+        delta = (len(w) - len(w.lstrip())) - (len(p) - len(p.lstrip()))
+        if delta < 0:
+            return None
+        prefixes.add(w[:delta])
+    return prefixes.pop() if len(prefixes) == 1 else None
+
+
+def _match_but_for_trim(whole_lines: list[str], part_lines: list[str]) -> str | None:
+    """Like ``_match_but_for_leading_whitespace``, but a full ``.strip()`` on
+    both sides instead of ``lstrip()`` only - opencode's ``LineTrimmedReplacer``
+    (MIT). A quoted line differing from the file ONLY in trailing whitespace
+    (Jinja-generated scaffolds carry it) matches nothing upstream: tier 2's
+    ``lstrip()`` leaves the trailing difference in place."""
+    n = len(whole_lines)
+    if n != len(part_lines):
+        return None
+    if not all(whole_lines[i].strip() == part_lines[i].strip() for i in range(n)):
+        return None
+    return _uniform_indent_prefix(whole_lines, part_lines)
+
+
+def _replace_with_normalized_lines(
+    matcher, whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
+    ambiguous_msg: str = "Multiple normalized windows",
+) -> str | None:
+    """Slide a window, testing each with ``matcher`` (one of the two
+    functions above), and re-indent the replacement by its returned prefix."""
+    n = len(part_lines)
+    if not n:
+        return None
+    result = None
+    for i in range(len(whole_lines) - n + 1):
+        add = matcher(whole_lines[i:i + n], part_lines)
+        if add is None:
+            continue
+        if _protected_window(whole_lines, i, i + n, protected_spans):
+            continue
+        if result is not None:
+            raise AmbiguousEdit(ambiguous_msg)
+        fixed = [add + r if r.strip() else r for r in replace_lines]
+        result = "".join(whole_lines[:i] + fixed + whole_lines[i + n:])
+        if not require_unique:
+            return result
+    return result
+
+
 def _perfect_or_whitespace(
     whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
     protected_spans: tuple[tuple[int, int], ...] = (),
     require_unique: bool = False,
 ) -> str | None:
     result = _perfect_replace(whole_lines, part_lines, replace_lines, protected_spans, require_unique)
-    return result if result is not None else (
-        _replace_with_missing_leading_whitespace(
-            whole_lines, part_lines, replace_lines, protected_spans, require_unique,
-        )
+    if result is not None:
+        return result
+    result = _replace_with_missing_leading_whitespace(
+        whole_lines, part_lines, replace_lines, protected_spans, require_unique,
     )
+    if result is not None:
+        return result
+    # Tier 6: leading AND trailing whitespace forgiven per line.
+    result = _replace_with_normalized_lines(
+        _match_but_for_trim, whole_lines, part_lines, replace_lines, protected_spans, require_unique,
+        "Multiple trim-normalized windows",
+    )
+    return result
 
 
 def _collapse_blank_runs(lines: list[str]) -> tuple[list[str], list[int]]:
@@ -276,6 +362,17 @@ def replace_most_similar_chunk(
     # Models sometimes prepend a blank line to the block (aider issue #25).
     if len(part_lines) > 2 and not part_lines[0].strip():
         res = _perfect_or_whitespace(whole_lines, part_lines[1:], replace_lines, protected_spans, require_unique)
+        if res is not None:
+            return res
+
+    # ...or append one, or both (opencode's TrimmedBoundaryReplacer, MIT).
+    if len(part_lines) > 2 and not part_lines[-1].strip():
+        res = _perfect_or_whitespace(whole_lines, part_lines[:-1], replace_lines, protected_spans, require_unique)
+        if res is not None:
+            return res
+
+    if len(part_lines) > 2 and not part_lines[0].strip() and not part_lines[-1].strip():
+        res = _perfect_or_whitespace(whole_lines, part_lines[1:-1], replace_lines, protected_spans, require_unique)
         if res is not None:
             return res
 

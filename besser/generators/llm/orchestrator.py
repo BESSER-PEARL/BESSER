@@ -1216,10 +1216,14 @@ class LLMOrchestrator:
     # ``_is_stuck`` warning (a soft note appended to a tool_result)
     # doesn't change behaviour. At 3 consecutive single-file edits we
     # inject a high-salience reminder before the NEXT LLM call.
-    _PER_FILE_MODIFY_THRESHOLD = 3
+    #
+    # Derived, not re-declared: this guard reads the same counter
+    # (``consecutive_modify_misses``) that the executor refuses on, so two
+    # independent 3s in two files could be tuned apart and silently disagree.
+    _PER_FILE_MODIFY_THRESHOLD = ToolExecutor._MAX_MODIFY_MISSES
     # How many output-token truncations one Phase 2 may recover from in
-    # total. Two is enough to let the model shrink its turn; beyond that it is
-    # not adapting, and resume is a better answer than burning the cost cap.
+    # total, never reset. Past this the model is not adapting and resume is a
+    # better answer than burning the cost cap.
     _MAX_TRUNCATION_RETRIES = 4
 
     def _auto_detect_primary_kind(self) -> str | None:
@@ -3298,33 +3302,7 @@ class LLMOrchestrator:
                 # high-salience reminder as a separate user message
                 # BEFORE the next LLM call, so the model sees it at
                 # response-time (not buried inside a tool_result blob).
-                stuck_path = self._consecutive_modify_on_same_file()
-                if stuck_path is not None:
-                    reminder_text = self._build_modify_loop_reminder(stuck_path)
-                    logger.warning(
-                        "Per-file modify loop: %d consecutive modify_file "
-                        "on %s — injecting reminder",
-                        self._PER_FILE_MODIFY_THRESHOLD, stuck_path,
-                    )
-                    messages.append({
-                        "role": "user",
-                        "content": [{"type": "text", "text": reminder_text}],
-                    })
-                    # Record so we don't re-fire on the next turn while
-                    # the LLM is still on the same file. The next
-                    # _consecutive_modify_on_same_file() call will return
-                    # None for ``stuck_path`` until the LLM switches
-                    # files / tools.
-                    self._last_modify_warning_path = stuck_path
-                else:
-                    # Streak broken (LLM switched file/tool) — clear so
-                    # a fresh streak on the same path could re-warn.
-                    if self._recent_modify_targets:
-                        last_tool, last_path = self._recent_modify_targets[-1]
-                        if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
-                            self._last_modify_warning_path = None
-
-                if self._escalate_repeat_rejection(messages):
+                if self._apply_edit_loop_guards(messages, where="phase 2"):
                     break
 
                 # Save a checkpoint at the end of every full turn so a
@@ -4484,6 +4462,11 @@ class LLMOrchestrator:
                 if entry["tool"] in _WRITE_TOOLS_ON_RECORD and entry["success"]
             )
             messages.append({"role": "user", "content": tool_results})
+            # The same streak/repeat guards Phase 2 and the fix cycle get.
+            # Omitting them here left the bounded repair loop running on
+            # _is_stuck alone, on a tighter budget than either.
+            if self._apply_edit_loop_guards(messages, where="phase 3 repair"):
+                break
             self._save_phase3_checkpoint()
 
     _FILE_LINE_RE = _re.compile(
@@ -6465,25 +6448,7 @@ class LLMOrchestrator:
                 # cycle is the most common offender — the LLM gets a
                 # single error to fix and starts dribbling out one-line
                 # modify_file calls instead of rewriting the file.
-                stuck_path = self._consecutive_modify_on_same_file()
-                if stuck_path is not None:
-                    reminder_text = self._build_modify_loop_reminder(stuck_path)
-                    logger.warning(
-                        "Per-file modify loop (fix cycle): %d consecutive "
-                        "modify_file on %s — injecting reminder",
-                        self._PER_FILE_MODIFY_THRESHOLD, stuck_path,
-                    )
-                    messages.append({
-                        "role": "user",
-                        "content": [{"type": "text", "text": reminder_text}],
-                    })
-                    self._last_modify_warning_path = stuck_path
-                else:
-                    if self._recent_modify_targets:
-                        last_tool, last_path = self._recent_modify_targets[-1]
-                        if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
-                            self._last_modify_warning_path = None
-                if self._escalate_repeat_rejection(messages):
+                if self._apply_edit_loop_guards(messages, where="fix cycle"):
                     break
             else:
                 break
@@ -6562,10 +6527,6 @@ class LLMOrchestrator:
             # flips it to prepend the "preserve what works" directive.
             modify_mode=self._modify_mode,
         )
-
-    def _build_inventory(self, generator_name: str) -> str:
-        """Delegate to prompt_builder module."""
-        return build_inventory(self.output_dir, self.domain_model, generator_name)
 
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:
         """Delegate to compaction module.
@@ -6763,6 +6724,33 @@ class LLMOrchestrator:
     _REPEAT_FORCE_AT = 3
     _REPEAT_STOP_AT = 7
 
+    def _apply_edit_loop_guards(self, messages: list[dict], *, where: str) -> bool:
+        """Per-file modify streak + repeat-rejection escalation. True = stop.
+
+        One mechanism with three callers. It was pasted into Phase 2's loop
+        and the fix cycle and simply omitted from ``_invoke_phase3_fix_loop``,
+        so the bounded repair loop - the one place a model is asked to fix its
+        own mistakes on a 10-turn budget - ran on ``_is_stuck`` alone, the
+        weakest of the three, while the README claimed recovery was shared
+        across phases. Only the low-level executor ladder actually was.
+        """
+        stuck_path = self._consecutive_modify_on_same_file()
+        if stuck_path is not None:
+            logger.warning(
+                "Per-file modify loop (%s): %d consecutive edits on %s - "
+                "injecting reminder", where, self._PER_FILE_MODIFY_THRESHOLD, stuck_path,
+            )
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": self._build_modify_loop_reminder(stuck_path)}]})
+            # Don't re-fire while the model is still on the same file.
+            self._last_modify_warning_path = stuck_path
+        elif self._recent_modify_targets:
+            last_tool, last_path = self._recent_modify_targets[-1]
+            if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
+                # Streak broken; a fresh one on this path may warn again.
+                self._last_modify_warning_path = None
+        return self._escalate_repeat_rejection(messages)
+
     def _escalate_repeat_rejection(self, messages: list[dict]) -> bool:
         """Act on ``executor.last_repeat``. Returns True when the caller's
         loop must stop."""
@@ -6788,7 +6776,14 @@ class LLMOrchestrator:
             # Only steer toward the range editor when the failing strategy is
             # text quotation. Sending a repeating range edit back through
             # read -> replace_file_lines is the loop it is already in.
-            self._force_tool_next = "read_file" if tool == "modify_file" else None
+            #
+            # _force_tool_next is a single slot the executor's recovery ladder
+            # also writes, earlier in the same turn. An unconditional
+            # assignment here silently discarded that hint - including the
+            # "go back to modify_file" reversal - purely by write order. The
+            # executor saw the actual refusal, so leave its choice alone.
+            if self._force_tool_next is None:
+                self._force_tool_next = "read_file" if tool == "modify_file" else None
             strategy = (
                 "Read the target block, then use replace_file_lines with the returned "
                 "read_id and inclusive line numbers."

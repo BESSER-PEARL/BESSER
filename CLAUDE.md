@@ -173,9 +173,9 @@ The hybrid generator. Treat it as a peer of the deterministic generators, not a 
 - **`orchestrator.py`** (`LLMOrchestrator`) — owns the three phases and all the loop guards:
   - Phase 1 deterministic generation (plus Phase 0.5 stack-metadata when no generator fits, and Phase 1.5 validation of the scaffold)
   - Phase 2 LLM customization loop
-  - Phase 3 validation + bounded auto-fix (`_MAX_TOOLCHAIN_FIX_ITERATIONS = 5`, snapshot/rollback if fixes regress)
+  - Phase 3 validation + bounded auto-fix (`_MAX_TOOLCHAIN_FIX_ITERATIONS = 5` is a FLOOR - the loop runs `max(5, max_turns - total_turns)` rounds, snapshot/rollback if fixes regress)
   - Severity classification lives in `_classify_issue`: `blocker` / `warning` / `style`
-  - Guards worth knowing: turn cap (`MAX_TURNS = 80`), cost/runtime caps checked at turn boundaries, truncation recovery (`_MAX_TRUNCATION_RETRIES = 2`), per-file modify-loop detection (`_PER_FILE_MODIFY_THRESHOLD = 3`), parallel tool execution grouped by write path (`_MAX_PARALLEL_WORKERS = 4`), checklist end_turn gate (`_MAX_TASK_NUDGES = 2`, 4 when an open item carries a verifier)
+  - Guards worth knowing: turn cap (`MAX_TURNS = 120`), cost/runtime caps checked at turn boundaries, truncation recovery (`_MAX_TRUNCATION_RETRIES = 4`, per run, never reset), per-file modify-loop detection (`_PER_FILE_MODIFY_THRESHOLD = 3`), parallel tool execution grouped by write path (`_MAX_PARALLEL_WORKERS = 4`), checklist end_turn gate (`_MAX_TASK_NUDGES = 2`, 4 when an open item carries a verifier)
 - **`tools.py`** — declares the LLM's tool surface (files, model queries, validation/bookkeeping, generators, shell). **If you add a tool, add it to `_TOOL_MODEL_REQUIREMENTS` in the same file** so it is only offered when the models it needs are present; `tests/generators/llm/test_added_generator_tools.py` asserts every generator tool has an entry.
 - **`tool_executor.py`** — implements the tools, plus the `task_list` checklist (batch `ids=[...]`, bounded verification retries: `_MAX_TASK_VERIFY_ATTEMPTS = 3`, after which an item is recorded *blocked* and stops holding the gate open).
 - **`llm_client.py`** — provider clients (`anthropic`, `openai`, `mistral`), the keyless `free` tier and the `sponsored` tier, pricing tables, the cheap planning-model routing, and the free-tier fallback chain.

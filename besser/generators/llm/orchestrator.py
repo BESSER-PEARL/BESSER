@@ -116,6 +116,7 @@ from besser.generators.llm.tracing import (
     EVENT_PHASE_EXIT,
     EVENT_RUN_END,
     EVENT_RUN_START,
+    EVENT_ROLLBACK,
     EVENT_SNAPSHOT,
     EVENT_TOOL_CALL,
     EVENT_TURN_START,
@@ -1097,6 +1098,9 @@ class LLMOrchestrator:
         # Cast to strings via `[str(i) for i in self._validation_issues]`
         # when emitting JSON.
         self._validation_issues: list[ValidationIssue] = []
+        # True when Phase 3's repair was discarded because it ended
+        # worse than it began; the recipe must not read as a clean fix.
+        self._phase3_rolled_back = False
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
         # Last model name observed on the client. The provider's outage
         # fallback (``OpenAIProvider._activate_fallback``) can swap the
@@ -3940,6 +3944,8 @@ class LLMOrchestrator:
         # metric. Two unchanged/repeated source states stop an unproductive loop.
         current_blockers = blockers_before
         prev_blocker_count = len(blockers_before)
+        # Only a repair that actually wrote something can be rolled back.
+        source_ever_changed = False
         last_issues = list(issues)
         progress = self._repair_progress
         attempts_run = progress.get("attempts_run", 0)
@@ -3987,6 +3993,7 @@ class LLMOrchestrator:
             checkpoint_progress()
             edits = self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
             source_changed = revision_before != self._workspace_revision()
+            source_ever_changed = source_ever_changed or source_changed
             obligations_changed = obligations_before != self._repair_obligations_revision()
             checkpoint_progress()
             if not edits:
@@ -4077,7 +4084,10 @@ class LLMOrchestrator:
         # We get here either by ending the loop early (no progress)
         # or by exhausting the attempt cap. Record whatever the final
         # state is so the recipe surfaces it.
-        self._validation_issues = list(last_issues)
+        if self._rollback_phase3_if_worse(blockers_before, last_issues, source_ever_changed):
+            last_issues = list(self._validation_issues)
+        else:
+            self._validation_issues = list(last_issues)
         checkpoint_progress()
         remaining_blockers = [
             i for i in last_issues if i.severity == "blocker"
@@ -4090,6 +4100,67 @@ class LLMOrchestrator:
             )
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
+
+    def _rollback_phase3_if_worse(
+        self, entry_blockers: list[ValidationIssue],
+        final_issues: list[ValidationIssue],
+        source_changed: bool,
+    ) -> bool:
+        """Ship the pre-Phase-3 tree when repair ended worse than it began.
+
+        Three conditions, and all are needed. The repair must have actually
+        written something: a blocker that appears while nothing was edited is
+        newly-exposed truth or judge variance, and rolling back would hide it
+        (there would also be nothing to undo). A rising count *during* the
+        loop is expected, since fixing an import exposes the errors behind it,
+        so only the final state counts. And only hard blockers count, because
+        two judge passes on one app returned 12 then 22 missing requirements.
+
+        Run trilraak entered Phase 3 with 11 blockers; attempt 2 wrote six
+        files, added an association table using ``Table`` without importing
+        it, took the count to 45, and the run shipped that: ``sql_alchemy.py``
+        no longer imported, so every router that star-imports it was dead.
+        ``_restore_snapshot`` existed and was unit-tested, but nothing in
+        production ever called it.
+
+        The code is reverted, the findings are not: what the repaired tree
+        revealed is recorded, so a real defect a partial fix exposed does not
+        become invisible again.
+        """
+        if not source_changed:
+            return False
+        final_blockers = [i for i in final_issues if i.severity == "blocker"]
+        entry_hard = len(_hard_blockers(entry_blockers))
+        final_hard = len(_hard_blockers(final_blockers))
+        if final_hard <= entry_hard:
+            return False
+        logger.warning(
+            "Phase 3 ended worse than it began (%d -> %d hard blockers); "
+            "restoring the pre-Phase-3 tree.", entry_hard, final_hard,
+        )
+        if not self._restore_snapshot():
+            logger.error(
+                "Phase 3 regressed but the snapshot could not be restored; "
+                "keeping the repaired tree and reporting it as it stands.",
+            )
+            self._validation_issues = list(final_issues)
+            return False
+        self._phase3_rolled_back = True
+        restored = self._collect_validation_issues()
+        discarded = sorted({i.message for i in final_blockers})[:10]
+        self._validation_issues = list(restored) + [_classify_issue(
+            "validation: the Phase 3 repair was rolled back - it ended with "
+            f"{final_hard} hard blockers against {entry_hard} on entry, so the "
+            "pre-repair output is what ships. Findings seen only in the "
+            "discarded tree (they may still be real): " + "; ".join(discarded)
+        )]
+        self._trace.write(
+            EVENT_ROLLBACK, phase="phase3",
+            blockers_on_entry=entry_hard,
+            blockers_after_repair=final_hard,
+            blockers_after_rollback=len([i for i in restored if i.severity == "blocker"]),
+        )
+        return True
 
     def _invoke_phase3_fix_loop(
         self,
@@ -6995,6 +7066,9 @@ class LLMOrchestrator:
             # model or Phase 3 didn't run). The UI/recipe reader can
             # render this as the model-derived definition of done.
             "acceptance_matrix": self._acceptance_matrix,
+            # The Phase 3 edits in tool_calls are on disk only when this is
+            # False; a rollback discarded them and kept the Phase 2 output.
+            "phase3_rolled_back": self._phase3_rolled_back,
             "output_files": sorted(output_files, key=lambda f: f["path"]),
             "output_summary": {
                 "total_files": len(output_files),

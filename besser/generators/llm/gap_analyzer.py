@@ -205,9 +205,12 @@ def analyze_gaps_via_llm(
     cleaned = _dedupe([t.strip() for t in tasks if isinstance(t, str) and t.strip()])[:_MAX_TASKS]
     cleaned = _sanitize_tasks(cleaned, generator_used, instructions)
     cleaned = _drop_present_enumerations(cleaned, domain_model)
+    cleaned = _drop_present_attributes(cleaned, domain_model)
+    cleaned = _note_present_regex_validations(cleaned, domain_model)
     cleaned = _resolve_task_paths(cleaned, workspace_files or [])
     cleaned = _note_dependent_rule_placement(cleaned, domain_model)
     cleaned = _note_model_only_tasks(cleaned, workspace_files or [])
+    cleaned = _note_present_relationships(cleaned, domain_model)
     cleaned = _dedupe(_note_action_placement(cleaned, action_endpoints or []))
     # Harness-owned, prepended: a spec-vs-model gap the planner may miss or
     # (worse) judge "nothing to do" — this must survive even an empty list,
@@ -441,6 +444,257 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
                 continue
         kept.append(task)
     return kept
+
+
+# "add/create/... an attribute": proposes declaring an attribute the model
+# may already carry. The identifier is read from a token WINDOW around the
+# "attribute" keyword, not the whole sentence, so an unrelated quoted token
+# elsewhere in a longer task (an enum literal, a requirement quote) is never
+# mistaken for the attribute's own name.
+_ADD_VERB_RE = re.compile(r"\b(?:add|create|introduce|define|declare)\b", re.IGNORECASE)
+_ATTR_KEYWORD_RE = re.compile(r"\battributes?\b", re.IGNORECASE)
+_QUOTED_IDENT_RE = re.compile(r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]")
+
+# Naming the attribute is not the same as asking for the BEHAVIOUR behind it.
+# Live counterexample (se7k3zbx, 2026-09-19): "add a computed
+# 'commercialStatus' attribute that is derived from the bill's settlement
+# status, transitioning from 'awaiting payment' to 'confirmed' when the bill
+# is settled" names an attribute the model already has, but the transition
+# LOGIC - which the model does not encode - is the real ask. This downgrades
+# a drop to an annotation so the requirement itself is never lost.
+_ATTR_BEHAVIOR_RE = re.compile(
+    r"\b(?:derive[ds]?\s+from|computed?\s+from|transition\w*|based\s+on|"
+    r"calculat\w+|whenever|logic)\b",
+    re.IGNORECASE,
+)
+_TYPE_SYNONYMS = {"boolean": "bool", "string": "str", "text": "str", "integer": "int"}
+_TYPE_WORD_RE = re.compile(
+    r"\b(float|double|int|integer|str|string|text|bool|boolean|date|datetime|time)\b",
+    re.IGNORECASE,
+)
+
+
+def _attr_idents_near_keyword(sentence: str) -> list[str]:
+    """Quoted identifiers within 6 tokens of the word 'attribute(s)'."""
+    tokens = sentence.split()
+    idents: list[str] = []
+    for i, tok in enumerate(tokens):
+        if not _ATTR_KEYWORD_RE.search(tok):
+            continue
+        window = " ".join(tokens[max(0, i - 6): i + 7])
+        idents.extend(_QUOTED_IDENT_RE.findall(window))
+    return idents
+
+
+def _rejected_constraint_names(domain_model) -> set:
+    """Names of OCL invariants that were REJECTED during conversion.
+
+    These live in ``domain_model.conversion_issues``, never in
+    ``domain_model.constraints`` - but the planner routinely re-describes a
+    rejected rule in a LATER, separate task without naming it (e.g.
+    "does not exceed the combined capacity of all rooms" instead of
+    "guestsWithinCapacity"). Every "already present" family in this module
+    checks this set FIRST and backs off entirely on a hit: a false "already
+    handled" signal on unimplemented, rejected work is worse than a missed
+    drop or annotation on implemented work.
+    """
+    names: set = set()
+    for issue in getattr(domain_model, "conversion_issues", None) or []:
+        name = issue.get("name") if isinstance(issue, dict) else None
+        if name:
+            names.add(str(name))
+    return names
+
+
+def _mentions_rejected_constraint(task: str, rejected_names: set) -> bool:
+    return any(re.search(rf"\b{re.escape(n)}\b", task, re.IGNORECASE) for n in rejected_names)
+
+
+def _mentioned_classes(sentence: str, classes: list) -> list:
+    """Model classes named in ``sentence``, tolerating a Create/Update/...
+    schema suffix (``BookingCreate`` still names ``Booking``)."""
+    found = []
+    for cls in classes:
+        pattern = _class_name_pattern(cls.name)
+        if re.search(rf"\b{pattern}(?:Create|Update|Read|Response)?\b", sentence):
+            found.append(cls)
+    return found
+
+
+def _drop_present_attributes(tasks: list, domain_model) -> list:
+    """Drop (or, when behaviour is also being asked for, annotate) an
+    add-attribute task whose (class, attribute) pair the model already has.
+
+    Verified 2026-09-19 against verification/spec-iterations (18 real
+    recipes, one model shared across all of them): run fcdh0s9k's task 11
+    "Add a 'extraCharges' attribute to the ReservedRoom class" - ReservedRoom
+    already declares agreedPrice AND extraCharges, and the generated
+    sql_alchemy.py / pydantic_classes.py of every run already carry both end
+    to end.
+
+    Matching requires an exact (case-insensitive) attribute-name match on
+    the NAMED class's OWN attributes: not a same-named attribute on an
+    unrelated class, not a class the sentence never mentions. A type word
+    (float/int/bool/...) that contradicts the model's actual type blocks the
+    match entirely - that names a real gap, not a duplicate. Only a task
+    that is PURELY a declaration is dropped; one that also asks for derived
+    behaviour (see ``_ATTR_BEHAVIOR_RE``) is annotated instead, so the
+    requirement is never silently lost.
+    """
+    if domain_model is None:
+        return tasks
+    try:
+        classes = list(domain_model.get_classes())
+        rejected = _rejected_constraint_names(domain_model)
+    except Exception:
+        return tasks
+
+    noted: list = []
+    for task in tasks:
+        if not isinstance(task, str) or not _ADD_VERB_RE.search(task) \
+                or not _ATTR_KEYWORD_RE.search(task) \
+                or _mentions_rejected_constraint(task, rejected):
+            noted.append(task)
+            continue
+        decision = None  # "drop" | "annotate"
+        for sentence in _sentences(task):
+            if not (_ADD_VERB_RE.search(sentence) and _ATTR_KEYWORD_RE.search(sentence)):
+                continue
+            quoted = _attr_idents_near_keyword(sentence)
+            if not quoted:
+                continue
+            for cls in _mentioned_classes(sentence, classes):
+                attr_by_lower = {a.name.lower(): a for a in getattr(cls, "attributes", None) or []}
+                if not all(q.lower() in attr_by_lower for q in quoted):
+                    continue
+                type_word = _TYPE_WORD_RE.search(sentence)
+                if type_word and len(quoted) == 1:
+                    word = _TYPE_SYNONYMS.get(type_word.group(1).lower(), type_word.group(1).lower())
+                    type_name = getattr(getattr(attr_by_lower[quoted[0].lower()], "type", None), "name", None)
+                    if type_name and word != str(type_name).lower():
+                        continue  # names a type the model disagrees with - a real gap
+                decision = "annotate" if _ATTR_BEHAVIOR_RE.search(sentence) else "drop"
+                break
+            if decision:
+                break
+        if decision == "drop":
+            logger.info("Gap sanitizer dropped already-present attribute task: %r", task[:100])
+            continue
+        if decision == "annotate":
+            noted.append(
+                f"{task.rstrip()} (NOTE: the model already declares this "
+                "attribute and the generator already carries it into the generated "
+                "ORM/Pydantic code - focus on the requested BEHAVIOUR, not on "
+                "re-adding the field.)"
+            )
+            logger.info("Gap sanitizer annotated already-present attribute task: %r", task[:100])
+            continue
+        noted.append(task)
+    return noted
+
+
+# ``self.<attr>.matches('<regex>')`` with nothing else: the one shape
+# besser/generators/pydantic_classes/ocl_utils.py turns into a
+# ``@field_validator`` without skipping it (a constraint touching
+# collections/relationships is emitted as a code comment instead).
+_OCL_HEADER_RE = re.compile(r"^\s*context\s+\S+(?:::\S+)?\s+inv\s+\S+\s*:\s*", re.IGNORECASE)
+_OCL_PURE_MATCH_RE = re.compile(
+    r"^self\s*\.\s*(?P<attr>[A-Za-z_]\w*)\s*\.\s*matches\s*\(\s*(?:'[^']*'|\"[^\"]*\")\s*\)$"
+)
+_REGEX_VALIDATION_MARKER_RE = re.compile(
+    r"\b(?:regex|pattern|format|valid(?:ate|ated|ation)?)\b", re.IGNORECASE,
+)
+
+
+def _present_regex_validations(domain_model) -> list[tuple[str, str, str, set]]:
+    """(class_name, attribute_name, constraint_name, subclass_names) for
+    every successfully-converted OCL invariant that is exactly a
+    ``self.<attr>.matches(regex)`` check.
+
+    ``domain_model.constraints`` holds only invariants that PARSED; a
+    REJECTED one lives in ``domain_model.conversion_issues`` and is never
+    read here, so a task about a rejected constraint can never match.
+    """
+    triples: list[tuple[str, str, str, set]] = []
+    for c in getattr(domain_model, "constraints", None) or []:
+        body = _OCL_HEADER_RE.sub("", c.expression or "", count=1).strip()
+        m = _OCL_PURE_MATCH_RE.match(body)
+        if not m:
+            continue
+        ctx = getattr(c, "context", None)
+        if ctx is None or not getattr(ctx, "name", None):
+            continue
+        try:
+            subclasses = {s.name for s in ctx.all_specializations()}
+        except Exception:
+            subclasses = set()
+        triples.append((ctx.name, m.group("attr"), c.name, subclasses))
+    return triples
+
+
+def _note_present_regex_validations(tasks: list, domain_model) -> list:
+    """Annotate (never drop) a task that asks to validate an attribute the
+    model already enforces via a successfully-converted OCL regex invariant.
+
+    Verified 2026-09-19: 6 of 18 real runs re-asked for Person email/phone
+    validation while the model's validEmail/validPhone invariants already
+    convert and the generated PersonCreate already carries their exact
+    ``@field_validator`` (inherited by GuestCreate/EmployeeCreate, since both
+    subclass PersonCreate in every generated pydantic_classes.py).
+
+    Kept as an ANNOTATION, not a drop: run gpt-5.6-terra-dp3trml9's task 14
+    bundles the already-satisfied validEmail/validPhone re-ask together with
+    "enforce Person identifyingNumber uniqueness", which the model does NOT
+    carry anywhere. Dropping the whole task on the validEmail/validPhone
+    match would have silently discarded that second, genuine requirement -
+    exactly the failure mode this module must not reproduce.
+    """
+    if domain_model is None:
+        return tasks
+    try:
+        triples = _present_regex_validations(domain_model)
+        rejected = _rejected_constraint_names(domain_model)
+    except Exception:
+        return tasks
+    if not triples:
+        return tasks
+
+    noted: list = []
+    for task in tasks:
+        if not isinstance(task, str) or _mentions_rejected_constraint(task, rejected):
+            noted.append(task)
+            continue
+        hit = None
+        for sentence in _sentences(task):
+            for cls_name, attr_name, constraint_name, subclasses in triples:
+                if re.search(rf"\b{re.escape(constraint_name)}\b", sentence, re.IGNORECASE):
+                    hit = (cls_name, attr_name, constraint_name)
+                    break
+                if not re.search(rf"\b{re.escape(attr_name)}\b", sentence, re.IGNORECASE):
+                    continue
+                if not _REGEX_VALIDATION_MARKER_RE.search(sentence):
+                    continue
+                names = {cls_name} | subclasses
+                if any(re.search(rf"\b{_class_name_pattern(n)}\b", sentence) for n in names):
+                    hit = (cls_name, attr_name, constraint_name)
+                    break
+            if hit:
+                break
+        if hit is None:
+            noted.append(task)
+            continue
+        cls_name, attr_name, constraint_name = hit
+        noted.append(
+            f"{task.rstrip()} (NOTE: {cls_name}.{attr_name} already carries "
+            f"the OCL invariant '{constraint_name}'; the generated Pydantic Create "
+            "model already enforces it with a @field_validator - verify it in the "
+            "generated code before re-adding it.)"
+        )
+        logger.info(
+            "Gap sanitizer annotated already-validated attribute task (%s.%s): %r",
+            cls_name, attr_name, task[:100],
+        )
+    return noted
 
 
 # Sentences that plausibly name a starting/initial state ("begins",
@@ -755,6 +1009,126 @@ def _note_dependent_rule_placement(tasks: list, domain_model) -> list:
             )
             break
         noted.append(text)
+    return noted
+
+
+_RELATIONSHIP_MARKER_RE = re.compile(
+    r"\b(?:relationship|reference|cardinalit\w*|association|valid\s+\w+)\b",
+    re.IGNORECASE,
+)
+
+# A rule that aggregates or compares ACROSS related rows (a capacity sum, an
+# overlap check) is not the plain existence/cardinality guard the router
+# already emits, even when it is phrased through a real association name.
+# Live finding (2026-09-19, several runs): the planner re-describes a
+# REJECTED constraint ("does not exceed the combined capacity of all rooms")
+# without naming it, so the name-based ``_mentions_rejected_constraint``
+# guard alone does not catch it - this catches it on the shape of the rule
+# instead. Both rejected constraints in the verified dataset are exactly
+# this shape (a capacity sum, a date overlap), so this guard is what keeps
+# every one of their paraphrases out of this function's reach.
+_AGGREGATE_RULE_MARKER_RE = re.compile(
+    r"\b(?:capacity|occupancy|overlap\w*|exceed\w*|combined|aggregate|sum)\b",
+    re.IGNORECASE,
+)
+
+
+def _relationship_names_by_class(domain_model) -> dict:
+    """class name -> relationship identifiers reachable FROM it: each
+    sibling end's role name (the field the generator puts on this class's
+    own Create schema) plus the association's own name - how these tasks
+    usually refer to it, even when that differs from the generated field
+    (the 'handledBy' association's own field on Booking is 'employee')."""
+    names: dict = {}
+    for assoc in getattr(domain_model, "associations", None) or []:
+        ends = list(getattr(assoc, "ends", None) or [])
+        if len(ends) != 2:
+            continue
+        for i, end in enumerate(ends):
+            other = ends[1 - i]
+            cls_name = getattr(getattr(end, "type", None), "name", None)
+            if not cls_name:
+                continue
+            bucket = names.setdefault(cls_name, set())
+            if getattr(other, "name", None):
+                bucket.add(other.name.lower())
+            if getattr(assoc, "name", None):
+                bucket.add(assoc.name.lower())
+    return names
+
+
+def _note_present_relationships(tasks: list, domain_model) -> list:
+    """Annotate (never drop) a task that asks to validate an association
+    end / relationship reference the model already declares.
+
+    Verified 2026-09-19: run trilraak asked, in 4 separate tasks phrased
+    "Ensure the '<end>' relationship in Booking enforces that ... is a
+    valid ... by validating ... in the create_booking endpoint", for exactly
+    the contact/guests/handledBy/rooms relationships - and the generated
+    web_app/backend/routers/booking.py of that same run already has the
+    400/404 existence check and the minimum-cardinality check for every one
+    of them, deterministically emitted from the model's multiplicities. All
+    four tasks sat at attempts=0: the agent recognised they were already
+    done and never touched them, but they still occupied a checklist slot.
+
+    Kept as an ANNOTATION rather than a drop: the evidence that the router
+    already enforces it is a property of a SPECIFIC generator's template
+    (``router.py.j2``, used by the web-app/FastAPI/REST-API generators), not
+    a fact derivable from the domain model alone for every generator (e.g.
+    Django, or a from-scratch build), and the wording of these tasks is far
+    less uniform than the enumeration or attribute families - some ask for
+    more than existence (a business-specific check a plain ID-existence
+    guard would not cover).
+    """
+    if domain_model is None:
+        return tasks
+    try:
+        classes = list(domain_model.get_classes())
+        rel_names = _relationship_names_by_class(domain_model)
+        rejected = _rejected_constraint_names(domain_model)
+    except Exception:
+        return tasks
+    if not rel_names:
+        return tasks
+
+    noted: list = []
+    for task in tasks:
+        if not isinstance(task, str) or _mentions_rejected_constraint(task, rejected) \
+                or _AGGREGATE_RULE_MARKER_RE.search(task):
+            noted.append(task)
+            continue
+        hit = None
+        for sentence in _sentences(task):
+            if not _RELATIONSHIP_MARKER_RE.search(sentence):
+                continue
+            for cls in _mentioned_classes(sentence, classes):
+                idents = rel_names.get(cls.name)
+                if not idents:
+                    continue
+                low = sentence.lower()
+                match = next(
+                    (rel for rel in idents if re.search(rf"\b{re.escape(rel)}\b", low)), None,
+                )
+                if match:
+                    hit = (cls.name, match)
+                    break
+            if hit:
+                break
+        if hit is None:
+            noted.append(task)
+            continue
+        cls_name, rel_name = hit
+        noted.append(
+            f"{task.rstrip()} (NOTE: '{rel_name}' is a relationship the "
+            f"model already declares on {cls_name}. A deterministically generated "
+            "router typically already enforces existence and minimum-cardinality "
+            "checks for it from the model's multiplicities - verify in the "
+            "generated router before re-implementing this.)"
+        )
+        logger.info(
+            "Gap sanitizer annotated already-declared relationship task (%s.%s): %r",
+            cls_name, rel_name, task[:100],
+        )
     return noted
 
 

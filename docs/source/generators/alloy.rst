@@ -3,10 +3,11 @@ Alloy Specifications Generator
 
 This code generator produces an `Alloy specification <https://alloytools.org/>`_ from a B-UML/OCL 
 :doc:`../buml_language/model_types/structural`. The Alloy specification can be employed afterwards 
-for semantic consistency checks and automated object diagram generation for the B-UML/OCL model.
+for semantic consistency checks and automated :doc:`object diagram generation <./object_diagram>` 
+for the B-UML/OCL model.
 
 Let's generate the Alloy specification for our :doc:`../examples/library_example`. 
-You should create an ``AlloyGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, 
+You must create an ``AlloyGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, 
 and use the ``generate`` method as follows:
 
 .. code-block:: python
@@ -27,22 +28,25 @@ folder and it will look as follows.
 Configuration Parameters
 ------------------------
 
+At its creation, the ``AlloyGenerator`` class can be configured with the following parameters:
+
 - ``model``: The structural model to be used for generating the Alloy specification.
 - ``output_dir``: (Optional) The directory where the generated Alloy specification will be saved.
 - ``scope``: (Optional) The scope for the Alloy analysis.
 
-OCL Constraint Validation
---------------------------
+OCL Invariants Validation
+-------------------------
 
 The Alloy generator incorporates ``facts`` in the Alloy specification to ensure that 
 instances created from the specification satisfy the OCL (Object Constraint
-Language) invariant constraints defined in your B-UML models.
+Language) invariants defined in your B-UML models. It also employs the OCL invariants 
+for consistency checks of the B-UML model.
 
-Defining OCL Constraints
-^^^^^^^^^^^^^^^^^^^^^^^^^
+Defining OCL Invariants 
+^^^^^^^^^^^^^^^^^^^^^^^
 
-For exampple, in our :doc:`../examples/library_example` we can define an OCL constraint 
-on the ``Book`` class to ensure that the number of pages is greater than 10:
+For example, in our :doc:`../examples/library_example` we can define an OCL invariant 
+on ``Book`` to enforce that the number of pages on any book is greater than 10:
 
 .. code-block:: python
 
@@ -58,9 +62,14 @@ on the ``Book`` class to ensure that the number of pages is greater than 10:
 
     library_model.constraints = {inv1}
 
-For each OCL invariant the generator adds a ``fact`` to the Alloy specification:
+For each OCL invariant the generator adds a ``fact`` to the Alloy specification. 
+In this case, the specification will include the following fact:
 
 .. code-block:: alloy 
 
     fact inv1 { all self : this/Book | self.book_pages > 10 }
 
+Hence, when using the :doc:`automated object diagram generator <./object_diagram>`, 
+all generated object diagrams will satisfy the OCL invariants. The 
+:doc:`object diagram generator <./object_diagram>` can also be used to 
+verify the consistency of the constrained B-UML/OCL model.

@@ -117,9 +117,14 @@ Choosing a Generator
    * - **Alloy**
      - Structural
      - .als files
-     - Semantic consistency checks and automated object diagram generation 
-       for B-UML/OCL models by resorting to the `Alloy specification language <https://alloytools.org/>`_. 
-
+     - Generates an `Alloy specification <https://alloytools.org/>`_ from B-UML/OCL models, 
+       enabling semantic consistency checks and automated object diagram generation.
+   * - **Object Diagram**
+     - Structural
+     - .als files
+     - Employs the specification produced by the ``Alloy`` generator 
+       to perform semantic consistency checks and automated object diagram generation 
+       for B-UML/OCL models.
 
 Web Application
 ---------------
@@ -151,6 +156,7 @@ Generate code for various frameworks and programming languages:
    generators/flutter
    generators/react
    generators/alloy
+   generators/object_diagram
 
 Data & API
 ----------

@@ -216,6 +216,7 @@ def analyze_gaps_via_llm(
     # (worse) judge "nothing to do" — this must survive even an empty list,
     # since [] can short-circuit Phase 2 entirely (see the module docstring).
     cleaned = _dedupe(_note_derived_enum_initial_state(domain_model, instructions) + cleaned)
+    cleaned = _dedupe(_note_rejected_constraints(domain_model, cleaned) + cleaned)
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
 
@@ -508,6 +509,61 @@ def _rejected_constraint_names(domain_model) -> set:
 
 def _mentions_rejected_constraint(task: str, rejected_names: set) -> bool:
     return any(re.search(rf"\b{re.escape(n)}\b", task, re.IGNORECASE) for n in rejected_names)
+
+
+# A model can reject many constraints; the checklist is a scarce resource.
+_MAX_REJECTED_CONSTRAINT_TASKS = 6
+
+
+def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
+    """Harness-owned tasks for OCL invariants the converter threw away.
+
+    The generator now leaves a TODO where it could not enforce a constraint
+    (``pydantic_classes/ocl_utils.py``), which makes the omission visible but
+    does not make it anyone's job. Nothing turned a rejected invariant into
+    work: ``_rejected_constraint_names`` was only ever read defensively, to
+    stop an "already present" family from dropping a task that happened to
+    mention one. If the planner did not raise it, the rule shipped as a
+    comment.
+
+    So the harness raises it. Rejected invariants are exactly the rules the
+    deterministic path cannot express - the owner's directive is that the
+    agent implements those, not that the generator grows to cover them.
+
+    Only constraints no existing task already names are added, since the
+    planner's own phrasing carries the spec's wording and already gets
+    placement advice. The rejection reason rides along: it usually says
+    which property name did not resolve, and that is the model-vs-spec
+    delta the agent needs in order to write the check against the ends the
+    model actually declares rather than the ones the OCL text assumed.
+    """
+    issues = getattr(domain_model, "conversion_issues", None) or []
+    added: list[str] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        name = issue.get("name")
+        expression = issue.get("expression") or issue.get("original_text") or ""
+        if not name or not expression:
+            continue
+        if any(_mentions_rejected_constraint(t, {str(name)}) for t in tasks):
+            continue
+        context = issue.get("context") or ""
+        reason = (issue.get("reason") or "").removeprefix("Warning: ")
+        reason = reason.replace(f" in '{expression}'", "", 1).strip()
+        where = f"that create or update {context}" if context else "for this operation"
+        added.append(
+            f"Enforce the '{name}' rule, which the model records but no generated code "
+            f"checks: {expression}. The OCL converter rejected it"
+            + (f" ({reason})" if reason else "")
+            + f", so pydantic_classes.py carries only a TODO for it. Implement the check "
+            f"in the router handlers {where}, after loading the related rows via the "
+            f"database session, and write it against the relationship names the model "
+            f"actually declares - the ones in the OCL text above may not exist."
+        )
+        if len(added) >= _MAX_REJECTED_CONSTRAINT_TASKS:
+            break
+    return added
 
 
 def _mentioned_classes(sentence: str, classes: list) -> list:

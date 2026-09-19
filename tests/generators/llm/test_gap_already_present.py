@@ -447,7 +447,12 @@ class TestWiredIntoTheAnalyser:
 
     def test_rejected_constraint_task_alone_cannot_be_emptied_out(self):
         """A planner list containing ONLY the rejected-constraint task must
-        not be reduced to nothing by any of the three new families."""
+        not be reduced to nothing by any of the three new families.
+
+        The harness may PREPEND its own task for a rejected invariant the
+        planner never raised (see test_gap_rejected_constraints.py) - that
+        is work being added, not this task being removed.
+        """
         rejected_constraint_task = (
             "Add a constraint in the Room class to enforce that no two "
             "active bookings overlap in date range."
@@ -459,4 +464,6 @@ class TestWiredIntoTheAnalyser:
             inventory="web_app/backend/routers/booking.py 28808",
             llm_client=_Planner([rejected_constraint_task]),
         )
-        assert tasks == [rejected_constraint_task]
+        assert rejected_constraint_task in tasks
+        assert all(t == rejected_constraint_task or t.startswith("Enforce the ")
+                   for t in tasks), "nothing but harness enforcement tasks may be added"

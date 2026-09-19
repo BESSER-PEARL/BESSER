@@ -23,6 +23,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import time
 
 from besser.generators.llm.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.generators.llm.specification import validate_specification
@@ -180,6 +181,21 @@ _SUBMIT_REQUIREMENTS_TOOL = {
     },
 }
 
+# An adversarial review of 17 live runs measured the judge call - never the
+# extraction call, which shares _call_with_tool and the client but sends a
+# prompt two orders of magnitude smaller - returning nothing usable in 3 of
+# them (fcdh0s9k, n_6i2i5r, ys4gfj4v), every time in under a second: too
+# fast to be real inference over a prompt that can hold a 200k-char digest,
+# and consistent with a raised exception or an empty completion rather than
+# a slow response that got cut off. The digest was ~195k chars in all three
+# failures and, built from a fourth run on the same spec that succeeded
+# (lsrnaime), ~195k chars there too - so digest size alone does not explain
+# the difference. That points at an intermittent failure, which a bounded
+# retry has real expected value against; a deterministic one would just
+# fail the retry identically and cost double for nothing.
+_JUDGE_MAX_ATTEMPTS = 2
+_JUDGE_RETRY_BACKOFF_SECONDS = 2.0
+
 _JUDGE_SYSTEM_PROMPT = (
     "You audit generated application code against a numbered list of "
     "requirements. Decide from the CODE ONLY.\n"
@@ -295,11 +311,20 @@ def original_request(instructions: str) -> str:
     return tail
 
 
-def _call_with_tool(llm_client, system: str, prompt: str, tool: dict) -> dict | None:
+def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
+                    use_planning_model: bool = True) -> dict | None:
     """One forced tool call (planning model first, primary on error); the
-    tool's input dict, or None when the call failed or returned nothing."""
+    tool's input dict, or None when the call failed or returned nothing.
+
+    ``use_planning_model=False`` goes straight to the primary model - a
+    retry's second attempt should not repeat the same cheap-sibling call
+    that just failed or came back empty; on a provider with no cheap
+    sibling (``planning_model`` is already ``None``) this changes nothing.
+    """
     structured = _chat_supports_kwargs(llm_client, "force_tool", "model_override")
-    planning_model = getattr(llm_client, "planning_model", None) if structured else None
+    planning_model = (
+        getattr(llm_client, "planning_model", None) if structured and use_planning_model else None
+    )
     messages = [{"role": "user", "content": prompt}]
 
     def _chat(model_override):
@@ -494,6 +519,39 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     return "\n\n".join(parts) + footer[:footer_budget]
 
 
+def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
+                use_planning_model: bool) -> dict[int, dict]:
+    """One judge call parsed into ``{id: verdict}``; empty when the call
+    raised, came back with no tool call, or parsed to nothing usable."""
+    payload = _call_with_tool(
+        llm_client, _JUDGE_SYSTEM_PROMPT, judge_prompt, _SUBMIT_VERDICTS_TOOL,
+        use_planning_model=use_planning_model,
+    )
+    verdicts: dict[int, dict] = {}
+    for item in (payload or {}).get("verdicts") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            rid = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if rid not in by_id:
+            continue
+        status = str(item.get("status", "")).lower()
+        verdicts[rid] = {
+            "id": rid,
+            "text": by_id[rid]["text"],
+            "kind": by_id[rid].get("kind", ""),
+            "status": status if status in _STATUSES else "unverified",
+            "evidence": str(item.get("evidence") or "").strip(),
+            "note": str(item.get("note") or "").strip(),
+            "inspection_paths": [path[:500] for path in item.get("inspection_paths", [])
+                                 if isinstance(path, str)][:5]
+            if isinstance(item.get("inspection_paths"), list) else [],
+        }
+    return verdicts
+
+
 def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                    original_spec: str | None = None,
                    previous_verdicts: list[dict] | None = None) -> list[dict] | None:
@@ -515,44 +573,36 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                 if isinstance(item, dict) and item.get("id") in requested_ids][:_MAX_REQUIREMENTS]
     repair_context = ("## Previous citation verification (diagnostic data, not application code)\n\n"
                       + json.dumps(feedback, ensure_ascii=True)[:16000] + "\n\n") if feedback else ""
-    payload = _call_with_tool(
-        llm_client, _JUDGE_SYSTEM_PROMPT,
-        authority + repair_context + f"## Requirements\n\n{listing}\n\n## Generated code\n\n{digest}",
-        _SUBMIT_VERDICTS_TOOL,
-    ) if application_requirements else {"verdicts": []}
-    if not payload:
-        return None
     by_id = {r["id"]: r for r in requirements}
     verdicts: dict[int, dict] = {}
-    for item in payload.get("verdicts") or []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            rid = int(item.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if rid not in by_id:
-            continue
-        status = str(item.get("status", "")).lower()
-        verdicts[rid] = {
-            "id": rid,
-            "text": by_id[rid]["text"],
-            "kind": by_id[rid].get("kind", ""),
-            "status": status if status in _STATUSES else "unverified",
-            "evidence": str(item.get("evidence") or "").strip(),
-            "note": str(item.get("note") or "").strip(),
-            "inspection_paths": [path[:500] for path in item.get("inspection_paths", [])
-                                 if isinstance(path, str)][:5]
-            if isinstance(item.get("inspection_paths"), list) else [],
-        }
-    # Nothing usable came back at all. That is a failed check, not one
-    # unverified verdict per requirement: run lsrnaime (Qwen) filled in "no
-    # verdict returned" for all 104 and reported 104 blockers, burying the
-    # eleven real ones. The caller has a single honest finding for this.
-    if not verdicts and any(req.get("kind") != "verification" for req in by_id.values()):
+    if application_requirements:
+        judge_prompt = (authority + repair_context + f"## Requirements\n\n{listing}"
+                        f"\n\n## Generated code\n\n{digest}")
+        # The first attempt keeps today's planning-model-first behaviour; a
+        # retry forces the primary model straight away (see _call_with_tool)
+        # instead of repeating the exact call that just failed or came back
+        # empty. Bounded to _JUDGE_MAX_ATTEMPTS: every attempt is a full,
+        # paid call carrying the whole digest.
+        for attempt in range(_JUDGE_MAX_ATTEMPTS):
+            verdicts = _judge_once(llm_client, judge_prompt, by_id, use_planning_model=attempt == 0)
+            if verdicts or attempt + 1 >= _JUDGE_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "Requirements ledger: the judge returned no usable verdict on "
+                "attempt %d/%d (model %s); retrying",
+                attempt + 1, _JUDGE_MAX_ATTEMPTS, getattr(llm_client, "model", "?"),
+            )
+            time.sleep(_JUDGE_RETRY_BACKOFF_SECONDS)
+    # Nothing usable came back at all, even after the retry above. That is a
+    # failed check, not one unverified verdict per requirement: run lsrnaime
+    # (Qwen) filled in "no verdict returned" for all 104 and reported 104
+    # blockers, burying the eleven real ones. The caller has a single honest
+    # finding for this, and it must still fire once retries are exhausted.
+    if not verdicts and application_requirements:
         logger.warning(
             "Requirements ledger: the judge returned no usable verdict for any "
-            "of %d requirements (model %s)", len(by_id), getattr(llm_client, "model", "?"),
+            "of %d requirements after %d attempt(s) (model %s)",
+            len(by_id), _JUDGE_MAX_ATTEMPTS, getattr(llm_client, "model", "?"),
         )
         return None
     # A requirement the judge skipped is not implemented until shown otherwise.

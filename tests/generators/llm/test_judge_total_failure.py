@@ -34,6 +34,7 @@ class _Client:
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(ledger, "_is_real_provider", lambda _c: True)
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
     return _Client()
 
 

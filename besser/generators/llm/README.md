@@ -49,7 +49,7 @@ paths so a test's descriptive name is not mistaken for exercising those paths.
 | Authoritative request | `specification.py`, `user_request.py` |
 | Tool contracts and execution | `tools.py`, `tool_executor.py`, `edit_apply.py` |
 | Shared subprocess environment | `execution/process.py` |
-| Shared findings and source contracts | `validation/issues.py`, `validation/python_source.py`, `validation/frontend_schema.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/python_imports.py` |
+| Shared findings and source contracts | `validation/issues.py`, `validation/python_source.py`, `validation/frontend_schema.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/python_imports.py`, `validation/toolchain.py` |
 | Immediate source/model contracts | `write_diagnostics.py`, `contract_checks.py`, `frontend_bindings.py`, `endpoint_coherence.py` |
 | Deterministic repair (no model, no LLM) | `import_repair.py`, `scaffold_repair.py` |
 | Runtime probes | `constructibility.py`, `api_probe.py` |

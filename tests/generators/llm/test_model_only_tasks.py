@@ -80,3 +80,39 @@ def test_the_real_model_mutation_is_still_redirected_alongside_it():
     noted = _note_model_only_tasks([LIVE_TASKS[0]], FILES)[0]
 
     assert "read-only in this phase" in noted
+
+
+# The live kinie9zr shape: the agent put this in a Pydantic validator, where
+# self.rooms holds link objects with no maxOccupancy, and every POST /booking/
+# raised AttributeError.
+RELATIONAL = (
+    "Recover model constraint 'guestsWithinCapacity' rejected during conversion. "
+    "Add it to the Booking class in the domain model. Original OCL: context Booking "
+    "inv guestsWithinCapacity: self.guests->size() <= self.rooms->collect(maxOccupancy)->sum()"
+)
+FIELD_SHAPE = (
+    "Add a constraint to the Room class in the domain model so that maxOccupancy "
+    "is at least 1 and standardPrice is positive"
+)
+
+
+def test_a_rule_that_reads_related_rows_is_sent_to_the_router():
+    noted = _note_model_only_tasks([RELATIONAL], FILES)[0]
+
+    assert "CANNOT run in a Pydantic validator" in noted
+    assert "database session" in noted
+    assert "pydantic_classes.py" not in noted, "named the file that cannot enforce it"
+
+
+def test_a_field_constraint_still_names_the_validator():
+    noted = _note_model_only_tasks([FIELD_SHAPE], FILES)[0]
+
+    assert "pydantic_classes.py" in noted
+    assert "CANNOT run in a Pydantic validator" not in noted
+
+
+@pytest.mark.parametrize("navigation", ["->forAll(", "->exists(", "->select(", "->collect("])
+def test_every_collection_navigation_counts_as_relational(navigation):
+    task = f"Add a constraint in the domain model: context Room inv x: self.bookings{navigation}b | b.id)"
+
+    assert "database session" in _note_model_only_tasks([task], FILES)[0]

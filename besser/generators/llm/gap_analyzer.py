@@ -251,12 +251,43 @@ def _note_model_only_tasks(tasks: list, workspace_files: list) -> list:
                 or not _MODEL_MUTATION_RE.search(task):
             noted.append(task)
             continue
-        noted.append(
-            f"{task.rstrip()} (The B-UML model is read-only in this phase — no tool edits "
-            f"it. Implement this in the generated code: {target} for the constraint or "
-            "field, plus the router that performs the operation.)"
-        )
+        noted.append(f"{task.rstrip()} (The B-UML model is read-only in this phase — "
+                     f"no tool edits it. {_placement_advice(task, target)})")
     return noted
+
+
+# OCL collection navigation: the rule reads a RELATED row, not this payload.
+_RELATIONAL_OCL_RE = re.compile(
+    r"->\s*(?:collect|forAll|exists|select|reject|includes|isEmpty|notEmpty)\b",
+    re.IGNORECASE,
+)
+
+
+def _placement_advice(task: str, target: str) -> str:
+    """Where a recovered rule can actually run.
+
+    A Pydantic ``model_validator`` sees only the request payload. A rule that
+    navigates a relationship needs the related rows, so it can only run where
+    the database session exists. Run kinie9zr implemented
+    ``guestsWithinCapacity`` as ``sum(room.maxOccupancy for room in
+    self.rooms)`` inside the validator, where ``self.rooms`` holds link
+    objects carrying ``target``/``agreedPrice`` and no capacity at all. Every
+    POST /booking/ then raised AttributeError, which took the whole booking
+    half of the app down. The earlier version of this note named the
+    validator file first and so pointed the model straight at it.
+    """
+    if _RELATIONAL_OCL_RE.search(task):
+        return (
+            "This rule reads related rows, so it CANNOT run in a Pydantic "
+            "validator - that sees only the request payload, where a "
+            "relationship is an id or a link object, not the related row. "
+            "Enforce it in the router handler that performs the operation, "
+            "after loading the related rows through the database session, and "
+            "reject the request there."
+        )
+    return (f"Implement this in the generated code: {target} for a field or "
+            "shape constraint, or the router handler that performs the "
+            "operation when the rule needs data beyond the request payload.")
 
 
 def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) -> list[str]:

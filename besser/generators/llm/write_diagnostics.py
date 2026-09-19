@@ -9,10 +9,14 @@ release gate.
 from __future__ import annotations
 
 import ast
+import builtins
+import importlib
+import inspect
 import json
 import logging
 import os
 import sqlite3
+import sys
 import tomllib
 from typing import Any
 
@@ -143,6 +147,7 @@ def python_structural_diagnostics(
         if members is not None and node.attr not in members and not node.attr.startswith("_"):
             add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {', '.join(sorted(members))}. Use an actual member, not an invented spelling.")
     findings.extend(_enum_column_value_misuse(tree, rel_path, workspace))
+    findings.extend(_star_import_attribute_misuse(tree, rel_path, workspace))
     return findings
 
 
@@ -556,6 +561,260 @@ def _enum_column_value_misuse(
                     code="enum-column-compared-to-value",
                     line=node.lineno,
                 ))
+    return findings
+
+
+# Interactive/GUI/joke stdlib modules that have real import-time side effects
+# (``antigravity`` opens a browser tab; ``turtle``/``tkinter`` want a display
+# and can hang headless). Excluded even though they are technically stdlib,
+# so resolving a star import never executes anything beyond a plain,
+# side-effect-free module import - the same guarantee this file's docstring
+# makes about generated code, extended to the stdlib modules it introspects.
+_UNSAFE_STDLIB_IMPORTS = frozenset({
+    "antigravity", "this", "turtle", "tkinter", "idlelib", "test", "lib2to3", "ensurepip",
+})
+_STDLIB_MODULES = frozenset(
+    name for name in getattr(sys, "stdlib_module_names", ())
+    if not name.startswith("_") and name not in _UNSAFE_STDLIB_IMPORTS
+)
+
+
+def _scan_star_import_bindings(path: str, workspace: str) -> dict[str, object] | None:
+    """Names one star-imported module binds via its own ``import`` /
+    ``from ... import`` statements, resolved to the real object.
+
+    Static AST parsing only, never importing ``path`` itself - it is
+    generated code, and this module's docstring rules that out. Resolution
+    only reaches further when a binding's *source* is a standard-library
+    module: :func:`importlib.import_module` on a known stdlib name is
+    side-effect-free (barring ``_UNSAFE_STDLIB_IMPORTS``) and always
+    available, unlike a third-party dependency the diagnostics environment
+    may not have installed, or another workspace file, which is generated
+    code just the same.
+
+    A name is dropped rather than guessed at when: its source is a
+    workspace file or a non-stdlib package; the stdlib module doesn't
+    actually export it; two imports disagree on what it is (e.g. a
+    try/except fallback import); or this module also binds it some other
+    way (assignment, def, class, a for/with/except target) - any of those
+    make the real, final value something this static pass cannot prove.
+    Names this module only re-exports via its own ``from x import *`` are
+    likewise never added here; nothing is known about what they resolve to.
+
+    Returns ``None`` only when ``path`` itself cannot be parsed - nothing
+    can be judged against it, mirroring ``_scan_orm_module``.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read(), filename=path)
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+        return None
+
+    module_dir = os.path.dirname(path)
+    resolved: dict[str, object] = {}
+    shadowed: set[str] = set()
+
+    def invalidate(name: str) -> None:
+        shadowed.add(name)
+        resolved.pop(name, None)
+
+    def offer(name: str, obj: object) -> None:
+        if name in shadowed:
+            return
+        if name in resolved and resolved[name] is not obj:
+            invalidate(name)
+            return
+        resolved[name] = obj
+
+    for node in _module_scope_statements(tree.body):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                bound_name = alias.asname or top
+                if (_resolve_module(top, module_dir, workspace) is not None
+                        or top not in _STDLIB_MODULES):
+                    invalidate(bound_name)
+                    continue
+                try:
+                    imported = importlib.import_module(alias.name)
+                except Exception:
+                    invalidate(bound_name)
+                    continue
+                offer(bound_name, imported if alias.asname else sys.modules[top])
+        elif isinstance(node, ast.ImportFrom):
+            if any(alias.name == "*" for alias in node.names):
+                continue
+            if node.level or not node.module:
+                for alias in node.names:
+                    invalidate(alias.asname or alias.name)
+                continue
+            top = node.module.split(".")[0]
+            if (_resolve_module(node.module, module_dir, workspace) is not None
+                    or top not in _STDLIB_MODULES):
+                for alias in node.names:
+                    invalidate(alias.asname or alias.name)
+                continue
+            try:
+                source = importlib.import_module(node.module)
+            except Exception:
+                for alias in node.names:
+                    invalidate(alias.asname or alias.name)
+                continue
+            for alias in node.names:
+                bound_name = alias.asname or alias.name
+                if not hasattr(source, alias.name):
+                    invalidate(bound_name)
+                    continue
+                offer(bound_name, getattr(source, alias.name))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            invalidate(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for name_node in ast.walk(target):
+                    if isinstance(name_node, ast.Name):
+                        invalidate(name_node.id)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                invalidate(node.target.id)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            for name_node in ast.walk(node.target):
+                if isinstance(name_node, ast.Name):
+                    invalidate(name_node.id)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    for name_node in ast.walk(item.optional_vars):
+                        if isinstance(name_node, ast.Name):
+                            invalidate(name_node.id)
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                invalidate(node.name)
+
+    if not resolved:
+        return resolved
+    # ``__all__`` (or a leading underscore) can keep a name a plain
+    # ``import``/``from`` statement binds out of ``from <module> import *``
+    # entirely; without this intersection a name resolved above but not
+    # actually re-exported would be flagged as broken when it is simply
+    # absent from the star-importing file's namespace (a different, already
+    # -covered bug: pyflakes' ImportStarUsage / this module's UndefinedName).
+    exported = _star_exports(path, workspace, set())
+    if exported is None:
+        return None
+    return {name: obj for name, obj in resolved.items() if name in exported}
+
+
+def _describe_binding(obj: object) -> str:
+    """What a resolved star-import binding actually is, for a finding
+    message: its kind and its real, importable name - never the name the
+    generated code mistakenly assumes it has."""
+    if inspect.ismodule(obj):
+        return f"the module '{obj.__name__}'"
+    qualname = getattr(obj, "__qualname__", getattr(obj, "__name__", repr(obj)))
+    home = getattr(obj, "__module__", None)
+    label = f"{home}.{qualname}" if home else str(qualname)
+    if isinstance(obj, type):
+        kind = "class"
+    elif inspect.isroutine(obj):
+        kind = "function"
+    else:
+        kind = type(obj).__name__
+    return f"the {kind} '{label}'"
+
+
+def _locally_bound_names(tree: ast.Module) -> set[str]:
+    """Every name the written file binds itself, at any scope: assignment,
+    augmented-assignment, for/with/except and comprehension targets, def/class
+    names, parameters, and this file's own imports. Deliberately whole-file
+    and scope-blind rather than a precise per-scope (LEGB) resolution: a name
+    assigned anywhere shadows the star import for this check everywhere in
+    the file, even where Python's actual scoping would still see the star
+    import. That can only miss a genuinely-broken case, never invent one -
+    the safe side to err on.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.Import):
+            names |= {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            names |= {alias.asname or alias.name for alias in node.names if alias.name != "*"}
+    return names
+
+
+def _star_import_attribute_misuse(
+    tree: ast.Module, rel_path: str | None, workspace: str | None
+) -> list[dict]:
+    """``NAME.attr`` (plain access or a call) where ``NAME`` is provided only
+    by a star import and the object actually bound to it has no ``attr``.
+
+    Live (run _abcgx9s): ``routers/booking_methods.py`` does ``from
+    sql_alchemy import *``; ``sql_alchemy.py`` does ``from datetime import
+    ..., time``, so the star import binds ``time`` to the *class*
+    ``datetime.time``, not the ``time`` module. ``int(time.time())`` then
+    raises ``AttributeError: type object 'datetime.time' has no attribute
+    'time'`` on the first request that reaches it. The name is genuinely
+    bound, so pyflakes and ruff both pass, and the file ``ast.parse``s
+    cleanly too - the same "ships green, boots dead" class as an undefined
+    name behind a star import, one layer over.
+
+    ``NAME``'s real object comes only from ``_scan_star_import_bindings``,
+    which never imports the star-imported module itself; see its docstring
+    for exactly which bindings that leaves resolved. A name this file (the
+    one being diagnosed, not the star-imported one) also binds itself,
+    anywhere, is skipped as shadowed, and so is any builtin name. If any
+    star-imported module cannot be resolved and parsed, this reports
+    nothing for the file, same as ``_enum_column_value_misuse``.
+    """
+    if not rel_path or not workspace:
+        return []
+    paths = _star_import_paths(tree, rel_path, workspace)
+    if not paths:
+        return []
+
+    bindings: dict[str, object] = {}
+    origin: dict[str, str] = {}
+    for path in paths:
+        scanned = _scan_star_import_bindings(path, workspace)
+        if scanned is None:
+            return []
+        label = os.path.splitext(os.path.basename(path))[0]
+        for name, obj in scanned.items():
+            bindings[name] = obj
+            origin[name] = label
+    if not bindings:
+        return []
+
+    local_names = _locally_bound_names(tree)
+
+    findings: list[dict] = []
+    for node in ast.walk(tree):
+        attr = _attr_access(node)
+        if attr is None:
+            continue
+        name = node.value.id
+        if name in local_names or name not in bindings or hasattr(builtins, name):
+            continue
+        obj = bindings[name]
+        if hasattr(obj, attr):
+            continue
+        findings.append(_finding(
+            "python-contract",
+            f"'{name}.{attr}' does not exist: the star import from '{origin[name]}' "
+            f"binds '{name}' to {_describe_binding(obj)}, which has no '{attr}'. This "
+            f"is a standard-library name collision, not an undefined name, so pyflakes "
+            f"and ruff both pass while this raises AttributeError the first time the "
+            f"line actually runs.",
+            code="star-import-attribute-misuse",
+            line=node.lineno,
+        ))
     return findings
 
 

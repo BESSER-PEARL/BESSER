@@ -956,13 +956,42 @@ class ToolExecutor:
         )
         return f"{switch}\n{note}" if switch else note
 
+    def _repair_imports(self, rel_path: str, content: str, result: dict) -> str:
+        """Write back the same file with the forgotten import added.
+
+        Returns the content now on disk. Silent on failure: this is a
+        convenience, and Phase 3 remains the backstop.
+        """
+        try:
+            from besser.generators.llm.import_repair import repair_missing_imports
+
+            repaired, notes = repair_missing_imports(rel_path, content)
+            if not notes or repaired == content:
+                return content
+            path = self._safe_path(rel_path)
+            with open(path, "w", encoding="utf-8", newline="\n") as target:
+                target.write(repaired)
+            self._successful_writes[os.path.normcase(path)] = self._content_digest(repaired)
+            result["auto_imports"] = notes
+            return repaired
+        except Exception:
+            logger.debug("import repair failed on %s", rel_path, exc_info=True)
+            return content
+
     def _append_write_feedback(
         self,
         result: dict,
         rel_path: str,
         content: str,
     ) -> None:
-        """Attach bounded contract and parser feedback to a successful write."""
+        """Attach bounded contract and parser feedback to a successful write.
+
+        A framework name the file never imported is repaired here first, so
+        the break cannot cascade: three runs shipped an ORM module that had
+        stopped importing, which killed every router that star-imports it and
+        cost the whole Phase 3 repair to a rollback.
+        """
+        content = self._repair_imports(rel_path, content, result)
         warnings = self._contract_warnings(rel_path, content)
         if warnings:
             result["contract_warnings"] = warnings

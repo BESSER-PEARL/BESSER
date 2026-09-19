@@ -98,6 +98,7 @@ from besser.generators.llm.validation.issues import (
     required_check_unverified,
     required_dependency_setup,
     _RUFF_STYLE_CODES as _RUFF_STYLE_CODES,
+    _RUFF_BLOCKER_CODES as _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE as _RUFF_LINE_RE,
 )
 from besser.generators.llm.mutation_inventory import build_mutation_manifest
@@ -787,6 +788,10 @@ _EDIT_TOOLS = frozenset({"modify_file", "replace_file_lines"})
 # Tools whose ``path`` is recorded for that guard — the edits themselves,
 # plus a re-read of the file being edited (part of the flail, not a break).
 _EDIT_STREAK_TOOLS = _EDIT_TOOLS | {"read_file"}
+
+# How many ruff lines Phase 3 reports. Blocker-code lines are always kept
+# even past this, then files the LLM edited, then the rest.
+_RUFF_MAX_REPORTED = 20
 
 # Maximum workers for parallel tool execution
 _MAX_PARALLEL_WORKERS = 4
@@ -5568,15 +5573,55 @@ class LLMOrchestrator:
             reason = detail[-1][:200] if detail else f"exit code {result.returncode}"
             return [_check_did_not_run("ruff", reason)]
 
-        lines = (result.stdout or "").strip().splitlines()
+        lines = [line.strip() for line in (result.stdout or "").strip().splitlines()
+                 if line.strip()]
         if not lines:
             return []
-        # Cap to keep Phase 3 feedback scoped — the LLM doesn't need every
-        # unused-import warning, it needs the shape of the problem.
-        issues = [f"ruff: {line.strip()}" for line in lines[:20] if line.strip()]
-        if len(lines) > 20:
-            issues.append(f"ruff: (+{len(lines) - 20} more issues truncated)")
+        # The cap used to take ruff's first 20 lines, which are sorted by
+        # path: on a 585-issue workspace that is always the same scaffold
+        # files, and a real F821 late in the alphabet never reached the fix
+        # loop at all. Keep every blocker-code line, then spend what is left
+        # of the budget on files the LLM actually edited this run.
+        touched = self._llm_edited_paths()
+        blockers, edited, rest = [], [], []
+        for line in lines:
+            match = _RUFF_LINE_RE.search(line)
+            if match and match.group(1) in _RUFF_BLOCKER_CODES:
+                blockers.append(line)
+            elif self._ruff_line_path(line) in touched:
+                edited.append(line)
+            else:
+                rest.append(line)
+        ordered = blockers + edited + rest
+        kept = ordered[:max(_RUFF_MAX_REPORTED, len(blockers))]
+        issues = [f"ruff: {line}" for line in kept]
+        if len(ordered) > len(kept):
+            issues.append(f"ruff: (+{len(ordered) - len(kept)} more issues truncated)")
         return issues
+
+    def _llm_edited_paths(self) -> set[str]:
+        """Absolute, normalised paths the LLM wrote to in this run."""
+        edited = set()
+        for call in self.tool_calls_log:
+            if call.get("tool") not in _WRITE_TOOLS_ON_RECORD or call.get("success") is False:
+                continue
+            path = (call.get("input") or {}).get("path")
+            if isinstance(path, str) and path.strip():
+                edited.add(os.path.normcase(os.path.normpath(
+                    os.path.join(self.output_dir, path.replace("\\", "/")))))
+        return edited
+
+    @staticmethod
+    def _ruff_line_path(line: str) -> str:
+        """The file part of a concise ruff line, or "" when unparseable.
+
+        ``<path>:<line>:<col>: <CODE> <message>`` — a Windows drive letter
+        puts an extra colon in the path, so split from the right.
+        """
+        head = line.rsplit(":", 3)
+        if len(head) != 4:
+            return ""
+        return os.path.normcase(os.path.normpath(head[0]))
 
     def _collect_tsc_issues(self) -> list[str]:
         """Run ``tsc --noEmit`` for any TypeScript project in the workspace.
@@ -6807,6 +6852,13 @@ class LLMOrchestrator:
         # whole recipe was dropped from the done event).
         output_files = []
         generator_files = self.executor._generator_files if hasattr(self.executor, '_generator_files') else set()
+        # ``source`` records who CREATED the file, and resume re-seeds the
+        # scaffold guardrail from it, so it must keep its two values. It
+        # therefore cannot answer "did the LLM change this?": run 7aybctis
+        # landed 13 edits and still reported from_llm=1, because all but one
+        # were edits to generator files. That is the number that says which
+        # work regeneration would overwrite, so record it separately.
+        llm_edited = self._llm_edited_paths()
         try:
             for root, dirs, fnames in os.walk(self.output_dir):
                 dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
@@ -6815,11 +6867,14 @@ class LLMOrchestrator:
                         continue
                     full = os.path.join(root, f)
                     rel = os.path.relpath(full, self.output_dir).replace("\\", "/")
-                    output_files.append({
+                    entry = {
                         "path": rel,
                         "size": os.path.getsize(full),
                         "source": "generator" if rel in generator_files else "llm",
-                    })
+                    }
+                    if os.path.normcase(os.path.normpath(full)) in llm_edited:
+                        entry["llm_modified"] = True
+                    output_files.append(entry)
         except Exception:
             pass
 
@@ -6926,6 +6981,11 @@ class LLMOrchestrator:
                 "total_files": len(output_files),
                 "from_generator": sum(1 for f in output_files if f["source"] == "generator"),
                 "from_llm": sum(1 for f in output_files if f["source"] == "llm"),
+                # Generator files the LLM changed: the work a regeneration
+                # would overwrite. from_llm alone counts only new files.
+                "generator_files_edited_by_llm": sum(
+                    1 for f in output_files
+                    if f.get("llm_modified") and f["source"] == "generator"),
                 "total_bytes": sum(f["size"] for f in output_files),
             },
             "tool_calls": self.tool_calls_log,

@@ -81,6 +81,9 @@ def _demands_enforcement(kind: str, text: str) -> bool:
     return kind in ("validation", "rule") and any(w in low for w in _CONSTRAINT_WORDS)
 
 
+_READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
+
+
 def _normalise_quote(text: str) -> str:
     """The judge's quote, made comparable to file text: literal escape
     sequences become spaces, single quotes become double quotes (the live
@@ -88,6 +91,9 @@ def _normalise_quote(text: str) -> str:
     only the first quoted line counts - later lines are often abridged."""
     text = text.replace("\\n", "\n").replace("\\t", " ")
     first = text.strip().split("\n", 1)[0]
+    # read_file numbers what the model sees; no real source line starts with
+    # "175| ", so such a prefix is always a copied artifact.
+    first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
     return _collapse(first.replace("'", '"'))
 
 

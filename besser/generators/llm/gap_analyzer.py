@@ -207,9 +207,52 @@ def analyze_gaps_via_llm(
     cleaned = _drop_present_enumerations(cleaned, domain_model)
     cleaned = _resolve_task_paths(cleaned, workspace_files or [])
     cleaned = _note_dependent_rule_placement(cleaned, domain_model)
+    cleaned = _note_model_only_tasks(cleaned, workspace_files or [])
     cleaned = _dedupe(_note_action_placement(cleaned, action_endpoints or []))
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
+
+
+# "to the domain model" as a TARGET, not "as defined in the domain model".
+_MODEL_TARGET_RE = re.compile(
+    r"(?<!as defined )(?<!as described )(?<!as specified )(?<!according to )"
+    r"\b(?:to|in|into|on)\s+the\s+(?:b-?uml\s+|besser\s+)?(?:domain\s+)?model\b",
+    re.IGNORECASE,
+)
+_MODEL_MUTATION_RE = re.compile(
+    r"\b(?:add|create|define|introduce|declare|change|update|modify|rename|remove|delete)\b",
+    re.IGNORECASE,
+)
+
+
+def _note_model_only_tasks(tasks: list, workspace_files: list) -> list:
+    """Redirect a task that asks to edit the B-UML model into the code.
+
+    Phase 2's model tools are query-only — there is no tool that mutates the
+    domain model. Live run 7aybctis (2026-09-19): three of sixteen tasks were
+    phrased "add an association class ... to the domain model" and "add a
+    constraint ... to the Booking class in the domain model". The agent
+    understood the intent and cited ``pydantic_classes.py``, but could not
+    produce write evidence for a file it had not changed, so each burned its
+    three checklist attempts and was recorded BLOCKED — nine of the run's
+    thirty-four turns. The requirement stays; only its target is corrected.
+    """
+    validator = next((path for path in workspace_files
+                      if path.replace("\\", "/").endswith("pydantic_classes.py")), None)
+    target = f"`{validator}`" if validator else "the generated Pydantic/ORM modules"
+
+    noted: list = []
+    for task in tasks:
+        if not isinstance(task, str) or not _MODEL_TARGET_RE.search(task) \
+                or not _MODEL_MUTATION_RE.search(task):
+            noted.append(task)
+            continue
+        noted.append(
+            f"{task.rstrip()} (The B-UML model is read-only in this phase — no tool edits "
+            f"it. Implement this in the generated code: {target} for the constraint or "
+            "field, plus the router that performs the operation.)"
+        )
+    return noted
 
 
 def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) -> list[str]:

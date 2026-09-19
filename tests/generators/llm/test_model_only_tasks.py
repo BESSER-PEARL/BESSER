@@ -1,0 +1,57 @@
+"""A task cannot ask Phase 2 to edit the B-UML model: no tool does that.
+
+Phase 2's model tools are query-only (``query_class``, ``get_constraints_for``,
+``list_classes_with``, ``validate_model``). Live run 7aybctis (Qwen,
+2026-09-19) planned three tasks phrased "add an association class ... to the
+domain model" and "add a constraint ... to the Booking class in the domain
+model". The agent understood the intent and cited ``pydantic_classes.py``, but
+had no write evidence for a file it had not changed, so each spent its three
+checklist attempts and was recorded BLOCKED — nine of the run's thirty-four
+turns on work it structurally could not do.
+"""
+
+import pytest
+
+from besser.generators.llm.gap_analyzer import _note_model_only_tasks
+
+
+FILES = ["web_app/backend/pydantic_classes.py", "web_app/backend/sql_alchemy.py"]
+
+LIVE_TASKS = [
+    "Add a new association class 'ReservedRoom' with attributes 'agreedPrice' "
+    "and 'extraCharges' to the Booking-Room relationship in the domain model",
+    "Add a constraint 'guestsWithinCapacity' to the Booking class in the domain "
+    "model: context Booking inv guestsWithinCapacity: self.guests->size() <= 3",
+]
+
+
+@pytest.mark.parametrize("task", LIVE_TASKS)
+def test_a_model_mutation_task_is_redirected_into_the_code(task):
+    noted = _note_model_only_tasks([task], FILES)[0]
+
+    assert task in noted, "the requirement itself must survive"
+    assert "read-only in this phase" in noted
+    assert "web_app/backend/pydantic_classes.py" in noted
+
+
+def test_the_annotation_names_a_real_file_or_stays_generic():
+    noted = _note_model_only_tasks([LIVE_TASKS[1]], [])[0]
+
+    assert "generated Pydantic/ORM modules" in noted
+    assert "`" not in noted.split("read-only in this phase")[1]
+
+
+@pytest.mark.parametrize("task", [
+    "Implement POST /booking/ exactly as defined in the domain model",
+    "Add a create form for Booking in web_app/frontend/src/pages/Booking.tsx",
+    "Validate the payload according to the domain model constraints",
+    "Add pagination to the Room list endpoint",
+])
+def test_ordinary_code_tasks_are_left_alone(task):
+    assert _note_model_only_tasks([task], FILES) == [task]
+
+
+def test_non_string_entries_pass_through():
+    payload = [{"text": "something structured"}, 7]
+
+    assert _note_model_only_tasks(payload, FILES) == payload

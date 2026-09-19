@@ -423,7 +423,11 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 1. **Keep changes scoped to the user request.** Don't rewrite generated files
    or add features the user didn't ask for.
 2. **Pick the right write tool.** Start with `modify_file` for small changes to an
-   existing file. After matching failures, switch strategy: `read_file` the target
+   existing file. Several targeted edits to one file in the SAME turn are fine —
+   and are the fastest way to finish — as long as every `old_text` comes from your
+   most recent read of that file. Once an edit is refused, go back to one edit per
+   turn until one lands: a batch built on a stale view fails as a batch.
+   After matching failures, switch strategy: `read_file` the target
    block, then `replace_file_lines` with its `read_id`, inclusive line numbers,
    and complete replacement. This avoids re-quoting old code; never repeat a
    rejected edit or treat a refused edit as done. A successful range edit expires

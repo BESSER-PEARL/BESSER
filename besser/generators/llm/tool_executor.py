@@ -47,6 +47,7 @@ from besser.generators.llm.edit_apply import (
     locate_chunk,
     replace_most_similar_chunk,
     replacement_spans,
+    _strip_line_numbers,
 )
 
 logger = logging.getLogger(__name__)
@@ -573,6 +574,14 @@ class ToolExecutor:
                     content = source.read()
             except (ValueError, OSError, UnicodeError):
                 return [], f"evidence path is not a readable workspace file: {rel}"
+            # read_file numbers every line, so a quote copied straight out of
+            # it never matches. modify_file has stripped that prefix since the
+            # ladder's tier 5; the checklist did not, and live run 7aybctis
+            # recorded four genuinely-implemented tasks BLOCKED because of it.
+            if quote not in content:
+                unnumbered = _strip_line_numbers(quote.splitlines())
+                if unnumbered is not None and "\n".join(unnumbered) in content:
+                    quote = "\n".join(unnumbered)
             digest = self._content_digest(content)
             origin = "written"
             if self._successful_writes.get(os.path.normcase(path)) != digest:
@@ -1609,9 +1618,21 @@ class ToolExecutor:
         start, end = args.get("start_line"), args.get("end_line")
         if (type(start) is not int or type(end) is not int
                 or not view[2] <= start <= end <= view[3]):
-            return {"error": f"Select 1-based inclusive lines within the displayed range {view[2]}-{view[3]}. "
-                             "Unseen or truncated lines cannot be replaced. Read the complete target block first.",
-                    "rejection_kind": "unread_range"}
+            # read_file's ``offset`` is a 0-based skip; the numbers printed
+            # beside each line are 1-based. Run 7aybctis read offset=50, asked
+            # for start_line=50 against a 51-108 view, was refused, and sent
+            # the identical call again — so name the correction, don't restate
+            # the range.
+            hint = ""
+            if type(start) is int and start == view[2] - 1:
+                hint = (f" You selected {start}, one before the first displayed line: "
+                        "read_file's offset is a 0-based skip, while the numbers shown "
+                        "beside each line are the 1-based ones to use here. Use the "
+                        "start_line/end_line that read_file returned.")
+            return {"error": f"Select 1-based inclusive lines within the displayed range {view[2]}-{view[3]}."
+                             f"{hint} Unseen or truncated lines cannot be replaced; read the complete target block first.",
+                    "rejection_kind": "unread_range",
+                    "displayed_start_line": view[2], "displayed_end_line": view[3]}
         replacement = args.get("new_text")
         if not isinstance(replacement, str):
             return {"error": "new_text must be a string containing the complete replacement."}

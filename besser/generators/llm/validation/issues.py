@@ -85,6 +85,11 @@ _RUFF_STYLE_CODES = frozenset({
     "E302", "E303", "E305", "E261", "E262", "E266",  # blank lines / comments
     "I001",                       # import order
 })
+# F811 joins the undefined-name codes: a redefinition means the later name
+# silently wins — the ORM `User` shadowed by the Pydantic `User` and then
+# queried through the wrong one. All 4 hits across a 10-app live batch were
+# real defects (2026-09-11).
+_RUFF_BLOCKER_CODES = frozenset({"F811", "F821", "F822", "F823"})
 _RUFF_LINE_RE = _re.compile(r"\b([EWFCNI]\d{2,4})\b")
 
 
@@ -169,14 +174,14 @@ def _classify_issue(message: str) -> ValidationIssue:
     # it means the backend imports crash on `uvicorn` even though
     # ast.parse was clean — the classic "ships green, boots dead" bug.
     if text.startswith("ruff:"):
+        # The "+N more issues truncated" note is a count, not a defect; it
+        # must never inflate the blocker/warning totals the fix loop gates on.
+        if text.startswith("ruff: (+"):
+            return ValidationIssue("style", text)
         match = _RUFF_LINE_RE.search(text)
         if match and match.group(1) in _RUFF_STYLE_CODES:
             return ValidationIssue("style", text)
-        # F811 joins them: a redefinition means the later name silently wins —
-        # the ORM `User` shadowed by the Pydantic `User` and then queried through
-        # the wrong one. All 4 hits across a 10-app live batch were real defects
-        # (2026-09-11).
-        if match and match.group(1) in ("F811", "F821", "F822", "F823"):
+        if match and match.group(1) in _RUFF_BLOCKER_CODES:
             return ValidationIssue("blocker", text)
         return ValidationIssue("warning", text)
 

@@ -117,3 +117,31 @@ def test_range_edits_count_toward_the_per_file_streak_guard(simple_library_book_
     orchestrator.executor._failed_modifies["app.py"] = n
 
     assert orchestrator._consecutive_modify_on_same_file() == "app.py"
+
+
+def test_the_offset_off_by_one_is_named_not_just_refused(executor):
+    """read_file's offset is a 0-based skip; the printed numbers are 1-based.
+
+    Run 7aybctis read offset=50, asked for start_line=50 against a 51-108
+    view, was refused with the range restated, and sent the identical call
+    again on the next turn.
+    """
+    read = call(executor, "read_file", path="app.py", offset=1, limit=3)
+    assert read["start_line"] == 2
+
+    result = call(executor, "replace_file_lines", path="app.py", read_id=read["read_id"],
+                  start_line=1, end_line=3, new_text="x = 1\n")
+
+    assert result["rejection_kind"] == "unread_range"
+    assert "0-based skip" in result["error"], result["error"]
+    assert result["displayed_start_line"] == 2
+
+
+def test_an_ordinary_out_of_range_selection_gets_no_off_by_one_hint(executor):
+    read = call(executor, "read_file", path="app.py", offset=1, limit=2)
+
+    result = call(executor, "replace_file_lines", path="app.py", read_id=read["read_id"],
+                  start_line=2, end_line=99, new_text="x = 1\n")
+
+    assert result["rejection_kind"] == "unread_range"
+    assert "0-based skip" not in result["error"]

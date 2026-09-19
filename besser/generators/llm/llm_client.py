@@ -1080,15 +1080,36 @@ def _openai_stop_reason(finish_reason: str | None, complete_tool_calls: bool) ->
     return finish_reason
 
 
-def _openai_response_to_common(response) -> dict[str, Any]:
+def _tool_name_index(tools: list[dict] | None) -> dict[str, str]:
+    """Fold map (case-folded name -> the exact name we offered)."""
+    return {t["name"].casefold(): t["name"] for t in tools or [] if t.get("name")}
+
+
+def _canonical_tool_name(name: str | None, index: dict[str, str]) -> str:
+    """Resolve a provider-returned tool name against the names we sent.
+
+    OpenAI-compatible servers sometimes echo a tool name with different
+    casing, and the executor's handler table is exact-match — so the call
+    comes back "Unknown tool" and the turn is spent. Only case is folded: an
+    unrecognized name passes through and is still reported as unknown. This
+    renames a NATIVE tool call; it never promotes prose to one.
+    """
+    return index.get((name or "").casefold(), name or "")
+
+
+def _openai_response_to_common(response, tools: list[dict] | None = None) -> dict[str, Any]:
     """
     Convert an OpenAI chat completion response to the common format
     used by the orchestrator.
+
+    ``tools`` is the tool list sent with the request, used only to resolve a
+    returned tool name whose casing differs from ours.
 
     Returns a dict with ``stop_reason`` and ``content`` list.
     """
     choice = response.choices[0]
     message = choice.message
+    tool_index = _tool_name_index(tools)
 
     content: list[Any] = []
 
@@ -1106,11 +1127,12 @@ def _openai_response_to_common(response) -> dict[str, Any]:
             except (ValueError, TypeError):
                 arguments = {}
                 complete_tool_calls = False
-            if not isinstance(arguments, dict) or not tc.id or not tc.function.name:
+            name = _canonical_tool_name(tc.function.name, tool_index)
+            if not isinstance(arguments, dict) or not tc.id or not name:
                 complete_tool_calls = False
             content.append(_ToolUseBlock(
                 tool_id=tc.id,
-                name=tc.function.name,
+                name=name,
                 arguments=arguments,
             ))
 
@@ -1345,7 +1367,7 @@ class OpenAIProvider(LLMProvider):
                 if not model_override:
                     self._usage.set_served_model(getattr(response, "model", None))
 
-                return _openai_response_to_common(response)
+                return _openai_response_to_common(response, tools)
 
             except Exception as e:
                 last_error = e
@@ -1476,6 +1498,7 @@ class OpenAIProvider(LLMProvider):
                 if collected_text:
                     content.append(_TextBlock(text=collected_text))
                 complete_tool_calls = bool(tool_calls_accum)
+                tool_index = _tool_name_index(tools)
                 for _idx in sorted(tool_calls_accum.keys()):
                     tc_data = tool_calls_accum[_idx]
                     import json as _json
@@ -1484,11 +1507,12 @@ class OpenAIProvider(LLMProvider):
                     except (ValueError, TypeError):
                         arguments = {}
                         complete_tool_calls = False
-                    if not isinstance(arguments, dict) or not tc_data["id"] or not tc_data["name"]:
+                    name = _canonical_tool_name(tc_data["name"], tool_index)
+                    if not isinstance(arguments, dict) or not tc_data["id"] or not name:
                         complete_tool_calls = False
                     content.append(_ToolUseBlock(
                         tool_id=tc_data["id"],
-                        name=tc_data["name"],
+                        name=name,
                         arguments=arguments,
                     ))
 

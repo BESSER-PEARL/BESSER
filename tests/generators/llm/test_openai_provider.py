@@ -219,6 +219,61 @@ class TestOpenAIResponseToCommon:
 
 
 # ======================================================================
+# Tool-name case folding
+# ======================================================================
+
+class TestToolNameCaseFolding:
+    """A returned tool name is matched against the names we offered, folding
+    case. The executor's handler table is exact-match, so ``Read_File`` would
+    otherwise come back "Unknown tool" and cost a turn. Folding renames a
+    NATIVE tool call only - it never promotes prose to one."""
+
+    TOOLS = [
+        {"name": "read_file", "description": "Read",
+         "input_schema": {"type": "object", "properties": {}, "required": ["path"]}},
+        {"name": "write_file", "description": "Write",
+         "input_schema": {"type": "object", "properties": {}}},
+    ]
+
+    def _response(self, name, arguments='{"path": "main.py"}', finish_reason="stop"):
+        tc = SimpleNamespace(
+            id="call_1", function=SimpleNamespace(name=name, arguments=arguments),
+        )
+        message = SimpleNamespace(content=None, tool_calls=[tc])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason=finish_reason)],
+        )
+
+    @pytest.mark.parametrize("returned", ["read_file", "Read_File", "READ_FILE", "rEaD_fIlE"])
+    def test_case_variant_resolves_to_the_offered_name(self, returned):
+        result = _openai_response_to_common(self._response(returned), self.TOOLS)
+        assert result["content"][0].name == "read_file"
+        assert result["stop_reason"] == "tool_use"
+
+    def test_unknown_name_is_left_alone(self):
+        """An unrecognised name must reach the executor unchanged so it is
+        still reported as an unknown tool - folding is not a guess."""
+        result = _openai_response_to_common(self._response("summarise_repo"), self.TOOLS)
+        assert result["content"][0].name == "summarise_repo"
+
+    def test_no_tools_offered_leaves_the_name_alone(self):
+        result = _openai_response_to_common(self._response("Read_File"))
+        assert result["content"][0].name == "Read_File"
+
+    def test_prose_is_never_promoted_to_a_tool_call(self):
+        """Folding must not add tool_use blocks. A text-only turn that names a
+        tool in prose stays end_turn with no tool call (README: 'Never infer a
+        tool call from prose')."""
+        message = SimpleNamespace(content="I will now read_file main.py.", tool_calls=None)
+        resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        )
+        result = _openai_response_to_common(resp, self.TOOLS)
+        assert result["stop_reason"] == "end_turn"
+        assert [b.type for b in result["content"]] == ["text"]
+
+
+# ======================================================================
 # Content block types
 # ======================================================================
 
@@ -577,6 +632,23 @@ class TestOpenAIProviderStream:
         assert result["stop_reason"] == (finish_reason if finish_reason in {"length", "content_filter"} else "tool_use")
         assert result["content"][0].input == {"path": "app.py"}
         assert result["provider_finish_reason"] == finish_reason
+
+    def test_streamed_tool_name_is_case_folded_against_the_offered_tools(self):
+        """Same folding as the non-streaming path: a name echoed with the
+        wrong casing must reach the executor's exact-match handler table
+        under the name we offered."""
+        provider = _make_openai_provider()
+        chunks = [SimpleNamespace(usage=None, choices=[SimpleNamespace(
+            delta=SimpleNamespace(content=None, tool_calls=[SimpleNamespace(
+                index=0, id="call_x",
+                function=SimpleNamespace(name="WRITE_FILE", arguments='{"path":"a.py"}'))]),
+            finish_reason="stop")])]
+        provider._client.chat.completions.create.return_value = iter(chunks)
+        tools = [{"name": "write_file", "description": "Write",
+                  "input_schema": {"type": "object", "properties": {}}}]
+        result = list(provider.chat_stream(system="sys", messages=[], tools=tools))[-1]
+        assert result["content"][0].name == "write_file"
+        assert result["stop_reason"] == "tool_use"
 
     def test_stream_text(self):
         provider = _make_openai_provider()

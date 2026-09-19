@@ -14,10 +14,12 @@ from besser.generators.llm.orchestrator import (
 from besser.generators.llm.compaction import (
     _compact_model_recap,
     _estimate_tokens as standalone_estimate_tokens,
+    _tail_cut_index,
     maybe_compact as standalone_maybe_compact,
     _summarize_messages as standalone_summarize_messages,
     COMPACT_TOKEN_THRESHOLD as STANDALONE_THRESHOLD,
-    COMPACT_PRESERVE_RECENT as STANDALONE_PRESERVE_RECENT,
+    COMPACT_MIN_PRESERVE_TOKENS,
+    COMPACT_PRESERVE_TAIL_FRACTION,
 )
 
 
@@ -60,6 +62,12 @@ def _bulk(target_tokens: int) -> str:
             [{"role": "user", "content": "\n".join(lines)}]
         ) > target_tokens:
             return "\n".join(lines)
+
+
+def _default_tail_budget(threshold: int = STANDALONE_THRESHOLD) -> int:
+    """The tail budget ``maybe_compact`` derives when none is passed."""
+    return max(COMPACT_MIN_PRESERVE_TOKENS,
+               int(threshold * COMPACT_PRESERVE_TAIL_FRACTION))
 
 
 class TestTokenEstimation:
@@ -207,7 +215,11 @@ class TestStandaloneCompaction:
     def test_standalone_constants(self):
         """Constants are the same in both locations."""
         assert STANDALONE_THRESHOLD == COMPACT_TOKEN_THRESHOLD
-        assert STANDALONE_PRESERVE_RECENT == 6
+        # The tail is a share of the threshold, not a message count. It must
+        # leave the majority of the budget for the summary to free, or
+        # compaction frees nothing and fires again next turn.
+        assert 0 < COMPACT_PRESERVE_TAIL_FRACTION <= 0.5
+        assert COMPACT_MIN_PRESERVE_TOKENS >= 4_000
 
     def test_standalone_maybe_compact_no_compaction(self, tmp_path):
         """Standalone maybe_compact returns (messages, False) when small."""
@@ -358,34 +370,40 @@ class TestHarnessUpgrades:
         assert clamped is True
 
     def test_cut_never_orphans_tool_results(self, tmp_path):
-        """When the naive cut would open the preserved tail on a
-        tool_result message, the boundary walks back to include the
-        paired assistant tool_use — and skips the synthetic assistant
-        turn so roles still alternate."""
-        big = _bulk(STANDALONE_THRESHOLD + 5_000)
+        """A tool_result must never be the first surviving message.
+
+        Under the TOKEN budget the boundary lands mid-pair far more often
+        than it did under a fixed message count: the common shape is a
+        ``write_file`` tool_use carrying a whole file body followed by a
+        two-word ack, so the tail fits the ack and not the call. The cut
+        then has to walk back onto the tool_use, or the provider rejects
+        the request outright.
+        """
+        body = _bulk(_default_tail_budget() + 6_000)
         tool_use = {"role": "assistant", "content": [
-            {"type": "tool_use", "id": "t1", "name": "read_file", "input": {"path": "a.py"}},
+            {"type": "tool_use", "id": "t1", "name": "write_file",
+             "input": {"path": "api.py", "content": body}},
         ]}
         tool_result = {"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "t1", "content": "data"},
+            {"type": "tool_result", "tool_use_id": "t1", "content": "Wrote api.py"},
         ]}
         messages = [
-            {"role": "user", "content": big},
+            {"role": "user", "content": _bulk(STANDALONE_THRESHOLD)},
             {"role": "assistant", "content": [{"type": "text", "text": "planning"}]},
             {"role": "user", "content": "go"},
-            {"role": "assistant", "content": [{"type": "text", "text": "step"}]},
-            tool_use,       # pair head — naive cut (preserve_recent=6) starts BELOW this
-            tool_result,    # pair tail
-            {"role": "assistant", "content": [{"type": "text", "text": "more"}]},
-            {"role": "user", "content": "go"},
-            {"role": "assistant", "content": [{"type": "text", "text": "more"}]},
-            {"role": "user", "content": "go"},
-            {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+            tool_use,       # pair head — too big for the tail budget
+            tool_result,    # pair tail — cheap, so the budget reaches it
+            {"role": "assistant", "content": [{"type": "text", "text": "wrote it"}]},
         ]
+        # Non-vacuous: the budget alone really does land on the tool_result.
+        naive = _tail_cut_index(messages, _default_tail_budget())
+        assert messages[naive] is tool_result
+
         result, did_compact = standalone_maybe_compact(
             messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
         )
         assert did_compact is True
+        assert result[1] is tool_use          # walked back onto the pair head
         # Every preserved tool_result must still be preceded by its tool_use.
         for i, msg in enumerate(result):
             if isinstance(msg.get("content"), list) and any(
@@ -418,3 +436,379 @@ class TestHarnessUpgrades:
         assert "b.py, c.py" in summary          # written, sorted; b.py not double-listed as read
         assert "Files you already read: a.py" in summary
         assert "junk.py" not in summary          # deleted paths drop out
+
+
+class TestTokenBudgetTail:
+    """The preserved tail is sized in tokens, not in messages.
+
+    Six messages is the wrong unit: six ``write_file`` turns and six
+    one-line turns differ by two orders of magnitude, so the old fixed
+    count produced a tail that was either far bigger than the threshold it
+    had to fit under, or a few hundred tokens of nothing.
+    """
+
+    def test_short_but_enormous_history_still_compacts(self, tmp_path):
+        """A 6-message history way over threshold used to skip compaction.
+
+        The old guard was ``len(messages) <= preserve_recent``, so six huge
+        tool results went to the provider uncompacted every single turn.
+        """
+        big = _bulk(STANDALONE_THRESHOLD)
+        messages = [
+            {"role": "user", "content": "build the app"},
+            {"role": "assistant", "content": [{"type": "text", "text": big}]},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": [{"type": "text", "text": big}]},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+        ]
+        assert len(messages) == 6
+        assert standalone_estimate_tokens(messages) > STANDALONE_THRESHOLD
+
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert did_compact is True
+        assert standalone_estimate_tokens(result) < STANDALONE_THRESHOLD
+
+    def test_fat_tail_is_cut_down_to_the_budget(self, tmp_path):
+        """Six fat turns: the old tail was itself bigger than the threshold.
+
+        Compaction that leaves the history above the threshold buys nothing
+        - it fires again next turn, having paid a lossy summary for it.
+        """
+        fat = _bulk(20_000)
+        messages = [{"role": "user", "content": "build"}]
+        for i in range(8):
+            messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": fat}]}
+            )
+            messages.append({"role": "user", "content": f"next {i}"})
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": fat}]})
+
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert did_compact is True
+        # The last six messages alone are ~60k tokens; the budget is ~24k.
+        assert standalone_estimate_tokens(messages[-6:]) > _default_tail_budget()
+        assert standalone_estimate_tokens(result) < STANDALONE_THRESHOLD
+        # The invariant: everything but the oldest kept message fits the
+        # budget (that one is kept whatever it costs).
+        tail = [m for m in result if m in messages]
+        assert standalone_estimate_tokens(tail[1:]) <= _default_tail_budget()
+        assert result[-1] == messages[-1]
+
+    def test_thin_tail_keeps_far_more_than_six_messages(self, tmp_path):
+        """The mirror case: cheap turns should not be thrown away.
+
+        Twenty short turns cost a few hundred tokens together. Dropping all
+        but six of them saves nothing and costs the model the thread of
+        what it was doing.
+        """
+        messages = [{"role": "user", "content": _bulk(STANDALONE_THRESHOLD)}]
+        for i in range(20):
+            messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": f"step {i}"}]}
+            )
+            messages.append({"role": "user", "content": f"ok {i}"})
+
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert did_compact is True
+        preserved = [m for m in result if m in messages]
+        assert len(preserved) > 6
+        assert preserved == messages[1:]        # everything but the fat head
+
+    def test_tail_keeps_at_least_the_last_message(self, tmp_path):
+        """One message larger than the whole budget still survives."""
+        messages = [
+            {"role": "user", "content": _bulk(STANDALONE_THRESHOLD)},
+            {"role": "assistant", "content": [{"type": "text", "text": "plan"}]},
+            {"role": "user", "content": _bulk(_default_tail_budget() + 10_000)},
+        ]
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert did_compact is True
+        assert result[-1] == messages[-1]
+
+    def test_budget_scales_with_a_clamped_model_window(self, tmp_path):
+        """A small-window model gets a proportionally smaller tail.
+
+        A flat tail would be most of a clamped model's window, so
+        compaction would free nothing on exactly the models that need it.
+        """
+        messages = [{"role": "user", "content": _bulk(40_000)}]
+        for i in range(6):
+            messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": _bulk(3_000)}]}
+            )
+            messages.append({"role": "user", "content": f"go {i}"})
+
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+            model="devstral:24b",          # 32k window -> 16k threshold
+        )
+        assert did_compact is True
+        tail = [m for m in result if m in messages]
+        assert standalone_estimate_tokens(tail[1:]) <= _default_tail_budget(16_000)
+        assert standalone_estimate_tokens(result) < 16_000
+
+    def test_explicit_budget_overrides_the_derived_one(self, tmp_path):
+        messages = [{"role": "user", "content": _bulk(STANDALONE_THRESHOLD)}]
+        for i in range(10):
+            messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": _bulk(2_000)}]}
+            )
+            messages.append({"role": "user", "content": f"go {i}"})
+
+        tight, _ = standalone_maybe_compact(
+            messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
+            preserve_tokens=2_500,
+        )
+        roomy, _ = standalone_maybe_compact(
+            messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
+            preserve_tokens=12_000,
+        )
+        assert standalone_estimate_tokens(tight) < standalone_estimate_tokens(roomy)
+
+    def test_tail_cut_index_never_returns_an_empty_tail(self):
+        messages = [{"role": "user", "content": "a" * 4_000}]
+        assert _tail_cut_index(messages, 1) == 0
+        assert _tail_cut_index([], 1_000) == 0
+
+
+class TestWorkStateInSummary:
+    """The summary must carry the work the end-of-run gate blocks on."""
+
+    TASKS = [
+        {"id": 1, "text": "Add DELETE /books/{isbn}", "done": False,
+         "verify": lambda: True},
+        {"id": 2, "text": "Wire the edit form to PUT", "done": False},
+        {"id": 3, "text": "Seed the database", "done": False, "blocked": True,
+         "blocked_reason": "its check still fails: no seed script on disk"},
+        {"id": 4, "text": "Scaffold the backend", "done": True,
+         "verification": "verified"},
+        {"id": 5, "text": "Add nav links", "done": True,
+         "verification": "unverified"},
+        {"id": 6, "text": "Rewrite in Rust", "done": False,
+         "dropped": "the user never asked for it"},
+    ]
+    WORK_STATE = {
+        "tasks": TASKS,
+        "blockers": ["missing module: app.services.booking",
+                     "undefined name: Book in routers/books.py"],
+        "contract_rules": ["Book.isbn is str in every layer, never parseInt it",
+                           "id/created_at are server-owned, never in create forms"],
+    }
+
+    def test_open_items_survive_compaction(self, tmp_path):
+        """This is the gap: the gate blocks on items the model cannot see."""
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state=self.WORK_STATE,
+        )
+        assert "OPEN 1" in summary
+        assert "Add DELETE /books/{isbn}" in summary
+        assert "OPEN 2" in summary
+        assert "Wire the edit form to PUT" in summary
+        assert "cannot finish while an item is open" in summary
+
+    def test_verifier_carrying_items_are_flagged(self, tmp_path):
+        """A verifier changes what 'done' costs - the model must know which
+        items are machine-checked before it claims them."""
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state=self.WORK_STATE,
+        )
+        verifier_line = next(ln for ln in summary.splitlines() if "OPEN 1" in ln)
+        plain_line = next(ln for ln in summary.splitlines() if "OPEN 2" in ln)
+        assert "has verifier" in verifier_line
+        assert "has verifier" not in plain_line
+
+    def test_a_serialized_snapshot_can_flag_verifiers_too(self, tmp_path):
+        """``task_snapshot()`` drops the live callable; ``has_verifier`` is
+        the flag that shape carries instead."""
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state={"tasks": [
+                {"id": 9, "text": "Checked item", "done": False, "has_verifier": True},
+            ]},
+        )
+        assert "OPEN 9 [has verifier]: Checked item" in summary
+
+    def test_blocked_done_and_dropped_are_distinguished(self, tmp_path):
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state=self.WORK_STATE,
+        )
+        assert "Checklist (2 open, 1 blocked, 2 done, 1 dropped)" in summary
+        assert "BLOCKED 3: Seed the database" in summary
+        assert "no seed script on disk" in summary
+        assert "DONE (do not redo): 4, 5" in summary
+        assert "1 of them unverified" in summary
+        # A dropped item is counted, never re-listed as work.
+        assert "Rewrite in Rust" not in summary
+
+    def test_open_blockers_and_contract_rules_survive(self, tmp_path):
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state=self.WORK_STATE,
+        )
+        assert "Open blockers (2)" in summary
+        assert "missing module: app.services.booking" in summary
+        assert "Data contract" in summary
+        assert "never parseInt it" in summary
+
+    def test_blockers_accept_validation_issue_objects(self, tmp_path):
+        """The orchestrator holds ``ValidationIssue`` objects, not strings."""
+        issue = type("ValidationIssue", (), {"message": "syntax error: main.py:42"})()
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state={"blockers": [issue, {"message": "mapper config: Book"}]},
+        )
+        assert "syntax error: main.py:42" in summary
+        assert "mapper config: Book" in summary
+
+    def test_contract_rules_accept_one_block_of_text(self, tmp_path):
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state={"contract_rules": "Ids are the model types\n\nNo fake success"},
+        )
+        assert "Ids are the model types" in summary
+        assert "No fake success" in summary
+
+    def test_long_lists_are_capped_not_dumped(self, tmp_path):
+        """The summary competes for context; it must not become the dump."""
+        work_state = {
+            "tasks": [{"id": i, "text": f"task number {i}", "done": False}
+                      for i in range(1, 51)],
+            "blockers": [f"blocker number {i}" for i in range(40)],
+            "contract_rules": [f"rule number {i}" for i in range(40)],
+        }
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state=work_state,
+        )
+        assert "Checklist (50 open" in summary
+        assert summary.count("OPEN ") <= 12
+        assert "more" in summary
+        assert standalone_estimate_tokens(
+            [{"role": "user", "content": summary}]
+        ) < 2_000
+
+    def test_a_single_item_is_not_truncated_to_uselessness(self, tmp_path):
+        long_text = "Implement the booking confirmation email " * 20
+        summary = standalone_summarize_messages(
+            [{"role": "user", "content": "x"}], [], str(tmp_path),
+            work_state={"tasks": [{"id": 1, "text": long_text, "done": False}]},
+        )
+        line = next(ln for ln in summary.splitlines() if "OPEN 1" in ln)
+        assert "Implement the booking confirmation email" in line
+        assert len(line) < 260
+
+    def test_maybe_compact_threads_work_state_through(self, tmp_path):
+        messages = [{"role": "user", "content": _bulk(STANDALONE_THRESHOLD)}]
+        for i in range(6):
+            messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": f"step {i}"}]}
+            )
+            messages.append({"role": "user", "content": f"ok {i}"})
+
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+            work_state=self.WORK_STATE,
+        )
+        assert did_compact is True
+        assert "OPEN 1" in result[0]["content"]
+        assert "missing module: app.services.booking" in result[0]["content"]
+
+
+class TestWorkStateIsOptional:
+    """Nothing changes until the call site is wired."""
+
+    # Byte-for-byte what the summary produced before the work-state section
+    # existed. Pinned so a later edit cannot quietly reshape the part of the
+    # summary an unwired call site still gets.
+    GOLDEN = (
+        "Earlier: 3 messages\n"
+        "Tools: read_file(1x), write_file(1x)\n"
+        "Files you already WROTE or MODIFIED (your edits are on disk — "
+        "re-read before editing again, never rewrite blindly): app.py\n"
+        "Files you already read: b.py\n"
+        "Files: app.py"
+    )
+
+    def _fixture(self, tmp_path):
+        (tmp_path / "app.py").write_text("x = 1")
+        return (
+            [{"role": "user", "content": "x"}] * 3,
+            [{"tool": "write_file", "input": {"path": "app.py"}},
+             {"tool": "read_file", "input": {"path": "b.py"}}],
+            str(tmp_path),
+        )
+
+    def test_summary_without_work_state_is_unchanged(self, tmp_path):
+        messages, log, out = self._fixture(tmp_path)
+        assert standalone_summarize_messages(messages, log, out) == self.GOLDEN
+
+    def test_explicit_none_matches_the_omitted_argument(self, tmp_path):
+        messages, log, out = self._fixture(tmp_path)
+        assert (standalone_summarize_messages(messages, log, out, work_state=None)
+                == standalone_summarize_messages(messages, log, out))
+
+    @pytest.mark.parametrize(
+        "work_state",
+        [None, {}, {"tasks": []}, {"tasks": None}, {"unknown_key": "x"},
+         [], "tasks", 0],
+    )
+    def test_empty_or_malformed_state_adds_nothing(self, tmp_path, work_state):
+        """A wrong-shaped argument must degrade to today's summary, never
+        raise: this runs inside the generation loop."""
+        messages, log, out = self._fixture(tmp_path)
+        assert (standalone_summarize_messages(messages, log, out, work_state=work_state)
+                == self.GOLDEN)
+
+    def test_maybe_compact_without_work_state_adds_no_section(self, tmp_path):
+        messages = [{"role": "user", "content": _bulk(STANDALONE_THRESHOLD)}]
+        for i in range(6):
+            messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": f"step {i}"}]}
+            )
+            messages.append({"role": "user", "content": f"ok {i}"})
+
+        result, did_compact = standalone_maybe_compact(
+            messages=messages, tool_calls_log=[], output_dir=str(tmp_path),
+        )
+        assert did_compact is True
+        assert "Work state" not in result[0]["content"]
+
+
+def test_compaction_makes_no_llm_call(tmp_path, monkeypatch):
+    """The summary is deterministic. OpenCode summarizes with a model; here
+    the target is often a weak local Qwen3-30B-A3B, and asking it to
+    summarize its own transcript at the moment its context is failing is a
+    reliability liability. Deliberate - do not 'improve' it.
+    """
+    import besser.generators.llm.compaction as c
+
+    def explode(*args, **kwargs):     # any outbound HTTP at all
+        raise AssertionError("compaction must not call out to a model")
+
+    monkeypatch.setattr(c.urllib.request, "urlopen", explode)
+    messages = [{"role": "user", "content": _bulk(STANDALONE_THRESHOLD)}]
+    for i in range(6):
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": f"s{i}"}]})
+        messages.append({"role": "user", "content": f"ok {i}"})
+
+    first, _ = standalone_maybe_compact(
+        messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
+        work_state=TestWorkStateInSummary.WORK_STATE,
+    )
+    second, _ = standalone_maybe_compact(
+        messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
+        work_state=TestWorkStateInSummary.WORK_STATE,
+    )
+    assert first[0]["content"] == second[0]["content"]

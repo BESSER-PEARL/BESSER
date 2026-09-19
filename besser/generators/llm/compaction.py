@@ -3,7 +3,13 @@ Context compaction for LLM conversation history.
 
 When the conversation grows too large for the context window, older messages
 are summarized and replaced with a compact representation that preserves
-the essential information (what tools were called, what files exist).
+the essential information (what tools were called, what files exist, and —
+when the caller passes it — what work is still open).
+
+The summary is DETERMINISTIC on purpose: no LLM call. The target model is
+often a weak local Qwen3-30B-A3B, and asking it to summarize its own
+transcript at the exact moment its context is failing is a reliability
+liability, not a feature.
 """
 
 import json
@@ -32,7 +38,17 @@ COMPACT_TOKEN_THRESHOLD = max(
 _OPERATOR_CAP: int | None = (
     COMPACT_TOKEN_THRESHOLD if os.environ.get("BESSER_LLM_COMPACT_THRESHOLD") else None
 )
-COMPACT_PRESERVE_RECENT = 6
+# The preserved tail is sized in TOKENS, not messages. A fixed count (this
+# was 6) is the wrong unit: six write_file turns and six one-line turns
+# differ by two orders of magnitude, so the tail was either far larger than
+# the threshold it was meant to fit under (compaction that frees nothing) or
+# a few hundred tokens (the model loses its working set and re-reads).
+# Expressed as a share of the LIVE threshold so a clamped small-window model
+# gets a proportionally smaller tail instead of one that fills its window.
+COMPACT_PRESERVE_TAIL_FRACTION = 0.3
+# Floor for very small thresholds: under ~one whole-file read the tail cannot
+# hold a working set at all.
+COMPACT_MIN_PRESERVE_TOKENS = 4_000
 
 # Headroom the model needs for its next response. The threshold is
 # really "context window minus reserve" - the fixed 80k default silently
@@ -365,12 +381,32 @@ def _estimate_tokens(messages: list[dict]) -> int:
     return total
 
 
+def _tail_cut_index(messages: list[dict], budget: int) -> int:
+    """Index of the first message to KEEP: the longest tail fitting ``budget``.
+
+    Walks backwards over whole messages. The last message is kept even when it
+    alone busts the budget — a tail of nothing leaves the model with a summary
+    and no work in hand. Turns are never split: the walk stops on a message
+    boundary and the caller's tool_result walk-back then pulls the paired
+    ``tool_use`` back in, which may push the tail slightly over budget.
+    """
+    total = 0
+    cut = len(messages)
+    for index in range(len(messages) - 1, -1, -1):
+        cost = _estimate_tokens([messages[index]])
+        if cut < len(messages) and total + cost > budget:
+            break
+        total += cost
+        cut = index
+    return cut
+
+
 def maybe_compact(
     messages: list[dict],
     tool_calls_log: list[dict],
     output_dir: str,
     threshold: int = COMPACT_TOKEN_THRESHOLD,
-    preserve_recent: int = COMPACT_PRESERVE_RECENT,
+    preserve_tokens: int | None = None,
     domain_model: Any | None = None,
     gui_model: Any | None = None,
     agent_model: Any | None = None,
@@ -382,6 +418,7 @@ def maybe_compact(
     primary_kind: str | None = None,
     model: str | None = None,
     reserve: int = COMPACT_RESERVE_TOKENS,
+    work_state: Any | None = None,
 ) -> tuple[list[dict], bool]:
     """
     Compact conversation history if it exceeds the token threshold.
@@ -391,7 +428,8 @@ def maybe_compact(
         tool_calls_log: Log of tool calls made so far.
         output_dir: Path to the output directory (for file listing).
         threshold: Token threshold above which compaction triggers.
-        preserve_recent: Number of recent messages to preserve verbatim.
+        preserve_tokens: Token budget for the preserved tail. ``None``
+            derives it from the resolved threshold.
         domain_model: Optional BUML DomainModel. When provided, a minimal
             recap (class names + association summary) is preserved in the
             summary so the LLM doesn't have to re-discover structure from
@@ -399,29 +437,38 @@ def maybe_compact(
         model: The LLM model name, used to clamp ``threshold`` to the
             model's context window (small local models overflow the
             fixed default long before it trips).
+        work_state: Optional open-work state; see :func:`_work_state_section`.
+            Omitted, the summary is exactly what it was before this argument
+            existed.
 
     Returns:
         A tuple of (compacted_messages, did_compact).
     """
     threshold = effective_threshold(model, threshold, reserve)
     est_tokens = _estimate_tokens(messages)
-    if est_tokens < threshold or len(messages) <= preserve_recent:
+    if est_tokens < threshold:
         return messages, False
+    if preserve_tokens is None:
+        preserve_tokens = max(
+            COMPACT_MIN_PRESERVE_TOKENS,
+            int(threshold * COMPACT_PRESERVE_TAIL_FRACTION),
+        )
 
-    logger.info(
-        "Compacting: ~%d tokens (threshold %d) -> preserving last %d messages",
-        est_tokens, threshold, preserve_recent,
-    )
-
+    cut = _tail_cut_index(messages, preserve_tokens)
     # The cut must not orphan a tool_use/tool_result pair: a preserved
     # tail that OPENS with tool results whose tool_use call was
     # summarized away is an invalid conversation for both providers.
     # Walk the cut back until the tail opens on a clean boundary.
-    cut = len(messages) - preserve_recent
     while cut > 0 and _is_tool_result_message(messages[cut]):
         cut -= 1
     if cut <= 0:
         return messages, False
+
+    logger.info(
+        "Compacting: ~%d tokens (threshold %d) -> summarizing %d messages, "
+        "preserving the last %d (~%d token tail budget)",
+        est_tokens, threshold, cut, len(messages) - cut, preserve_tokens,
+    )
 
     to_summarize = messages[:cut]
     to_preserve = messages[cut:]
@@ -436,6 +483,7 @@ def maybe_compact(
         bpmn_model=bpmn_model,
         nn_model=nn_model,
         primary_kind=primary_kind,
+        work_state=work_state,
     )
 
     compacted = [
@@ -466,6 +514,7 @@ def _summarize_messages(
     bpmn_model: Any | None = None,
     nn_model: Any | None = None,
     primary_kind: str | None = None,
+    work_state: Any | None = None,
 ) -> str:
     """Build a compact summary of earlier conversation messages."""
     lines = [f"Earlier: {len(messages)} messages"]
@@ -525,7 +574,161 @@ def _summarize_messages(
             lines.append(f"Files: {', '.join(sorted(files)[:25])}")
     except Exception:
         pass
+
+    # Last, next to the "Continue." the caller appends: this is the section
+    # the model must act on, and the end-of-run gate keeps blocking on the
+    # checklist whether or not the model can still see it.
+    work = _work_state_section(work_state)
+    if work:
+        lines.append(work)
     return "\n".join(lines)
+
+
+# Caps for the work-state section. This competes with the live tail for
+# context, so every list is bounded and the remainder reported as a count.
+_MAX_SUMMARY_OPEN_TASKS = 12
+_MAX_SUMMARY_BLOCKED_TASKS = 5
+_MAX_SUMMARY_DONE_IDS = 30
+_MAX_SUMMARY_BLOCKERS = 8
+_MAX_SUMMARY_RULES = 8
+_MAX_SUMMARY_LINE_CHARS = 200
+
+
+def _clip(text: Any, limit: int = _MAX_SUMMARY_LINE_CHARS) -> str:
+    """One whitespace-collapsed line, truncated to ``limit`` characters."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _more(total: int, shown: int) -> list[str]:
+    return [f"    … +{total - shown} more"] if total > shown else []
+
+
+def _task_status(task: dict) -> str:
+    """open / blocked / done / dropped, in the checklist's own precedence."""
+    if task.get("dropped"):
+        return "dropped"
+    if task.get("blocked"):
+        return "blocked"
+    if task.get("done"):
+        return "done"
+    return "open"
+
+
+def _checklist_lines(tasks: Any) -> list[str]:
+    """Render the checklist: every open item, every blocker, done as ids."""
+    if not isinstance(tasks, (list, tuple)):
+        return []
+    items = [t for t in tasks if isinstance(t, dict) and t.get("text")]
+    if not items:
+        return []
+    by_status: dict[str, list[dict]] = {}
+    for task in items:
+        by_status.setdefault(_task_status(task), []).append(task)
+    open_items = by_status.get("open", [])
+    blocked = by_status.get("blocked", [])
+    done = by_status.get("done", [])
+
+    counts = [f"{len(open_items)} open", f"{len(blocked)} blocked"]
+    if done:
+        counts.append(f"{len(done)} done")
+    if by_status.get("dropped"):
+        counts.append(f"{len(by_status['dropped'])} dropped")
+    lines = [
+        f"  Checklist ({', '.join(counts)}) — the run cannot finish while an "
+        "item is open; close each one with task_list (done / drop / blocked)."
+    ]
+    for task in open_items[:_MAX_SUMMARY_OPEN_TASKS]:
+        flag = " [has verifier]" if _has_verifier(task) else ""
+        lines.append(f"    OPEN {task.get('id')}{flag}: {_clip(task['text'])}")
+    lines += _more(len(open_items), _MAX_SUMMARY_OPEN_TASKS)
+    for task in blocked[:_MAX_SUMMARY_BLOCKED_TASKS]:
+        reason = task.get("blocked_reason")
+        lines.append(
+            f"    BLOCKED {task.get('id')}: {_clip(task['text'])}"
+            + (f" — {_clip(reason, 120)}" if reason else "")
+        )
+    lines += _more(len(blocked), _MAX_SUMMARY_BLOCKED_TASKS)
+    if done:
+        ids = [str(t.get("id")) for t in done[:_MAX_SUMMARY_DONE_IDS]]
+        unverified = sum(
+            1 for t in done if t.get("verification", "unverified") != "verified"
+        )
+        lines.append(
+            f"    DONE (do not redo): {', '.join(ids)}"
+            + (f" +{len(done) - len(ids)} more" if len(done) > len(ids) else "")
+            + (f" — {unverified} of them unverified" if unverified else "")
+        )
+    return lines
+
+
+def _has_verifier(task: dict) -> bool:
+    """True when the item carries a verifier, so 'done' is machine-checked.
+
+    ``verify`` is the live callable the executor holds; ``has_verifier`` is
+    the flag a serialized snapshot can carry instead.
+    """
+    return bool(task.get("verify") or task.get("has_verifier"))
+
+
+def _issue_text(entry: Any) -> str:
+    """Blocker text from a string, a mapping, or a ValidationIssue-like."""
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return str(entry.get("message") or entry)
+    return str(getattr(entry, "message", entry))
+
+
+def _blocker_lines(blockers: Any) -> list[str]:
+    if not isinstance(blockers, (list, tuple)) or not blockers:
+        return []
+    lines = [f"  Open blockers ({len(blockers)}) — these must be fixed:"]
+    for entry in blockers[:_MAX_SUMMARY_BLOCKERS]:
+        lines.append(f"    - {_clip(_issue_text(entry))}")
+    return lines + _more(len(blockers), _MAX_SUMMARY_BLOCKERS)
+
+
+def _contract_lines(rules: Any) -> list[str]:
+    if isinstance(rules, str):
+        rules = [line for line in rules.splitlines() if line.strip()]
+    if not isinstance(rules, (list, tuple)) or not rules:
+        return []
+    lines = ["  Data contract — still NON-NEGOTIABLE:"]
+    for rule in rules[:_MAX_SUMMARY_RULES]:
+        lines.append(f"    - {_clip(rule)}")
+    return lines + _more(len(rules), _MAX_SUMMARY_RULES)
+
+
+def _work_state_section(work_state: Any) -> str:
+    """Render the open work the summary must not drop.
+
+    ``work_state`` is an optional mapping so this module stays a leaf — it
+    must not import the orchestrator or the executor that own this state.
+    Recognized keys, all optional:
+
+    * ``tasks`` — checklist items as the executor stores them: ``id``,
+      ``text``, ``done``, ``blocked``/``blocked_reason``, ``dropped``,
+      ``verification``, and either the live ``verify`` callable or a
+      ``has_verifier`` flag.
+    * ``blockers`` — currently open blockers: strings, mappings with a
+      ``message`` key, or objects with a ``.message`` attribute.
+    * ``contract_rules`` — model-derived hard rules, as a list of short
+      strings or one newline-separated block.
+
+    Anything else (including ``None``) renders nothing, which is what keeps
+    an unwired caller byte-identical to the pre-work-state summary.
+    """
+    if not isinstance(work_state, dict):
+        return ""
+    lines = (
+        _checklist_lines(work_state.get("tasks"))
+        + _blocker_lines(work_state.get("blockers"))
+        + _contract_lines(work_state.get("contract_rules"))
+    )
+    if not lines:
+        return ""
+    return "Work state (carried through compaction — still binding):\n" + "\n".join(lines)
 
 
 def _file_operations(tool_calls_log: list[dict]) -> tuple[list, list]:

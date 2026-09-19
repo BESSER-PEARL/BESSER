@@ -3669,6 +3669,15 @@ class LLMOrchestrator:
             )
 
         execution = self.executor.execute_typed(tool_name, block.input)
+        # A landed edit may have satisfied a checkable item. Close it here
+        # rather than making the model spend a turn arguing for it: run
+        # ys4gfj4v made 22 task_list calls against 9 edits, 12 refused.
+        if execution.succeeded and tool_name in _WRITE_TOOLS_ON_RECORD:
+            closed = self.executor.autoclose_verified_tasks()
+            if closed:
+                execution.payload["checklist_closed"] = closed
+                logger.info("Auto-closed %d verified checklist item(s): %s",
+                            len(closed), [item["id"] for item in closed])
         recovery = execution.payload.get("edit_recovery", {})
         if recovery.get("next_tool") in {"read_file", "replace_file_lines", "modify_file"}:
             self._force_tool_next = recovery["next_tool"]

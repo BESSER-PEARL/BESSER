@@ -490,6 +490,34 @@ class ToolExecutor:
                      "attempts": 0, "blocked": False}
                 )
 
+    def autoclose_verified_tasks(self) -> list[dict]:
+        """Close open items whose deterministic verifier now passes.
+
+        A task with a real verifier does not need the model to argue for it:
+        the harness can see the endpoint is implemented. Run ys4gfj4v spent
+        22 task_list calls against 9 edits, and 12 of those calls were
+        refused - bookkeeping cost 2.4x the actual work. Anything checkable
+        is checked here instead, which also means a model that never learns
+        the checklist protocol still gets credit for what it built.
+
+        Only verifier-backed items qualify. An evidence-only task still needs
+        the model to cite its work, because nothing here can judge it.
+        """
+        closed = []
+        for task in self._tasks:
+            verify = task.get("verify")
+            if verify is None or task.get("done") or task.get("dropped"):
+                continue
+            try:
+                passed = bool(verify())
+            except Exception:
+                continue
+            if passed:
+                task.update(done=True, verification="verified", blocked=False)
+                task.pop("blocked_reason", None)
+                closed.append({"id": task["id"], "text": task["text"][:120]})
+        return closed
+
     def reopen_unverifiable_tasks(self) -> list[int]:
         """Re-run verifiers on completed items and reopen those that now fail.
 

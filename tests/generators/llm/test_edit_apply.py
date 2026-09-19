@@ -14,6 +14,7 @@ import pytest
 from besser.generators.llm.edit_apply import (
     AmbiguousEdit,
     find_similar_lines,
+    locate_anchored_span,
     replace_most_similar_chunk,
 )
 from besser.generators.llm.tool_executor import ToolExecutor
@@ -409,3 +410,60 @@ def test_trim_tier_ambiguous_match_is_refused():
     whole = "    x = 1  \n    y = 2\n    x = 1\t\n"
     with pytest.raises(AmbiguousEdit):
         replace_most_similar_chunk(whole, "    x = 1\n", "    x = 9\n", require_unique=True)
+
+
+# -- locate_anchored_span (locator only, never an applier) ----------------
+
+def test_anchored_span_brackets_a_quote_the_ladder_refuses():
+    """The live failure mode of run w7zoeszt (16 refusals): the quote is
+    indented DEEPER than the file. _uniform_indent_prefix rejects a negative
+    delta, so every ladder tier declines - the anchors still bracket it."""
+    whole = '@router.post("/x/")\nasync def handler(\n    a: int,\n):\n    """Doc."""\n'
+    part = '    @router.post("/x/")\nasync def handler(\n    a: int,\n):\n    """Doc."""\n'
+    assert replace_most_similar_chunk(whole, part, "x\n", require_unique=True) is None
+    assert locate_anchored_span(whole, part) == (1, 5)
+
+
+def test_anchored_span_tolerates_lines_the_quote_skipped():
+    """A quote that omits interior lines can never match a tier; its first and
+    last lines still name the region (run mbzbzhq9 t117)."""
+    whole = "".join(f"v{n} = {n}\n" for n in range(10))
+    part = "".join(f"v{n} = {n}\n" for n in [0, 1, 2, 3, 4, 5, 6, 9])
+    assert replace_most_similar_chunk(whole, part, "x\n", require_unique=True) is None
+    assert locate_anchored_span(whole, part) == (1, 10)
+
+
+def test_anchored_span_refuses_two_candidates():
+    whole = "start\nmid\nend\nfiller\nstart\nmid\nend\n"
+    assert locate_anchored_span(whole, "start\nmid\nend\n") is None
+
+
+def test_anchored_span_refuses_when_the_block_size_is_out_of_range():
+    """Anchors alone are not enough: a candidate more than 25% off the quote's
+    length is a different region that happens to share its edges."""
+    whole = "open\n" + "".join(f"body{n}\n" for n in range(20)) + "close\n"
+    assert locate_anchored_span(whole, "open\nbody0\nbody1\nclose\n") is None
+    # ...and within 25% it is accepted.
+    tight = "open\nx\ny\nz\nclose\n"
+    assert locate_anchored_span(tight, "open\na\nb\nclose\n") == (1, 5)
+
+
+def test_anchored_span_ignores_boundary_blank_lines_and_line_numbers():
+    whole = "def f():\n    return 1\n"
+    assert locate_anchored_span(whole, "\n\ndef f():\n    return 1\n\n") == (1, 2)
+    assert locate_anchored_span(whole, "   1| def f():\n   2|     return 1\n") == (1, 2)
+
+
+def test_anchored_span_declines_a_quote_with_no_anchor_in_the_file():
+    whole = "def f():\n    return 1\n"
+    assert locate_anchored_span(whole, "def g():\n    return 2\n") is None
+    assert locate_anchored_span(whole, "\n\n") is None
+
+
+def test_anchored_span_is_a_locator_and_never_applies():
+    """The apply ladder must not gain an anchor tier: the module docstring
+    records why similarity-driven application stays out of this file."""
+    whole = "head\nORIGINAL BODY\ntail\n"
+    part = "head\nSOMETHING ELSE ENTIRELY\ntail\n"
+    assert locate_anchored_span(whole, part) == (1, 3)
+    assert replace_most_similar_chunk(whole, part, "x\n", require_unique=True) is None

@@ -112,9 +112,12 @@ def test_repeated_qwen_shaped_quotation_failures_switch_strategy_and_recover(tmp
             elif force_tool == "replace_file_lines":
                 results = [json.loads(b["content"]) for m in messages if isinstance(m.get("content"), list)
                            for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
-                read = next(r for r in reversed(results) if "read_id" in r)
+                # Either a read_file view or the span a missed modify_file located.
+                read = next(r.get("located_range", r) for r in reversed(results)
+                            if "read_id" in r or "located_range" in r)
                 name, args = "replace_file_lines", dict(path="app.py", read_id=read["read_id"],
-                    start_line=2, end_line=3, new_text="async def action():\n    return True\n")
+                    start_line=read.get("start_line", 2), end_line=read.get("end_line", 3),
+                    new_text="async def action():\n    return True\n")
             return {"stop_reason": "tool_use", "content": [SimpleNamespace(
                 type="tool_use", name=name, id=f"t{n}", input=args)]}
 
@@ -127,7 +130,9 @@ def test_repeated_qwen_shaped_quotation_failures_switch_strategy_and_recover(tmp
                                            is_first_attempt=True) == 1
     else:
         orch.run("Change action to return True; preserve unrelated.")
-    assert client.forced[:4] == [None, None, "read_file", "replace_file_lines"]
+    # One miss, not two plus a re-read: the miss itself brackets the target
+    # and issues the read_id, so the range edit is the very next call.
+    assert client.forced[:2] == [None, "replace_file_lines"]
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == SOURCE.replace("return False", "return True", 1)
     assert not orch.executor._frozen("app.py")
     writes = [e for e in orch.tool_calls_log if e["tool"] == "replace_file_lines"]

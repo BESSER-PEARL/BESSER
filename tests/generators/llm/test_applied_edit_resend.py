@@ -140,5 +140,7 @@ def test_a_miss_on_the_pristine_file_is_not_called_applied(ex):
     assert "error" in res, res
     assert "applied" not in res["error"]
     assert "not found" in res["error"]
-    assert "did_you_mean" in res
+    # A quote whose anchors bracket one region answers with the located range
+    # (numbered) in place of the unnumbered did_you_mean window.
+    assert res["located_range"]["lines"]
     assert _file(ex) == before

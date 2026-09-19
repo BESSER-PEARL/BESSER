@@ -154,3 +154,74 @@ def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_pat
     assert rows and rows[0]["tool"] == "modify_file"
     assert rows[0]["input"]["old_text"] == long_block, "must be the untruncated bytes"
     assert len(long_block) > 500
+
+
+# -- the same TARGET refused again, whatever the draft --------------------
+
+SOURCE = "# keep\nasync def action():\n    return False\n"
+
+
+def _executor(tmp_path):
+    from besser.generators.llm.tool_executor import ToolExecutor
+    (tmp_path / "app.py").write_text(SOURCE, encoding="utf-8")
+    return ToolExecutor(workspace=str(tmp_path))
+
+
+def _miss(ex, new_text):
+    """A modify_file that cannot match, so the anchor is the only constant."""
+    return ex.execute_typed("modify_file", {
+        "path": "app.py", "old_text": "def nowhere():\n    pass\n",
+        "new_text": new_text}).payload
+
+
+def test_alternating_drafts_at_one_target_escalate(tmp_path):
+    """Run se7k3zbx alternated two byte-identical drafts at booking.py
+    301-400 across t24/26/28/30/32. Keyed on exact text the counter only
+    reached 3 on the fifth call; keyed on the target it reaches 4 on the
+    fourth."""
+    ex = _executor(tmp_path)
+    for draft in ("# A\n", "# B\n", "# A\n"):
+        _miss(ex, draft)
+        assert (ex.last_repeat or ("app.py", 0))[1] < 3, draft
+
+    _miss(ex, "# B\n")
+
+    assert ex.last_repeat == ("app.py", 4)
+    assert ex.repeat_rejections("app.py") == 4
+
+
+def test_three_genuinely_different_drafts_do_not_escalate(tmp_path):
+    """Run mbzbzhq9 sent three different drafts to one range at t34/36/40 and
+    SUCCEEDED on the third, so the target threshold sits above the exact one."""
+    ex = _executor(tmp_path)
+    for draft in ("# A\n", "# B\n", "# C\n"):
+        _miss(ex, draft)
+        assert (ex.last_repeat or ("app.py", 0))[1] < 3, draft
+
+
+def test_a_successful_edit_clears_the_target_counter(tmp_path):
+    ex = _executor(tmp_path)
+    for draft in ("# A\n", "# B\n", "# C\n"):
+        _miss(ex, draft)
+    landed = ex.execute_typed("modify_file", {
+        "path": "app.py", "old_text": "    return False",
+        "new_text": "    return True"}).payload
+    assert landed["status"] == "modified", landed
+
+    _miss(ex, "# D\n")
+    _miss(ex, "# E\n")
+
+    assert ex.last_repeat is None, "a landed edit must reset the target count"
+
+
+def test_a_range_edit_target_counts_across_redrafts(tmp_path):
+    """A range edit carries no old_text, so its target is the selected lines."""
+    ex = _executor(tmp_path)
+    read = ex.execute_typed("read_file", {"path": "app.py"}).payload
+    for n in range(4):
+        refused = ex.execute_typed("replace_file_lines", {
+            "path": "app.py", "read_id": read["read_id"], "start_line": 2,
+            "end_line": 3, "new_text": f"async def broken(\n    # {n}\n"}).payload
+        assert refused["rejection_kind"] == "syntax_error", refused
+
+    assert ex.last_repeat == ("app.py", 4)

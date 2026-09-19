@@ -90,8 +90,7 @@ def test_the_t19_quote_is_refused_and_the_file_is_untouched(ex):
 def test_the_refusal_names_the_indentation_and_shows_the_real_line(ex):
     res = _modify(ex, T19_OLD, T19_NEW)
     assert "indent" in res["error"].lower()
-    assert "did_you_mean" in res
-    assert "        # Booking.computeAmountOwed: no body" in res["did_you_mean"]
+    assert "        # Booking.computeAmountOwed: no body" in res["located_range"]["lines"]
 
 
 def test_the_same_stub_quoted_at_the_files_indent_lands(ex):

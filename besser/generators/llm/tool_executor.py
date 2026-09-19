@@ -44,6 +44,7 @@ from besser.generators.llm.edit_apply import (
     elided_lines,
     find_elision,
     find_similar_lines,
+    locate_anchored_span,
     locate_chunk,
     replace_most_similar_chunk,
     replacement_spans,
@@ -439,6 +440,9 @@ class ToolExecutor:
         # 3-strike cycles because the refusal reset its own counter. Only a
         # successful edit on the path clears these.
         self._rejected_edits: dict[tuple[str, str, str], int] = {}
+        # The same TARGET refused again, whatever the draft: (path, anchor)
+        # where anchor is old_text, or "lines N-M" for a range edit.
+        self._rejected_targets: dict[tuple[str, str], int] = {}
         self._repeat_hits: dict[str, int] = {}
         # (path, times seen) when the LAST call repeated a rejected edit, for
         # the orchestrator's escalation; None otherwise.
@@ -1751,6 +1755,16 @@ class ToolExecutor:
         files = [f for f in files if not f["path"].startswith(".besser_")]
         return {"files": files, "total": len(files)}
 
+    def _mint_read_view(self, path: str, content: str, start_line: int, end_line: int) -> str:
+        """Authorize a 1-based inclusive line span of ``content`` for a range edit."""
+        read_id = f"{self._read_epoch}:{next(self._read_sequence)}"
+        self._read_views[read_id] = (
+            os.path.normcase(path), self._content_digest(content), start_line, end_line,
+        )
+        if len(self._read_views) > 128:
+            del self._read_views[next(iter(self._read_views))]
+        return read_id
+
     def _read_file(self, args: dict) -> dict:
         """
         Read a file with optional line-based pagination, numbered ``   7| code``.
@@ -1800,14 +1814,7 @@ class ToolExecutor:
             end = start + (selected.count("\n") + 1 if selected else 0)
 
         result = {"content": selected}
-        read_id = f"{self._read_epoch}:{next(self._read_sequence)}"
-        self._read_views[read_id] = (
-            os.path.normcase(path), self._content_digest(content), start + 1,
-            end,
-        )
-        if len(self._read_views) > 128:
-            del self._read_views[next(iter(self._read_views))]
-        result["read_id"] = read_id
+        result["read_id"] = self._mint_read_view(path, content, start + 1, end)
         result["start_line"] = start + 1
         result["end_line"] = end
         if truncated:
@@ -1886,9 +1893,21 @@ class ToolExecutor:
                         args.get("new_text") or "",
                     )
                     self._range_edit_failures[path] = self._range_edit_failures.get(path, 0) + 1
+        exhausted = self._range_edit_failures.get(path, 0) >= self._RANGE_EDIT_GIVE_UP
+        # _modify_file already bracketed the target and issued a read_id for it,
+        # so steer on the FIRST miss: the two turns this used to cost (re-read,
+        # then guess line numbers) are exactly what the span removes.
+        located = result.get("located_range") if tool == "modify_file" else None
+        if located:
+            result["edit_recovery"] = {
+                "next_tool": "replace_file_lines", "path": path,
+                "read_id": located["read_id"],
+                "start_line": located["start_line"], "end_line": located["end_line"],
+                "instruction": located["instruction"],
+            }
+            return
         if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
             return
-        exhausted = self._range_edit_failures.get(path, 0) >= self._RANGE_EDIT_GIVE_UP
         if tool == "read_file" and "read_id" in result and not exhausted:
             result["edit_recovery"] = {
                 "next_tool": "replace_file_lines", "path": path,
@@ -2184,20 +2203,35 @@ class ToolExecutor:
             ),
         }
 
+    # Refusals at one target before the orchestrator's escalation is told,
+    # counting redrafts. One above the exact-text threshold (_REPEAT_FORCE_AT
+    # = 3): run se7k3zbx alternated two byte-identical drafts at booking.py
+    # 301-400 (t24/26/28/30/32) so the exact-text counter only reached 3 on
+    # the fifth call, but run mbzbzhq9 landed the THIRD genuinely different
+    # edit to one range. Advisory - it steers strategy, it refuses nothing.
+    _TARGET_REPEAT_AT = 4
+
     def _note_rejection(self, rel_path: str, old_text: str, new_text: str) -> int:
         """Record a rejected edit; return how often this exact call has now been seen."""
         key = (rel_path.strip(), old_text, new_text)
         seen = self._rejected_edits.get(key, 0) + 1
         self._rejected_edits[key] = seen
-        if seen > 1:
-            self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), seen)
-            self.last_repeat = (key[0], seen)
+        target = (key[0], old_text)
+        hits = self._rejected_targets.get(target, 0) + 1
+        self._rejected_targets[target] = hits
+        reported = max(seen if seen > 1 else 0,
+                       hits if hits >= self._TARGET_REPEAT_AT else 0)
+        if reported:
+            self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), reported)
+            self.last_repeat = (key[0], reported)
         return seen
 
     def _clear_rejections(self, rel_path: str) -> None:
         key_path = rel_path.strip()
         for key in [k for k in self._rejected_edits if k[0] == key_path]:
             del self._rejected_edits[key]
+        for key in [k for k in self._rejected_targets if k[0] == key_path]:
+            del self._rejected_targets[key]
         self._repeat_hits.pop(key_path, None)
 
     def _modify_file(self, args: dict) -> dict:
@@ -2394,6 +2428,9 @@ class ToolExecutor:
             resent = self._last_missed_old_text.get(rel_path) == old_text
             self._last_missed_old_text[rel_path] = old_text
             hint = find_similar_lines(old_text, content)
+            # The lines old_text brackets, if it brackets exactly one region.
+            # A LOCATOR: nothing is applied, the model still authors new_text.
+            span = locate_anchored_span(content, old_text)
             unread = (
                 f"You have not read {args['path']} this run, so old_text cannot be a "
                 "copy of it: call read_file (offset/limit for a region) and quote from "
@@ -2454,7 +2491,7 @@ class ToolExecutor:
                         "indentation exactly from read_file output."
                     ),
                 }
-            elif not hint:
+            elif not hint and not span:
                 # No close match, including when the model quotes a rejected
                 # draft as though it was applied. Re-read CURRENT code rather
                 # than claiming that re-reading cannot help and then asking
@@ -2474,7 +2511,30 @@ class ToolExecutor:
                              f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
                              f"Make sure old_text matches exactly including whitespace/indentation.",
                 }
-            if hint:
+            # A bracketed span replaces the old recovery detour (miss -> miss ->
+            # read_file -> guess a range) with one pre-filled replace_file_lines.
+            # Both documented range-edit failure modes are line-number selection
+            # errors, so the numbers come from here, not from the model.
+            if (span and err.get("status") != "possible_replay"
+                    and self._range_edit_failures.get(rel_path, 0) < self._RANGE_EDIT_GIVE_UP):
+                numbered = chr(10).join(
+                    f"{n:>4}| {line}"
+                    for n, line in enumerate(content.split(chr(10))[span[0] - 1:span[1]], span[0])
+                )
+                if len(numbered) <= MAX_FILE_READ:
+                    err["located_range"] = {
+                        "path": args["path"],
+                        "read_id": self._mint_read_view(path, content, span[0], span[1]),
+                        "start_line": span[0], "end_line": span[1],
+                        "lines": numbered,
+                        "instruction": (
+                            "Your old_text brackets exactly these lines. Call "
+                            "replace_file_lines with this read_id and these start_line/"
+                            "end_line, and new_text = their complete replacement. Do not "
+                            "re-quote old_text and do not paste the 'NNN| ' prefixes."
+                        ),
+                    }
+            if hint and "located_range" not in err:
                 err["did_you_mean"] = (
                     "Closest lines actually in the file - copy old_text verbatim "
                     "from here:" + chr(10) + hint

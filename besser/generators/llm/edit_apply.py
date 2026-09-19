@@ -52,6 +52,14 @@ real corruption risk for no observed gain here. And two of aider's own:
 
 ``find_similar_lines`` is the other half of the technique: on a miss, show the
 model the closest actual lines so its retry can copy them verbatim.
+``locate_anchored_span`` goes further where it safely can: it returns the LINE
+RANGE the quote brackets, so the executor hands back a pre-filled
+``replace_file_lines`` instead of a second guess. Measured over the 70 refused
+``old_text`` values from 21 live runs that the ladder above still cannot apply,
+it locates 31 (44%), and 20 of the 28 whose file is unchanged since the refusal
+(71%). One of the 31 closes on a later duplicate of the last anchor line - a
+span that starts right and stops short. Tolerable only because it never
+applies anything.
 """
 
 from __future__ import annotations
@@ -281,16 +289,38 @@ def _replace_with_collapsed_blank_runs(
     return result
 
 
-_NUMBERED = re.compile(r"^\s*\d+(?:\||:|\t) ?")
+_NUMBERED = re.compile(r"^\s*(\d+)(?:\||:|\t) ?")
+# read_file's own ``NNN| `` form. Only this one is trusted on a MIXED block:
+# ``1: "one"`` in a dict literal matches the general pattern.
+_PIPE_NUMBERED = re.compile(r"^\s*(\d+)\| ?")
 
 
 def _strip_line_numbers(lines: list[str]) -> list[str] | None:
-    """Tier 5: drop a uniform line-number prefix when every non-blank line
-    carries one; ``None`` when the block is not numbered."""
+    """Tier 5: drop a line-number prefix the quote was copied with; ``None``
+    when the block is not numbered.
+
+    Every non-blank line numbered is the safe case. Mixed numbering is real
+    too - 11 inputs across 23 runs carried prefixes on all but one line, and
+    one of them was WRITTEN, baking ``NNN| `` into a shipped Booking.tsx. On a
+    mixed block only read_file's ``NNN| `` form counts, only as a majority of
+    at least two lines, and only with strictly rising numbers. Calibrated over
+    2.27M line windows of besser/ and 23 generated apps: zero matches in text
+    that was not already numbered output.
+    """
     content = [ln for ln in lines if ln.strip()]
-    if not content or not all(_NUMBERED.match(ln) for ln in content):
+    if not content:
         return None
-    return [_NUMBERED.sub("", ln, count=1) if ln.strip() else ln for ln in lines]
+    if all(_NUMBERED.match(ln) for ln in content):
+        return [_NUMBERED.sub("", ln, count=1) if ln.strip() else ln for ln in lines]
+    marked = [(i, m) for i, ln in enumerate(lines) if (m := _PIPE_NUMBERED.match(ln))]
+    if len(marked) < 2 or len(marked) * 2 < len(content):
+        return None
+    numbers = [int(m.group(1)) for _, m in marked]
+    if any(b <= a for a, b in zip(numbers, numbers[1:])):
+        return None
+    numbered = {i for i, _ in marked}
+    return [_PIPE_NUMBERED.sub("", ln, count=1) if i in numbered else ln
+            for i, ln in enumerate(lines)]
 
 
 def _protected_window(lines, start, end, protected_spans) -> bool:
@@ -409,6 +439,46 @@ def locate_chunk(whole: str, part: str) -> int | None:
         if whole_lines[i:i + n] == part_lines:
             return i + 1
     return None
+
+
+def locate_anchored_span(whole: str, part: str) -> tuple[int, int] | None:
+    """1-based inclusive line span of ``whole`` that ``part`` brackets, else None.
+
+    The candidate rule of sst/opencode's ``BlockAnchorReplacer``
+    (``tool/edit.ts``, MIT): ``part``'s first and last non-empty lines must
+    equal candidate lines exactly after ``.strip()``, and the candidate's line
+    count must be within 25% of ``part``'s. Two candidates return None rather
+    than a guess - opencode scores them by similarity, we refuse.
+
+    A LOCATOR, never an applier. The span is handed to the model so it can
+    author the replacement itself against ``replace_file_lines``; see the
+    module docstring for why similarity-driven *application* stays out.
+    """
+    part_lines = part.split("\n")
+    part_lines = _strip_line_numbers(part_lines) or part_lines
+    filled = [i for i, line in enumerate(part_lines) if line.strip()]
+    if not filled:
+        return None
+    # Compare against the quote's core: boundary blank lines are padding the
+    # model added (tiers 3/7), not part of the block it meant to name.
+    core = part_lines[filled[0]:filled[-1] + 1]
+    n = len(core)
+    first, last = core[0].strip(), core[-1].strip()
+
+    whole_lines = whole.split("\n")
+    lo = max(1, (3 * n + 3) // 4)   # ceil(0.75n)
+    hi = (5 * n) // 4               # floor(1.25n)
+    found: tuple[int, int] | None = None
+    for i, line in enumerate(whole_lines):
+        if line.strip() != first:
+            continue
+        for j in range(i + lo - 1, min(i + hi, len(whole_lines))):
+            if whole_lines[j].strip() != last:
+                continue
+            if found is not None:
+                return None
+            found = (i + 1, j + 1)
+    return found
 
 
 def find_similar_lines(

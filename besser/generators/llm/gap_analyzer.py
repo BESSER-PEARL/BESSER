@@ -567,8 +567,9 @@ def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
 
 
 def _mentioned_classes(sentence: str, classes: list) -> list:
-    """Model classes named in ``sentence``, tolerating a Create/Update/...
-    schema suffix (``BookingCreate`` still names ``Booking``)."""
+    """Model classes named in ``sentence``, tolerating a Create, Update,
+    Read or Response schema suffix (``BookingCreate`` still names
+    ``Booking``)."""
     found = []
     for cls in classes:
         pattern = _class_name_pattern(cls.name)

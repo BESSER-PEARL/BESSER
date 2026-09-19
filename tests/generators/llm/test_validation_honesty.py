@@ -184,7 +184,8 @@ def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, 
     assert expression in planned
     assert orch._requirements == []  # recovery does not pretend extraction found the rule
     prompt = orch._build_system_prompt("Users must have a nonnegative count.")
-    assert expression in prompt and "Model conversion losses" in prompt
+    assert expression in prompt
+    assert "Where the model disagrees with your specification" in prompt
     tasks = orch._deterministic_gap_tasks()
     assert len(tasks) == 1 and expression in tasks[0]
     orch.executor.set_tasks(tasks)

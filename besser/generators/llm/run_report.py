@@ -446,7 +446,7 @@ def format_report(report: dict) -> str:
                 lines.append(f"    {prefix:42} {count}")
             remaining = len(counter) - len(shown)
             if remaining > 0:
-                lines.append(f"    ... {remaining} more distinct prefix(es)")
+                lines.append(f"    (+{remaining} more distinct prefix(es))")
 
     lines.append(_fmt_section("Cost and turns"))
     ct = report["cost_and_turns"]

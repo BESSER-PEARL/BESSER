@@ -1888,6 +1888,18 @@ class ToolExecutor:
         if not isinstance(replacement, str):
             return {"error": "new_text must be a string containing the complete replacement."}
         replacement = replacement.replace("\r\n", "\n")
+        # read_file numbers what the model sees, and a model that selected a
+        # range by those numbers often pastes them back. modify_file's ladder
+        # has always stripped them from BOTH sides; this tool shipped without
+        # that and wrote them to disk. Run fcdh0s9k, turn 29: modify_file
+        # refused 107 numbered lines. Turn 31: replace_file_lines accepted 293
+        # and baked " 101|       </nav>" into Booking.tsx, so lines 101-393 of
+        # the delivered frontend were not valid TSX. The backend probe passed
+        # and nothing else noticed, because tsc was disabled on that run.
+        numbering = _strip_line_numbers(replacement.split("\n"))
+        stripped_numbering = numbering is not None
+        if stripped_numbering:
+            replacement = "\n".join(numbering)
         # Match read_file's newline-only numbering (splitlines would also
         # split form feeds / Unicode separators inside a source line).
         parts = before.split("\n")
@@ -1919,6 +1931,12 @@ class ToolExecutor:
         self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
         result = {"status": "modified", "path": args["path"], "replacements": 1,
                   "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
+        if stripped_numbering:
+            result["note"] = (
+                "Your new_text carried read_file's 'NNN| ' line numbers on every "
+                "line; they were stripped before writing. Send the code itself, "
+                "not the numbered display."
+            )
         self._append_write_feedback(result, args["path"], after)
         return result
 

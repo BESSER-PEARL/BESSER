@@ -837,6 +837,20 @@ _HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") =
 # SELECTOR is already told "generate_fastapi_backend includes SQLAlchemy +
 # Pydantic — don't pick those separately", but that guidance never reached the
 # Phase-2 agent; this removes the tools so it CANNOT call them.
+# Generators that produce a WHOLE application. Once one of them has built the
+# scaffold, none of them may run again: re-running the primary regenerates
+# over every edit Phase 2 has made, and a rival stack drops a second
+# application beside the assembled one - the failure the frontend contract's
+# "rival framework imported into the scaffold" check exists to catch.
+# Measured across twelve runs the model never called one, so this removes a
+# risk and ~200 tokens per request rather than a capability it was using.
+# Single-artefact generators (rdf, supabase, java/python classes) stay: a user
+# can legitimately ask for one alongside the app.
+_APPLICATION_PRIMARY_TOOLS = frozenset({
+    "generate_web_app", "generate_django", "generate_flutter",
+    "generate_fastapi_backend", "generate_rest_api",
+})
+
 _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
     "generate_fastapi_backend": {
         "generate_pydantic", "generate_sqlalchemy", "generate_rest_api",

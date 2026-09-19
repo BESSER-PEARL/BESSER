@@ -6,10 +6,17 @@ from besser.BUML.metamodel.structural import DomainModel
 
 
 def is_server_owned_attribute(attribute) -> bool:
-    """Whether backend create/update payloads omit this generated attribute."""
+    """Whether backend create/update payloads omit this generated attribute.
+
+    Covers the surrogate `id`, audit timestamps (createdAt/updatedAt), and any
+    attribute the model marks `is_derived=True` -- a value the server computes,
+    which the client must never be asked to supply on create/update. A declared
+    primary key (`is_id`) is always client-supplied regardless of these checks.
+    """
     return not attribute.is_id and (
         attribute.name == "id"
         or attribute.name.lower().replace("_", "") in {"createdat", "updatedat"}
+        or attribute.is_derived
     )
 
 

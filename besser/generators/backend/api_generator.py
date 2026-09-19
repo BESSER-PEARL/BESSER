@@ -186,7 +186,14 @@ def _make_env() -> Environment:
     )
     env.filters['clean_method_name'] = clean_method_name
     env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
-                       normalize_code=normalize_method_code)
+                       normalize_code=normalize_method_code,
+                       # router.py.j2's _client_supplied used to re-implement
+                       # this and its own comment said it MUST mirror the
+                       # pydantic template's copy. Three copies of one rule is
+                       # how they drift: when the schema learned to exclude
+                       # derived attributes, a stale copy here would have read
+                       # them off the payload and returned 500 on every create.
+                       is_server_owned_attribute=is_server_owned_attribute)
     # Method-parameter defaults are unvalidated request JSON rendered into a
     # FastAPI app that /besser_api/deploy-app runs. Same sink the SQLAlchemy
     # template had: emit literals, never expressions.

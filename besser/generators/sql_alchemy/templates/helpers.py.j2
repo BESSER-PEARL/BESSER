@@ -21,6 +21,22 @@
     {%- if is_pk and attribute.name == 'id' and attribute.type.name in ('str', 'string') and attribute.default_value is none %}, default=_new_str_id{% endif %}
     {%- if unique_needed %}, unique=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
+    {#- A derived attribute is computed by the server, so the client never
+        sends one and the INSERT would otherwise violate NOT NULL. Give it a
+        starting value where the type has an unambiguous zero.
+
+        Enums are deliberately NOT defaulted. There is no zero state to pick:
+        this model declares BookingPhysicalStatus.CHECKED_IN first while the
+        spec says a booking "starts out with the guests not yet arrived", so
+        "use the first literal" would have shipped every new booking already
+        checked in. A modeller who wants an initial state sets an explicit
+        default on the attribute, which this branch then leaves alone. #}
+    {%- if attribute.is_derived and not nullable and not is_pk and attribute.default_value is none %}
+        {%- if attribute.type.name in ('int', 'float') %}, default=0
+        {%- elif attribute.type.name in ('str', 'string') %}, default=""
+        {%- elif attribute.type.name == 'bool' %}, default=False
+        {%- endif %}
+    {%- endif %}
     {#- Server-owned audit timestamps: stamp createdAt/updatedAt on the server
         (and re-stamp updatedAt on every update) so the client never supplies
         them. Only when the user didn't give an explicit default and it isn't a

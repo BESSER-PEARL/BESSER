@@ -52,6 +52,49 @@ _HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches the "Property 'X' not found in context 'Y'" message raised by
+# besser.BUML.notations.ocl.wrapping_visitor when self.X doesn't resolve.
+_MISSING_PROPERTY_RE = re.compile(r"^Property '(?P<name>[^']+)' not found in context\b")
+
+
+def _suggest_property_fix(
+    domain_model: DomainModel, class_name: Optional[str], error_text: str,
+) -> Optional[str]:
+    """Point a failed ``self.X`` at the property it probably meant.
+
+    Covers the one UML gotcha behind most "not found" failures: an
+    association end's role name landed on the wrong end.
+
+    1. ``X`` is the role name on the *other* end of an association that
+       also touches this class (e.g. Guest<->Booking rolled "guests" onto
+       the Booking end, so ``Guest.guests`` exists but ``Booking.guests``
+       doesn't -- ``Booking.guest`` does).
+    2. ``X`` is the naive plural of a many-valued property whose role was
+       left blank and fell back to a singular class-name default (e.g.
+       ``Room.booking`` is 0..* but named singular, so ``self.bookings``
+       fails though ``self.booking`` is the collection).
+
+    Returns the real property name, or ``None`` when nothing matches --
+    most failures are genuinely wrong names and must stay rejected.
+    """
+    match = _MISSING_PROPERTY_RE.match(error_text)
+    if not match or not class_name:
+        return None
+    context_class = next(
+        (t for t in domain_model.types if isinstance(t, Class) and t.name == class_name),
+        None,
+    )
+    if context_class is None:
+        return None
+    missing_name = match.group("name")
+    for end in context_class.all_association_ends():
+        opposite = end.opposite_end()
+        if opposite is not None and opposite.name == missing_name:
+            return end.name
+        if end.multiplicity.max > 1 and missing_name == f"{end.name}s":
+            return end.name
+    return None
+
 
 def _typeref_name(t) -> str:
     """Best-effort BOCL type name for a Property/Parameter type."""
@@ -225,6 +268,9 @@ def process_ocl_constraints(
             kind, constraint, class_name, method_name = parse_constraint_text(line_for_parse, domain_model)
         except BOCLSyntaxError as e:
             reason = f"Warning: Invalid OCL syntax in '{line_for_parse}': {e}"
+            suggestion = _suggest_property_fix(domain_model, details.get("context"), str(e))
+            if suggestion:
+                reason += f" (did you mean 'self.{suggestion}'?)"
             warnings.append(reason)
             if issues is not None:
                 issues.append({**details, "code": "parse_error", "reason": reason})

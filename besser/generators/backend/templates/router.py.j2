@@ -1,11 +1,13 @@
 {%- macro _client_supplied(attr) -%}
 {#- True when the Create/Update schema actually carries this attribute.
-    MUST mirror _is_server_owned in pydantic_classes_template.py.j2: the
-    surrogate `id` and the audit timestamps are stamped by the ORM and are
-    absent from the schema, so reading them off the payload raises
-    AttributeError and every create returns 500. -#}
-{{ not ((attr.name == 'id' and not attr.is_id)
-        or (not attr.is_id and (attr.name | lower | replace('_','')) in ['createdat','updatedat'])) }}
+    Calls the SAME function the schema uses (structural_utils.
+    is_server_owned_attribute) rather than restating the rule: the surrogate
+    `id`, the audit timestamps and any derived attribute are produced by the
+    server and are absent from the schema, so reading one off the payload
+    raises AttributeError and every create returns 500. This macro used to
+    carry its own copy of the rule with a comment saying it must mirror the
+    schema's; the two drifted the moment derived attributes were added. -#}
+{{ not is_server_owned_attribute(attr) }}
 {%- endmacro -%}
 {% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in

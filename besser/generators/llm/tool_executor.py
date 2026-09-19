@@ -289,6 +289,76 @@ def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int]
     return None
 
 
+# The ORM module every router star-imports. Breaking it does not break one
+# file, it takes the whole application down, and the Phase 3 repair loop
+# reaches for it constantly: in run p_qopu92 all five of its edits went here
+# while ten of its blockers named booking_methods.py, and the app went from 7
+# hard blockers to 150. Same shape in iterations 2 (10 -> 45), 10 (2 -> 160)
+# and mbzbzhq9 (shipped dead). The phase rollback caught them, but a whole
+# attempt was wasted each time.
+_STRUCTURAL_MODULES = ("sql_alchemy.py", "pydantic_classes.py")
+_IMPORT_SMOKE_TIMEOUT = 20
+
+
+def _breaks_module_import(path: str, before: str, after: str) -> str | None:
+    """``reason`` when ``after`` makes a structural module unimportable.
+
+    The same contract as ``_new_syntax_error``, one level up: an edit that
+    leaves the file parseable but the module unimportable (a name used before
+    definition, a relationship naming a property that no longer exists) is
+    refused rather than written. Only judged when the module imported BEFORE
+    the edit, so a file that was already broken can still be repaired.
+    """
+    import subprocess
+
+    name = os.path.basename(path)
+    if name not in _STRUCTURAL_MODULES:
+        return None
+    folder = os.path.dirname(path) or "."
+    probe = (f"import {name[:-3]}\n"
+             "try:\n"
+             "    from sqlalchemy.orm import configure_mappers; configure_mappers()\n"
+             "except ImportError:\n"
+             "    pass\n")
+
+    def imports(source: str) -> tuple[bool, str]:
+        original = None
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                original = handle.read()
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(source)
+            result = subprocess.run(
+                [sys.executable, "-c", probe], cwd=folder, capture_output=True,
+                text=True, timeout=_IMPORT_SMOKE_TIMEOUT, env=_safe_subprocess_env(),
+            )
+            return result.returncode == 0, (result.stderr or "").strip().splitlines()[-1:] and \
+                (result.stderr or "").strip().splitlines()[-1] or ""
+        except Exception:
+            # The probe itself failed; never turn that into a refusal.
+            return True, ""
+        finally:
+            if original is not None:
+                with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(original)
+
+    was_ok, _ = imports(before)
+    if not was_ok:
+        return None
+    # Judge what will actually land. A write finishes by repairing a
+    # forgotten framework import, so an edit that only needs `Table` adding
+    # to the sqlalchemy line must not be refused here - the two guards would
+    # otherwise cancel out, the import one winning because it runs first.
+    try:
+        from besser.generators.llm.import_repair import repair_missing_imports
+
+        repaired, _notes = repair_missing_imports(path, after)
+    except Exception:
+        repaired = after
+    now_ok, reason = imports(repaired)
+    return None if now_ok else (reason or "the module no longer imports")
+
+
 def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
     """The lines of ``new`` that differ from ``old``, numbered, with
     ``context`` lines either side."""
@@ -1926,6 +1996,13 @@ class ToolExecutor:
                     "rejection_kind": "syntax_error", "syntax_line": line,
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after),
                     "current_source": "CURRENT ON-DISK CONTENT:\n" + _changed_region(after, before)}
+        unimportable = _breaks_module_import(path, before, after)
+        if unimportable:
+            return {"error": f"Refused: this edit leaves {args['path']} parseable but no longer "
+                             f"importable ({unimportable}). Every router star-imports it, so this "
+                             "would take the whole application down. The file was left unchanged.",
+                    "rejection_kind": "breaks_import",
+                    "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after)}
         with open(path, "w", encoding="utf-8", newline="\n") as target:
             target.write(after)
         self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
@@ -2447,6 +2524,21 @@ class ToolExecutor:
                 + _changed_region(content, new_content),
                 "current_source": "CURRENT ON-DISK CONTENT - unchanged by this refused edit:\n"
                 + _changed_region(new_content, content),
+            }
+
+        unimportable = _breaks_module_import(path, content, new_content)
+        if unimportable:
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            self._note_rejection(rel_path, old_text, new_text)
+            return {
+                "error": (
+                    f"Refused: this edit leaves {args['path']} parseable but no longer "
+                    f"importable ({unimportable}). Every router star-imports it, so this "
+                    "would take the whole application down. The file was left unchanged."
+                ),
+                "rejection_kind": "breaks_import",
+                "would_write": "PROPOSED ONLY - NOT APPLIED:\n"
+                + _changed_region(content, new_content),
             }
 
         # newline="\n": a text-mode write translates "\n" to os.linesep, which

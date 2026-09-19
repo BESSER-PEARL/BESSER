@@ -122,14 +122,19 @@ def test_the_repair_reaches_the_file_through_a_real_edit(tmp_path):
     from besser.generators.llm.tool_executor import ToolExecutor
 
     target = tmp_path / "sql_alchemy.py"
+    # A real declarative base. With `Base = None` this edit is genuinely
+    # unimportable, and the structural-import guard is right to refuse it.
     target.write_text(
-        "from sqlalchemy import Column, Integer\n\nBase = None\n", encoding="utf-8")
+        "from sqlalchemy import Column, Integer\n"
+        "from sqlalchemy.orm import declarative_base\n"
+        "\nBase = declarative_base()\n", encoding="utf-8")
     executor = ToolExecutor(workspace=str(tmp_path))
 
     payload = executor.execute_typed("modify_file", {
         "path": "sql_alchemy.py",
-        "old_text": "Base = None",
-        "new_text": "Base = None\nt = Table('x', Base, Column('id', Integer))",
+        "old_text": "Base = declarative_base()",
+        "new_text": "Base = declarative_base()\n"
+                    "t = Table('x', Base.metadata, Column('id', Integer, primary_key=True))",
     }).payload
 
     assert payload.get("status") == "modified", payload

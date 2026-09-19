@@ -62,6 +62,7 @@ class PydanticGenerator(GeneratorInterface):
             extensions=['jinja2.ext.do']
         )
         env.filters["ascii_identifier"] = ascii_identifier
+        env.globals["is_server_owned_attribute"] = is_server_owned_attribute
         register_default_literals(env)
         template = env.get_template('pydantic_classes_template.py.j2')
 

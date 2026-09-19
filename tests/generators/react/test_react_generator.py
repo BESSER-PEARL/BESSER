@@ -6,7 +6,7 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation, Multiplicity, Enumeration, EnumerationLiteral, BooleanType
 )
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text, DataBinding
-from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, Table
+from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType, Table, FieldColumn
 import besser.generators.react
 from besser.generators.react import ReactGenerator
 
@@ -419,6 +419,84 @@ def test_form_column_without_association_class_unchanged(plain_nm_models):
         "required": False,
     }
     assert all("association_class" not in col for col in form_columns)
+
+
+def _booking_derived_models():
+    """Booking model with a derived `totalPrice` and a plain `reference`
+    attribute -- mirrors the real hotel-app model where totalPrice is
+    computed server-side, not typed in by the client."""
+    reference = Property(name="reference", type=StringType)
+    total_price = Property(name="totalPrice", type=FloatType, is_derived=True)
+    booking = Class(name="Booking", attributes={reference, total_price})
+
+    domain_model = DomainModel(name="BookingDerivedModel", types={booking})
+
+    table = Table(
+        name="BookingTable",
+        title="Bookings",
+        columns=[FieldColumn(label="Total Price", field=total_price)],
+        data_binding=DataBinding(name="booking_binding", domain_concept=booking),
+    )
+    screen = Screen(
+        name="Bookings",
+        description="Booking screen",
+        view_elements={table},
+        is_main_page=True,
+    )
+    module = Module(name="BookingModule", screens={screen})
+    gui_model = GUIModel(
+        name="BookingDerivedApp",
+        package="com.test.booking",
+        versionCode="1",
+        versionName="1.0",
+        modules={module},
+        description="Booking GUI",
+    )
+    return domain_model, gui_model
+
+
+def _table_columns(generator):
+    """Extract the display `chart.columns` of the first table (the read path,
+    as opposed to `chart.formColumns`, the create/edit-form write path)."""
+    payload = json.loads(generator._build_generation_context()["components_json"])
+
+    def walk(nodes):
+        for node in nodes:
+            chart = node.get("chart") or {}
+            if "columns" in chart:
+                return chart["columns"]
+            found = walk(node.get("children") or [])
+            if found is not None:
+                return found
+        return None
+
+    for page in payload.get("pages", []):
+        found = walk(page.get("components", []))
+        if found is not None:
+            return found
+    return []
+
+
+def test_form_columns_exclude_derived_attribute():
+    """FAILS before the fix: totalPrice (is_derived=True) was included as a
+    required editable create-form field -- the generated form literally asked
+    the user to type in a value the system is supposed to compute."""
+    domain_model, gui_model = _booking_derived_models()
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+
+    fields = {col["field"] for col in _form_columns(generator)}
+    assert "reference" in fields
+    assert "totalPrice" not in fields
+
+
+def test_table_display_columns_keep_derived_attribute():
+    """The read/display path (explicit table columns) must still show a
+    derived attribute -- only the create/edit form excludes it."""
+    domain_model, gui_model = _booking_derived_models()
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model)
+
+    fields = {col["field"] for col in _table_columns(generator)}
+    assert "totalPrice" in fields
 
 
 def test_generated_page_embeds_association_class_metadata(assoc_class_models, tmp_path):

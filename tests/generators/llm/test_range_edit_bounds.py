@@ -145,3 +145,42 @@ def test_an_ordinary_out_of_range_selection_gets_no_off_by_one_hint(executor):
 
     assert result["rejection_kind"] == "unread_range"
     assert "0-based skip" not in result["error"]
+
+
+def test_the_ladder_goes_back_to_text_when_range_edits_keep_failing(executor):
+    """modify_file lands 86-92%; replace_file_lines 15-43%. The rescue tool is
+    now the weaker one, and run se7k3zbx spent 17 of 20 range edits failing
+    while the ladder steered back into it 29 times."""
+    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+        result = _failing_range_edit(executor)
+
+    assert result["edit_recovery"]["next_tool"] == "modify_file"
+    assert "smallest unique old_text" in result["edit_recovery"]["instruction"].lower()
+
+
+def test_a_read_stops_advertising_range_edits_once_they_are_exhausted(executor):
+    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+        _failing_range_edit(executor)
+
+    read = call(executor, "read_file", path="app.py", offset=1, limit=2)
+
+    assert read.get("edit_recovery", {}).get("next_tool") != "replace_file_lines"
+
+
+def test_one_success_re_enables_the_range_editor(executor):
+    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+        _failing_range_edit(executor)
+    read = call(executor, "read_file", path="app.py", offset=1, limit=2)
+    call(executor, "replace_file_lines", path="app.py", read_id=read["read_id"],
+         start_line=2, end_line=3, new_text="async def action():\n    return True\n")
+
+    assert executor._range_edit_failures.get("app.py") is None
+
+
+def test_two_failures_still_steer_toward_the_range_editor(executor):
+    """The forward ladder is what fixed the 0%-edit runs; keep it."""
+    for _ in range(2):
+        _failing_range_edit(executor)
+    read = call(executor, "read_file", path="app.py", offset=1, limit=2)
+
+    assert read["edit_recovery"]["next_tool"] == "replace_file_lines"

@@ -393,6 +393,9 @@ class ToolExecutor:
         self._read_counts: dict[str, int] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
         self._edit_recovery: dict[str, int] = {}
+        # Range-edit refusals per path; past _RANGE_EDIT_GIVE_UP the
+        # ladder stops steering this file toward replace_file_lines.
+        self._range_edit_failures: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
         self.api_tester = None
         # When True (weak / free-tier models only), the deterministic Phase-1
@@ -1567,9 +1570,19 @@ class ToolExecutor:
 
         return result
 
+    # Consecutive range-edit refusals on one path before the ladder sends the
+    # model back to text matching. Pooled over six live Qwen runs modify_file
+    # lands 86-92% while replace_file_lines lands 15-43%: the tool added to
+    # rescue a broken modify_file is now the weaker one. Run se7k3zbx spent 17
+    # of 20 range edits failing, 11 of them refused by the syntax guard on one
+    # Python file, while the ladder kept steering back into it 29 times.
+    _RANGE_EDIT_GIVE_UP = 3
+
     def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
         """Change strategy after two refusals, in every orchestration phase.
 
+        The ladder runs both ways: quoting text, then a revision-bound range
+        edit, then back to quoting when the range edit is the thing failing.
         Keep this in the typed execution path so a reworded/no-op/ambiguous
         failure cannot escape recovery. A read does not count as a write.
         """
@@ -1579,6 +1592,7 @@ class ToolExecutor:
                 self._edit_recovery.pop(path, None)
                 self._failed_modifies.pop(path, None)
                 self._last_missed_old_text.pop(path, None)
+                self._range_edit_failures.pop(path, None)
                 self._clear_rejections(path)
                 self.last_repeat = None
             elif (tool in {"modify_file", "replace_file_lines"}
@@ -1595,9 +1609,11 @@ class ToolExecutor:
                         path, f"lines {args.get('start_line')}-{args.get('end_line')}",
                         args.get("new_text") or "",
                     )
+                    self._range_edit_failures[path] = self._range_edit_failures.get(path, 0) + 1
         if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
             return
-        if tool == "read_file" and "read_id" in result:
+        exhausted = self._range_edit_failures.get(path, 0) >= self._RANGE_EDIT_GIVE_UP
+        if tool == "read_file" and "read_id" in result and not exhausted:
             result["edit_recovery"] = {
                 "next_tool": "replace_file_lines", "path": path,
                 "read_id": result["read_id"],
@@ -1605,12 +1621,22 @@ class ToolExecutor:
                                "Do not quote old_text again. Keep surrounding code unchanged; a read is not an implementation.",
             }
         elif tool in {"modify_file", "replace_file_lines"} and self._result_status(result) == "error":
-            result["edit_recovery"] = {
-                "next_tool": "read_file", "path": path,
-                "instruction": "Read the target function/block with offset/limit, then use replace_file_lines with its "
-                               "read_id and line numbers. Stop retrying the same text replacement. "
-                               "No rejected edit was applied; do not mark the requirement done.",
-            }
+            if exhausted:
+                result["edit_recovery"] = {
+                    "next_tool": "modify_file", "path": path,
+                    "instruction": "Range edits on this file keep being refused, so stop using them here. "
+                                   "Go back to modify_file with the SMALLEST unique old_text that "
+                                   "brackets your change - one or two lines copied from the latest "
+                                   "read - instead of rewriting a whole block. No rejected edit was "
+                                   "applied; do not mark the requirement done.",
+                }
+            else:
+                result["edit_recovery"] = {
+                    "next_tool": "read_file", "path": path,
+                    "instruction": "Read the target function/block with offset/limit, then use replace_file_lines with its "
+                                   "read_id and line numbers. Stop retrying the same text replacement. "
+                                   "No rejected edit was applied; do not mark the requirement done.",
+                }
 
     def _replace_file_lines(self, args: dict) -> dict:
         """Replace a deliberately selected range from an unchanged, visible read.

@@ -3670,7 +3670,7 @@ class LLMOrchestrator:
 
         execution = self.executor.execute_typed(tool_name, block.input)
         recovery = execution.payload.get("edit_recovery", {})
-        if recovery.get("next_tool") in {"read_file", "replace_file_lines"}:
+        if recovery.get("next_tool") in {"read_file", "replace_file_lines", "modify_file"}:
             self._force_tool_next = recovery["next_tool"]
         result = execution.to_json()
         success = execution.succeeded

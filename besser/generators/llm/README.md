@@ -51,6 +51,7 @@ paths so a test's descriptive name is not mistaken for exercising those paths.
 | Shared subprocess environment | `execution/process.py` |
 | Shared findings and source contracts | `validation/issues.py`, `validation/python_source.py`, `validation/frontend_schema.py`, `validation/frontend_build.py` |
 | Immediate source/model contracts | `write_diagnostics.py`, `contract_checks.py`, `frontend_bindings.py`, `endpoint_coherence.py` |
+| Deterministic repair (no model, no LLM) | `import_repair.py`, `scaffold_repair.py` |
 | Runtime probes | `constructibility.py`, `api_probe.py` |
 | Requirements and scoped acceptance | `requirements_ledger.py`, `acceptance.py`, `fix_target.py` |
 | Persistence, tracing, context | `checkpoint.py`, `tracing.py`, `compaction.py`, `history_eviction.py`, `errors.py` |

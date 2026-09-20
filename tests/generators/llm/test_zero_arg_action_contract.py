@@ -196,6 +196,35 @@ def test_a_conditional_read_falling_back_to_a_value_is_accepted():
     )) == []
 
 
+def test_a_refusal_dressed_as_http_200_is_still_a_demand():
+    """gpt-5.6-terra-053ydac9, the run made to confirm this very fix.
+
+    It answers the empty body with 200 and {"success": false, "message": "An
+    extended dueDate is required"}, leaving dueDate untouched. The button is
+    as dead as on a 422, and both the check and the case oracle scored it a
+    pass while it did nothing.
+    """
+    messages = _messages(_handler(
+        '    payload = params or {}\n'
+        '    raw_due_date = payload.get("dueDate") or payload.get("due_date")\n'
+        "    if not raw_due_date:\n"
+        '        return {"success": False, "message": "An extended dueDate is required"}\n'
+        "    return {\"success\": True}\n"
+    ))
+    assert len(messages) == 1
+    assert "dueDate" in messages[0]
+
+
+def test_a_state_refusal_returning_success_false_is_accepted():
+    """The modelled return type is bool; refusing on state is correct."""
+    assert _messages(_handler(
+        "    if _loan.status != LoanStatus.ACTIVE:\n"
+        '        return {"success": False, "message": "Only an active loan can be renewed"}\n'
+        "    _loan.dueDate = _loan.dueDate + timedelta(days=14)\n"
+        "    return {\"success\": True}\n"
+    )) == []
+
+
 def test_a_subscript_read_of_the_body_is_a_demand():
     assert len(_messages(_handler(
         '    _loan.dueDate = params["dueDate"]\n    return {"success": True}\n'

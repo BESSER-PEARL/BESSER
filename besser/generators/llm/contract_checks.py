@@ -279,6 +279,32 @@ def _is_4xx_raise(node) -> bool:
     return isinstance(status, ast.Constant) and status.value in (400, 422)
 
 
+_FAILURE_KEYS = frozenset({"success", "succeeded", "ok", "result", "renewed"})
+
+
+def _is_failure_return(node) -> bool:
+    """``return {"success": False, ...}`` - a refusal dressed as HTTP 200.
+
+    gpt-5.6-terra-053ydac9 answers the empty body with 200 and
+    ``{"success": false, "message": "An extended dueDate is required"}``,
+    leaving dueDate untouched. The button is just as dead as on a 422, and
+    a status-code-only reading scores it as a pass.
+    """
+    if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Dict):
+        return False
+    for key, value in zip(node.value.keys, node.value.values):
+        if isinstance(key, ast.Constant) and key.value in _FAILURE_KEYS \
+                and isinstance(value, ast.Constant) and value.value is False:
+            return True
+    return False
+
+
+def _refuses(statements) -> bool:
+    """A branch that ends the call without doing the work."""
+    return any(_is_4xx_raise(node) or _is_failure_return(node)
+               for statement in statements for node in ast.walk(statement))
+
+
 def _reads_body(node) -> bool:
     """`params`, and the `(params or {})` / `params or {}` wrappers."""
     return any(isinstance(n, ast.Name) and n.id in _BODY_NAMES for n in ast.walk(node))
@@ -384,10 +410,9 @@ def _demanded_values(function, route: str) -> list:
         if isinstance(node, ast.Subscript) and _reads_body(node.value) \
                 and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
             keys.append(node.slice.value)
-        # `if not <key>: raise 4xx` - the key is required in all but name.
-        # Only the branch taken when the key is missing counts.
-        if isinstance(node, ast.If) and any(
-                _is_4xx_raise(s) for stmt in node.body for s in ast.walk(stmt)):
+        # `if not <key>: raise 4xx` (or return success=False) - the key is
+        # required in all but name. Only the missing-key branch counts.
+        if isinstance(node, ast.If) and _refuses(node.body):
             keys.extend(_absence_keys(node.test, bound))
 
     for key in keys:

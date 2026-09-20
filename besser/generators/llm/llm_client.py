@@ -22,6 +22,12 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from besser.generators.llm.errors import InvalidApiKeyError, UpstreamLLMError
+from besser.generators.llm.model_settings import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    max_output_tokens,
+    reasoning_effort_for_tools,
+    sampling_kwargs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -657,7 +663,7 @@ class ClaudeLLMClient(LLMProvider):
     """
 
     DEFAULT_MODEL = "claude-sonnet-4-6"
-    DEFAULT_MAX_TOKENS = 16384
+    DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
 
     PLANNING_MODEL = "claude-haiku-4-5"
 
@@ -687,7 +693,7 @@ class ClaudeLLMClient(LLMProvider):
 
         self._client = anthropic.Anthropic(**client_kwargs)
         self._model = model or self.DEFAULT_MODEL
-        self._max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
+        self._max_tokens = max_tokens or max_output_tokens(self._model)
         self._usage = UsageTracker(self._model)
 
     @property
@@ -930,10 +936,13 @@ def _needs_reasoning_none_for_tools(model: str, base_url: str | None = None) -> 
     The test is the HOST, not merely "a base_url was passed": the sponsored
     tier always sets one (endpoint lives in server env), so pointing it at
     api.openai.com would otherwise suppress the flag and break every tool call.
+
+    The model half of this decision lives in ``model_settings``; the endpoint
+    gate stays here because it is not a property of the model.
     """
     if base_url and not _is_official_openai_base_url(base_url):
         return False
-    return "gpt-5.6" in model.lower()
+    return reasoning_effort_for_tools(model) is not None
 
 
 def _is_official_openai_base_url(base_url: str) -> bool:
@@ -1197,7 +1206,7 @@ class OpenAIProvider(LLMProvider):
     """
 
     DEFAULT_MODEL = "gpt-4o"
-    DEFAULT_MAX_TOKENS = 16384
+    DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
     PLANNING_MODEL = "gpt-4o-mini"
 
     def __init__(
@@ -1233,7 +1242,7 @@ class OpenAIProvider(LLMProvider):
         # model-specific — see _needs_reasoning_none_for_tools.
         self._base_url = resolved_base
         self._model = model or self.DEFAULT_MODEL
-        self._max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
+        self._max_tokens = max_tokens or max_output_tokens(self._model)
         self._usage = UsageTracker(self._model)
         # Ordered fallback chain, used when the primary endpoint stays
         # unavailable past the retry budget. The switch is sticky for the run so
@@ -1339,6 +1348,11 @@ class OpenAIProvider(LLMProvider):
                     tok_key: self._max_tokens,
                     "messages": api_messages,
                 }
+                # Per-model sampling. Empty for every model not in the
+                # registry, so the request is unchanged for those. Keyed on
+                # the model actually being called, which on a planning turn
+                # is the cheap override, not self._model.
+                kwargs.update(sampling_kwargs(effective_model))
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     if force_tool:
@@ -1350,7 +1364,9 @@ class OpenAIProvider(LLMProvider):
                     # on chat/completions — disable reasoning so tools work.
                     if _needs_reasoning_none_for_tools(
                             effective_model, self._base_url):
-                        kwargs["reasoning_effort"] = "none"
+                        kwargs["reasoning_effort"] = reasoning_effort_for_tools(
+                            effective_model
+                        )
 
                 response = self._client.chat.completions.create(**kwargs)
 
@@ -1430,13 +1446,17 @@ class OpenAIProvider(LLMProvider):
                     # restores per-turn cost tracking.
                     "stream_options": {"include_usage": True},
                 }
+                # Per-model sampling; empty for models not in the registry.
+                kwargs.update(sampling_kwargs(self._model))
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     # gpt-5.6 reasoning models can't combine tools + reasoning
                     # on chat/completions — disable reasoning so tools work.
                     if _needs_reasoning_none_for_tools(
                             self._model, self._base_url):
-                        kwargs["reasoning_effort"] = "none"
+                        kwargs["reasoning_effort"] = reasoning_effort_for_tools(
+                            self._model
+                        )
 
                 collected_text = ""
                 tool_calls_accum: dict[int, dict] = {}
@@ -1588,7 +1608,7 @@ class MistralProvider(OpenAIProvider):
     """
 
     DEFAULT_MODEL = "mistral-large-latest"
-    DEFAULT_MAX_TOKENS = 16384
+    DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
     # Mistral's small model is a cheap sibling suitable for one-shot
     # planning calls. Like the other providers this is overridable via
     # ``BESSER_LLM_PLANNING_MODEL`` (set to ``primary`` to disable).
@@ -1669,7 +1689,7 @@ class NebiusProvider(OpenAIProvider):
     """
 
     DEFAULT_MODEL = "Qwen/Qwen3-30B-A3B-Instruct-2507"
-    DEFAULT_MAX_TOKENS = 16384
+    DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
     # No cheap sibling: the default is already a small-activation MoE
     # (3B active of 30B), so routing planning calls elsewhere buys nothing
     # and a wrong id costs two failing round-trips per gap analysis.

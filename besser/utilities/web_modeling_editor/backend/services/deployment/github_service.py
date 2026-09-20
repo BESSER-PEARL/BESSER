@@ -6,12 +6,15 @@ Handles creating GitHub repositories and pushing generated code.
 
 import base64
 import io
+import logging
 import os
 import shutil
 import tarfile
 import tempfile
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 import httpx
 
 
@@ -54,6 +57,17 @@ class GitHubService:
     # of files and hundreds of MB into the process.
     _DEFAULT_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024  # 100 MB
 
+    # Companion cap on the *uncompressed* tree. The cap above bounds the
+    # download, not the expansion: 100 MB of gzip holds ~100 GB. Source gzips
+    # 3-5x, so 5x the compressed cap is the lowest ceiling that still admits
+    # every archive the download already accepted.
+    _DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024  # 500 MB
+
+    # Companion cap on member count. Empty files weigh nothing against the
+    # byte cap but still cost an inode each, and the extracted tree is copied
+    # again as a run seed and again into the packaging zip.
+    _DEFAULT_MAX_ARCHIVE_MEMBERS = 50_000
+
     async def download_repo_tarball(
         self,
         owner: str,
@@ -71,7 +85,8 @@ class GitHubService:
 
         The archive is streamed with a hard size cap (``max_archive_bytes``,
         default 100 MB) so a committed dependency directory can't blow up
-        the process. GitHub wraps the whole repo under a single top-level
+        the process; extraction applies the companion uncompressed-size and
+        member-count caps. GitHub wraps the whole repo under a single top-level
         ``{owner}-{repo}-{sha}/`` directory; that wrapper is stripped during
         extraction so the returned path *is* the repo root.
 
@@ -117,7 +132,12 @@ class GitHubService:
         return extract_root
 
     @staticmethod
-    def _extract_tarball_stripping_root(tar: tarfile.TarFile, dest_dir: str) -> None:
+    def _extract_tarball_stripping_root(
+        tar: tarfile.TarFile,
+        dest_dir: str,
+        max_extracted_bytes: int = _DEFAULT_MAX_EXTRACTED_BYTES,
+        max_members: int = _DEFAULT_MAX_ARCHIVE_MEMBERS,
+    ) -> None:
         """Extract ``tar`` into ``dest_dir``, stripping the single top-level dir.
 
         GitHub tarballs nest everything under one ``{owner}-{repo}-{sha}/``
@@ -125,10 +145,18 @@ class GitHubService:
         the repo root. Path-traversal entries (``..`` / absolute paths) are
         rejected, and non-regular members (symlinks, hardlinks, devices)
         are skipped so a crafted archive cannot write outside ``dest_dir``.
+
+        The download cap is on *compressed* bytes, so this scan also totals
+        the declared uncompressed sizes and counts the members it keeps.
+        Both are checked before ``extractall``, so an over-limit archive
+        writes nothing.
         """
         dest_abs = os.path.abspath(dest_dir)
         safe_members = []
-        for member in tar.getmembers():
+        extracted_bytes = 0
+        # Iterate lazily: a member-count explosion aborts before the whole
+        # member list is materialised.
+        for member in tar:
             # Drop the leading ``{owner}-{repo}-{sha}/`` component.
             parts = member.name.split("/", 1)
             if len(parts) == 1:
@@ -144,6 +172,23 @@ class GitHubService:
             if target != dest_abs and not target.startswith(dest_abs + os.sep):
                 raise ValueError(
                     f"Unsafe path in repository archive: {member.name!r}"
+                )
+            if len(safe_members) >= max_members:
+                raise ValueError(
+                    f"This repository holds more than {max_members:,} files, "
+                    "more than BESSER can import. Remove committed dependency "
+                    "or build directories (node_modules, target, dist) and "
+                    "import again."
+                )
+            extracted_bytes += member.size
+            if extracted_bytes > max_extracted_bytes:
+                raise ValueError(
+                    "This repository unpacks to more than "
+                    f"{max_extracted_bytes // (1024 * 1024)} MB, more than "
+                    "BESSER can import (the limit was reached at "
+                    f"{relative!r}). Remove large files or committed "
+                    "dependency directories (node_modules, target, dist) "
+                    "and import again."
                 )
             member.name = relative
             safe_members.append(member)

@@ -95,6 +95,11 @@ ACTION_UNVERIFIED_PREFIX = "action unverified:"
 _PROBE_TIMEOUT_SECONDS = 90
 _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
 _ACTIONS_ENV = "BESSER_PROBE_MODEL_ACTIONS"
+# Entities the MODEL marks abstract. A generated router is right to refuse to
+# instantiate one ("Person is abstract; create a Patron or Librarian
+# instead"), so POSTing to it manufactures a blocker no repair can clear:
+# gpt-5.6-terra-hzllh0l6 spent 17 rounds, 108 turns and $0.96 on exactly that.
+_ABSTRACT_ENV = "BESSER_PROBE_ABSTRACT_ENTITIES"
 _SKIP_DIRS = frozenset({
     "node_modules", "__pycache__", ".besser_snapshot", "dist", "build", "data",
 })
@@ -123,11 +128,12 @@ def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     from besser.generators.llm.execution.process import _safe_subprocess_env
 
     model_actions = _model_actions(domain_model)
+    abstract = _abstract_entities(domain_model)
     issues: list[str] = []
     backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
         rel = os.path.relpath(folder, output_dir).replace("\\", "/")
-        report = _run_probe(folder, _safe_subprocess_env(), model_actions)
+        report = _run_probe(folder, _safe_subprocess_env(), model_actions, abstract)
         issues.extend(_issues_from_report(report, rel))
         backends.append({"backend": rel, **report})
     return {"issues": issues, "backends": backends}
@@ -136,6 +142,24 @@ def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
 def collect_constructibility_issues(output_dir: str, domain_model=None) -> list[str]:
     """Observed server defects and explicit gaps in create-route verification."""
     return collect_constructibility_report(output_dir, domain_model)["issues"]
+
+
+def _abstract_entities(domain_model) -> list[str]:
+    """Class names the model marks ``is_abstract``.
+
+    Read defensively: an older serializer, or a model with no such notion,
+    yields an empty list and the probe behaves exactly as before.
+    """
+    if domain_model is None:
+        return []
+    try:
+        return sorted(
+            cls.name for cls in domain_model.get_classes()
+            if getattr(cls, "is_abstract", False)
+        )
+    except Exception:
+        logger.debug("constructibility probe: abstract classes unreadable", exc_info=True)
+        return []
 
 
 def _model_actions(domain_model) -> dict:
@@ -199,7 +223,8 @@ def _fastapi_backends(output_dir: str) -> list[str]:
     return found
 
 
-def _run_probe(folder: str, env: dict, model_actions: dict | None = None) -> dict:
+def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
+               abstract_entities: list[str] | None = None) -> dict:
     """Execute the child on a scratch copy of ``folder``; never raises."""
     work = tempfile.mkdtemp(prefix="besser_probe_")
     try:
@@ -218,6 +243,8 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None) -> dic
                 env[_ACTIONS_ENV] = actions_path
             except (OSError, TypeError, ValueError):
                 logger.debug("constructibility probe: modelled actions not passed", exc_info=True)
+        if abstract_entities:
+            env[_ABSTRACT_ENV] = ",".join(abstract_entities)
         try:
             result = subprocess.run(
                 [sys.executable, os.path.abspath(__file__)],
@@ -1225,12 +1252,21 @@ def _probe_cwd() -> dict:
                 subclasses.setdefault(base.__name__, []).append(name)
 
     creates: dict = {}
+    abstract = {name.strip() for name in
+                (os.environ.get(_ABSTRACT_ENV) or "").split(",") if name.strip()}
+    skipped_abstract: list = []
     for path, ops in spec.get("paths", {}).items():
         body = (ops.get("post") or {}).get("requestBody", {})
         ref = body.get("content", {}).get("application/json", {}).get("schema", {}).get("$ref", "")
         if ref.endswith("Create") and ref.rsplit("/", 1)[-1] in schemas:
             schema_name = ref.rsplit("/", 1)[-1]
-            creates[schema_name[: -len("Create")]] = (path, schema_name)
+            entity = schema_name[: -len("Create")]
+            if entity in abstract:
+                # Refusing to instantiate it is the correct behaviour; a
+                # concrete subclass carries the same rows.
+                skipped_abstract.append(entity)
+                continue
+            creates[entity] = (path, schema_name)
 
     import asyncio
 
@@ -1367,7 +1403,10 @@ def _probe_cwd() -> dict:
     except Exception as exc:
         return {"boot": "probe_error", "error": f"{type(exc).__name__}: {exc}"[:300]}
     return {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
-            "action_calls": result["action_calls"]}
+            "action_calls": result["action_calls"],
+            # Named so a reader can tell "not probed because the model says
+            # it is abstract" from "probed and passed".
+            "skipped_abstract": sorted(set(skipped_abstract))}
 
 
 if __name__ == "__main__":

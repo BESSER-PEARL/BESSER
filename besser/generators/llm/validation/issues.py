@@ -31,11 +31,21 @@ class ValidationIssue:
 
 
 def _hard_blockers(issues: list) -> list:
-    """Blockers from deterministic checks - everything but the requirements
-    ledger's ``requirement:`` verdicts, which an LLM judge produces."""
+    """Blockers from deterministic checks that OBSERVED a failure.
+
+    Excluded: the requirements ledger's ``requirement:`` verdicts, which an
+    LLM judge produces, and the ``unverified`` family, whose own text says a
+    guessed request being refused "does not prove this endpoint is broken".
+    They stay blockers - an unverified app is not a verified one - but they
+    may not rank one tree above another or force a rollback, because we do
+    not know that they describe a defect. Run gpt-5.6-terra-hzllh0l6 pinned
+    one of these at 1 blocker for 17 zero-write repair rounds, 108 turns and
+    $0.96: the app was correctly refusing to create an ABSTRACT entity.
+    """
     return [i for i in issues if not i.message.startswith((
         "requirement:", "requirement unverified:",
         "requirement partial:", "task unverified:",
+        "runtime unverified:", "create unverified:",
     ))]
 
 

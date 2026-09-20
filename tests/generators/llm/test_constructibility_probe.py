@@ -37,6 +37,7 @@ from besser.generators.llm.constructibility import (
     _run_probe,
     _sample,
     collect_constructibility_issues,
+    collect_constructibility_report,
 )
 from besser.generators.llm.execution.process import _safe_subprocess_env
 from besser.generators.llm.orchestrator import LLMOrchestrator, ValidationIssue, _classify_issue
@@ -480,3 +481,63 @@ def test_a_create_handler_that_dials_out_is_blocked_inside_the_probe(tmp_path):
     [issue] = [i for i in issues if "POST /room/" in i]
     assert issue.startswith(f"{PREFIX} web_app/backend: POST /room/ -")
     assert "outbound network access blocked" in issue
+
+
+# --------------------------------------------------- abstract entities
+
+def _abstract_scaffold(tmp_path):
+    """A backend whose ``Person`` is ABSTRACT, with a concrete ``Patron``.
+
+    Returns ``(workspace, model)``. The generated create route for Person is
+    then guarded exactly as a real one is: it refuses, with the reason.
+    """
+    import re as _re
+
+    from besser.BUML.metamodel.structural import (
+        Class, DomainModel, Generalization, Property, StringType,
+    )
+    from besser.generators.backend import BackendGenerator
+
+    person = Class(name="Person", attributes={Property(name="fullName", type=StringType)},
+                   is_abstract=True)
+    patron = Class(name="Patron", attributes={Property(name="cardNumber", type=StringType)})
+    model = DomainModel(
+        name="Library", types={person, patron},
+        generalizations={Generalization(general=person, specific=patron)},
+    )
+    BackendGenerator(model=model, output_dir=str(tmp_path / "web_app" / "backend")).generate()
+    router = tmp_path / "web_app" / "backend" / "routers" / "person.py"
+    text = router.read_text(encoding="utf-8")
+    head = _re.search(r"async def create_person\(.*\n", text).group(0)
+    guarded = head + (
+        '    raise HTTPException(status_code=422, '
+        'detail="Person is abstract; create a Patron instead")\n'
+    )
+    router.write_text(text.replace(head, guarded, 1), encoding="utf-8")
+    return str(tmp_path), model
+
+
+def test_an_abstract_entity_is_not_probed_for_construction(tmp_path):
+    """A router that refuses to instantiate an abstract class is CORRECT, and
+    POSTing to it manufactures a blocker no repair can clear.
+
+    Walked end to end on run gpt-5.6-terra-hzllh0l6: the project marks
+    ``Person`` abstract, the generated router answers
+    ``422 Person is abstract; create a Patron or Librarian instead``, and the
+    recipe's sole remaining blocker was the probe's own guessed POST being
+    refused. 17 Phase 3 rounds, every one zero writes, 108 turns, $0.96,
+    blockers pinned at 1 throughout. Without the model the probe cannot know,
+    so the finding still appears - that is the control below.
+    """
+    workspace, model = _abstract_scaffold(tmp_path)
+
+    blind = collect_constructibility_issues(workspace)
+    assert any("/person" in issue.lower() for issue in blind), (
+        "control: with no model to read, the refusal is still reported"
+    )
+
+    informed = collect_constructibility_report(workspace, model)
+    assert not [i for i in informed["issues"] if "/person" in i.lower()], informed["issues"]
+    assert informed["backends"][0].get("skipped_abstract") == ["Person"]
+    # The concrete subclass is still probed.
+    assert "Patron" in (informed["backends"][0].get("entities") or {})

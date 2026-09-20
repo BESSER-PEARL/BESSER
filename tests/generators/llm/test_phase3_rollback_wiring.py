@@ -56,6 +56,16 @@ def test_a_worse_phase3_is_rolled_back(orchestrator, monkeypatch):
 
 
 def test_the_discarded_findings_are_still_reported(orchestrator, monkeypatch):
+    """And ONLY the discarded ones.
+
+    The note is the text a human reads to decide whether the rollback hid a
+    real defect, so it has to name what the discarded tree added. It used to
+    print the whole final blocker list: on one run on disk its three
+    "discarded" findings - no frontend directory at all, ``undefined name
+    'ids'``, a 409 on ``POST /orderline/`` - all described the tree that
+    SHIPPED. Here defects 0-10 are in both trees and 11-44 only in the
+    discarded one.
+    """
     monkeypatch.setattr(orchestrator, "_restore_snapshot", lambda: True)
     monkeypatch.setattr(orchestrator, "_collect_validation_issues",
                         lambda: _blockers(11))
@@ -66,7 +76,9 @@ def test_the_discarded_findings_are_still_reported(orchestrator, monkeypatch):
              if "rolled back" in i.message]
     assert len(notes) == 1
     assert "45 hard blockers against 11" in notes[0]
-    assert "defect 0" in notes[0], "the discarded findings must survive the rollback"
+    assert "defect 11" in notes[0], "the discarded findings must survive the rollback"
+    assert "defect 0;" not in notes[0], "a finding the shipped tree still has is not discarded"
+    assert "more not listed" in notes[0], "a truncated list must say that it is truncated"
 
 
 def test_an_improved_phase3_is_kept(orchestrator, monkeypatch):

@@ -59,6 +59,7 @@ from besser.generators.llm.scaffold_repair import (
     _is_dockerfile,
     _project_has_npm_lockfile,
     _strip_missing_lockfile_copy,
+    ensure_frontend_scaffold,
 )
 from besser.generators.llm.checkpoint import (
     CHECKPOINT_FILENAME,
@@ -3511,9 +3512,25 @@ class LLMOrchestrator:
         return reason
 
     def _repair_obligations_revision(self) -> str:
-        """Test corrections and checklist evidence are progress without source edits."""
-        payload = {"tasks": self.executor.task_snapshot(),
-                   "scenarios": [record["scenario"] for record in self._api_scenarios.values()]}
+        """Test corrections and checklist evidence are progress without source edits.
+
+        Two things deliberately do NOT move it, because both moved it without
+        anything being discharged and so reset the no-progress streak:
+
+        * ``attempts`` in the task snapshot - a REFUSED ``task_list(done=...)``
+          increments it, so failing to close an item read as closing one;
+        * the scenario KEY - the model may pass its own ``scenario_id``, so
+          re-registering identical requests under a new name minted a new
+          entry. Only distinct scenario CONTENT counts, so a rename is not a
+          new obligation. 84 rounds across 65 runs survived on these two.
+        """
+        tasks = [{k: v for k, v in task.items() if k != "attempts"}
+                 for task in self.executor.task_snapshot()]
+        scenarios = sorted(
+            json.dumps(record["scenario"], sort_keys=True)
+            for record in self._api_scenarios.values()
+        )
+        payload = {"tasks": tasks, "scenarios": sorted(set(scenarios))}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     def _with_model_contract(
@@ -3885,7 +3902,8 @@ class LLMOrchestrator:
         # or by exhausting the attempt cap. Record whatever the final
         # state is so the recipe surfaces it.
         self._phase3_exit_reason = exit_reason
-        if self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed):
+        if self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed,
+                                          entry_score=best_score):
             last_issues = list(self._validation_issues)
         else:
             self._validation_issues = self._with_model_contract(last_issues)
@@ -4044,6 +4062,7 @@ class LLMOrchestrator:
         self, entry_blockers: list[ValidationIssue],
         final_issues: list[ValidationIssue],
         source_changed: bool,
+        entry_score: tuple[int, int, int, int] | None = None,
     ) -> bool:
         """Ship the pre-Phase-3 tree when repair ended worse than it began.
 
@@ -4075,7 +4094,20 @@ class LLMOrchestrator:
         # callable) and only then on the hard count - see _phase3_tree_score.
         # ``entry_blockers`` is the BEST state reached, which is what the
         # snapshot now holds, not necessarily the Phase 3 entry state.
-        entry_score = self._phase3_tree_score(entry_blockers)
+        #
+        # The score MUST be the one computed while that tree was the tree on
+        # disk. _phase3_tree_score reads ``_runtime_probe_facts``, and by the
+        # time we get here those facts describe the FINAL tree: recomputing
+        # the entry score here gave both trees the same middle two components
+        # (entities not created, actions not effective), they cancelled, and
+        # the comparison collapsed to (boot, hard count) - the component this
+        # ranking exists to demote. A repair that broke three entity creates
+        # and removed one hard blocker then scored as an improvement and
+        # shipped. Callers inside the repair loop pass ``best_score``;
+        # ``None`` means "no probe has measured a different tree since", which
+        # only holds for a direct call.
+        if entry_score is None:
+            entry_score = self._phase3_tree_score(entry_blockers)
         final_score = self._phase3_tree_score(final_blockers)
         # A count cannot see a TRADE. Run mbzbzhq9 held 13 blockers flat across
         # six attempts while swapping a hard blocker for a broken ORM mapper,
@@ -4114,14 +4146,24 @@ class LLMOrchestrator:
                 "item(s), now reopened: %s", len(reopened), reopened,
             )
         restored = self._collect_validation_issues()
-        discarded = sorted({i.message for i in final_blockers})[:10]
+        # Only what the DISCARDED tree added. Printing the whole final set
+        # listed findings that describe the tree that just shipped - the one
+        # text a human reads to decide whether the rollback hid a real defect,
+        # naming defects it did not hide.
+        kept = {i.message for i in entry_blockers}
+        only_in_discarded = sorted({i.message for i in final_blockers} - kept)
+        discarded = only_in_discarded[:10]
+        more = (f" (+{len(only_in_discarded) - len(discarded)} more not listed)"
+                if len(only_in_discarded) > len(discarded) else "")
+        seen_only = ("; ".join(discarded) + more if discarded
+                     else "none - every finding in the discarded tree is also in this one")
         undone = (f" The restore also undid completed work: {len(reopened)} checklist "
                   f"item(s) verified during the repair are open again." if reopened else "")
         self._validation_issues = self._with_model_contract(restored) + [_classify_issue(
             "validation: the Phase 3 repair was rolled back - it ended with "
             f"{final_hard} hard blockers against {entry_hard} on entry, so the "
             f"pre-repair output is what ships.{undone} Findings seen only in the "
-            "discarded tree (they may still be real): " + "; ".join(discarded)
+            "discarded tree (they may still be real): " + seen_only
         )]
         restored_blockers = [i for i in restored if i.severity == "blocker"]
         self._trace.write(
@@ -4780,6 +4822,17 @@ class LLMOrchestrator:
         Phase 3 fix loop only acts on ``blocker`` items when
         ``auto_fix_issues`` is enabled.
         """
+        # Repair the build configuration BEFORE looking for defects in it.
+        # The class-only path never asks the model for a Vite config: across
+        # 192 recorded class-only runs, 192 had none and 96 also had a JSX
+        # file with no React import, which is a guaranteed blank page. This
+        # writes the config (with @vitejs/plugin-react, which is also what
+        # makes the missing import harmless), so the fix loop neither sees
+        # nor pays to repair a defect we can settle for free - and, unlike
+        # the packaging-time hook, it puts back a config a Phase 3 edit
+        # deleted. Idempotent; it never overwrites what a project already has.
+        for repair in ensure_frontend_scaffold(self.output_dir):
+            logger.info("Auto-fixed: %s", repair)
         raw_issues: list[str] = [
             required_check_unverified(
                 "model assembly",
@@ -4993,6 +5046,24 @@ class LLMOrchestrator:
                 "Phase 3: toolchain validation (tsc/cargo/kotlinc) disabled "
                 "for this run"
             )
+
+        # Every import a generated frontend makes must resolve to a file it
+        # ships or a package it declares, and a JSX file needs React in scope
+        # unless the project configures the automatic runtime. Pure
+        # filesystem: no install, no bundler, no shell, so unlike
+        # ``frontend_build`` below it runs in every configuration.
+        #
+        # A browser sweep of the recorded corpus on 2026-09-21 drove seven
+        # generated apps in Chrome: four rendered a blank page, and three of
+        # those four carried a PERFECT probe score. The probe boots the
+        # backend and drives HTTP; it never renders a page, so nothing in the
+        # pipeline was looking at the one thing the user sees.
+        # ``React is not defined`` is a runtime error in a bundle that builds
+        # cleanly, which is why the build check cannot substitute for this.
+        from besser.generators.llm.validation.frontend_resolution import (
+            collect_frontend_resolution_issues,
+        )
+        raw_issues.extend(collect_frontend_resolution_issues(self.output_dir))
 
         from besser.generators.llm.validation.frontend_build import collect_frontend_build_issues
         build_cache = getattr(self, "_successful_frontend_builds", {})

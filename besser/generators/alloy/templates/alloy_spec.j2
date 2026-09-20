@@ -1,0 +1,116 @@
+{% macro strname(n) -%}
+{{ "Str" if n == "str" else ("Date" if n == "date" else n) }}
+{%- endmacro -%}
+open util/boolean
+{% if "int" in basic_signatures or "float" in basic_signatures -%}
+open util/integer
+{% endif -%}
+{% if has_date_values -%}
+open util/ordering[Date]
+{% endif -%}
+{% if date_ops -%}
+open date
+{% endif -%}
+open utils
+{% if string_ops or use_str -%}
+open strings
+{% endif -%}
+
+{% for tipo in basic_signatures -%}
+{% if tipo not in ['str','bool', 'int', 'float', 'date'] -%}
+sig {{ strname(tipo) }} {}
+{% endif -%}
+{% endfor -%}
+{% if enum_types -%}
+{% for e in enum_types %}
+{% set literals = [] -%}
+{% for v in e.literals -%}
+{% do literals.append("ENUM_" ~ e.name ~ "_" ~ v.name) -%}
+{% endfor -%}
+abstract sig {{ e.name }} {}
+one sig {{ literals | join(',\n') | indent(8) }} extends {{ e.name }} {}
+{% endfor %}
+
+{% endif -%}
+{% macro alloy_model(class_obj, associations) -%}
+{% if class_obj.name not in ['Integer', 'String'] -%}
+{% set lines = [] -%}
+
+{% for attr in class_obj.attributes -%}
+{% set typename = "Int" if (attr.type.name in ["int", "float", "integer"]) else ("Bool" if attr.type.name == "bool" else ("Date" if attr.type.name in ("date", "datetime", "time", "timedelta") else strname(attr.type.name))) -%}
+{% do lines.append(class_obj.name ~ "_" ~ attr.name ~ ": " ~ typename) -%}
+{% endfor -%}
+
+{% for association in associations if association.ends | length == 2 -%}
+{% set ends_list = association.ends | list -%}
+{% set e1 = ends_list[0] -%}
+{% set e2 = ends_list[1] -%}
+{# Relaciones reflexivas #}
+{% if e1.type.name == class_obj.name and e2.type.name == class_obj.name -%}
+{% for end_ref in ends_list if end_ref.is_navigable -%}
+{% set typename = "Int" if end_ref.type.name | lower in ['integer', 'int', 'float'] else strname(end_ref.type.name) -%}
+{% set mult = "lone " if (end_ref.multiplicity.min == 0 and end_ref.multiplicity.max == 1) else ("set " if end_ref.multiplicity.max > 1 else "one ") -%}
+{% do lines.append(class_obj.name ~ "_" ~ end_ref.name ~ ": " ~ mult ~ typename) -%}
+{% endfor -%}
+
+{% else -%}
+{% set target_end = e2 if e1.type.name == class_obj.name else (e1 if e2.type.name == class_obj.name else None) -%}
+{% if target_end and target_end.is_navigable -%}
+{% set typename = "Int" if target_end.type.name | lower in ['integer', 'int', 'float'] else strname(target_end.type.name) -%}
+{% set mult = "lone " if (target_end.multiplicity.min == 0 and target_end.multiplicity.max == 1) else ("set " if target_end.multiplicity.max > 1 else "one ") -%}
+{% do lines.append(class_obj.name ~ "_" ~ target_end.name ~ ": " ~ mult ~ typename) -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
+{% if class_obj.parents() -%}
+{% if class_obj.parents() | length > 1 -%}
+{% set header = "sig " ~ class_obj.name ~ " in " ~ (class_obj.parents() | map(attribute='name') | join(' + ')) -%}
+{% else -%}
+{% set header = "sig " ~ class_obj.name ~ " extends " ~ (class_obj.parents() | list | first).name -%}
+{% endif -%}
+{% else -%}
+{% set header = ("abstract sig " ~ class_obj.name) if class_obj.is_abstract else ("sig " ~ class_obj.name) -%}
+{% endif -%}
+{% if lines | length == 0 -%}
+{{ header }} {}
+{%- else -%}
+{{ header }} {
+{% for line in lines %}
+{{ '  ' ~ line }}{{ "," if not loop.last else "" }}
+{% endfor %}
+}
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
+{% for class_obj in classes %}
+{{ alloy_model(class_obj, associations_by_class.get(class_obj.name, [])) }}
+
+{% endfor %}
+{% set valid_sigsnv = [] -%}
+{% for sig in sigsnv | unique -%}
+{% if sig not in ['bool', 'int', 'float', 'Integer'] -%}
+{% do valid_sigsnv.append(sig) -%}
+{% endif -%}
+{% endfor -%}
+{% if facts_rules %}
+{% for f in facts_rules if f | trim %}
+{{ f | trim }}
+
+{% endfor %}
+{% endif -%}
+{% if constraints -%}
+{% for c in constraints %}
+{{ c.expression }}
+
+{% endfor %}
+{% endif -%}
+pred instance_model {
+{% for sig in valid_sigsnv %}
+  some {{ strname(sig) }}
+{% endfor %}
+}
+
+{% set use_int = "int" in basic_signatures or "float" in basic_signatures or "integer" in basic_signatures -%}
+{% set use_str = "str" in basic_signatures or "string" in basic_signatures or "Str" in basic_signatures -%}
+run instance_model for {% for sig in valid_sigsnv %}{{ scope }} {{ strname(sig) }}{% if not loop.last %}, {% elif use_int or use_str %}, {% endif %}{% endfor %}{% if use_int or use_str %}{{ int_bitwidth }} Int{% if use_str %}, {% endif %}{% endif %}{% if use_str %}{{ scope }} Str, {{ maxseq }} seq{% endif %}{{ "\n" }}

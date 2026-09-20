@@ -71,11 +71,12 @@ def _method_entry(method) -> dict[str, Any]:
     entry: dict[str, Any] = {"name": method.name}
     if method.type:
         entry["return_type"] = _type_name(method.type)
-    if method.parameters:
-        entry["parameters"] = [
-            {"name": p.name, "type": _type_name(p.type)}
-            for p in method.parameters
-        ]
+    # Always stated, empty list included: an omitted key reads as "not shown",
+    # and a modelled action's parameter list is the callable contract.
+    entry["parameters"] = [
+        {"name": p.name, "type": _type_name(p.type)}
+        for p in method.parameters or []
+    ]
     visibility = getattr(method, "visibility", None)
     if visibility and visibility != "public":
         entry["visibility"] = visibility

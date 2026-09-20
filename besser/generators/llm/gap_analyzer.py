@@ -762,10 +762,10 @@ _INITIAL_STATE_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Types the generator (sql_alchemy/templates/helpers.py.j2, commit 143b7656)
-# already defaults a required derived attribute to on INSERT, because the
-# type has an unambiguous zero. An enum is deliberately excluded there —
-# there is no zero state to pick — so it is the only type this helper flags.
+# Types the generator (sql_alchemy/templates/helpers.py.j2) already defaults a
+# required derived attribute to on INSERT, because the type has an unambiguous
+# zero. An enum has none, so its column is emitted nullable instead: the app is
+# constructible, but the initial state is still open and only the spec knows it.
 _SERVER_DEFAULTABLE_TYPES = {"int", "float", "str", "string", "bool"}
 
 
@@ -821,8 +821,10 @@ def _derived_enum_task_text(
         "attribute with no default and no server-side initial value: an "
         f"enum has no unambiguous zero, so {enum_name}'s first-declared "
         f"literal ({literals[0]}) is only declaration order, not a "
-        "decision, and the generator deliberately left it unset — every "
-        "create request will otherwise violate NOT NULL. THE SPEC DECIDES "
+        "decision, and the generator left the column nullable rather than "
+        f"invent one. Creates therefore succeed, but every new {cls_name} "
+        f"starts with no {attr_name} at all — a state the spec does not "
+        "describe, and one that no status check will match. THE SPEC DECIDES "
         f"the initial value here, NOT the model. {resolution} Close this "
         f"in the generated code: give {cls_name}.{attr_name} that value "
         f"wherever a {cls_name} row is created (ORM column default or the "
@@ -839,15 +841,14 @@ def _note_derived_enum_initial_state(domain_model, instructions: str) -> list[st
     wait for a planner call to notice, and it does not ship the model's
     silence as if it were a decision.
 
-    Commit 143b7656 made a required derived attribute with an unambiguous
-    zero (int/float/str/bool) get a server-side default at INSERT time, and
-    deliberately did NOT do the same for an enum: this hotel model declares
-    BookingPhysicalStatus.CHECKED_IN first (alphabetically — the order every
-    layer here sorts literals in), while the spec says a booking "starts out
-    with the guests not yet arrived", so "use the first literal" would have
-    shipped every new booking already checked in. The generator cannot know
-    the initial state; the spec can, and this is the only stage that holds
-    both the spec text and the model side by side to say so.
+    A required derived attribute with an unambiguous zero (int/float/str/bool)
+    gets a server-side default at INSERT time; an enum has no zero, so its
+    column is emitted nullable instead — "use the first literal" would have
+    shipped every new booking already CHECKED_IN while the spec says a booking
+    "starts out with the guests not yet arrived". Nullable keeps the app
+    constructible without inventing that state, but it does not supply it:
+    the row starts with no status, so this task remains the only stage that
+    holds the spec text and the model side by side and can say what it is.
 
     Only the genuinely open case is flagged: derived, required (not
     optional, not the id), no explicit default already on the model, and

@@ -16,6 +16,10 @@ not yet arrived". Using the first-declared literal would have shipped every
 new booking already checked in. The generator cannot know the initial
 state; the spec can, and nothing before this change told the Phase 2 agent
 to look for it.
+
+The enum column is nullable now, so the create route no longer dies on it -
+but a booking still starts with no status, which is not a state the spec
+describes. The task stays; only its reason changed.
 """
 
 from besser.BUML.metamodel.structural import (
@@ -89,6 +93,18 @@ class TestDerivedEnumWithNoInitialValueIsFlagged:
         # a warning, never adopted as the resolution.
         assert "CHECKED_IN" in physical_task
         assert "set the initial value to BookingPhysicalStatus.CHECKED_IN" not in physical_task
+
+    def test_the_task_no_longer_claims_the_create_route_is_dead(self):
+        """The column is nullable now, so the create route works and the task
+        must not say otherwise -- an agent told "every create request will
+        violate NOT NULL" is being pointed at a bug that no longer exists, and
+        the cheapest way to silence it is the first-literal default that was
+        measured and rejected. What is still open is the semantic one."""
+        tasks = _note_derived_enum_initial_state(_hotel_model(), HOTEL_SPEC)
+        physical = next(t for t in tasks if t.startswith("Booking.physicalStatus"))
+        assert "NOT NULL" not in physical
+        assert "nullable" in physical
+        assert "starts with no physicalStatus at all" in physical
 
     def test_derived_float_attribute_already_defaulted_is_not_flagged(self):
         """commit 143b7656 already gives totalPrice a server default (0.0) -

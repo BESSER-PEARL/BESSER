@@ -32,6 +32,12 @@ _SECRET_ENV_ASSIGNMENT_RE = re.compile(
 # Provider tokens with sufficiently specific prefixes to avoid redacting
 # ordinary prose or generated identifiers.
 _SECRET_VALUE_TOKEN_RE = re.compile(
+    # The lookbehind is load-bearing: '-' is a body character, so without it
+    # "sk-" matched INSIDE kebab-case identifiers and the scrub rewrote
+    # delivered source in place - `./task-list-item-component` became
+    # `./ta[REDACTED]`, taking imports, className values and CSS selectors
+    # with it, after Phase 3 had already validated the tree.
+    r"(?<![A-Za-z0-9_\-])"
     r"(sk-ant-[A-Za-z0-9_\-]{12,}"
     r"|sk-[A-Za-z0-9_\-]{16,}"
     r"|gh[posru]_[A-Za-z0-9]{20,}"

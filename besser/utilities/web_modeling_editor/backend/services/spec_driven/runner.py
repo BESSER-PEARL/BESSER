@@ -51,6 +51,7 @@ from besser.generators.llm.llm_client import (
     is_free_fallback_choice,
 )
 from besser.generators.llm.orchestrator import LLMOrchestrator
+from besser.generators.llm.scaffold_repair import ensure_frontend_scaffold
 from besser.generators.llm.tools import get_available_generator_names
 from besser.generators.llm.validation.issues import is_completion_issue, required_check_unverified
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -2162,6 +2163,24 @@ class SmartGenerationRunner:
         """
         if self.temp_dir is None:
             raise RuntimeError("Runner has no temp_dir")
+
+        # An LLM-authored React frontend (the class-diagram path, where no GUI
+        # model means generate_web_app is never offered) ships without a vite
+        # config, so JSX compiles with the classic runtime and the page is
+        # blank on "React is not defined". Write the build configuration
+        # deterministically before anything leaves the workspace — the same
+        # tree feeds the download zip and the GitHub push.
+        try:
+            frontend_repairs = ensure_frontend_scaffold(result_path)
+            if frontend_repairs:
+                logger.info(
+                    "spec-driven run %s frontend scaffold repairs: %s",
+                    self.run_id, "; ".join(frontend_repairs),
+                )
+        except Exception:
+            logger.exception(
+                "Frontend scaffold repair failed for run %s", self.run_id
+            )
 
         # The download is the primary deliverable and therefore a security
         # boundary of its own. Scrub before collecting files so a populated

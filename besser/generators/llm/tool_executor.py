@@ -207,7 +207,12 @@ def _normalize_path_for_comparison(path: str) -> str:
 _RUNTIME_NOT_INSTALLED_PATTERNS: tuple[str, ...] = (
     "command not found",
     "not recognized as an internal or external command",  # Windows shell
-    "no such file or directory",
+)
+# A bare "no such file or directory" is NOT one of these: it is also what a
+# missing data file, requirements.txt or package.json produces. Only the
+# exec-failure form names an absent binary.
+_EXEC_ENOENT_RE = re.compile(
+    r"^\s*exec(?:ve)?:.*no such file or directory", re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -216,7 +221,9 @@ def _looks_like_command_not_found(stderr: str) -> bool:
     if not isinstance(stderr, str) or not stderr:
         return False
     lowered = stderr.lower()
-    return any(pat in lowered for pat in _RUNTIME_NOT_INSTALLED_PATTERNS)
+    if any(pat in lowered for pat in _RUNTIME_NOT_INSTALLED_PATTERNS):
+        return True
+    return bool(_EXEC_ENOENT_RE.search(stderr))
 
 
 

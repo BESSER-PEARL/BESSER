@@ -71,6 +71,71 @@ class TestLooksLikeCommandNotFound:
         assert not _looks_like_command_not_found(None)  # type: ignore[arg-type]
 
 
+class TestEnoentIsNotAMissingRuntime:
+    """A missing FILE is not a missing BINARY.
+
+    ``no such file or directory`` was matched as a lowercase substring over
+    the whole stderr, so a genuine ENOENT came back ``exit_code: 0,
+    success: true, skipped: true`` with the stderr discarded — invisible to
+    ``_is_stuck`` and the failure counters. This is the on-prem path (shell
+    is off hosted), and the Phase 3 toolchain reminder sends the model back
+    through ``run_command`` to confirm a fix, so a real ENOENT read as
+    confirmation. Only the exec-failure form names an absent binary.
+    """
+
+    def test_missing_data_file_is_a_real_failure(self):
+        assert not _looks_like_command_not_found(
+            "Traceback (most recent call last):\n"
+            "  File \"seed.py\", line 3, in <module>\n"
+            "    with open('data/seed.json') as fh:\n"
+            "FileNotFoundError: [Errno 2] No such file or directory: "
+            "'data/seed.json'\n"
+        )
+
+    def test_missing_requirements_file_is_a_real_failure(self):
+        assert not _looks_like_command_not_found(
+            "ERROR: Could not open requirements file: [Errno 2] "
+            "No such file or directory: 'requirements.txt'\n"
+        )
+
+    def test_npm_enoent_is_a_real_failure(self):
+        assert not _looks_like_command_not_found(
+            "npm ERR! code ENOENT\n"
+            "npm ERR! syscall open\n"
+            "npm ERR! path /app/package.json\n"
+            "npm ERR! enoent ENOENT: no such file or directory, "
+            "open '/app/package.json'\n"
+        )
+
+    def test_exec_prefix_still_skips(self):
+        # The only case the pattern was ever for.
+        assert _looks_like_command_not_found(
+            "execve: /usr/local/bin/kotlin: No such file or directory"
+        )
+        assert _looks_like_command_not_found(
+            "exec: /usr/bin/cargo: no such file or directory"
+        )
+
+
+class TestEnoentReachesTheLLM:
+    def test_missing_file_is_reported_not_laundered(self, tmp_path):
+        """The full path: stderr preserved, exit code intact, not skipped."""
+        ex = _make_executor(tmp_path)
+        stderr = (
+            "Traceback (most recent call last):\n"
+            "FileNotFoundError: [Errno 2] No such file or directory: "
+            "'data/seed.json'\n"
+        )
+        completed = _completed(returncode=1, stdout="", stderr=stderr)
+        with patch("besser.generators.llm.tool_executor.subprocess.run", return_value=completed):
+            result = ex._run_command({"command": "python seed.py"})
+
+        assert result["success"] is False
+        assert result["exit_code"] == 1
+        assert "FileNotFoundError" in result["stderr"]
+        assert "skipped" not in result
+
+
 # ----------------------------------------------------------------------
 # _run_command soft-skip
 # ----------------------------------------------------------------------

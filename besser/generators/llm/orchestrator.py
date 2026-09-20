@@ -199,6 +199,14 @@ _RECIPE_EXCLUDED_DIRS = {
     _SNAPSHOT_STAGING_DIR, _ROLLBACK_DISCARD_DIR, COMMAND_OUTPUT_DIR,
 }
 
+# Written by a build or by running the app, never authored. Invisible to
+# ``_workspace_revision`` (not even by presence): the frontend build and the
+# boot probe both compare the revision across their own run, and their own
+# leftovers must not read back as a source edit.
+_REVISION_IGNORED_SUFFIXES = (
+    ".tsbuildinfo", ".log", ".db", ".sqlite", ".sqlite3",
+)
+
 
 # Languages / frameworks BESSER has NO code generator for. An explicitly-named
 # one must be built from scratch by the LLM (Phase 2) rather than scaffolded by
@@ -682,6 +690,10 @@ class LLMOrchestrator:
         # Cast to strings via `[str(i) for i in self._validation_issues]`
         # when emitting JSON.
         self._validation_issues: list[ValidationIssue] = []
+        # Phase 0 findings about the SPECIFICATION. Held separately because
+        # Phase 3 replaces ``_validation_issues`` wholesale from
+        # ``_collect_validation_issues``, which never re-derives these.
+        self._model_contract_issues: list[ValidationIssue] = []
         # True when Phase 3's repair was discarded because it ended
         # worse than it began; the recipe must not read as a clean fix.
         self._phase3_rolled_back = False
@@ -1196,6 +1208,12 @@ class LLMOrchestrator:
             fix_run=self._is_fix_run,
             fix_target=(self._fix_target.descriptor if self._fix_target else None),
         )
+
+        # -- Phase 0: the model itself ------------------------------------
+        # Runs after the model-sync deltas above, so it checks the model this
+        # run will actually build against. A user who edited the diagram
+        # between runs can introduce a mandatory creation cycle here.
+        self._collect_model_contract_issues()
 
         # -- Phase 1.5: Validate the seeded output (no Phase 1 run) --------
         phase1_issues = self._validate_phase1_output()
@@ -3439,6 +3457,17 @@ class LLMOrchestrator:
                    "scenarios": [record["scenario"] for record in self._api_scenarios.values()]}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
+    def _with_model_contract(
+        self, issues: list[ValidationIssue],
+    ) -> list[ValidationIssue]:
+        """Phase 3 findings with the Phase 0 model-contract ones kept in front.
+
+        Every wholesale reassignment of ``_validation_issues`` goes through
+        here. Without it a clean Phase 3 erased the mandatory-creation-cycle
+        blocker and the run reported ``incomplete: false``.
+        """
+        return list(self._model_contract_issues) + list(issues)
+
     def _run_phase3_validation(self) -> None:
         """Validate, repair, then apply the runtime exit gate.
 
@@ -3496,7 +3525,7 @@ class LLMOrchestrator:
 
         if not issues:
             logger.info("Phase 3: Validation passed -- no issues found")
-            self._validation_issues = []
+            self._validation_issues = self._with_model_contract([])
             self._complete_repair_if_verified()
             if self._checkpoint_phase == "phase3":
                 self._save_phase3_checkpoint()
@@ -3513,7 +3542,7 @@ class LLMOrchestrator:
         )
         for issue in issues:
             logger.warning("  [%s] %s", issue.severity, issue.message)
-        self._validation_issues = list(issues)
+        self._validation_issues = self._with_model_contract(issues)
         if not blockers_before:
             self._complete_repair_if_verified()
         if self._checkpoint_phase == "phase3":
@@ -3631,7 +3660,7 @@ class LLMOrchestrator:
             # is what actually drives the metric.
             issues_after = self._collect_validation_issues()
             last_issues = issues_after
-            self._validation_issues = list(issues_after)
+            self._validation_issues = self._with_model_contract(issues_after)
             last_validated_revision = self._workspace_revision()
             last_obligations_revision = self._repair_obligations_revision()
             blockers_after = [i for i in issues_after if i.severity == "blocker"]
@@ -3650,7 +3679,7 @@ class LLMOrchestrator:
                     "(%d non-blocker remain).",
                     attempts_run, len(issues_after),
                 )
-                self._validation_issues = list(issues_after)
+                self._validation_issues = self._with_model_contract(issues_after)
                 self._complete_repair_if_verified()
                 checkpoint_progress()
                 return
@@ -3747,7 +3776,7 @@ class LLMOrchestrator:
         if self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed):
             last_issues = list(self._validation_issues)
         else:
-            self._validation_issues = list(last_issues)
+            self._validation_issues = self._with_model_contract(last_issues)
         checkpoint_progress()
         remaining_blockers = [
             i for i in last_issues if i.severity == "blocker"
@@ -3941,7 +3970,7 @@ class LLMOrchestrator:
                 "Phase 3 regressed but the snapshot could not be restored; "
                 "keeping the repaired tree and reporting it as it stands.",
             )
-            self._validation_issues = list(final_issues)
+            self._validation_issues = self._with_model_contract(final_issues)
             return False
         self._phase3_rolled_back = True
         # The tree went back; the checklist did not. Anything whose verifier
@@ -3957,7 +3986,7 @@ class LLMOrchestrator:
         discarded = sorted({i.message for i in final_blockers})[:10]
         undone = (f" The restore also undid completed work: {len(reopened)} checklist "
                   f"item(s) verified during the repair are open again." if reopened else "")
-        self._validation_issues = list(restored) + [_classify_issue(
+        self._validation_issues = self._with_model_contract(restored) + [_classify_issue(
             "validation: the Phase 3 repair was rolled back - it ended with "
             f"{final_hard} hard blockers against {entry_hard} on entry, so the "
             f"pre-repair output is what ships.{undone} Findings seen only in the "
@@ -5288,26 +5317,48 @@ class LLMOrchestrator:
         )
 
     def _workspace_revision(self) -> str:
-        """Hash source/config state, excluding traces, caches and runtime data."""
+        """Hash source/config state, excluding traces, caches and runtime data.
+
+        Every file's PATH counts, so writing or deleting one is progress
+        whatever its extension. Only the listed kinds are hashed by content;
+        the rest (binaries, sqlite files written by the boot probe) would
+        churn the revision without a source edit. ``_workspace_file_list``
+        has already dropped caches, vendor dirs and ``.besser_*``.
+        """
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
         extensions = {
             ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".html", ".css",
             ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".txt", ".lock",
             ".sql", ".rs", ".kt", ".java", ".go", ".c", ".cpp", ".h", ".rb", ".php",
+            # Stacks _UNSUPPORTED_STACK_RE sends to Phase 2 to build from
+            # scratch, plus the per-service Dockerfiles / build files a
+            # Phase 3 repair edits.
+            ".vue", ".svelte", ".dart", ".cs", ".swift", ".scala", ".ex",
+            ".mod", ".sum", ".md",
         }
+        # ``.env`` and ``Dockerfile.backend`` have no usable splitext suffix.
+        basename_prefixes = ("Dockerfile", "Makefile", ".env")
         for rel in sorted(self._workspace_file_list()):
-            if os.path.splitext(rel)[1].lower() not in extensions and os.path.basename(rel) != "Dockerfile":
+            if rel.lower().endswith(_REVISION_IGNORED_SUFFIXES):
                 continue
             path = os.path.realpath(os.path.join(workspace, rel))
             try:
                 if os.path.commonpath([workspace, path]) != workspace:
                     continue
-                fingerprint.update(rel.encode("utf-8"))
+            except ValueError:
+                continue
+            fingerprint.update(rel.encode("utf-8"))
+            base = os.path.basename(rel)
+            if (os.path.splitext(rel)[1].lower() not in extensions
+                    and not base.startswith(basename_prefixes)):
+                fingerprint.update(b"\0")
+                continue
+            try:
                 with open(path, "rb") as source:
                     for chunk in iter(lambda: source.read(65536), b""):
                         fingerprint.update(chunk)
-            except (OSError, ValueError):
+            except OSError:
                 fingerprint.update(b"<unreadable>")
             fingerprint.update(b"\0")
         return fingerprint.hexdigest()
@@ -5865,6 +5916,10 @@ class LLMOrchestrator:
         ``_collect_validation_issues``: the Phase 3 fix loop edits code, and
         no edit to the generated code can repair the specification it was
         generated from. Surfacing it early is the whole value.
+
+        Kept in ``_model_contract_issues`` as well, because Phase 3 REPLACES
+        ``_validation_issues`` with what ``_collect_validation_issues``
+        returns; ``_with_model_contract`` carries these across that.
         """
         if self.domain_model is None:
             return
@@ -5877,6 +5932,7 @@ class LLMOrchestrator:
             if not warning.lower().startswith("mandatory creation cycle"):
                 continue
             issue = _classify_issue(f"model contract: {warning}")
+            self._model_contract_issues.append(issue)
             self._validation_issues.append(issue)
             logger.warning("Phase 0: %s", issue.message)
             self._trace.write(

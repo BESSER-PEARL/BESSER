@@ -308,6 +308,14 @@ def _process_classes(
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model, type_lookup=type_lookup)
 
+                    # The editor's newer format carries the return type in its own
+                    # `attributeType` property, the way attributes do above, and
+                    # leaves the name bare ("renew()"). Only the signature was
+                    # read, so every such method arrived with type None and the
+                    # agent never saw what an action returns.
+                    if not return_type:
+                        return_type = method.get("attributeType") or method.get("returnType") or None
+
                     # Get the code attribute for the method
                     method_code = method.get("code", "")
 

@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from besser.generators.llm.contract_checks import build_data_contract
+from besser.generators.llm.execution.process import COMMAND_OUTPUT_DIR
 from besser.generators.llm.mutation_inventory import build_mutation_manifest
 from besser.generators.llm.model_serializer import (
     serialize_agent_model,
@@ -462,8 +463,9 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    subqueries or refer to another table's columns. Reject invalid changes
    atomically; do not partially persist an aggregate before validation succeeds.
 {hygiene_rule}
-8. **Read before modify.** Read the relevant section of a file before editing it.
-   Use offset/limit for large files (>200 lines).
+8. **Read before modify.** Read the WHOLE function or class you intend to
+   change in one call. Paginate only above the read cap, and then in large
+   slices - crawling a file in small windows spends a turn per window.
 9. **Be efficient. Batch tool calls in one turn.** Issue every
    independent tool call you can in the SAME turn — read multiple files
    in one turn, edit multiple files in one turn. When a single file
@@ -772,6 +774,7 @@ _SNAPSHOT_SKIP_NAMES = {"package-lock.json", "yarn.lock", "poetry.lock", "Cargo.
 _SNAPSHOT_SKIP_DIRS = {
     ".besser_snapshot", "node_modules", "target", "__pycache__", ".git",
     "dist", "build", ".next", ".gradle", "venv", ".venv",
+    COMMAND_OUTPUT_DIR,
 }
 
 # Route decorators + mount/prefix/port patterns for the endpoint manifest.
@@ -797,13 +800,20 @@ _METHOD_ORDER = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4, "HEAD":
 
 
 def _norm_path(*parts: str) -> str:
-    """Join URL fragments and collapse duplicate slashes, keep leading slash."""
+    """Join URL fragments and collapse duplicate slashes, keep leading slash.
+
+    Whitespace is collapsed and the result capped because these paths come
+    from a regex over workspace source, matched with DOTALL: a route literal
+    containing real newlines would otherwise render as its own lines inside
+    the endpoint manifest, a system-prompt block framed as "the only routes
+    that exist - copy them verbatim". A URL path has no legitimate newline.
+    """
     joined = "/".join(p.strip("/") for p in parts if p and p.strip("/"))
     path = "/" + joined
     # Preserve a single trailing slash if any source fragment had one.
     if parts and parts[-1].endswith("/") and not path.endswith("/"):
         path += "/"
-    return re.sub(r"/{2,}", "/", path)
+    return re.sub(r"\s+", " ", re.sub(r"/{2,}", "/", path)).strip()[:200]
 
 
 def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:

@@ -186,3 +186,67 @@ def test_escape_diagnostic_is_silent_on_a_correctly_quoted_line():
 
 def test_escape_diagnostic_is_silent_when_nothing_is_doubled():
     assert describe_escape_mismatch(_GENERATED_VALIDATOR, "        return v\n") is None
+
+
+# -- the numbered-read gutter, transcribed by hand -----------------------
+#
+# Qwen echoes read_file's "NNN| " gutter back inside old_text. Tier 5 has
+# stripped that since it was written, and over the 2026-09-20 corpus it
+# handles it well: 181 Qwen payloads carry a gutter, 136 of them land (75.1%,
+# slightly BETTER than the 71.2% of clean Qwen calls). It declined 3.
+#
+# One of those 3 is mechanical and worth closing: the model transcribes the
+# numbers by hand and drops a digit. Live Booking.tsx turn 13 quoted 106
+# gutter lines running 228, 229, 30, 231 - two bad steps in 105 - and the
+# all-or-nothing "strictly rising" rule discarded all 106.
+
+# The rising rule only governs the MIXED path - a block where EVERY content
+# line is numbered strips unconditionally, and always has. The live payload is
+# mixed: 106 of its 107 lines carry a gutter, so these cases leave one line
+# bare, exactly as Booking.tsx turn 13 did.
+
+def _mixed_quote(numbers):
+    """A gutter over ``numbers``, with the opening line left un-numbered."""
+    body = "".join(f"{n}| line_{k + 1} = {k + 1}\n" for k, n in enumerate(numbers))
+    return "line_0 = 0\n" + body
+
+
+WHOLE = "".join(f"line_{k} = {k}\n" for k in range(12))
+
+
+def test_gutter_survives_a_mistyped_line_number():
+    """Live: web_app/frontend/src/pages/Booking.tsx turn 13.
+
+    The model transcribed the gutter as 228, 229, 30, 231 - it dropped a
+    digit off 230. Every prefix is still a gutter; two bad steps in 105 must
+    not discard the other 104.
+    """
+    part = _mixed_quote([228, 229, 30, 231, 232])
+    replace = "".join(f"line_{k} = {k * 10}\n" for k in range(6))
+    out = replace_most_similar_chunk(WHOLE, part, replace, (), True)
+    assert out is not None, "a gutter with one mistyped number must still strip"
+    assert out.startswith("line_0 = 0\nline_1 = 10\n")
+    assert "228|" not in out and "30|" not in out
+
+
+def test_a_gutter_that_does_not_rise_is_still_refused():
+    """The rule still rejects text that merely looks numbered."""
+    part = _mixed_quote([9, 8, 7, 6, 5])           # descending
+    replace = "".join(f"line_{k} = {k * 10}\n" for k in range(6))
+    assert replace_most_similar_chunk(WHOLE, part, replace, (), True) is None
+
+
+def test_a_mostly_broken_gutter_is_still_refused():
+    """Half the steps falling is not a transcription slip."""
+    part = _mixed_quote([10, 3, 11, 2, 12])
+    replace = "".join(f"line_{k} = {k * 10}\n" for k in range(6))
+    assert replace_most_similar_chunk(WHOLE, part, replace, (), True) is None
+
+
+def test_two_line_mixed_gutter_still_requires_an_outright_rise():
+    assert replace_most_similar_chunk(
+        WHOLE, _mixed_quote([7, 8]), "line_0 = 0\nline_1 = 9\nline_2 = 9\n", (), True,
+    ) is not None
+    assert replace_most_similar_chunk(
+        WHOLE, _mixed_quote([8, 7]), "line_0 = 0\nline_1 = 9\nline_2 = 9\n", (), True,
+    ) is None

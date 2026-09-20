@@ -31,6 +31,7 @@ from besser.generators.llm.validation.issues import (
     required_dependency_setup,
     _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE,
+    _RUFF_STYLE_CODES,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,8 @@ def _build_toolchain_reminder(
 # How many ruff lines Phase 3 reports. Blocker-code lines are always kept
 # even past this, then files the LLM edited, then the rest.
 _RUFF_MAX_REPORTED = 20
+# A real concise-format line always carries a file, a position and a rule.
+_CONCISE_FINDING_RE = _re.compile(r"^.+?:\d+:\d+: \S+ ")
 
 
 def _collect_ruff_issues(
@@ -195,8 +198,13 @@ def _collect_ruff_issues(
         reason = detail[-1][:200] if detail else f"exit code {result.returncode}"
         return [_check_did_not_run("ruff", reason)], warned_missing
 
+    # Concise format is ``<path>:<line>:<col>: <rule> <message>``; ruff also
+    # prints its own trailer ("Found 630 errors.", "No fixes available ..."),
+    # which carries no rule code, so _classify_issue made each one a warning
+    # about nothing. They were invisible only because cosmetic findings used
+    # to crowd them out of the cap.
     lines = [line.strip() for line in (result.stdout or "").strip().splitlines()
-             if line.strip()]
+             if _CONCISE_FINDING_RE.match(line.strip())]
     if not lines:
         return [], warned_missing
     # The cap used to take ruff's first 20 lines, which are sorted by
@@ -204,17 +212,30 @@ def _collect_ruff_issues(
     # files, and a real F821 late in the alphabet never reached the fix
     # loop at all. Keep every blocker-code line, then spend what is left
     # of the budget on files the LLM actually edited this run.
+    # Ranking keys on the SEVERITY each line will be given, not only on the
+    # blocker codes. Cosmetic lines used to compete for the same 20 slots as
+    # real findings: every generated router star-imports sql_alchemy /
+    # pydantic_classes / bal_stdlib, so F403/F405/E402 alone fill the budget
+    # (59% of the kept lines across the labelled corpus, on apps that all
+    # truncate). Sorting them behind everything else keeps them reported and
+    # stops them hiding an actionable finding.
     touched = _llm_edited_paths(output_dir, tool_calls_log, write_tools)
-    blockers, edited, rest = [], [], []
+    blockers = []
+    edited, rest = [], []                  # actionable
+    edited_cosmetic, rest_cosmetic = [], []
     for line in lines:
         match = _RUFF_LINE_RE.search(line)
-        if match and match.group(1) in _RUFF_BLOCKER_CODES:
+        code = match.group(1) if match else None
+        was_edited = _ruff_line_path(line) in touched
+        if code in _RUFF_BLOCKER_CODES:
             blockers.append(line)
-        elif _ruff_line_path(line) in touched:
-            edited.append(line)
+        elif code in _RUFF_STYLE_CODES:
+            (edited_cosmetic if was_edited else rest_cosmetic).append(line)
         else:
-            rest.append(line)
-    ordered = blockers + edited + rest
+            (edited if was_edited else rest).append(line)
+    # Severity first, then whether the agent touched the file - the
+    # edited-before-scaffold preference still holds inside each tier.
+    ordered = blockers + edited + rest + edited_cosmetic + rest_cosmetic
     kept = ordered[:max(_RUFF_MAX_REPORTED, len(blockers))]
     issues = [f"ruff: {line}" for line in kept]
     if len(ordered) > len(kept):

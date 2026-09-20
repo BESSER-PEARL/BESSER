@@ -355,13 +355,22 @@ _PHASE3_NO_EDIT_REMINDER = (
 
 # Consecutive no-progress rounds tolerated before the repair loop ends.
 #
-# Was 1, and that was measurably too tight. Every round rebuilds the prompt
-# from the freshly re-collected blocker list, so round n+1 is a new attempt,
-# not a replay of round n. Over the 221 spec-iteration runs recorded before
-# this guard existed (verification/spec-iterations, 2026-09-19..20), the round
-# after a single barren one wrote source 38% of the time and cut the blocker
-# count 19% of the time (n=127); after TWO consecutive barren rounds it wrote
-# 6% and cut 4% (n=116). One more round is worth its ~11 turns, a third is not.
+# Was 1, which is right for a round that is genuinely a replay of the last one
+# and wrong for every other kind. The loop now decides that per round (see
+# ``replay`` below): a round that never reached for the editor still ends the
+# loop on the spot, and only a round that DID something it can carry into the
+# next prompt gets this allowance.
+#
+# Measured over the 221 spec-iteration runs recorded before the zero-write
+# stop existed (verification/spec-iterations, 2026-09-19..20), on the round
+# that FOLLOWED a round which wrote nothing and left the tree byte-identical:
+#
+#   the round attempted edits, all rejected  n= 30  next wrote 57%, cut 20%
+#   the round made tool calls, none an edit  n=209  next wrote 18%, cut 11%
+#   the round called no tool at all (prose)  n=  4  next wrote  0%, cut  0%
+#
+# and after TWO consecutive such rounds, whatever their kind, the next wrote
+# 6% and cut 4% (n=116) - so the streak still ends at two.
 _PHASE3_NO_PROGRESS_ROUNDS = 2
 
 # Rounds that edit the tree without improving its score before the loop ends.
@@ -777,6 +786,13 @@ class LLMOrchestrator:
         # "cancelled", "max_turns". The runner reads this to decide whether
         # to warn the user that the downloaded output may be incomplete.
         self._phase2_stop_reason: str = "max_turns"
+        # Which branch produced that reason, when the reason alone is
+        # ambiguous. "validation_required" is set both by the end_turn blocker
+        # gate and by the bounded-inspection handoff, and across
+        # verification/spec-iterations those are 75 and 96 runs of very
+        # different character. Traced only; the runner still reads
+        # ``_phase2_stop_reason``, whose values are unchanged.
+        self._phase2_stop_detail: str = ""
         # Short provider error string captured when stop_reason == "api_error",
         # surfaced to the user so a rate-limit reads as such (not a mystery).
         self._phase2_api_error: str = ""
@@ -957,6 +973,7 @@ class LLMOrchestrator:
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns,
             stop_reason=self._phase2_stop_reason,
+            stop_detail=self._phase2_stop_detail,
         )
 
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
@@ -1117,6 +1134,7 @@ class LLMOrchestrator:
             self._trace.write(
                 EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns,
                 stop_reason=self._phase2_stop_reason,
+            stop_detail=self._phase2_stop_detail,
             )
         else:
             self._drop_redundant_generator_tools()
@@ -1286,6 +1304,7 @@ class LLMOrchestrator:
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
             stop_reason=self._phase2_stop_reason,
+            stop_detail=self._phase2_stop_detail,
         )
 
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 edits) --------
@@ -2848,6 +2867,7 @@ class LLMOrchestrator:
                 execution_report = self._validate_app()
                 if execution_report["blocker_count"]:
                     self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn blocker gate"
                     self._phase2_exited_cleanly = False
                     break
                 open_items = self.executor.open_tasks()
@@ -2929,6 +2949,9 @@ class LLMOrchestrator:
                     )}]})
                 if handoff:
                     self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = (
+                        f"inspection handoff (no source change for {no_source_progress} "
+                        f"turns, no new information for {no_information_progress})")
                     paths = sorted({path for path, _ in inspected})
                     self._phase2_inspection_handoff = (
                         f"Phase 2 inspected {len(inspected)} distinct successful source excerpts and "
@@ -3684,7 +3707,16 @@ class LLMOrchestrator:
             revision_before = self._workspace_revision()
             obligations_before = self._repair_obligations_revision()
             checkpoint_progress()
+            log_before = len(self.tool_calls_log)
             edits = self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
+            # Writes the attempt REACHED FOR, successful or not. A rejected
+            # edit is not nothing: the rejection is fed back into the next
+            # attempt's prompt as a recent-failure, so that attempt is not the
+            # same request again. See the replay test below.
+            attempted_writes = sum(
+                1 for entry in self.tool_calls_log[log_before:]
+                if entry["tool"] in _WRITE_TOOLS_ON_RECORD
+            )
             source_changed = revision_before != self._workspace_revision()
             source_ever_changed = source_ever_changed or source_changed
             obligations_changed = obligations_before != self._repair_obligations_revision()
@@ -3770,6 +3802,18 @@ class LLMOrchestrator:
             # discharged obligation. Zero writes is no longer its own stop -
             # it is one no-progress round like any other.
             improved = score_after < prev_score
+            # An attempt that changed nothing AND never reached for the editor
+            # leaves the next prompt identical to this one, so the next round
+            # really would be this round again: end it here, on the first
+            # occurrence. An attempt whose edits were all REJECTED is the
+            # opposite case - it is the commonest way a weak model spends a
+            # round (a third of Qwen3-30B's edit calls fail), the rejections
+            # reach the next prompt, and across the pre-guard corpus the round
+            # after one wrote source 57% of the time and cut the blocker count
+            # 20% (n=30). Those get the second round; at ~8 turns an attempt
+            # that is ~1.2 turns per run, against the ~10 turns per run that
+            # granting it to every barren round would cost.
+            replay = edits == 0 and not source_changed and attempted_writes == 0
             if not improved and (
                 (not source_changed and not obligations_changed)
                 or state in seen_states
@@ -3779,16 +3823,20 @@ class LLMOrchestrator:
                     self.max_cost_usd is None
                     or self.client.usage.estimated_cost < self.max_cost_usd
                 )
-                if no_progress_streak >= _PHASE3_NO_PROGRESS_ROUNDS or not budget_left:
+                if (replay or no_progress_streak >= _PHASE3_NO_PROGRESS_ROUNDS
+                        or not budget_left):
                     logger.warning(
                         "Phase 3: Attempt %d made no progress (%d -> %d "
                         "blockers); ending fix loop (%d consecutive "
-                        "no-progress round(s), writes=%s, budget_left=%s).",
+                        "no-progress round(s), writes=%s, attempted_writes=%s, "
+                        "budget_left=%s).",
                         attempts_run, prev_blocker_count, len(blockers_after),
-                        no_progress_streak, edits, budget_left,
+                        no_progress_streak, edits, attempted_writes, budget_left,
                     )
-                    exit_reason = ("no-progress streak" if budget_left
-                                   else "cost budget exhausted")
+                    exit_reason = (
+                        "cost budget exhausted" if not budget_left
+                        else "replay (attempt never reached for the editor)" if replay
+                        else "no-progress streak")
                     break
                 logger.info(
                     "Phase 3: Attempt %d made no progress (%d -> %d "

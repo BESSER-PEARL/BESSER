@@ -76,38 +76,21 @@ _NOT_A_HELPER = frozenset({
     "typeof", "new", "delete", "void", "do", "else",
 })
 _STRING_ARG_RE = re.compile(r"['\"]([^'\"]{1,60})['\"]")
+_BLANKABLE_RE = re.compile(
+    r"//[^\n]*|/\*[\s\S]*?\*/"
+    r"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`")
+_KEEP_NEWLINES_RE = re.compile(r"[^\n]")
 
 
 def _blank_literals(text: str) -> str:
-    """Blank comments and string bodies, keeping every offset in place."""
-    out = list(text)
-    index, size = 0, len(text)
-    while index < size:
-        char = text[index]
-        if char == "/" and text.startswith("//", index):
-            while index < size and text[index] != "\n":
-                out[index] = " "
-                index += 1
-        elif char == "/" and text.startswith("/*", index):
-            while index < size and not text.startswith("*/", index):
-                out[index] = " "
-                index += 1
-            for position in range(index, min(index + 2, size)):
-                out[position] = " "
-            index += 2
-        elif char in "\"'`":
-            quote = char
-            index += 1
-            while index < size and text[index] != quote:
-                out[index] = " "
-                if text[index] == "\\" and index + 1 < size:
-                    out[index + 1] = " "
-                    index += 1
-                index += 1
-            index += 1
-        else:
-            index += 1
-    return "".join(out)
+    """Blank comments and string bodies, keeping every offset in place.
+
+    Offsets and newlines are preserved so `_HELPER_DEF_RE` positions still
+    index into the original source. A per-character rewrite allocated a list
+    the size of the file on every call and exhausted memory on the sweep;
+    substituting only the matched spans keeps it proportional to the literals.
+    """
+    return _BLANKABLE_RE.sub(lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()), text)
 
 
 def _bracket_depth(blanked: str, start: int, end: int) -> int:
@@ -176,7 +159,8 @@ def _resolve_import(rel: str, spec: str) -> list[str]:
             + [f"{stem}/index{ext}" for ext in _FRONTEND_EXTS])
 
 
-def _client_create_calls(rel: str, source: str, files: dict[str, str]) -> list:
+def _client_create_calls(rel: str, source: str, files: dict[str, str],
+                         helper_cache: dict[str, set[str]]) -> list:
     """Creates ``rel`` issues through an imported api-client module.
 
     One entry per call site: its literal string arguments, or None when the
@@ -184,13 +168,19 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str]) -> list:
     ``<EntityList entity={...}/>`` page). None means "a create happens here
     but this call does not say which entity", which is exactly the evidence
     the file-mention test already stands on.
+
+    ``helper_cache`` is keyed by module path: one api client is imported by
+    every page, and scanning it once per importer is what made this sweep
+    run out of memory.
     """
     calls = []
     for binding, spec in _import_bindings(source):
         target = next((c for c in _resolve_import(rel, spec) if c in files), None)
         if target is None or not _POST_RE.search(files[target]):
             continue
-        helpers = _post_helpers(files[target])
+        if target not in helper_cache:
+            helper_cache[target] = _post_helpers(files[target])
+        helpers = helper_cache[target]
         if not helpers:
             continue
         pattern = re.compile(
@@ -296,7 +286,8 @@ def build_acceptance_matrix(
                 continue
 
     by_path = dict(frontend_files)
-    client_calls = {rel: _client_create_calls(rel, content, by_path)
+    helper_cache: dict[str, set[str]] = {}
+    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache)
                     for rel, content in frontend_files}
 
     matrix: dict[str, dict[str, bool]] = {}

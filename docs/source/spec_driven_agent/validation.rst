@@ -123,7 +123,10 @@ that change the tree without improving it. A round is progress when the tree
 scores better, the source changed, or a verification obligation was discharged
 — writing no source is not by itself a stop, because a round spent closing
 checklist items or correcting a scenario can resolve blockers without touching
-a file. A larger error count does not trigger an automatic rollback: fixing one
+a file, and a round whose edits were all rejected feeds those rejections into
+the next attempt's prompt. A round that wrote nothing and never called an edit
+tool is the exception: it leaves the next prompt identical to its own, so it
+ends the loop immediately rather than paying for the same attempt twice. A larger error count does not trigger an automatic rollback: fixing one
 import may expose several previously unreachable CRUD failures. Unresolved
 output remains explicitly incomplete. Startup and data-entry failures are
 repaired before spending tokens on business requirement judgment.

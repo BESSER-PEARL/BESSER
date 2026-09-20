@@ -456,8 +456,152 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
     return findings
 
 
+# --- Nondeterministic business outcome -------------------------------------
+#
+# Six delivered apps (all Qwen, all `Order.confirmPayment`) answer the
+# action with `random.choice([True, False])` / `random.random() < 0.8`.
+# The coin flip IS the whole handler - no assignment, no commit - so the
+# app has no payment state at all, and the flake is only how an
+# unimplemented action becomes visible from outside. It also corrupts
+# measurement: such an app passes a single probe 50-90% of the time.
+#
+# The check keys on the random draw being a BOOLEAN that decides the
+# response, not on `random` being imported. Four other delivered apps
+# build a bill number with `random.choices(string.ascii_uppercase, k=6)`
+# and are correct, and demo-data seeders legitimately randomise flags -
+# hence the route-handler scope and the boolean test, which is what keeps
+# this module's zero-false-positive record.
+_RANDOM_MODULES = frozenset({"random", "secrets"})
+# Draws that are a coin flip once compared against anything.
+_COMPARED_DRAWS = frozenset({"random", "uniform", "randint", "randrange",
+                             "getrandbits", "randbelow"})
+_SEQUENCE_DRAWS = frozenset({"choice", "choices", "sample"})
+
+
+def _random_aliases(tree) -> frozenset:
+    """Names pulled in by ``from random import choice`` and friends."""
+    return frozenset(
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module in _RANDOM_MODULES
+        for alias in node.names
+    )
+
+
+def _random_draw(node, aliases: frozenset):
+    """The function name if ``node`` is a call into random/secrets."""
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) \
+            and func.value.id in _RANDOM_MODULES:
+        return func.attr
+    if isinstance(func, ast.Name) and func.id in aliases:
+        return func.id
+    return None
+
+
+def _is_coin_flip(node, aliases: frozenset) -> bool:
+    """``node``'s VALUE is a random boolean - not merely random."""
+    draw = _random_draw(node, aliases)
+    # random.choice([True, False]) - every element a bool literal.
+    if draw in _SEQUENCE_DRAWS and node.args:
+        sequence = node.args[0]
+        if isinstance(sequence, (ast.List, ast.Tuple)) and sequence.elts and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, bool)
+                for e in sequence.elts):
+            return True
+    # random.getrandbits(1) / secrets.randbelow(2) - binary by construction.
+    if draw in ("getrandbits", "randbelow") and len(node.args) == 1 \
+            and isinstance(node.args[0], ast.Constant) \
+            and node.args[0].value in (1, 2):
+        return True
+    # random.random() < 0.8, randint(0, 1) == 1, ...
+    if isinstance(node, ast.Compare):
+        return any(_random_draw(part, aliases) in _COMPARED_DRAWS
+                   for part in (node.left, *node.comparators))
+    return False
+
+
+def _coin_flip_outcome_issues(rel: str, content: str) -> list:
+    """A route handler whose answer is decided by a random boolean."""
+    if not any(word in content for word in ("random", "secrets")):
+        return []
+    try:
+        tree = ast.parse(content)
+    except (SyntaxError, ValueError):
+        return []  # a half-written file is python_source's problem, not ours
+    aliases = _random_aliases(tree)
+    findings: list = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _routes_of(function):
+            continue  # seeders, factories and helpers are not the app's answer
+        # Locals bound to a coin flip, and the draw that produced each.
+        flips: dict = {}
+        for node in ast.walk(function):
+            targets, value = [], None
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value:
+                targets, value = [node.target], node.value
+            if value is not None and _is_coin_flip(value, aliases):
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        flips[target.id] = value
+        decisive = _decisive_flip(function, flips, aliases)
+        if decisive is None:
+            continue
+        try:
+            snippet = ast.unparse(decisive)
+        except Exception:  # pragma: no cover - unparse is total on parsed trees
+            snippet = "a random draw"
+        findings.append(Finding(
+            path=rel,
+            line=getattr(decisive, "lineno", function.lineno),
+            message=(
+                f"`{snippet}` decides what this endpoint answers — the "
+                "outcome is a coin flip, so nothing can tell a working "
+                "operation from a broken one, and the same request gives "
+                "different answers. Decide it from state the app actually "
+                "holds (the request, the modeled attributes, the database); "
+                "if the model gives you nothing to decide it with, return "
+                "HTTP 501 (Not Implemented). Randomness is fine for ids and "
+                "seed data, never for whether an operation succeeded"
+            ),
+            blocker=True,
+        ))
+    return findings
+
+
+def _decisive_flip(function, flips: dict, aliases: frozenset):
+    """The coin flip that reaches the response, or None."""
+    for node in ast.walk(function):
+        # `return {"success": <flip>}` / `return <flip>`
+        if isinstance(node, ast.Return) and node.value is not None:
+            for sub in ast.walk(node.value):
+                if _is_coin_flip(sub, aliases):
+                    return sub
+                if isinstance(sub, ast.Name) and sub.id in flips:
+                    return flips[sub.id]
+        # `if <flip>: return ... else: return ...`
+        if isinstance(node, ast.If):
+            branch = [*node.body, *node.orelse]
+            if not any(isinstance(s, ast.Return)
+                       for stmt in branch for s in ast.walk(stmt)):
+                continue
+            for sub in ast.walk(node.test):
+                if _is_coin_flip(sub, aliases):
+                    return sub
+                if isinstance(sub, ast.Name) and sub.id in flips:
+                    return flips[sub.id]
+    return None
+
+
 def _lint_python(rel: str, content: str, contract: DataContract) -> list:
     findings: list = _zero_arg_action_issues(rel, content, contract)
+    findings += _coin_flip_outcome_issues(rel, content)
 
     # The generated method endpoints legitimately answer "executed" after
     # actually running the modeled body (a ``_impl`` function call in the

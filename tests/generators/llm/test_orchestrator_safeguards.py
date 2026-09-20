@@ -677,6 +677,11 @@ class TestPhase2SystemPrompt:
             expected = {"repeated_reads": 11, "missing_reads": 10, "only_new_reads": 20}[inspection]
             assert len(calls) == expected and orch._phase2_stop_reason == "validation_required"
             assert "inspection handoff, not verification" in orch._phase2_inspection_handoff
+            # "validation_required" is also what the end_turn blocker gate
+            # sets, and the two are 96 and 75 runs of very different character
+            # across verification/spec-iterations. The trace has to be able to
+            # tell them apart.
+            assert orch._phase2_stop_detail.startswith("inspection handoff")
             checkpoint = load_checkpoint(str(tmp_path))
             assert checkpoint.turn == expected and checkpoint.messages[-1]["role"] == "user"
             assert len(reminders) <= 1

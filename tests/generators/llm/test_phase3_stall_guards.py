@@ -75,13 +75,17 @@ class _MutableUsage:
         self.estimated_cost = cost
 
 
-def _drive(orchestrator, rounds, entry_blockers=6, after_round=None):
+def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
+           rejected_edits=0):
     """Run the real Phase 3 cycle over a scripted sequence of rounds.
 
     Each round is ``(edits, wrote_source, discharged_obligations,
     blockers_after)``. ``discharged_obligations`` models a round that closed a
     checklist item or fixed a scenario: the task/scenario revision moves even
-    though not one source byte did.
+    though not one source byte did. ``rejected_edits`` makes every round log
+    that many REFUSED ``modify_file`` calls, the way a real attempt whose
+    edits the executor rejected does - a zero-write round that still reached
+    for the editor.
     """
     state = {"attempt": 0, "rev": 0, "obl": 0}
 
@@ -91,6 +95,10 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None):
             state["rev"] += 1
         if obligations:
             state["obl"] += 1
+        for _ in range(rejected_edits):
+            orchestrator.tool_calls_log.append(
+                {"turn": state["attempt"], "tool": "modify_file",
+                 "input": {}, "success": False})
         state["attempt"] += 1
         if after_round is not None:
             after_round(state["attempt"])
@@ -151,12 +159,37 @@ def test_revalidation_alone_can_carry_a_round(orch):
 # 2. ... and the loop still stops when nothing moves
 # ---------------------------------------------------------------------------
 
-def test_consecutive_barren_rounds_still_end_the_loop(orch):
-    """The protection the zero-write stop existed to give, kept: a model that
-    writes nothing, changes nothing and discharges nothing buys exactly
-    ``_PHASE3_NO_PROGRESS_ROUNDS`` rounds - one more attempt, ~11 turns, and
-    the cost/runtime/turn caps are untouched underneath it."""
+def test_a_round_that_never_reached_for_the_editor_ends_the_loop(orch):
+    """The protection the zero-write stop existed to give, kept in full.
+
+    This round wrote nothing, changed nothing, discharged nothing and never
+    called an edit tool, so the next prompt is the one this attempt just
+    answered and the next round is this round again. It ends immediately - no
+    second round, no streak. Across the 221 pre-guard runs the round after a
+    prose-only one wrote source 0 times in 4, and granting the second round to
+    every zero-write round instead of only this one would have cost ~10 turns
+    per run (243 rounds x ~8 turns over 194 runs with a repair loop)."""
     attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8)
+
+    assert attempts == 1
+    assert orch._phase3_exit_reason == "replay (attempt never reached for the editor)"
+
+
+def test_an_attempt_whose_edits_were_all_rejected_gets_one_more_round(orch):
+    """The case the replay rule must NOT catch, and the reason the zero-write
+    stop was too tight.
+
+    A third of Qwen3-30B's edit calls are refused (1818 of 5555 across the
+    corpus; gpt-5.6-terra: 5%), so "wrote nothing" is most often "tried and
+    was rejected". Those rejections are fed back into the next attempt's
+    prompt as recent-failures, so the next round is a different request - and
+    measurably so: across the pre-guard corpus the round after one wrote
+    source 57% of the time and cut the blocker count 20% (n=30), against 18%
+    / 11% for a round that only read (n=209) and 0% / 0% for prose (n=4).
+    It costs ~1.2 turns per run, and two of them in a row still end the loop.
+    """
+    attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8,
+                      rejected_edits=2)
 
     assert attempts == _PHASE3_NO_PROGRESS_ROUNDS == 2
     assert orch._phase3_exit_reason == "no-progress streak"

@@ -444,6 +444,28 @@ def _source_files(output_dir: str) -> dict[str, str]:
     return files
 
 
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+
+def _class_homes(files: dict[str, str], cache: dict) -> dict[str, set[str]]:
+    """Class name -> the source files defining it, built once per run."""
+    if "classes" not in cache:
+        homes: dict[str, set[str]] = {}
+        for full in files.values():
+            if not full.endswith(".py"):
+                continue
+            try:
+                with open(full, "r", encoding="utf-8-sig", errors="ignore") as handle:
+                    tree = ast.parse(handle.read())
+            except (OSError, SyntaxError, ValueError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    homes.setdefault(node.name, set()).add(full)
+        cache["classes"] = homes
+    return cache["classes"]
+
+
 def _compact(content: str) -> str:
     """Drop blank and comment-only lines; the judge reads code, not prose."""
     kept = []
@@ -806,6 +828,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     files = _source_files(output_dir)
     sqlite = workspace_uses_sqlite(output_dir)
     parsed: dict[str, tuple[list[str], ast.AST | None, list[dict], set[int]]] = {}
+    quote_cache: dict = {}
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
@@ -826,6 +849,21 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
             [files[path]] if path in files else
             [full for rel, full in files.items() if rel.endswith("/" + path)]
         )
+        # The judge is asked for ``<path>:<line>`` and sometimes answers with
+        # the CLASS the line belongs to - ``Person: id: Mapped_[int] =
+        # mapped_column(Integer_, primary_key=True)``. 161 of those landed on
+        # three apps the probe drove end to end, at the same rate per app as
+        # on dead ones, so the check was separating nothing. Accept the class
+        # as a locator only when the tree really defines one class by that
+        # name: that is what distinguishes it from the 2026-09-18 run whose
+        # judge wrote the literal word "path" for all 40 citations, which
+        # names no class and stays unverified. This never widens the search
+        # for a citation that does name a file, and every later test
+        # (comment, statement kind, diagnostics, enforcement) still applies.
+        if not candidates and quoted and _IDENTIFIER_RE.match(path):
+            homes = _class_homes(files, quote_cache).get(path, ())
+            if len(homes) == 1:
+                candidates = list(homes)
         reason = "the cited source path is missing, excluded or ambiguous"
         if not quoted:
             reason = "the citation must identify an implemented statement, not only a decorator"

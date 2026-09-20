@@ -49,7 +49,10 @@ SANDBOX_POLICY_ENV = "BESSER_LLM_SHELL_SANDBOX"
 # Mounted fresh rather than bound: a private /proc (so --unshare-pid actually
 # hides the host PID 1) and a private /dev, plus scratch space nothing outside
 # the sandbox should see.
-_TMPFS_PATHS = ("/tmp", "/run", "/var/tmp")
+# /dev/shm is listed because bwrap's --dev builds a minimal device tree that
+# does not include it, and POSIX shared memory (multiprocessing, some npm and
+# browser toolchains) fails without it.
+_TMPFS_PATHS = ("/tmp", "/run", "/var/tmp", "/dev/shm")
 
 # Top-level entries the mount plan never binds from the outside.
 _VIRTUAL_TOPLEVEL = frozenset({"/proc", "/dev", "/tmp", "/run"})

@@ -283,15 +283,17 @@ def test_phase3_tool_calls_are_recorded_like_phase2_ones(tmp_path):
 
 
 def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
-    """Two attempts, and the log names the streak that ended them.
+    """One attempt, not two.
 
-    "Zero writes, therefore nothing moved" turned out to be false: each round
-    rebuilds its prompt from the re-collected findings, and over the 221 runs
-    recorded before the zero-write stop existed, the round after a barren one
-    wrote source 38% of the time. So a barren round costs one round, and the
-    streak - two of them - ends the loop. What must never regress is the
-    summary line: it prints the real attempt count, never the cap, because
-    printing the cap is what got this misdiagnosed in the first place.
+    This client answers in prose and calls no tool at all, so the attempt left
+    the tree byte-identical AND never reached for the editor: nothing it did
+    reaches the next prompt, and the next round would be a replay of this one.
+    Across the 221 runs recorded before this stop existed, the round after a
+    prose-only round wrote source 0 times in 4. (An attempt whose edits were
+    REJECTED is the opposite case and does buy a second round - 57% of those
+    wrote next round, n=30 - see test_phase3_stall_guards.py.) The summary
+    still prints the real attempt count, never the cap: printing the cap is
+    what got this misdiagnosed in the first place.
     """
     client = _PlainClient()
     orch = _build(tmp_path, client, auto_fix_issues=True)
@@ -304,9 +306,8 @@ def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
 
     text = caplog.text
     assert "no successful edit" in text, text
-    assert "remain after 2 attempt(s)" in text, text
-    assert "2 consecutive no-progress round(s)" in text, text
-    assert "writes=0" in text, text
+    assert "remain after 1 attempt(s)" in text, text
+    assert "writes=0, attempted_writes=0" in text, text
     assert f"after {_MAX_TOOLCHAIN_FIX_ITERATIONS} attempt(s)" not in text
 
 

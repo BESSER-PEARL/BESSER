@@ -46,6 +46,7 @@ from besser.generators.llm.execution.sandbox import (
 )
 from besser.generators.llm.edit_apply import (
     AmbiguousEdit,
+    describe_escape_mismatch,
     elided_lines,
     find_elision,
     find_similar_lines,
@@ -242,6 +243,13 @@ _ANCHOR_ADVICE = (
     "old_text = that line copied from read_file output, new_text = that line "
     "followed by the new code. To change existing code, copy the real lines from "
     "read_file output."
+)
+
+
+_IMPORT_BREAK_ADVICE = (
+    "Do not resend it unchanged. Either define the missing name in this same "
+    "file before the code that uses it, or call read_file on the file to see "
+    "the name it actually exports and use that spelling."
 )
 
 
@@ -2047,7 +2055,10 @@ class ToolExecutor:
             replacement += "\n"
         after = "".join(lines[:start - 1]) + replacement + "".join(lines[end:])
         if after == before:
-            return {"error": "This range edit makes no change; it is not evidence of implementation.",
+            return {"error": "This range edit makes no change; it is not evidence of implementation. "
+                             "The lines you selected already read exactly like new_text. Call "
+                             "read_file on the region to see what is actually there, then send "
+                             "the change you meant - or mark the task blocked with a reason.",
                     "status": "no_change", "replacements": 0}
         broke = _new_syntax_error(args["path"], before, after)
         if broke:
@@ -2061,7 +2072,8 @@ class ToolExecutor:
         if unimportable:
             return {"error": f"Refused: this edit leaves {args['path']} parseable but no longer "
                              f"importable ({unimportable}). Every router star-imports it, so this "
-                             "would take the whole application down. The file was left unchanged.",
+                             "would take the whole application down. The file was left unchanged. "
+                             + _IMPORT_BREAK_ADVICE,
                     "rejection_kind": "breaks_import",
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after)}
         with open(path, "w", encoding="utf-8", newline="\n") as target:
@@ -2120,6 +2132,23 @@ class ToolExecutor:
         frozen = self._frozen(rel_path)
         if frozen:
             return frozen
+
+        # read_file numbers what the model sees and Qwen pastes the gutter
+        # back. modify_file's ladder strips it (tier 5) and
+        # replace_file_lines strips it for the reason recorded at its own
+        # call site; this was the one write path that did not, so a rewrite
+        # arriving as "   1| import re" was refused as "unexpected indent at
+        # line 1" and the model resent it unchanged. Measured over the
+        # 2026-09-20 corpus: 35 Qwen write_file calls carried a gutter and 1
+        # landed (2.9%), against 98.5% for the 726 clean ones - 34 of
+        # write_file's 56 Qwen refusals. Every one of the 35 is strippable.
+        # Safe because the guard is "most content lines carry NNN| ", which
+        # 0 lines out of 1.2M in besser/ and the generated apps satisfy.
+        content = args.get("content")
+        if isinstance(content, str) and content:
+            unnumbered = _strip_line_numbers(content.split("\n"))
+            if unnumbered is not None:
+                args = {**args, "content": "\n".join(unnumbered)}
 
         # Rewriting a file the model has never seen this run is a rewrite
         # from memory - the edit that lost scaffold code (2026-09-17).
@@ -2553,6 +2582,15 @@ class ToolExecutor:
                              f"File has {content.count(chr(10))+1} lines, {len(content)} chars. "
                              f"Make sure old_text matches exactly including whitespace/indentation.",
                 }
+            # "old_text not found" is true but useless when the quote IS the
+            # file's line with every backslash written twice: re-reading the
+            # region shows the model text it believes it already copied. Name
+            # the actual defect first. The ladder deliberately will not apply
+            # this one - see describe_escape_mismatch.
+            escaped = describe_escape_mismatch(content, old_text)
+            if escaped:
+                err["error"] = escaped + " " + err["error"]
+
             # A bracketed span replaces the old recovery detour (miss -> miss ->
             # read_file -> guess a range) with one pre-filled replace_file_lines.
             # Both documented range-edit failure modes are line-number selection
@@ -2636,7 +2674,8 @@ class ToolExecutor:
                 "error": (
                     f"Refused: this edit leaves {args['path']} parseable but no longer "
                     f"importable ({unimportable}). Every router star-imports it, so this "
-                    "would take the whole application down. The file was left unchanged."
+                    "would take the whole application down. The file was left unchanged. "
+                    + _IMPORT_BREAK_ADVICE
                 ),
                 "rejection_kind": "breaks_import",
                 "would_write": "PROPOSED ONLY - NOT APPLIED:\n"

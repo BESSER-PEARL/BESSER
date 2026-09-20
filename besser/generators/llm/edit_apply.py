@@ -37,7 +37,7 @@ direct comparison against it, 2026-09-19:
 Tier 8 is ours, calibrated 2026-09-20 over the 411 refused ``old_text``
 values of 197 completed runs:
 
-8. extra indentation on the quote's FIRST line alone is forgiven, lines 2..n
+8. a wrong indent on the quote's FIRST line alone is forgiven, lines 2..n
    matching exactly. Of the 128 Qwen refusals tiers 1-7 cannot apply, 20 have
    a window matching modulo whitespace; 18 are this one shape - a decorator
    quoted at indent 4 above a body at 0, because the model reconstructs the
@@ -58,6 +58,30 @@ values of 197 completed runs:
    those quotes stop one line short of a docstring's closing triple quote, a
    separate defect that the same-turn write diagnostics name and the
    "old_text not found" message could not.
+
+   The tier originally forgave OVER-indentation only, on the principle that
+   it should never add indent it invented. Widened 2026-09-20 to the signed
+   difference: of the three quotes left in the 79-case reconstructed-state
+   replay set that a window matches modulo whitespace, two are the mirror
+   shape - a JSX tag quoted one space short of where it sits, a def quoted a
+   level short of its body - and tier 2/6 cannot take either, because the
+   shift is not uniform and their single-prefix rule rejects the window. The
+   whitespace restored is the FILE's own, sliced off the line being matched,
+   never invented. The third stays refused: its replacement is authored a
+   level shallower than the body it would replace, which is the guard in
+   ``_first_line_replacement``. Re-calibrated over 300 generated app files /
+   36,357 sampled windows in both directions: zero landings on a window other
+   than the quote's own.
+
+One tier that looks obvious is deliberately absent. 11 refused quotes spell a
+regex with a doubled backslash where the file has one, and it is tempting to
+un-double and retry. BESSER's own pydantic generator emits the same regex
+twice one line apart - raw in the check, re-escaped inside the error message -
+so a quote spanning both carries BOTH conventions and no whole-quote
+un-doubling is right; replayed against the three live cases it rescues none.
+An un-doubled ``new_text`` would also write a DIFFERENT regex into a file that
+still parses, which is the silent-corruption failure this module refuses
+elsewhere. ``describe_escape_mismatch`` names the mistake instead.
 
 Three tiers are deliberately NOT ported. Opencode's
 ``WhitespaceNormalizedReplacer`` collapses runs of internal whitespace, which
@@ -429,9 +453,20 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     too - 11 inputs across 23 runs carried prefixes on all but one line, and
     one of them was WRITTEN, baking ``NNN| `` into a shipped Booking.tsx. On a
     mixed block only read_file's ``NNN| `` form counts, only as a majority of
-    at least two lines, and only with strictly rising numbers. Calibrated over
+    at least two lines, and only with rising numbers. Calibrated over
     2.27M line windows of besser/ and 23 generated apps: zero matches in text
     that was not already numbered output.
+
+    "Rising" was "strictly rising" until 2026-09-20. Qwen transcribes the
+    gutter by hand and sometimes drops a digit - live Booking.tsx turn 13
+    quoted ``228| 229| 30| 231|``, twice in 105 pairs - and an all-or-nothing
+    rule threw away the other 104 good prefixes and refused a 107-line quote
+    over two typos. A gutter still has to RISE, just not perfectly: a
+    MAJORITY of the steps must climb. The real guard was never this rule but
+    the one above it - most content lines carrying ``NNN| `` at all, which
+    unnumbered source does not do.
+    Measured over the whole corpus, 181 Qwen payloads carry a gutter and this
+    tier already stripped 178 of them; that run was one of the 3 it did not.
     """
     content = [ln for ln in lines if ln.strip()]
     if not content:
@@ -442,7 +477,13 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     if len(marked) < 2 or len(marked) * 2 < len(content):
         return None
     numbers = [int(m.group(1)) for _, m in marked]
-    if any(b <= a for a, b in zip(numbers, numbers[1:])):
+    pairs = len(numbers) - 1
+    rising = sum(1 for a, b in zip(numbers, numbers[1:]) if b > a)
+    # A MAJORITY of the steps must rise. Two numbers still have to rise
+    # outright (1 pair: 0 rising fails, 1 passes), so nothing that used to be
+    # accepted on a short block is loosened, and exactly-half (10 3 11 2 12)
+    # is still refused.
+    if pairs and rising * 2 <= pairs:
         return None
     numbered = {i for i, _ in marked}
     return [_PIPE_NUMBERED.sub("", ln, count=1) if i in numbered else ln

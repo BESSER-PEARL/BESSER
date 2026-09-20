@@ -1369,7 +1369,18 @@ class ToolExecutor:
                 rel_path, full, self.workspace, full_norm, ws_norm,
             )
             raise ValueError(f"Path traversal blocked: {rel_path}")
-        return full
+        # Return the NORMALISED path, not the raw realpath. self.workspace is
+        # stored prefix-free, so a returned "\\?\C:\..." made every downstream
+        # os.path.relpath(path, self.workspace) raise "path is on mount
+        # '\\?\C:', start on mount 'C:'" — including the one in execute_typed
+        # that every file tool goes through. Seen 12 times across 9 Windows
+        # runs, always on write_file creating the first file in a new
+        # directory, alongside "[WinError 1450] Insufficient system
+        # resources": realpath keeps the prefix when the underlying
+        # _getfinalpathname fails transiently, which is why it never
+        # reproduced on demand. Containment was already proven against
+        # full_cmp, so returning it is also the self-consistent answer.
+        return full_cmp
 
     def _safe_cwd(self, rel_dir: str = ".") -> str:
         """Resolve a working directory within the workspace."""
@@ -1383,9 +1394,12 @@ class ToolExecutor:
             or cwd_norm.startswith(ws_norm + "/")
         ):
             raise ValueError(f"Path traversal blocked: {rel_dir}")
-        if not os.path.isdir(cwd):
-            os.makedirs(cwd, exist_ok=True)
-        return cwd
+        if not os.path.isdir(cwd_cmp):
+            os.makedirs(cwd_cmp, exist_ok=True)
+        # Same reason as _safe_path: the raw realpath can carry the Windows
+        # extended prefix, and this value becomes a subprocess cwd and the
+        # sandbox's --chdir.
+        return cwd_cmp
 
     def _list_dir(self, directory: str) -> list[dict]:
         """List files recursively, relative to workspace."""

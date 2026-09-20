@@ -576,3 +576,96 @@ class TestModelQueryTools:
             library_executor, "get_constraints_for", {"class_name": "Nope"}
         )
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# The Windows extended-path prefix must not escape _safe_path / _safe_cwd.
+#
+# self.workspace is stored prefix-free (__init__ normalises it), but both
+# resolvers used to return the RAW os.path.realpath. On Windows realpath keeps
+# the "\?\" extended prefix when the underlying _getfinalpathname fails
+# transiently -- which is what "[WinError 1450] Insufficient system resources"
+# is. Every downstream os.path.relpath(path, self.workspace) then raised
+#
+#     ValueError: path is on mount '\?\C:', start on mount 'C:'
+#
+# including the one in execute_typed that EVERY file tool passes through. Seen
+# 12 times across 9 runs, always on write_file creating the first file in a new
+# directory (frontend/index.html, frontend/src/api.js, ...), i.e. when the
+# parent does not exist yet and the resolve is most likely to fail. Needing the
+# transient is why nobody could reproduce it on demand; these tests inject it.
+# ---------------------------------------------------------------------------
+_EXT_PREFIX = "\\\\?\\"  # the literal four characters \ \ ? \
+
+
+class TestExtendedPathPrefixNeverEscapes:
+    """Each test fails against the pre-fix `return full` / `return cwd`."""
+
+    @staticmethod
+    def _flaky_realpath(monkeypatch, workspace):
+        """realpath() as Windows behaves when the resolve fails transiently."""
+        import ntpath
+
+        real = os.path.realpath
+
+        def _realpath(path, *args, **kwargs):
+            resolved = real(path, *args, **kwargs)
+            # The workspace root resolves cleanly (it exists); the child being
+            # created does not, and that is the one that comes back extended.
+            if resolved != workspace and ntpath.normcase(resolved).startswith(
+                ntpath.normcase(workspace),
+            ):
+                return _EXT_PREFIX + resolved
+            return resolved
+
+        monkeypatch.setattr(os.path, "realpath", _realpath)
+
+    def test_safe_path_returns_a_prefix_free_path(self, tmp_path, monkeypatch):
+        from besser.generators.llm.tool_executor import ToolExecutor
+
+        ex = ToolExecutor(workspace=str(tmp_path))
+        self._flaky_realpath(monkeypatch, ex.workspace)
+
+        resolved = ex._safe_path("frontend/index.html")
+        assert not resolved.startswith(_EXT_PREFIX), resolved
+        # The whole point: this is what blew up on every file tool.
+        assert os.path.relpath(resolved, ex.workspace).replace("\\", "/") == (
+            "frontend/index.html"
+        )
+
+    def test_safe_cwd_returns_a_prefix_free_path(self, tmp_path, monkeypatch):
+        from besser.generators.llm.tool_executor import ToolExecutor
+
+        ex = ToolExecutor(workspace=str(tmp_path))
+        self._flaky_realpath(monkeypatch, ex.workspace)
+
+        resolved = ex._safe_cwd("backend")
+        assert not resolved.startswith(_EXT_PREFIX), resolved
+        assert os.path.isdir(resolved)
+
+    def test_write_file_survives_the_first_file_in_a_new_directory(self, tmp_path, monkeypatch):
+        """The exact live shape: write_file creating a file whose parent does
+        not exist yet, with the resolve failing transiently."""
+        from besser.generators.llm.tool_executor import ToolExecutor
+
+        ex = ToolExecutor(workspace=str(tmp_path))
+        self._flaky_realpath(monkeypatch, ex.workspace)
+
+        result = _call(ex, "write_file", {
+            "path": "frontend/src/pages/StudentList.jsx",
+            "content": "export default function StudentList() { return null; }\n",
+        })
+        assert "error" not in result, result
+        assert (tmp_path / "frontend" / "src" / "pages" / "StudentList.jsx").is_file()
+
+    def test_traversal_is_still_blocked_when_the_prefix_is_present(self, tmp_path, monkeypatch):
+        """Normalising the return value must not soften the containment check."""
+        from besser.generators.llm.tool_executor import ToolExecutor
+
+        ex = ToolExecutor(workspace=str(tmp_path))
+        self._flaky_realpath(monkeypatch, ex.workspace)
+
+        with pytest.raises(ValueError):
+            ex._safe_path("../../../etc/passwd")
+        with pytest.raises(ValueError):
+            ex._safe_cwd("../../../")

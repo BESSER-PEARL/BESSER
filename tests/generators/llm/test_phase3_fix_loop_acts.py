@@ -283,6 +283,14 @@ def test_phase3_tool_calls_are_recorded_like_phase2_ones(tmp_path):
 
 
 def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
+    """One attempt, not two.
+
+    The old expectation of two attempts was the defect, not the contract: an
+    attempt that made zero successful writes AND left the tree byte-identical
+    cannot have moved anything, so the second round was the first one again.
+    Across the 23 runs of 2026-09-19, 34 of 104 fix attempts produced zero
+    writes - 222 turns bought at full price for a tree nothing had touched.
+    """
     client = _PlainClient()
     orch = _build(tmp_path, client, auto_fix_issues=True)
 
@@ -294,9 +302,11 @@ def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
 
     text = caplog.text
     assert "no successful edit" in text, text
-    # Two attempts ran (the second stalled round ends the loop); the summary
-    # used to print the cap instead, and that number was what got diagnosed.
-    assert "remain after 2 attempt(s)" in text, text
+    # One attempt ran: it wrote nothing and the tree is unchanged, so the loop
+    # ends there. The summary still prints the real number, never the cap -
+    # printing the cap is what got this misdiagnosed in the first place.
+    assert "remain after 1 attempt(s)" in text, text
+    assert "wrote_nothing=True" in text, text
     assert f"after {_MAX_TOOLCHAIN_FIX_ITERATIONS} attempt(s)" not in text
 
 

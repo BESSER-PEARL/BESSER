@@ -164,7 +164,14 @@ def test_a_correct_guard_that_refuses_sometimes_is_not_a_finding(tmp_path):
 def test_an_unhandled_exception_is_reported_unconditionally(tmp_path):
     """A crash is decisive on its own - unlike a 4xx, no reachable state
     excuses it, so this is reported even though every observed state is a
-    Python exception, not merely "every state refuses"."""
+    Python exception, not merely "every state refuses".
+
+    It is a BLOCKER. The old ``warning`` was not a decision: ``action call:``
+    appeared in no prefix list in ``_classify_issue`` and fell through to the
+    default, so a 500 the probe had literally watched an action handler raise
+    could never reach the blocker-only Phase 3 fix loop - while its exact
+    create-side twin, ``create contract:``, always could.
+    """
     workspace = _scaffold(tmp_path)
     _add_action(tmp_path, '    raise RuntimeError("boom")\n')
     [issue] = _action_issues(workspace)
@@ -172,7 +179,7 @@ def test_an_unhandled_exception_is_reported_unconditionally(tmp_path):
                             "POST /room/{room_id}/methods/activate/ -")
     assert "observed a server/persistence failure calling activate on a Room" in issue
     assert "RuntimeError" in issue and "boom" in issue
-    assert _classify_issue(issue).severity == "warning"
+    assert _classify_issue(issue).severity == "blocker"
 
 
 def test_an_honest_not_implemented_stub_is_left_to_the_static_scan(tmp_path):

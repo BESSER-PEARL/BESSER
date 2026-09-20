@@ -98,7 +98,9 @@ from besser.generators.llm.stack_metadata import (
     stack_label,
 )
 from besser.generators.llm.tool_executor import ToolExecutor
-from besser.generators.llm.execution.process import _safe_subprocess_env
+from besser.generators.llm.execution.process import (
+    COMMAND_OUTPUT_DIR, _safe_subprocess_env,
+)
 from besser.generators.llm.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
@@ -166,6 +168,17 @@ logger = logging.getLogger(__name__)
 # output_dir keeps the move on one filesystem, so it is a rename, not a copy.
 _ROLLBACK_DISCARD_DIR = ".besser_rollback_discard"
 
+# Where a new snapshot is assembled before it replaces the current one. The
+# swap is a rename, so a failed copy never leaves the run without a rollback
+# target. Phase 3 re-snapshots every time it reaches a better tree.
+_SNAPSHOT_STAGING_DIR = ".besser_snapshot_staging"
+
+# Installed dependency caches, never LLM-authored, excluded from the snapshot.
+# Phase 3 now re-snapshots on every improvement, and copying an installed
+# node_modules several times per run is gigabytes of pointless IO on a host
+# whose C: drive has hit zero free bytes mid-session before.
+_SNAPSHOT_IGNORED_DIRS = ("node_modules", "__pycache__", ".venv", "venv")
+
 # Run bookkeeping that a rollback must NOT revert. The snapshot predates them,
 # so restoring it would rewind the append-only trace and resurrect a stale
 # checkpoint, making a later resume replay work already on disk.
@@ -174,6 +187,7 @@ _ROLLBACK_PRESERVED = {
     CHECKPOINT_FILENAME,
     ".besser_recipe.json",
     _SNAPSHOT_DIR,
+    _SNAPSHOT_STAGING_DIR,
     _ROLLBACK_DISCARD_DIR,
 }
 
@@ -182,7 +196,7 @@ _ROLLBACK_PRESERVED = {
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
     ".next", ".gradle", "venv", ".venv", _SNAPSHOT_DIR,
-    _ROLLBACK_DISCARD_DIR,
+    _SNAPSHOT_STAGING_DIR, _ROLLBACK_DISCARD_DIR, COMMAND_OUTPUT_DIR,
 }
 
 
@@ -232,6 +246,24 @@ _TOOL_DETAIL_KEYS = (
     "path", "file_path", "filename", "target", "action", "id", "ids",
     "text", "command", "pattern", "query", "class_name", "generator",
 )
+
+
+def _runtime_verdict(messages) -> int:
+    """Worst runtime state the findings in ``messages`` establish.
+
+    ``_RUNTIME_FAILED`` only on an OBSERVED failure, ``_RUNTIME_UNVERIFIED``
+    when the probe ran but could not settle a create/action, ``_RUNTIME_OK``
+    otherwise. Callers must not read OK as "the app works" unless a backend
+    was actually booted - see ``_probeable_backends``.
+    """
+    verdict = _RUNTIME_OK
+    for entry in messages:
+        lower = str(getattr(entry, "message", entry)).strip().lower()
+        if lower.startswith(_RUNTIME_FAILURE_PREFIXES):
+            return _RUNTIME_FAILED
+        if lower.startswith(_RUNTIME_UNVERIFIED_PREFIXES):
+            verdict = _RUNTIME_UNVERIFIED
+    return verdict
 
 
 def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -> str:
@@ -311,6 +343,52 @@ _PHASE3_NO_EDIT_REMINDER = (
     "modify_file on the file the blocker names (quote old_text exactly from the "
     "excerpt), or write_file if the file has to be rewritten. Then keep going "
     "until every blocker is fixed.</system-reminder>"
+)
+
+# Consecutive no-progress rounds tolerated before the repair loop ends. Was 2.
+# Across 23 live runs on 2026-09-19, 522 turns (31% of every turn spent) came
+# after the blocker count stopped moving; mbzbzhq9 ran six attempts that each
+# ended at exactly 13 blockers, hit the 120-turn cap and shipped a dead app.
+_PHASE3_NO_PROGRESS_ROUNDS = 1
+
+# Rounds that edit the tree without improving its score before the loop ends.
+# The unchanged-state guard cannot see these: its key includes a content hash
+# of every source file, so ANY write - including a different useless one each
+# round - reads as a new state and the guard never fires.
+_PHASE3_PLATEAU_ROUNDS = 2
+
+# Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
+_RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
+
+# The probe ran the application and WATCHED it fail: the ORM would not map,
+# the app would not start, a create route crashed, an action handler crashed.
+#
+# ``api scenario:`` is deliberately NOT here. A retained workflow is a
+# model-authored assertion, and the tool that owns it says so ("a generated
+# assertion can be wrong; explain any correction against that specification").
+# Run dynioweu delivers an app that passes 11/11 corrected acceptance checks
+# and still fails its own booking_overlap_violation scenario, so a gate keyed
+# on it refuses a working application.
+_RUNTIME_OBSERVED_FAILURE_PREFIXES = (
+    "mapper config:", "application startup:", "create contract:", "action call:",
+)
+# Source the app cannot survive at runtime even where no probe reached it: it
+# does not parse, imports a module that is not there, or uses a name nothing
+# defines. Deterministic, not a guess about untried input.
+_RUNTIME_FATAL_SOURCE_PREFIXES = (
+    "syntax error in", "python contract:", "missing module:", "undefined name:",
+)
+_RUNTIME_FAILURE_PREFIXES = (
+    _RUNTIME_OBSERVED_FAILURE_PREFIXES + _RUNTIME_FATAL_SOURCE_PREFIXES
+)
+# The app ran but the probe could not establish the result: a guessed fixture a
+# business rule legitimately refused, an action whose reachable state it could
+# not construct, or a probe that did not run at all. Not evidence of a defect,
+# and not evidence of a working app either. Only a spec-derived ``test_api``
+# scenario (see ``confirmed_create_paths``) turns one of these green.
+_RUNTIME_UNVERIFIED_PREFIXES = (
+    "runtime unverified:", "create unverified:", "action unverified:",
+    "api scenario:",
 )
 
 # Checkpoint history eviction (see history_eviction.py). When enabled, stale
@@ -607,6 +685,15 @@ class LLMOrchestrator:
         # True when Phase 3's repair was discarded because it ended
         # worse than it began; the recipe must not read as a clean fix.
         self._phase3_rolled_back = False
+        # Last boot-and-probe outcome for the delivered backend: one of the
+        # _RUNTIME_* ranks, or None when no probe result stands for the tree on
+        # disk. Written by _collect_execution_issues, read by the Phase 3 gate.
+        self._runtime_probe_verdict: int | None = None
+        # Source revision the verdict above was computed for. A verdict from an
+        # older tree is not evidence about the one being shipped.
+        self._runtime_verdict_revision: str | None = None
+        # (source revision, findings) for the boot probe; see _runtime_probe_issues.
+        self._runtime_probe_cache: tuple[str, list[str]] | None = None
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
         # Last model name observed on the client. The provider's outage
         # fallback (``OpenAIProvider._activate_fallback``) can swap the
@@ -3353,6 +3440,18 @@ class LLMOrchestrator:
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     def _run_phase3_validation(self) -> None:
+        """Validate, repair, then apply the runtime exit gate.
+
+        The gate runs on EVERY exit from the repair cycle - clean, stalled,
+        budget-exhausted or crashed - because those are exactly the paths a
+        dead app used to leave through quietly. See ``_apply_runtime_gate``.
+        """
+        try:
+            self._run_phase3_repair_cycle()
+        finally:
+            self._apply_runtime_gate()
+
+    def _run_phase3_repair_cycle(self) -> None:
         """
         Lightweight validation of generated output. If issues found,
         give the LLM a few turns to fix them.
@@ -3371,9 +3470,10 @@ class LLMOrchestrator:
         - ``kotlinc`` on every Kotlin source root (if kotlinc installed)
 
         Per-project failures feed a repair/recheck loop bounded by the
-        remaining turn, cost and runtime budgets. Two consecutive unchanged
-        or repeated source states stop retries; unresolved blockers remain
-        explicitly incomplete, never accepted as verified output. This
+        remaining turn, cost and runtime budgets. An attempt that writes
+        nothing, one unchanged/repeated source state, or two rounds that edit
+        the tree without improving its score stop retries; unresolved blockers
+        remain explicitly incomplete, never accepted as verified output. This
         closes the gap where Phase 3 used to surface tsc errors as
         warnings (no fix attempt) and never invoked cargo / kotlinc
         at all, leaving the per-project compile-pass at 0/n for TS /
@@ -3448,12 +3548,20 @@ class LLMOrchestrator:
 
         # Repair within the remaining budgets. Fixing an upstream failure can
         # expose downstream failures, so blocker counts are not a progress
-        # metric. Two unchanged/repeated source states stop an unproductive loop.
+        # metric. One unchanged/repeated source state stops an unproductive loop.
         current_blockers = blockers_before
         prev_blocker_count = len(blockers_before)
         # Only a repair that actually wrote something can be rolled back.
         source_ever_changed = False
         last_issues = list(issues)
+        # Best tree seen so far, and the snapshot that holds it. The snapshot
+        # starts as the Phase 3 entry tree; every strictly better tree replaces
+        # it, so the restore at the end returns the BEST state reached rather
+        # than the last. Run 673hzu0z walked 6-10-7-2-9-11-9-2-6-6-6 and shipped
+        # 6; 10 of the 22 runs with a repair loop ended worse than a state they
+        # had already reached.
+        best_issues = list(blockers_before)
+        best_score = prev_score = self._phase3_tree_score(blockers_before)
         progress = self._repair_progress
         attempts_run = progress.get("attempts_run", 0)
         last_validated_revision = self._workspace_revision()
@@ -3463,6 +3571,9 @@ class LLMOrchestrator:
             and progress.get("last_obligations_revision") == last_obligations_revision
         )
         no_progress_streak = progress.get("no_progress_streak", 0) if same_validated_state else 0
+        # Rounds that edited the tree without improving its score. Not
+        # checkpointed: a resume re-derives the score from the tree it finds.
+        plateau_streak = 0
         seen_states = {
             (source, obligations, tuple(messages))
             for source, obligations, messages in progress.get("seen_states", [])
@@ -3544,6 +3655,22 @@ class LLMOrchestrator:
                 checkpoint_progress()
                 return
 
+            # Keep the best tree, not the last one. Strictly better only, so a
+            # flat round never overwrites the snapshot it would restore.
+            score_after = self._phase3_tree_score(blockers_after)
+            if score_after < best_score:
+                logger.info(
+                    "Phase 3: attempt %d is the best tree so far %s -> %s; "
+                    "re-snapshotting it as the rollback target.",
+                    attempts_run, best_score, score_after,
+                )
+                self._create_snapshot()
+                self._trace.write(
+                    EVENT_SNAPSHOT, before_phase="phase3_best",
+                    attempt=attempts_run, score=list(score_after),
+                )
+                best_issues, best_score = list(blockers_after), score_after
+
             # Fixing one import can expose several previously unreachable CRUD
             # errors. A larger count is not evidence of regression. Continue on
             # new source states; only unchanged/repeated states count as stalls.
@@ -3551,24 +3678,25 @@ class LLMOrchestrator:
                 last_validated_revision, last_obligations_revision,
                 tuple(i.message for i in _hard_blockers(blockers_after)),
             )
-            if (not source_changed and not obligations_changed) or state in seen_states:
-                # A single stalled round can need another pass, so don't
-                # bail immediately: retry while we still have cost budget,
-                # and only give up after two consecutive no-progress rounds
-                # (or when the cost cap leaves nothing to retry with). The
-                # outer attempt cap still bounds the worst case.
+            # An attempt that wrote nothing AND left the tree byte-identical
+            # cannot have moved anything; another round against the same state
+            # is the same attempt again. 34 of 104 attempts across the 23 runs
+            # of 2026-09-19 produced zero writes - 222 turns.
+            wrote_nothing = edits == 0 and not source_changed
+            if wrote_nothing or (not source_changed and not obligations_changed) or state in seen_states:
                 no_progress_streak += 1
                 budget_left = (
                     self.max_cost_usd is None
                     or self.client.usage.estimated_cost < self.max_cost_usd
                 )
-                if no_progress_streak >= 2 or not budget_left:
+                if (wrote_nothing or no_progress_streak >= _PHASE3_NO_PROGRESS_ROUNDS
+                        or not budget_left):
                     logger.warning(
                         "Phase 3: Attempt %d made no progress (%d -> %d "
                         "blockers); ending fix loop (%d consecutive "
-                        "no-progress round(s), budget_left=%s).",
-                        attempts_run, prev_blocker_count,
-                        len(blockers_after), no_progress_streak, budget_left,
+                        "no-progress round(s), wrote_nothing=%s, budget_left=%s).",
+                        attempts_run, prev_blocker_count, len(blockers_after),
+                        no_progress_streak, wrote_nothing, budget_left,
                     )
                     break
                 logger.info(
@@ -3581,17 +3709,42 @@ class LLMOrchestrator:
                 checkpoint_progress()
                 continue
 
+            # The tree changed but the score did not improve ON THE PREVIOUS
+            # ROUND. ``state`` above can never catch this: it keys on a content
+            # hash, so any edit at all - including a different useless one each
+            # round - reads as a new state. Run mbzbzhq9 ran six attempts that
+            # each ended at exactly 13 blockers, hit the 120-turn cap and
+            # shipped a dead app.
+            #
+            # Measured against the previous round rather than the best ever, on
+            # purpose: fixing one import legitimately exposes the errors behind
+            # it, and 11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
+            # Oscillation (673hzu0z: 6-10-7-2-9-11-9-2-6-6-6) is the best-tree
+            # snapshot's problem, not this guard's.
+            if score_after >= prev_score:
+                plateau_streak += 1
+                if plateau_streak >= _PHASE3_PLATEAU_ROUNDS:
+                    logger.warning(
+                        "Phase 3: attempt %d is consecutive no-improvement round "
+                        "%d (score %s, best %s); ending fix loop.",
+                        attempts_run, plateau_streak, score_after, best_score,
+                    )
+                    break
+            else:
+                plateau_streak = 0
+
             # Progress this round: reset the stall counter and keep going.
             seen_states.add(state)
             no_progress_streak = 0
             prev_blocker_count = len(blockers_after)
+            prev_score = score_after
             current_blockers = blockers_after
             checkpoint_progress()
 
         # We get here either by ending the loop early (no progress)
         # or by exhausting the attempt cap. Record whatever the final
         # state is so the recipe surfaces it.
-        if self._rollback_phase3_if_worse(blockers_before, last_issues, source_ever_changed):
+        if self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed):
             last_issues = list(self._validation_issues)
         else:
             self._validation_issues = list(last_issues)
@@ -3621,6 +3774,111 @@ class LLMOrchestrator:
         """The startup-class blocker messages present in ``issues``."""
         return {i.message for i in issues
                 if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
+
+    @classmethod
+    def _phase3_tree_score(cls, issues: list[ValidationIssue]) -> tuple[int, int, int, int]:
+        """Rank one tree. LOWER is better; compare lexicographically.
+
+        ``(boot broken, entities not confirmed created, actions not confirmed,
+        hard blockers)`` - the runtime evidence the boot probe emits one line
+        per entity and per action, with the blocker count last because it is
+        the weakest signal there is: across the 23 runs of 2026-09-19 it
+        correlated +0.21 with whether the delivered app worked, i.e. the wrong
+        sign at noise magnitude. Boot dominates on purpose, so a tree that
+        starts can never be discarded for one that does not.
+        """
+        boot_broken = int(bool(cls._startup_blockers(issues)))
+        entities = actions = 0
+        for issue in issues:
+            message = issue.message.lower()
+            if "create contract:" in message or "create unverified:" in message:
+                entities += 1
+            elif "action call:" in message or "action unverified:" in message:
+                actions += 1
+        return boot_broken, entities, actions, len(_hard_blockers(issues))
+
+    # Findings this prefix carries are the Phase 3 exit gate's own verdict on
+    # the delivered application, not one more item in the list.
+    _RUNTIME_GATE_PREFIX = "runtime gate:"
+
+    def _runtime_gate_finding(self) -> str | None:
+        """The gate's refusal text, or None when the app is clear to ship.
+
+        Detection alone is provably not enough: run mbzbzhq9 held its fatal
+        ``mapper config:`` blocker in top-priority position for six attempts
+        and shipped anyway. So this is a gate, not a finding - when it returns
+        text the run cannot report itself complete, and the text names the
+        runtime failure rather than burying it among forty lint lines.
+
+        Silent when there is nothing to boot (a Qiskit or BAF run has no
+        backend to probe), and silent when the probe booted the app and every
+        entity create and modelled action came back settled.
+
+        Also silent on an UNSETTLED result, and that restraint is measured. A
+        guessed fixture a business rule legitimately refuses is the normal
+        answer from a correct app: rescoring the 2026-09-19 batch against a
+        corrected acceptance probe (``verification/rescore_corrected_probe.json``)
+        shows 308z4wo2 passing 11/11 while every one of its create routes came
+        back ``create unverified:``, and dp3trml9 - the accepted artifact -
+        answering the probe's ReservedRoom payload with a correct 409. Those
+        routes stay reported through their own ``runtime unverified:`` blocker;
+        they are not grounds for the gate to refuse a working application.
+        """
+        if not self._probeable_backends():
+            return None
+        verdict = self._runtime_probe_verdict
+        if (verdict is not None and self._runtime_verdict_revision is not None
+                and self._runtime_verdict_revision != self._workspace_revision()):
+            # Measured on a tree that is no longer the one being shipped.
+            verdict = None
+        if verdict == _RUNTIME_OK:
+            return None
+        observed = [i.message for i in self._validation_issues
+                    if i.message.lower().startswith(_RUNTIME_OBSERVED_FAILURE_PREFIXES)]
+        fatal_source = [i.message for i in self._validation_issues
+                        if i.message.lower().startswith(_RUNTIME_FATAL_SOURCE_PREFIXES)]
+        if (verdict in (_RUNTIME_FAILED, None)) and (observed or fatal_source):
+            what = ("the probe ran it and watched it fail" if observed
+                    else "its own source cannot survive a request")
+            return (
+                f"{self._RUNTIME_GATE_PREFIX} the delivered application is not "
+                f"proven to accept a record - {what}, so this run is NOT complete: "
+                + "; ".join(sorted(observed or fatal_source)[:3])[:1200]
+            )
+        if verdict is None and not any(
+            i.message.lower().startswith("runtime unverified:")
+            for i in self._validation_issues
+        ):
+            return (
+                f"{self._RUNTIME_GATE_PREFIX} the delivered application has no runtime "
+                "evidence at all - the boot-and-create probe did not produce a "
+                "verdict for this source revision and no test_api workflow was run, "
+                "so this run is NOT complete. An unrun check is not a passing check."
+            )
+        return None
+
+    def _apply_runtime_gate(self) -> None:
+        """Record the gate's verdict as a blocker so completion is refused.
+
+        Called on every Phase 3 exit, including the budget-exhausted one: the
+        honest outcome when the money runs out with the gate still red is an
+        incomplete run naming the runtime failure, never a silent pass.
+        """
+        try:
+            finding = self._runtime_gate_finding()
+        except Exception:
+            logger.debug("Runtime gate evaluation failed", exc_info=True)
+            return
+        if not finding:
+            return
+        if any(i.message.startswith(self._RUNTIME_GATE_PREFIX)
+               for i in self._validation_issues):
+            return
+        logger.warning("Phase 3 runtime gate refused completion: %s", finding[:300])
+        self._validation_issues.append(ValidationIssue("blocker", finding))
+        self._trace.write(
+            EVENT_VALIDATION_ISSUE, phase="phase3_runtime_gate", message=finding[:1000],
+        )
 
     def _rollback_phase3_if_worse(
         self, entry_blockers: list[ValidationIssue],
@@ -3653,6 +3911,12 @@ class LLMOrchestrator:
         final_blockers = [i for i in final_issues if i.severity == "blocker"]
         entry_hard = len(_hard_blockers(entry_blockers))
         final_hard = len(_hard_blockers(final_blockers))
+        # Ranked on runtime evidence first (boot, entities created, actions
+        # callable) and only then on the hard count - see _phase3_tree_score.
+        # ``entry_blockers`` is the BEST state reached, which is what the
+        # snapshot now holds, not necessarily the Phase 3 entry state.
+        entry_score = self._phase3_tree_score(entry_blockers)
+        final_score = self._phase3_tree_score(final_blockers)
         # A count cannot see a TRADE. Run mbzbzhq9 held 13 blockers flat across
         # six attempts while swapping a hard blocker for a broken ORM mapper,
         # so "not more than we started with" was true and the run shipped an
@@ -3660,7 +3924,7 @@ class LLMOrchestrator:
         # stops the app starting is never an acceptable trade, at any count.
         broke_startup = (self._startup_blockers(final_blockers)
                          - self._startup_blockers(entry_blockers))
-        if final_hard <= entry_hard and not broke_startup:
+        if final_score <= entry_score and not broke_startup:
             return False
         if broke_startup:
             logger.warning(
@@ -3668,8 +3932,9 @@ class LLMOrchestrator:
                 len(broke_startup), "; ".join(sorted(broke_startup))[:300],
             )
         logger.warning(
-            "Phase 3 ended worse than it began (%d -> %d hard blockers); "
-            "restoring the pre-Phase-3 tree.", entry_hard, final_hard,
+            "Phase 3 ended worse than the best tree it reached (%s -> %s; "
+            "%d -> %d hard blockers); restoring that tree.",
+            entry_score, final_score, entry_hard, final_hard,
         )
         if not self._restore_snapshot():
             logger.error(
@@ -4054,9 +4319,15 @@ class LLMOrchestrator:
     @staticmethod
     def _repair_priority(issue: ValidationIssue) -> tuple[int, str]:
         message = issue.message.lower()
-        if message.startswith(("syntax", "python contract:", "mapper config:", "application startup:", "missing module:")):
+        # ``create contract:`` / ``action call:`` are the runtime gate's own
+        # observed failures - the app booted and still could not take a record.
+        # They belong beside the startup classes, not below a lint finding.
+        if message.startswith((
+            "syntax", "python contract:", "mapper config:", "application startup:",
+            "missing module:", "create contract:", "action call:",
+        )):
             return 0, message
-        if message.startswith(("data contract:", "create contract:", "undefined name:", "runtime unverified:")):
+        if message.startswith(("data contract:", "undefined name:", "runtime unverified:")):
             return 1, message
         if message.startswith(("requirement", "task unverified:")):
             return 3, message
@@ -4081,46 +4352,129 @@ class LLMOrchestrator:
             for finding in diagnose_written_content(rel, source, workspace=self.output_dir, limit=25):
                 raw.append(f"python contract: {rel} line {finding.get('line', 1)}: {finding['message']}")
         raw.extend(_create_schema_router_mismatches(self.output_dir))
+        raw.extend(_unresolvable_local_imports(self.output_dir))
         from besser.generators.llm.validation.frontend_schema import collect_frontend_schema_issues
 
         raw.extend(collect_frontend_schema_issues(self.output_dir))
-        raw.extend(_unresolvable_local_imports(self.output_dir))
-        # Don't repeatedly boot an application already proven to be broken.
-        if raw:
+        # Only a finding that PROVES the app cannot boot may skip the probe.
+        # This early return used to fire on the whole list above - including
+        # ``frontend contract:`` (a React form field), a per-endpoint schema
+        # mismatch and any undefined name anywhere - so on a weak model, which
+        # always leaves something static on the floor, the boot probe never ran
+        # and the fix loop optimised a static list against a tree nobody had
+        # run. Nine of the 23 runs on 2026-09-19 (7aybctis, iw82zzoc, se7k3zbx,
+        # p_qopu92, pcovsppe, uvobkl4u, w7zoeszt, yxdo58mr, z1ayv8bq) shipped
+        # with no runtime verdict for that reason; re-probing 7aybctis's
+        # delivered tree found POST /booking/ raising TypeError on every call.
+        if any(item.startswith("missing module:") for item in raw):
+            self._record_runtime_verdict(None)
             return list(dict.fromkeys(raw))
         if self.enable_import_smoke_check:
-            mapper_issues = _import_smoke_issues(self.output_dir)
-            raw.extend(mapper_issues)
-            if not any(i.startswith("mapper config:") for i in mapper_issues):
-                try:
-                    from besser.generators.llm.constructibility import collect_constructibility_issues
-                    raw.extend(collect_constructibility_issues(self.output_dir))
-                except Exception as exc:
-                    raw.append(f"runtime unverified: isolated app verification failed: {type(exc).__name__}: {exc}")
-            raw = ["runtime unverified: " + item if item.startswith("validation:") else item for item in raw]
+            raw.extend(self._runtime_probe_issues())
             # Guessed fixtures can legitimately violate business rules. Keep
             # that unknown distinct from a crash, and let a real create/read
             # scenario supply evidence without weakening application validation.
             raw.extend(self._collect_api_scenario_issues())
-            from besser.generators.llm.api_probe import confirmed_create_paths
-            revision = self._workspace_revision()
-            confirmed = {
-                (record["report"].get("backend"), path)
-                for record in self._api_scenarios.values() if record["revision"] == revision
-                for path in confirmed_create_paths(record["report"])
-            }
-            checked = []
-            for item in raw:
-                if item.startswith("create unverified: "):
-                    match = _re.match(r"create unverified: (.+?): POST (\S+) -", item)
-                    if match and (match.group(1), match.group(2).rstrip("/")) in confirmed:
-                        continue
-                    item = "runtime unverified: " + item
-                checked.append(item)
-            raw = checked
+            raw = self._apply_scenario_evidence(raw)
+            # A clean list only counts as OK when a backend was actually booted;
+            # "no backend here" must never read as "the app works".
+            self._record_runtime_verdict(
+                _runtime_verdict(raw) if self._probeable_backends() else None
+            )
         elif any(os.path.basename(p) == "main_api.py" for p in _python_files(self.output_dir)):
+            self._record_runtime_verdict(None)
             raw.append("runtime unverified: backend startup/data-entry checks are disabled; this app has not been runtime verified")
+        else:
+            # Nothing to boot in this workspace: the gate has no claim to make.
+            self._record_runtime_verdict(None)
         return list(dict.fromkeys(raw))
+
+    def _record_runtime_verdict(self, verdict: int | None) -> None:
+        """Store the boot-and-probe outcome with the tree it was measured on."""
+        self._runtime_probe_verdict = verdict
+        self._runtime_verdict_revision = self._workspace_revision() if verdict is not None else None
+
+    def _runtime_probe_issues(self) -> list[str]:
+        """Import-smoke + constructibility findings, cached per source revision.
+
+        The probe boots the app in a subprocess and can take up to 90s per
+        backend. Phase 3 re-validates after every fix attempt, and the loop is
+        entitled to every turn Phase 2 left, so an uncached probe adds minutes
+        of wall clock per run for an answer that cannot have changed while the
+        source did not. ``_validate_app`` already caches its own call this way.
+        """
+        revision = self._workspace_revision()
+        cached = getattr(self, "_runtime_probe_cache", None)
+        if cached and cached[0] == revision:
+            return list(cached[1])
+        issues: list[str] = []
+        mapper_issues = _import_smoke_issues(self.output_dir)
+        issues.extend(mapper_issues)
+        if not any(i.startswith("mapper config:") for i in mapper_issues):
+            try:
+                from besser.generators.llm.constructibility import collect_constructibility_issues
+                issues.extend(collect_constructibility_issues(self.output_dir))
+            except Exception as exc:
+                issues.append(f"runtime unverified: isolated app verification failed: {type(exc).__name__}: {exc}")
+        issues = ["runtime unverified: " + item if item.startswith("validation:") else item
+                  for item in issues]
+        self._runtime_probe_cache = (revision, list(issues))
+        return issues
+
+    def _apply_scenario_evidence(self, raw: list[str]) -> list[str]:
+        """Retire probe unknowns a retained ``test_api`` workflow actually proved.
+
+        A guessed fixture refused with 4xx, or an action state the probe cannot
+        construct, is not evidence of a defect - but it is not evidence of a
+        working app either. Only a spec-derived scenario that created a record
+        and read it back retires one. Where nothing retires it, the finding is
+        re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
+        blocker instead of a warning nothing consumes.
+        """
+        from besser.generators.llm.api_probe import confirmed_create_paths
+
+        revision = self._workspace_revision()
+        current = [record for record in self._api_scenarios.values()
+                   if record["revision"] == revision]
+        confirmed = {(record["report"].get("backend"), path)
+                     for record in current
+                     for path in confirmed_create_paths(record["report"])}
+        # An action route a passing current scenario exercised end-to-end.
+        exercised = {
+            (record["report"].get("backend"),
+             str(response.get("path", "")).split("?", 1)[0].rstrip("/"))
+            for record in current if record["report"].get("status") == "passed"
+            for response in record["report"].get("responses", [])
+            if response.get("method") == "POST"
+            and isinstance(response.get("status"), int)
+            and 200 <= response["status"] < 300
+        }
+        checked: list[str] = []
+        for item in raw:
+            if item.startswith("create unverified: "):
+                match = _re.match(r"create unverified: (.+?): POST (\S+) -", item)
+                if match and (match.group(1), match.group(2).rstrip("/")) in confirmed:
+                    continue
+                item = "runtime unverified: " + item
+            elif item.startswith("action unverified: "):
+                # Same shape as the create side. Without this promotion the
+                # finding stayed a warning the blocker-only fix loop ignored.
+                match = _re.match(r"action unverified: (.+?): POST (\S+) -", item)
+                if match and (match.group(1), match.group(2).rstrip("/")) in exercised:
+                    continue
+                item = "runtime unverified: " + item
+            checked.append(item)
+        return checked
+
+    def _probeable_backends(self) -> list[str]:
+        """Generated FastAPI services the constructibility probe can drive."""
+        try:
+            from besser.generators.llm.constructibility import _fastapi_backends
+
+            return _fastapi_backends(self.output_dir)
+        except Exception:
+            logger.debug("Backend discovery failed", exc_info=True)
+            return []
 
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""
@@ -5020,11 +5374,22 @@ class LLMOrchestrator:
     # ==================================================================
 
     def _create_snapshot(self) -> None:
-        """Create a lightweight snapshot of the output directory after Phase 1."""
+        """Snapshot the output directory as the rollback target.
+
+        Taken once before Phase 3 and again after any repair attempt that
+        reaches a strictly better tree, so the snapshot always holds the BEST
+        state the run has reached rather than its first one.
+
+        Built in a staging directory and swapped in by rename: deleting the
+        existing snapshot first and copying after leaves the run with no
+        rollback target at all if the copy dies partway, and this now runs
+        several times per Phase 3 rather than once.
+        """
         snapshot_path = os.path.join(self.output_dir, _SNAPSHOT_DIR)
+        staging_path = os.path.join(self.output_dir, _SNAPSHOT_STAGING_DIR)
         try:
-            if os.path.exists(snapshot_path):
-                shutil.rmtree(snapshot_path)
+            if os.path.exists(staging_path):
+                shutil.rmtree(staging_path)
 
             # Copy everything except the snapshot dir and the run bookkeeping
             # a rollback must never revert (see _ROLLBACK_PRESERVED).
@@ -5032,16 +5397,22 @@ class LLMOrchestrator:
                 if item in _ROLLBACK_PRESERVED:
                     continue
                 src = os.path.join(self.output_dir, item)
-                dst = os.path.join(snapshot_path, item)
+                dst = os.path.join(staging_path, item)
                 if os.path.isdir(src):
-                    shutil.copytree(src, dst)
+                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
+                        *_SNAPSHOT_IGNORED_DIRS))
                 else:
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     shutil.copy2(src, dst)
+            os.makedirs(staging_path, exist_ok=True)
 
+            if os.path.exists(snapshot_path):
+                shutil.rmtree(snapshot_path)
+            os.replace(staging_path, snapshot_path)
             logger.info("Snapshot created at %s", snapshot_path)
         except Exception as e:
             logger.warning("Failed to create snapshot: %s", e)
+            shutil.rmtree(staging_path, ignore_errors=True)
 
     def _restore_snapshot(self) -> bool:
         """Restore the output directory from the post-Phase-1 snapshot.
@@ -5110,13 +5481,14 @@ class LLMOrchestrator:
         return True
 
     def _remove_snapshot(self) -> None:
-        """Clean up the snapshot directory."""
-        snapshot_path = os.path.join(self.output_dir, _SNAPSHOT_DIR)
-        if os.path.isdir(snapshot_path):
-            try:
-                shutil.rmtree(snapshot_path)
-            except Exception:
-                pass
+        """Clean up the snapshot directory (and any staging left by a failure)."""
+        for name in (_SNAPSHOT_DIR, _SNAPSHOT_STAGING_DIR):
+            path = os.path.join(self.output_dir, name)
+            if os.path.isdir(path):
+                try:
+                    shutil.rmtree(path)
+                except Exception:
+                    pass
 
     # ==================================================================
     # Interactive error feedback
@@ -5370,10 +5742,54 @@ class LLMOrchestrator:
             # window table must never guess LOW.
             model=model,
             reserve=reserve,
+            # Carried through the summary: without it the model resumes after a
+            # compaction unable to see the checklist the end_turn gate is
+            # blocking on, the blockers it is meant to be fixing, or the
+            # non-negotiable id/server-owned-field rules.
+            work_state=self._compaction_work_state(),
         )
         if did_compact:
             self._compaction_count += 1
         return result
+
+    def _compaction_work_state(self) -> dict:
+        """Open work a compaction must not summarize away."""
+        return {
+            "tasks": self.executor.open_tasks() + self.executor.blocked_tasks(),
+            "blockers": [i.message for i in self._validation_issues
+                         if i.severity == "blocker"],
+            "contract_rules": self._data_contract_rules(),
+        }
+
+    def _data_contract_rules(self) -> list[str]:
+        """The model-derived id/server-owned rules, as short lines.
+
+        Same source as the system prompt's data-contract section
+        (``contract_checks.build_data_contract``) and the same rules
+        ``_collect_data_contract_issues`` enforces.
+        """
+        try:
+            from besser.generators.llm.contract_checks import build_data_contract
+
+            contract = build_data_contract(self.domain_model)
+        except Exception:
+            logger.debug("Data contract extraction failed", exc_info=True)
+            return []
+        if contract is None:
+            return []
+        rules = [
+            f"`{cls}.{attr}` is {type_name} in EVERY layer - path param, column, "
+            "foreign key, schema and TypeScript interface; never parseInt a string id"
+            for cls, (attr, type_name) in sorted(contract.pk_types.items())
+        ]
+        rules.append(
+            "id, created_at/updated_at and every is_derived attribute are "
+            "server-owned: never in a create schema or create form, always computed"
+        )
+        rules.append(
+            "an unimplemented method must fail visibly, never return a fake success"
+        )
+        return rules
 
     def _summarize_messages(self, messages: list[dict]) -> str:
         """Delegate to compaction module."""
@@ -5514,6 +5930,14 @@ class LLMOrchestrator:
     # model has a way to recover. Ignoring recovery remains bounded.
     _REPEAT_FORCE_AT = 3
     _REPEAT_STOP_AT = 7
+    # ``executor.last_repeat`` now also reports refusals counted per TARGET
+    # (same path + same anchor, redrafted text) once they pass the executor's
+    # own _TARGET_REPEAT_AT, through this same channel. So _REPEAT_STOP_AT is
+    # deliberately also the target-refusal ceiling: seven refusals at one
+    # anchor with no successful edit in between is a dead loop, whether the
+    # model resent identical text or seven different drafts. Named so it reads
+    # as a decision rather than an accident of the shared channel.
+    _TARGET_REFUSAL_STOP_AT = _REPEAT_STOP_AT
 
     def _apply_edit_loop_guards(self, messages: list[dict], *, where: str) -> bool:
         """Per-file modify streak + repeat-rejection escalation. True = stop.
@@ -5544,7 +5968,12 @@ class LLMOrchestrator:
 
     def _escalate_repeat_rejection(self, messages: list[dict]) -> bool:
         """Act on ``executor.last_repeat``. Returns True when the caller's
-        loop must stop."""
+        loop must stop.
+
+        The channel carries two kinds of count: repeats of the byte-identical
+        rejected call, and refusals at one TARGET across redrafts. Both end
+        the phase at ``_TARGET_REFUSAL_STOP_AT`` - see the constant.
+        """
         hit = getattr(self.executor, "last_repeat", None)
         if not hit:
             return False
@@ -5556,10 +5985,10 @@ class LLMOrchestrator:
                      if item.get("tool") in _EDIT_TOOLS
                      and str(item.get("path", "")).replace("\\", "/").strip() == path),
                     "modify_file")
-        if seen >= self._REPEAT_STOP_AT:
+        if seen >= self._TARGET_REFUSAL_STOP_AT:
             logger.warning(
-                "Stuck edit loop: the same rejected %s on %s was sent %d "
-                "times; ending the phase", tool, path, seen,
+                "Stuck edit loop: %s on %s was refused %d times with no "
+                "successful edit in between; ending the phase", tool, path, seen,
             )
             self._phase2_stop_reason = "stuck_edit_loop"
             return True

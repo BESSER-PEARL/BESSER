@@ -167,7 +167,12 @@ def _classify_issue(message: str) -> ValidationIssue:
     # The runtime probe observed a server/persistence failure. Guessed input
     # rejected with 4xx is inconclusive, not proof that all valid inputs fail;
     # those reports use the separate create-unverified path.
-    if lower.startswith("create contract:"):
+    #
+    # ``action call:`` is the action-endpoint twin of ``create contract:`` -
+    # constructibility.py observed a 500 from a handler it invoked. It was in
+    # no prefix list here, so it fell through to the default warning and the
+    # blocker-only fix loop never consumed it.
+    if lower.startswith(("create contract:", "action call:")):
         return ValidationIssue("blocker", text)
 
     # Ruff: classify by rule code. F821 (undefined name) is a BLOCKER:

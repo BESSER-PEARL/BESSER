@@ -217,6 +217,11 @@ def test_orchestration_retains_workflows_reruns_changed_source_and_never_evicts_
     proof["backend"] = "web_app/backend"
     monkeypatch.setattr(constructibility, "collect_constructibility_issues", lambda _root: [
         "create contract: web_app/backend: POST /room/ - observed 500"])
+    # The boot probe is now cached per source revision - it costs up to 90s a
+    # backend and Phase 3 re-validates after every fix attempt. Swapping the
+    # probe's answer without touching a byte of source is something only a
+    # test can do, so the test drops the cache the way a real edit would.
+    coverage._runtime_probe_cache = None
     assert any("observed 500" in issue for issue in coverage._collect_execution_issues())
 
 

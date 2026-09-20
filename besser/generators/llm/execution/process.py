@@ -1,6 +1,14 @@
-"""Allowlisted subprocess environments shared by tools and runtime probes."""
+"""Subprocess environment and artefact locations shared by tools and probes."""
 
 import os
+
+
+# Workspace subdirectory holding the untruncated output of shell commands.
+# Head+tail truncation drops the middle of a failing `tsc` / `npm run build`
+# log, which is where its errors are; the full log is spilled here so
+# search_in_files / read_file can still reach them. Run-internal: excluded
+# from packaging, the push, the scaffold inventory and the recipe manifest.
+COMMAND_OUTPUT_DIR = ".besser_command_output"
 
 
 # Environment variables that are safe to expose to LLM-invoked subprocesses.

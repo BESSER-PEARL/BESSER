@@ -40,6 +40,35 @@ check; generic shell-success logs are not build evidence. The mutation inventory
 exposes reverse relationship inputs, native association roles, and public write
 paths so a test's descriptive name is not mistaken for exercising those paths.
 
+## Shell tools: a deployment decision
+
+`run_command` / `install_dependencies` are off by default on every path
+(`LLMOrchestrator`, `LLMGenerator`, the web runner). The web runner takes its
+value from `BESSER_LLM_ENABLE_SHELL_TOOLS`, read once at import into
+`backend/constants/constants.py`; no request field, header or query parameter
+reaches `allow_shell_tools`, and the Pydantic request model drops an unknown
+key in the body. That is the property that makes the hosted default a gate rather
+than a suggestion, so keep the decision at process scope. The gate is enforced
+in `ToolExecutor.execute_typed`, not only by filtering the advertised tool list.
+
+A local or on-prem install sets the variable and gets the generate-test-fix
+loop. `GET /besser_api/spec-driven/config` reports the live value as
+`features.shell_tools_enabled` so a deploy can be checked from outside the
+process. The local path already has a 120s per-command timeout, a
+workspace-confined working directory (`_safe_cwd`), the stripped subprocess
+environment from `execution/process.py`, an output cap and a denylist for the
+obvious catastrophes. None of that is an OS sandbox: the command runs as the
+backend user and may `cd` out of the workspace. `docs/source/spec_driven_agent/tools.rst`
+states the guarantees and the non-guarantees.
+
+When a stream overruns the cap, the untruncated output is spilled to
+`COMMAND_OUTPUT_DIR` (`.besser_command_output/`) in the workspace and the tool
+result carries `full_output_path`. Head+tail truncation discards the middle,
+which for a failing `tsc` / `npm run build` is the diagnostics themselves.
+`search_in_files` reaches that directory by exception; packaging, the push, the
+scaffold inventory and the recipe manifest all exclude it. Each spilled stream
+is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
+
 ## Responsibility map
 
 | Area | Modules |

@@ -68,9 +68,16 @@ Feature flags
 
 - ``BESSER_LLM_ENABLE_SHELL_TOOLS`` (**off**) -- Give the LLM
   ``run_command`` / ``install_dependencies``. Arbitrary shell on a shared BYOK
-  host is an RCE and secret-exfiltration surface, so this is opt-in and
-  intended for trusted local or CLI runs only. It also gates Phase 3's
-  ``pip install --dry-run`` dependency check. See :doc:`tools`.
+  host is an RCE and secret-exfiltration surface, so this stays off there; a
+  local or on-prem install -- one machine, one tenant -- is exactly where to
+  turn it on, and it is what lets the agent run its own tests and builds. It
+  also gates Phase 3's ``pip install --dry-run`` dependency check. There is no
+  request field for it: it is read from the environment at start-up, and the
+  config endpoint reports the resulting value as ``features.shell_tools_enabled``
+  so a deploy can be verified from outside the process. Read
+  :ref:`spec-driven-shell-tools` before enabling it -- the local path has a
+  timeout, a workspace-confined working directory, a stripped environment and a
+  denylist, but it is not an operating-system sandbox.
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (**off**) -- Run ``tsc`` /
   ``cargo`` / ``kotlinc`` in Phase 3. Costly on non-Python stacks. The cheap
   in-process checks (syntax, Dockerfile references, contracts, ``ruff``) run

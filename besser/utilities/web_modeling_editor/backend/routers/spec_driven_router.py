@@ -557,6 +557,11 @@ async def smart_gen_config():
             "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            # False on the hosted deploy and on any deploy that has not opted
+            # in. Reported so a local/on-prem operator can confirm from outside
+            # the process that BESSER_LLM_ENABLE_SHELL_TOOLS actually took
+            # effect - it is a process-start env var, never a request field.
+            "shell_tools_enabled": C.LLM_ENABLE_SHELL_TOOLS,
             "per_write_diagnostics_enabled": C.LLM_PER_WRITE_DIAGNOSTICS,
             "durable_runs_enabled": True,
             "event_replay_enabled": True,

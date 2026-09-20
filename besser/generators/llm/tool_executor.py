@@ -35,6 +35,7 @@ from besser.BUML.metamodel.structural import DomainModel
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.generators.llm.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.generators.llm.execution.process import (
+    COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
     _SAFE_ENV_ALLOWLIST as _SAFE_ENV_ALLOWLIST,
     _SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
@@ -154,6 +155,11 @@ def _check_command_safety(command: str) -> str | None:
 # Maximum output size returned to the LLM (chars).
 # Lower = less context bloat = more turns before compaction needed.
 MAX_OUTPUT_SIZE = 15_000
+
+# Per-stream ceiling on a spilled command log (chars). The spill exists to
+# keep what truncation drops, so it is deliberately far above MAX_OUTPUT_SIZE;
+# the bound is only there so a runaway command cannot fill the disk.
+MAX_SPILL_SIZE = 2_000_000
 
 # Maximum file content returned by read_file (chars)
 # Sized when context windows were small. A generated router runs to ~35k
@@ -412,6 +418,8 @@ class ToolExecutor:
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.allow_shell = allow_shell
+        # Serial number for spilled command logs (see _spill_command_output).
+        self._command_log_count = 0
         self.domain_model = domain_model
         self.gui_model = gui_model
         self.agent_model = agent_model
@@ -2678,14 +2686,21 @@ class ToolExecutor:
             regex = re.compile(re.escape(pattern), re.IGNORECASE)
 
         matches = []
-        for root, _, filenames in os.walk(self.workspace):
+        for root, dirs, filenames in os.walk(self.workspace):
+            # Spilled command logs are searchable, but visited last: a build
+            # log must not eat the 50-match budget before the source files.
+            dirs.sort(key=lambda name: name == COMMAND_OUTPUT_DIR)
             for fname in filenames:
                 if not fnmatch.fnmatch(fname, file_glob):
                     continue
                 abs_path = os.path.join(root, fname)
                 rel_path = os.path.relpath(abs_path, self.workspace).replace("\\", "/")
-                # Skip binary files and internal files
-                if rel_path.startswith(".besser_"):
+                # Skip binary files and internal files. Spilled command logs
+                # are the exception: run_command hands the model their path
+                # precisely so it can grep the errors truncation dropped.
+                if rel_path.startswith(".besser_") and not rel_path.startswith(
+                    COMMAND_OUTPUT_DIR + "/"
+                ):
                     continue
                 try:
                     with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -2707,6 +2722,44 @@ class ToolExecutor:
     # Execution tools — the generate-test-fix loop enabler
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _cap_spill(stream: str) -> str:
+        """Bound one spilled stream. 2 MB is ~130x the context cap."""
+        if len(stream) <= MAX_SPILL_SIZE:
+            return stream
+        dropped = len(stream) - MAX_SPILL_SIZE
+        return stream[:MAX_SPILL_SIZE] + f"\n\n... [{dropped} chars dropped from the spill]"
+
+    def _spill_command_output(
+        self, command: str, stdout: str, stderr: str,
+    ) -> str | None:
+        """Write the untruncated command output into the workspace.
+
+        Returns the workspace-relative path, or None when nothing was cut.
+        ``_truncate`` keeps head 20% + tail 60% of stderr, and a failing
+        ``tsc`` / ``npm run build`` reports its errors in the discarded
+        middle - the one part Phase 3 has to act on. The spill keeps them
+        reachable through search_in_files / read_file.
+        """
+        limit = MAX_OUTPUT_SIZE // 2
+        if len(stdout) <= limit and len(stderr) <= limit:
+            return None
+        self._command_log_count += 1
+        slug = re.sub(r"[^a-zA-Z0-9]+", "-", command).strip("-").lower()[:40] or "command"
+        rel = f"{COMMAND_OUTPUT_DIR}/{self._command_log_count:03d}-{slug}.log"
+        try:
+            full = self._safe_path(rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8", errors="replace", newline="") as fh:
+                fh.write(
+                    f"$ {command}\n\n===== stdout =====\n{self._cap_spill(stdout)}\n"
+                    f"===== stderr =====\n{self._cap_spill(stderr)}\n"
+                )
+        except (OSError, ValueError):
+            logger.debug("Could not spill command output for %s", command, exc_info=True)
+            return None
+        return rel
+
     def _run_command(self, args: dict) -> dict:
         """
         Run a shell command in the workspace.
@@ -2714,7 +2767,8 @@ class ToolExecutor:
         Security:
         - Working directory locked to workspace (or subdirectory)
         - Timeout enforced
-        - Output truncated to prevent context blow-up
+        - Output truncated to prevent context blow-up, full log spilled to
+          the workspace when it is
         """
         command = args["command"]
         working_dir = self._safe_cwd(args.get("working_dir", "."))
@@ -2745,9 +2799,11 @@ class ToolExecutor:
                 env=_safe_subprocess_env(),
             )
 
-            stdout = self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2)
+            raw_stdout = result.stdout or ""
+            raw_stderr = result.stderr or ""
+            stdout = self._truncate(raw_stdout, MAX_OUTPUT_SIZE // 2)
             # For stderr (errors), keep the tail where the actual error message is
-            stderr = self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
+            stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
             # If the command failed because the runtime isn't installed in
             # this container (e.g. `ruby -c file.rb` when ruby is absent),
@@ -2772,12 +2828,22 @@ class ToolExecutor:
                     ),
                 }
 
-            return {
+            payload = {
                 "exit_code": result.returncode,
                 "stdout": stdout,
                 "stderr": stderr,
                 "success": result.returncode == 0,
             }
+            spilled = self._spill_command_output(command, raw_stdout, raw_stderr)
+            if spilled:
+                payload["full_output_path"] = spilled
+                payload["full_output_note"] = (
+                    "stdout/stderr above are truncated and the middle is missing. "
+                    f"The complete output is in {spilled}: use search_in_files to "
+                    "locate the errors, then read_file with offset/limit. That file "
+                    "is run-internal and is not part of the generated project."
+                )
+            return payload
 
         except subprocess.TimeoutExpired:
             return {

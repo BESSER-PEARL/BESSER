@@ -41,6 +41,7 @@ from besser.generators.llm.errors import (
     InvalidApiKeyError,
     UpstreamLLMError,
 )
+from besser.generators.llm.execution.process import COMMAND_OUTPUT_DIR
 from besser.generators.llm.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -135,6 +136,8 @@ _EXCLUDED_OUTPUT_DIRS = {
     # A rollback that could not complete parks the pre-rollback tree here
     # rather than deleting it; it is recovery state, not deliverable output.
     ".besser_rollback_discard",
+    # Untruncated run_command logs: a debugging aid for the agent, not output.
+    COMMAND_OUTPUT_DIR,
     # runtime / build artifact files (never belong in source or a push)
     "*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log",
 }

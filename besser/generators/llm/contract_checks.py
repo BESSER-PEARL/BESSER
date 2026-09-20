@@ -26,6 +26,7 @@ demoted to advisory findings (``blocker=False``).
 from __future__ import annotations
 
 import ast
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -51,6 +52,30 @@ class Finding:
 
 
 @dataclass(frozen=True)
+class EndOwnership:
+    """Which class each association end is a property OF.
+
+    UML puts an end typed ``X`` on the class at the OPPOSITE end, so a role
+    named on the ``Booking`` end is a property of ``Employee`` — the same
+    fact ``model_serializer`` already spells out as ``"owner"`` in the
+    prompt. Telling the model does not settle it: Qwen run
+    ``...2507-14h282p0`` read ``"owner": "Employee"`` and still wrote
+    ``_booking_object.bookingsHandled``, which 500s ``produceBill``.
+
+    Only binary associations are recorded (an n-ary end has no single
+    opposite) and only roles that resolve to exactly one owner model-wide.
+    """
+
+    owner: dict        # role -> the class the role is a property of
+    partner: dict      # role -> the role the class at the other end carries
+    far: dict          # role -> the class the role is typed with
+    to_one: frozenset  # roles with an upper bound of 1, so `a.role` IS an
+                       # instance and `a.role.x` can be typed in turn
+    members: dict      # class -> every member name the model gives it
+    kin: dict          # class -> its ancestors and descendants
+
+
+@dataclass(frozen=True)
 class DataContract:
     """The id-type facts extracted once from the domain model.
 
@@ -65,6 +90,9 @@ class DataContract:
     # action has to succeed on an empty body, because that is all the
     # frontend's method button ever sends.
     action_arity: dict = field(default_factory=dict)
+    # Association-end ownership; None when the model declares no usable
+    # binary association, in which case the inverted-end check is a no-op.
+    ends: EndOwnership | None = None
 
     @property
     def string_id_classes(self) -> list:
@@ -111,7 +139,124 @@ def build_data_contract(domain_model) -> DataContract | None:
         }
         if arities:
             action_arity[cls.name] = arities
-    return DataContract(pk_types=pk_types, action_arity=action_arity)
+    return DataContract(
+        pk_types=pk_types,
+        action_arity=action_arity,
+        ends=_build_end_ownership(domain_model, classes),
+    )
+
+
+def _model_member_names(cls) -> set:
+    """Every name the model itself puts on ``cls`` (own + inherited)."""
+    names: set = set()
+    for attribute in getattr(cls, "attributes", None) or []:
+        name = getattr(attribute, "name", None)
+        if name:
+            names.add(str(name))
+    try:
+        for attribute in cls.inherited_attributes() or []:
+            names.add(str(attribute.name))
+    except Exception:
+        pass
+    for method in getattr(cls, "methods", None) or []:
+        name = getattr(method, "name", None)
+        if name:
+            names.add(str(name).split("(")[0].strip())
+    return names
+
+
+def _generalization_kin(domain_model, class_names: set) -> tuple:
+    """(ancestors, kin) per class, transitively.
+
+    An end owned by an ancestor is inherited, so accessing it on the child
+    is correct; an end owned by a descendant is at worst a missing downcast,
+    which is not the inversion this check is about. Both directions are
+    therefore excused, which is what ``kin`` is for.
+    """
+    parents: dict = {name: set() for name in class_names}
+    for gen in getattr(domain_model, "generalizations", None) or []:
+        child = getattr(getattr(gen, "specific", None), "name", None)
+        parent = getattr(getattr(gen, "general", None), "name", None)
+        if child in parents and parent in parents:
+            parents[child].add(parent)
+
+    def ancestors(name: str) -> set:
+        seen, stack = set(), list(parents.get(name, ()))
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            stack.extend(parents.get(current, ()))
+        return seen
+
+    up = {name: ancestors(name) for name in class_names}
+    kin = {name: set(up[name]) for name in class_names}
+    for name, elders in up.items():
+        for elder in elders:
+            kin[elder].add(name)
+    return up, kin
+
+
+def _build_end_ownership(domain_model, classes) -> EndOwnership | None:
+    """Resolve every binary association end to the class that carries it."""
+    # An association class is skipped as a RECEIVER: the scaffold gives it
+    # link-navigation attributes named after the participant classes
+    # (``ReservedRoom.bookings``, ``ReservedRoom.rooms``), which collide
+    # with real role names and would read as inversions.
+    plain = [c for c in classes if getattr(c, "association", None) is None]
+    class_names = {c.name for c in plain}
+    if not class_names:
+        return None
+
+    owners: dict = {}
+    partners: dict = {}
+    fars: dict = {}
+    multiples: set = set()
+    for assoc in getattr(domain_model, "associations", None) or []:
+        ends = list(getattr(assoc, "ends", None) or [])
+        if len(ends) != 2:
+            continue  # n-ary: this end has no single opposite
+        for end, other in ((ends[0], ends[1]), (ends[1], ends[0])):
+            role = str(getattr(end, "name", "") or "")
+            owner = getattr(getattr(other, "type", None), "name", None)
+            far = getattr(getattr(end, "type", None), "name", None)
+            if not role or not owner:
+                continue
+            owners.setdefault(role, set()).add(str(owner))
+            partners.setdefault(role, set()).add(
+                str(getattr(other, "name", "") or ""))
+            if far:
+                fars.setdefault(role, set()).add(str(far))
+            if getattr(getattr(end, "multiplicity", None), "max", 2) != 1:
+                multiples.add(role)
+    if not owners:
+        return None
+
+    # A role name reused by two associations has no single owner; it is
+    # dropped from the check but still counts as legitimate on each class
+    # that does own it.
+    owner = {r: next(iter(o)) for r, o in owners.items() if len(o) == 1}
+    partner = {r: next(iter(p)) for r, p in partners.items()
+               if r in owner and len(p) == 1 and next(iter(p))}
+    far = {r: next(iter(f)) for r, f in fars.items()
+           if r in owner and len(f) == 1}
+
+    owned_roles: dict = {}
+    for role, holders in owners.items():
+        for holder in holders:
+            owned_roles.setdefault(holder, set()).add(role)
+
+    ancestors, kin = _generalization_kin(domain_model, class_names)
+    members = {}
+    for cls in plain:
+        names = _model_member_names(cls) | owned_roles.get(cls.name, set())
+        for ancestor in ancestors.get(cls.name, ()):
+            names |= owned_roles.get(ancestor, set())
+        members[cls.name] = frozenset(names)
+    return EndOwnership(owner=owner, partner=partner, far=far,
+                        to_one=frozenset(set(far) - multiples),
+                        members=members, kin=kin)
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +742,369 @@ def _decisive_flip(function, flips: dict, aliases: frozenset):
                 if isinstance(sub, ast.Name) and sub.id in flips:
                     return flips[sub.id]
     return None
+
+
+# --- Association end read off the wrong class ------------------------------
+#
+# Live Qwen run ...2507-14h282p0 answered `produceBill` with
+# `AttributeError: 'Booking' object has no attribute 'bookingsHandled'`.
+# The scaffold had it right everywhere (`Booking.handledBy`,
+# `Employee.bookingsHandled`); the LLM-authored method body inverted it.
+# The prompt states the ownership per end (`"owner": "Employee"`), so this
+# is enforcement, not instruction.
+#
+# Three guards, each one calibrated against a false positive the corpus
+# produced:
+#
+# 1. The model's own member list excuses the name. An end owned by the
+#    receiver or by an ancestor, an attribute, a method, and any role name
+#    two associations share are all silent. This is what keeps
+#    self-associations and reused roles out; association classes are
+#    dropped as receivers outright, because the scaffold gives them
+#    link-navigation attributes named after the participant classes
+#    (``ReservedRoom.bookings``) that collide with real role names.
+#
+# 2. The APP's own declarations excuse the name. Six corpus runs rewrote
+#    the scaffold's `Booking.guest` as `Booking.guests` and then used that
+#    name consistently everywhere; two of them are probed-working apps.
+#    A rename that the whole app agrees on is not a defect, so the check
+#    reads every class body and every `Class.attr = ...` in the tree
+#    first (plus `backref=` / `back_populates=`, which declare a member on
+#    the class at the far end) and only fires on a name that resolves
+#    NOWHERE. That is why this is a workspace sweep and not a per-file
+#    lint: the access and the declaration are in different files.
+#
+# 3. The receiver's class must be named outright in the source — a
+#    `query(X)` chain, a constructor, `session.get(X, ...)`, an annotation
+#    or the enclosing class body. No name-shape guessing.
+
+# Query chains that yield ONE instance. `.all()` yields a list, whose
+# ELEMENTS are instances - handled separately for `for x in ....all()`.
+_ONE_TERMINALS = frozenset({"first", "one", "one_or_none", "scalar"})
+
+
+def _query_class(node, known: frozenset, terminals: frozenset) -> str | None:
+    """The model class ``db.query(X).filter(...).<terminal>()`` yields."""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr not in terminals:
+        return None
+    current = node.func.value
+    while isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute):
+        if current.func.attr == "query" and len(current.args) == 1 \
+                and isinstance(current.args[0], ast.Name) \
+                and current.args[0].id in known:
+            return current.args[0].id
+        current = current.func.value
+    return None
+
+
+def _instance_class(node, known: frozenset) -> str | None:
+    """The model class a single-instance expression evaluates to."""
+    if not isinstance(node, ast.Call):
+        return None
+    # Booking(...)
+    if isinstance(node.func, ast.Name) and node.func.id in known:
+        return node.func.id
+    # session.get(Booking, pk)
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "get" \
+            and node.args and isinstance(node.args[0], ast.Name) \
+            and node.args[0].id in known:
+        return node.args[0].id
+    return _query_class(node, known, _ONE_TERMINALS)
+
+
+def _local_instance_types(function, known: frozenset, enclosing: str | None) -> dict:
+    """Locals in ``function`` whose class this file names outright."""
+    types: dict = {}
+    conflicted: set = set()
+
+    def bind(name: str, cls: str | None) -> None:
+        if not cls:
+            return
+        if types.get(name, cls) != cls:
+            conflicted.add(name)
+        types[name] = cls
+
+    if enclosing in known:
+        bind("self", enclosing)
+    for argument in (list(function.args.posonlyargs) + list(function.args.args)
+                     + list(function.args.kwonlyargs)):
+        annotation = argument.annotation
+        if isinstance(annotation, ast.Name) and annotation.id in known:
+            bind(argument.arg, annotation.id)
+
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            bind(node.targets[0].id, _instance_class(node.value, known))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if isinstance(node.annotation, ast.Name) and node.annotation.id in known:
+                bind(node.target.id, node.annotation.id)
+            elif node.value is not None:
+                bind(node.target.id, _instance_class(node.value, known))
+        elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            bind(node.target.id,
+                 _query_class(node.iter, known, frozenset({"all"})))
+    for name in conflicted:
+        types.pop(name, None)
+    return types
+
+
+def _inverted_end_message(rel: str, line: int, what: str, receiver: str,
+                          role: str, ends: EndOwnership, blocker: bool) -> str:
+    owner = ends.owner[role]
+    carries = ""
+    if ends.far.get(role) == receiver and ends.partner.get(role):
+        carries = f"; `{receiver}` carries `{ends.partner[role]}`"
+    prefix = "data contract:" if blocker else "data contract (advisory):"
+    return (
+        f"{prefix} {rel} line {line}: {what}, and nothing in the app "
+        f"declares `{receiver}.{role}` — `{role}` is a property of `{owner}`, "
+        f"not `{receiver}`{carries}. An association end named on one class is "
+        f"a property of the class at the OPPOSITE end; the model states this "
+        f"as \"owner\": \"{owner}\". Navigate it from `{owner}`, or query the "
+        f"other side by its foreign key"
+    )
+
+
+def _class_scopes(tree) -> dict:
+    """Function node -> the name of the class body it is defined in."""
+    scopes: dict = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scopes[child] = node.name
+    return scopes
+
+
+def _declared_members(tree, known: frozenset, declared: dict) -> None:
+    """Accumulate every name this module attaches to a model class.
+
+    Generous on purpose: anything that plausibly puts the name on the class
+    counts, because a name that resolves is not the inversion we are after.
+    """
+    def note(cls, name) -> None:
+        if cls in known and name:
+            declared.setdefault(cls, set()).add(str(name))
+
+    def relationship_target(call):
+        """The class a ``relationship("Guest", ...)`` call points at."""
+        if not call.args:
+            return None
+        first = call.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            return first.value.rsplit(".", 1)[-1]
+        if isinstance(first, ast.Name):
+            return first.id
+        return None
+
+    def note_reverse(cls, value) -> None:
+        # ``backref=``/``back_populates=`` name a member of the class at the
+        # OTHER end - the scaffold's own way of declaring the opposite side.
+        if not isinstance(value, ast.Call):
+            return
+        called = getattr(value.func, "id", None) or getattr(value.func, "attr", "")
+        if called != "relationship":
+            return
+        far = relationship_target(value)
+        for keyword in value.keywords:
+            if keyword.arg in ("backref", "back_populates") \
+                    and isinstance(keyword.value, ast.Constant) \
+                    and isinstance(keyword.value.value, str):
+                note(far, keyword.value.value)
+
+    for node in ast.walk(tree):
+        # `Booking.handledBy = relationship(...)` / `Booking.handledBy: T = ...`
+        target, value = None, None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+            note(target.value.id, target.attr)
+            note_reverse(target.value.id, value)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                note(node.name, child.name)
+                # `self.x = ...` in __init__ and friends.
+                for sub in ast.walk(child):
+                    if isinstance(sub, (ast.Assign, ast.AnnAssign)):
+                        for target in (sub.targets if isinstance(sub, ast.Assign)
+                                       else [sub.target]):
+                            if isinstance(target, ast.Attribute) \
+                                    and isinstance(target.value, ast.Name) \
+                                    and target.value.id == "self":
+                                note(node.name, target.attr)
+            elif isinstance(child, ast.Assign):
+                for sub in child.targets:
+                    if isinstance(sub, ast.Name):
+                        note(node.name, sub.id)
+                note_reverse(node.name, child.value)
+            elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+                note(node.name, child.target.id)
+                note_reverse(node.name, child.value)
+        if node.name in known:
+            # A subclass gets whatever its in-app bases declare.
+            entry = declared.setdefault(node.name, set())
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    entry.add(f"<base>{base.id}")
+
+
+def _resolve_bases(declared: dict) -> dict:
+    """Fold in-app base-class members into each subclass, transitively."""
+    resolved: dict = {}
+
+    def members(name: str, seen: frozenset) -> set:
+        if name in resolved:
+            return resolved[name]
+        own = declared.get(name, set())
+        out = {n for n in own if not n.startswith("<base>")}
+        for entry in own:
+            if entry.startswith("<base>"):
+                base = entry[6:]
+                if base in declared and base not in seen:
+                    out |= members(base, seen | {name})
+        if not seen:
+            resolved[name] = out
+        return out
+
+    return {name: members(name, frozenset()) for name in declared}
+
+
+def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> list:
+    """Association ends the delivered app reads off the wrong class.
+
+    A workspace sweep, not a per-file lint: the access and the declaration
+    that would excuse it live in different files. Returns ``data contract:``
+    strings, ready for the Phase 3 issue list.
+    """
+    if contract is None or contract.ends is None:
+        return []
+    ends = contract.ends
+    known = frozenset(ends.members)
+    roles = tuple(ends.owner)
+
+    parsed: list = []
+    declared: dict = {}
+    for root, dirs, files in os.walk(app_dir):
+        dirs[:] = [d for d in dirs
+                   if d not in ("node_modules", "dist", "build", "__pycache__")]
+        for name in sorted(files):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, app_dir).replace("\\", "/")
+            if rel.startswith(".besser_"):
+                continue
+            try:
+                if os.path.getsize(path) > 1_000_000:
+                    continue
+                with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                    content = handle.read()
+            except OSError:
+                continue
+            try:
+                tree = ast.parse(content)
+            except (SyntaxError, ValueError):
+                continue  # a half-written file is python_source's problem
+            _declared_members(tree, known, declared)
+            if any(role in content for role in roles):
+                parsed.append((rel, tree))
+    if not parsed:
+        return []
+    app_members = _resolve_bases(declared)
+
+    def misplaced(receiver: str, role: str) -> bool:
+        owner = ends.owner.get(role)
+        return bool(
+            owner and owner != receiver
+            and receiver in ends.members
+            and role not in ends.members[receiver]
+            and role not in app_members.get(receiver, ())
+            and owner not in ends.kin.get(receiver, ())
+        )
+
+    # (path, line, message): ast.walk order is not source order, and the
+    # issue list is compared between runs.
+    issues: list = []
+    for rel, tree in parsed:
+        scopes = _class_scopes(tree)
+        seen: set = set()
+        # `Booking(guests=[...])` - the constructor rejects the keyword
+        # before any attribute is ever read.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            receiver = node.func.id
+            if receiver not in known:
+                continue
+            for keyword in node.keywords:
+                if keyword.arg and misplaced(receiver, keyword.arg):
+                    issues.append(((rel, node.lineno, keyword.arg),
+                                   _inverted_end_message(
+                                       rel, node.lineno,
+                                       f"`{receiver}(...)` is constructed with "
+                                       f"`{keyword.arg}=`",
+                                       receiver, keyword.arg, ends, True)))
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            types = _local_instance_types(function, known, scopes.get(function))
+            if not types:
+                continue
+
+            def holder(value) -> tuple:
+                """(class, hops) for ``value``, following to-one ends.
+
+                ``db_order.handledBy.warehouse`` needs the hop: the receiver
+                of the bad read is an expression, not a variable (live
+                inventory run ...2507-qr9osh7c). ``hops`` is what decides
+                severity - see below.
+                """
+                if isinstance(value, ast.Name):
+                    return types.get(value.id), 0  # noqa: B023 - same iteration
+                if not isinstance(value, ast.Attribute):
+                    return None, 0
+                base, hops = holder(value.value)
+                if base and ends.owner.get(value.attr) == base \
+                        and value.attr in ends.to_one:
+                    return ends.far.get(value.attr), hops + 1
+                return None, 0
+
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Attribute):
+                    continue
+                receiver, hops = holder(node.value)
+                if not receiver or not misplaced(receiver, node.attr):
+                    continue
+                key = (node.lineno, node.col_offset, receiver, node.attr)
+                if key in seen:
+                    continue  # a nested function is walked by its parent too
+                seen.add(key)
+                try:
+                    shown = ast.unparse(node.value)
+                except Exception:  # pragma: no cover - total on parsed trees
+                    shown = receiver
+                # Direct receiver: 2 corpus apps, both dead, and one of them
+                # is the AttributeError that started this. Through a hop:
+                # 3 corpus apps, 2 of which PASS their probe - the read is
+                # genuinely wrong but sits on a path nothing exercises, so
+                # it is reported and does not spend fix turns.
+                issues.append(((rel, node.lineno, node.attr),
+                               _inverted_end_message(
+                                   rel, node.lineno,
+                                   f"`{shown}` is a `{receiver}` here, so "
+                                   f"`{shown}.{node.attr}` raises AttributeError",
+                                   receiver, node.attr, ends, hops == 0)))
+    return [message for _, message in sorted(issues)]
 
 
 def _lint_python(rel: str, content: str, contract: DataContract) -> list:

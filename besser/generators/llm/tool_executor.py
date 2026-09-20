@@ -40,6 +40,10 @@ from besser.generators.llm.execution.process import (
     _SAFE_ENV_ALLOWLIST as _SAFE_ENV_ALLOWLIST,
     _SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
 )
+from besser.generators.llm.execution.sandbox import (
+    SandboxUnavailable,
+    sandboxed_command,
+)
 from besser.generators.llm.edit_apply import (
     AmbiguousEdit,
     elided_lines,
@@ -2666,6 +2670,28 @@ class ToolExecutor:
         self._append_write_feedback(result, rel_path, new_content)
         return result
 
+    def _scaffold_edit_route(self, rel_path: str, path: str) -> str:
+        """The write route ``_write_file`` actually permits for a generator file.
+
+        A rewrite of a generator file over 200 lines is itself refused until
+        two modify_file edits have been tried, so blanket "or write_file"
+        advice in another refusal walks the model into a second refusal.
+        """
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                existing_lines = fh.read().count("\n") + 1
+        except OSError:
+            existing_lines = 0
+        if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
+            return (
+                "Edit it in place with modify_file; write_file on this file "
+                "unlocks only after two modify_file attempts."
+            )
+        return (
+            "Edit it in place with modify_file, or read it in full and "
+            "write_file it back."
+        )
+
     def _delete_file(self, args: dict) -> dict:
         """Delete a regular file from the workspace.
 
@@ -2695,8 +2721,8 @@ class ToolExecutor:
                 "error": (
                     f"Refused to delete: '{args['path']}' is part of the generated "
                     "scaffold — the app's foundation. Do NOT remove or replace it. "
-                    "Edit it in place with modify_file (or write_file), keep the "
-                    "existing framework, and build on top of what is already generated."
+                    f"{self._scaffold_edit_route(rel_path, path)} Keep the existing "
+                    "framework and build on top of what is already generated."
                 ),
             }
         try:
@@ -2796,6 +2822,10 @@ class ToolExecutor:
 
         Security:
         - Working directory locked to workspace (or subdirectory)
+        - The command itself runs in a namespace sandbox that binds only this
+          run's directory and gives it its own PID 1 (see execution.sandbox).
+          The path lock covers tool arguments; the sandbox covers the command
+          string, which is where `cd ../<other_run>` lived.
         - Timeout enforced
         - Output truncated to prevent context blow-up, full log spilled to
           the workspace when it is
@@ -2816,18 +2846,53 @@ class ToolExecutor:
                 "success": False,
             }
 
-        logger.info("Running command: %s (in %s)", command, working_dir)
+        # Fail closed: a command that cannot be confined is not run. Falling
+        # back to an unconfined shell would silently restore both holes the
+        # sandbox exists to close.
+        try:
+            sandbox = sandboxed_command(
+                command, workspace=self.workspace, cwd=working_dir,
+            )
+        except SandboxUnavailable as exc:
+            logger.error("run_command refused, sandbox unavailable: %s", exc)
+            return {
+                "error": (
+                    "Refused: the shell sandbox could not be started, so this "
+                    f"command was not run. {exc}."
+                ),
+                "command": command,
+                "exit_code": None,
+                "success": False,
+            }
+
+        logger.info(
+            "Running command: %s (in %s, sandbox=%s)",
+            command, working_dir, sandbox.mode,
+        )
 
         try:
             result = subprocess.run(
-                command,
-                shell=True,
+                sandbox.argv,
+                shell=sandbox.use_shell,
                 cwd=working_dir,
                 capture_output=True,
                 text=True,
                 timeout=COMMAND_TIMEOUT,
                 env=_safe_subprocess_env(),
             )
+
+            startup_error = sandbox.startup_error(result.returncode, result.stderr)
+            if startup_error:
+                logger.error("run_command sandbox failed to start: %s", startup_error)
+                return {
+                    "error": (
+                        "Refused: the shell sandbox failed to start, so this "
+                        f"command was not run. {startup_error}."
+                    ),
+                    "command": command,
+                    "exit_code": None,
+                    "success": False,
+                }
 
             raw_stdout = result.stdout or ""
             raw_stderr = result.stderr or ""

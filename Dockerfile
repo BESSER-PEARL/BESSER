@@ -24,12 +24,19 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
 # (shutil.which -> None), so nextjs/rust/spring-boot output ships unchecked.
 # JDK 21 because Debian Trixie no longer packages 17. Kept before the
 # requirements copy so this slow layer caches.
+#
+# bubblewrap: run_command executes model-authored shell, and without it that
+# shell could read a sibling run's workspace and /proc/1/environ. The worker
+# fails closed when bwrap is missing, so this package is load-bearing, not
+# optional -- and the worker needs seccomp=unconfined to use it (see
+# docker-compose.prod.yml).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         unzip \
         build-essential \
+        bubblewrap \
         openjdk-21-jdk-headless \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \

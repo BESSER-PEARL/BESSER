@@ -18,6 +18,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+      # run_command confines model-authored shell to its own run directory
+      # with bubblewrap. Without the package the sandbox tests skip and the
+      # shell tests fall back to unconfined, so CI would not exercise the
+      # path production actually takes.
+      - name: Install bubblewrap (shell sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

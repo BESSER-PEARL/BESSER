@@ -13,6 +13,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     StartEvent,
     TextDeltaEvent,
     ToolCallEvent,
+    VerificationItem,
+    VerificationReport,
     format_sse,
 )
 
@@ -159,3 +161,39 @@ class TestDoneEventBlockerCount:
         data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
         payload = json.loads(data_line[len("data: "):])
         assert payload["blockerCount"] == 3
+
+
+class TestDoneEventVerification:
+    """The three lists are an additive, always-present field on the contract."""
+
+    def test_default_is_three_empty_lists(self):
+        ev = DoneEvent(downloadUrl="/d/abc", fileName="a.zip", isZip=True)
+        assert ev.verification.verified == []
+        assert ev.verification.notVerified == []
+        assert ev.verification.shippedUnenforced == []
+        # All three counts always present, so a client never reads undefined.
+        assert ev.verification.counts.model_dump() == {
+            "verified": 0, "notVerified": 0, "shippedUnenforced": 0,
+        }
+
+    def test_frame_carries_the_lists_and_what_was_run(self):
+        ev = DoneEvent(
+            downloadUrl="/d/abc", fileName="a.zip", isZip=True,
+            verification=VerificationReport(
+                verified=[VerificationItem(
+                    kind="api_workflow", id="booking",
+                    what="API workflow 'booking'", how="3 request(s) run against the app",
+                )],
+                shippedUnenforced=[VerificationItem(
+                    kind="ocl_constraint", id="noOverlappingBookings",
+                    what="OCL invariant on Booking", why="the OCL converter rejected it",
+                )],
+                counts={"verified": 1, "notVerified": 0, "shippedUnenforced": 1},
+            ),
+        )
+        frame = format_sse(ev).decode("utf-8")
+        data_line = next(x for x in frame.splitlines() if x.startswith("data: "))
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["verification"]["verified"][0]["how"].startswith("3 request(s)")
+        assert payload["verification"]["shippedUnenforced"][0]["id"] == "noOverlappingBookings"
+        assert payload["verification"]["counts"]["shippedUnenforced"] == 1

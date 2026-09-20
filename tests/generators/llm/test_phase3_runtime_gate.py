@@ -26,6 +26,7 @@ import pytest
 
 from besser.generators.llm.llm_client import UsageTracker
 from besser.generators.llm.orchestrator import (
+    _PHASE3_NO_PROGRESS_ROUNDS,
     _PHASE3_PLATEAU_ROUNDS,
     LLMOrchestrator,
     ValidationIssue,
@@ -88,41 +89,45 @@ def _drive(orchestrator, scripted_attempts):
 
 
 # ---------------------------------------------------------------------------
-# 1. An attempt that writes nothing ends the loop
+# 1. A round that moves nothing costs one round, not the run
+#
+# Zero writes stopped the loop outright until 2026-09-20. Measured over the 134
+# recorded runs on that guard, it was the single commonest way a run ended (47,
+# 35%), holding a median of 68 of 120 turns. The round after one barren round
+# wrote source 38% of the time across the 221 runs recorded before the guard
+# existed, so it is worth its ~11 turns; the round after two wrote 6%, so the
+# streak still ends the loop. See test_phase3_stall_guards.py.
 # ---------------------------------------------------------------------------
 
-def test_an_attempt_that_writes_nothing_ends_the_fix_loop(orch):
-    """34 of 104 attempts wrote nothing; the loop kept paying for more.
-
-    The old guard needed TWO consecutive no-progress rounds, so a dead model
-    always bought a second full attempt - ten more turns - against a tree
-    nothing had touched.
-    """
+def test_an_attempt_that_writes_nothing_costs_one_round_not_the_run(orch):
+    """A dead model still cannot run the budget down: two consecutive rounds
+    that write nothing, change nothing and discharge nothing end the loop."""
     attempts, _snap, _restore = _drive(orch, [(0, False, _blockers(6))] * 5)
 
-    assert attempts == 1, "a zero-write attempt must not buy another attempt"
+    assert attempts == _PHASE3_NO_PROGRESS_ROUNDS == 2
 
 
 def test_a_writing_attempt_still_gets_a_second_round(orch):
-    """The stop keys on ``edits == 0 AND the tree is unchanged``, not on either
-    alone - an attempt that spent early turns reading and then wrote is real
-    work and keeps its next round."""
+    """An attempt that spent early turns reading and then wrote is real work
+    and keeps its next round; only the barren streak closes the loop."""
     attempts, _snap, _restore = _drive(orch, [
         (1, True, _blockers(5)),
         (1, True, _blockers(4)),
-        (0, False, _blockers(4)),
+        (0, False, _blockers(4)),   # barren: streak 1
+        # _drive repeats its last entry, so round 4 is the same barren state
+        # again: streak 2, and the loop ends.
     ])
 
-    assert attempts == 3
+    assert attempts == 4
 
 
 def test_edits_without_a_tree_change_are_not_treated_as_nothing(orch):
     """``edits > 0`` with an unchanged revision (the model rewrote identical
-    bytes) is not the zero-write case; the softer no-progress guard owns it."""
+    bytes) lands in the same no-progress streak as a zero-write round - one
+    guard, not two."""
     attempts, _snap, _restore = _drive(orch, [(2, False, _blockers(6))] * 5)
 
-    # One no-progress round, not the immediate zero-write stop.
-    assert attempts == 1
+    assert attempts == _PHASE3_NO_PROGRESS_ROUNDS == 2
 
 
 # ---------------------------------------------------------------------------

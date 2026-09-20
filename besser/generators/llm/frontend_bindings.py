@@ -12,8 +12,13 @@ _COMPONENT = re.compile(r"<(TableBlock|MethodButton)\b")
 _ATTRIBUTE = re.compile(r"[\w:-]+")
 # Ignore JSX-looking examples in comments/string literals. Actual props are
 # parsed separately below; this scan never evaluates interpolation or code.
+# Only a template literal may span lines, so the two quoted alternatives stop
+# at a newline: without that bound, two ordinary apostrophes in JSX prose
+# ("Guest's" on one line, "Don't" on another) read as one string literal and
+# swallowed the whole <MethodButton> between them, hiding a real blocker.
 _NON_CODE = re.compile(
-    r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"
+    r"//[^\n]*|/\*[\s\S]*?\*/"
+    r"|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`"
 )
 
 

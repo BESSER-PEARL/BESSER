@@ -47,7 +47,7 @@ import re
 from typing import Any, Callable
 
 from besser.generators.llm.action_inventory import ActionEndpoint, format_action_inventory
-from besser.generators.llm.model_serializer import serialize_domain_model
+from besser.generators.llm.model_serializer import ordered_literals, serialize_domain_model
 
 logger = logging.getLogger(__name__)
 
@@ -880,7 +880,11 @@ def _note_derived_enum_initial_state(domain_model, instructions: str) -> list[st
             enum = enums.get(type_name)
             if enum is None:
                 continue
-            literals = sorted(lit.name for lit in enum.literals)
+            # Declaration order, not alphabetical: the task text below calls
+            # literals[0] the "first-declared" literal, and a name sort makes
+            # that claim false exactly when it matters (CANCELLED before
+            # SCHEDULED).
+            literals = [lit.name for lit in ordered_literals(enum)]
             if not literals:
                 continue
             found = _find_initial_state_quote(instructions, literals)

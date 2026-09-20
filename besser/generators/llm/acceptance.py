@@ -6,12 +6,20 @@ indicate whether the entity appears in the app (not executed acceptance):
 * ``route``  — the backend exposes REST routes for it (checked against
   the same static route parse the endpoint manifest uses);
 * ``page``   — some frontend file is about it (name or content match);
-* ``create`` — a frontend file about it contains a POST, OR a
-  ``<TableBlock>`` bound to it: ``dataBinding`` naming this entity and an
-  endpoint, plus a non-empty ``options.formColumns``. The GUI-model
-  scaffold's only generated create path issues its POST from a shared
-  runtime component (``TableComponent``), never a literal call in the
-  page file itself, so the binding — not the call site — is the signal.
+* ``create`` — a frontend file about it contains a POST, OR calls a
+  shared api-client helper that issues one, OR a ``<TableBlock>`` bound
+  to it: ``dataBinding`` naming this entity and an endpoint, plus a
+  non-empty ``options.formColumns``. The GUI-model scaffold's only
+  generated create path issues its POST from a shared runtime component
+  (``TableComponent``), never a literal call in the page file itself, so
+  the binding — not the call site — is the signal.
+
+Most generated React frontends put every request behind one api module
+(``api.create('carpark', payload)`` → ``fetch(url, {method:'POST'})``),
+so the literal POST never appears in the file that names the entity. A
+``.post(`` scan alone reported "no create path" for 302 entities across
+apps a live probe had just driven end to end. ``_client_create_calls``
+resolves those calls instead of demanding a literal in one file.
 
 The matrix is deliberately REPORT-ONLY (warnings + a recipe field, never
 blockers): a GUI-model-driven run may legitimately scope the UI to a
@@ -45,6 +53,153 @@ _DATA_BINDING_RE = re.compile(r"dataBinding\s*=\s*\{\{([^}]*)\}\}")
 _ENTITY_RE = re.compile(r'"entity"\s*:\s*"([^"]*)"')
 _ENDPOINT_RE = re.compile(r'"endpoint"\s*:\s*"([^"]*)"')
 _NONEMPTY_FORM_COLUMNS_RE = re.compile(r'"formColumns"\s*:\s*\[\s*[^\]\s]')
+
+# Resolution of a create issued through a shared api-client module.
+_IMPORT_RE = re.compile(
+    r"\bimport\s+(?P<clause>[^'\";]+?)\s+from\s+['\"](?P<spec>\.[^'\"]*)['\"]")
+_NAMESPACE_IMPORT_RE = re.compile(r"\*\s+as\s+([A-Za-z_$][\w$]*)")
+_NAMED_IMPORT_RE = re.compile(r"\{([^}]*)\}")
+_LEADING_NAME_RE = re.compile(r"^([A-Za-z_$][\w$]*)")
+# A named definition whose value is itself callable. The second branch must
+# require a function on the right: `const response = await fetch(...)` would
+# otherwise read as the helper enclosing the POST and the real one — the
+# exported `createItem` around it — would never be found.
+_HELPER_DEF_RE = re.compile(
+    r"\b(?P<fn>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*\{)"
+    r"|(?:^|[,{;(]|\bconst\s+|\blet\s+|\bvar\s+|\bexport\s+)[ \t]*"
+    r"(?P<name>[A-Za-z_$][\w$]*)\s*[:=](?![=>])"
+    r"(?=\s*(?:async\s+)?(?:function\b|\())",
+    re.MULTILINE,
+)
+_NOT_A_HELPER = frozenset({
+    "if", "for", "while", "switch", "catch", "function", "return", "await",
+    "typeof", "new", "delete", "void", "do", "else",
+})
+_STRING_ARG_RE = re.compile(r"['\"]([^'\"]{1,60})['\"]")
+
+
+def _blank_literals(text: str) -> str:
+    """Blank comments and string bodies, keeping every offset in place."""
+    out = list(text)
+    index, size = 0, len(text)
+    while index < size:
+        char = text[index]
+        if char == "/" and text.startswith("//", index):
+            while index < size and text[index] != "\n":
+                out[index] = " "
+                index += 1
+        elif char == "/" and text.startswith("/*", index):
+            while index < size and not text.startswith("*/", index):
+                out[index] = " "
+                index += 1
+            for position in range(index, min(index + 2, size)):
+                out[position] = " "
+            index += 2
+        elif char in "\"'`":
+            quote = char
+            index += 1
+            while index < size and text[index] != quote:
+                out[index] = " "
+                if text[index] == "\\" and index + 1 < size:
+                    out[index + 1] = " "
+                    index += 1
+                index += 1
+            index += 1
+        else:
+            index += 1
+    return "".join(out)
+
+
+def _bracket_depth(blanked: str, start: int, end: int) -> int:
+    depth = 0
+    for char in blanked[start:end]:
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+    return depth
+
+
+def _post_helpers(source: str) -> set[str]:
+    """Names in an api-client module whose own definition issues a POST.
+
+    For each POST literal, the enclosing helper is the last named callable
+    definition before it that we are still syntactically inside. Only those
+    names count as a create; `list`/`update`/`remove` next to them do not.
+    """
+    blanked = _blank_literals(source)
+    definitions = [
+        (match.end(), match.group("fn") or match.group("name"))
+        for match in _HELPER_DEF_RE.finditer(blanked)
+        if (match.group("fn") or match.group("name")) not in _NOT_A_HELPER
+    ]
+    names = set()
+    for post in _POST_RE.finditer(source):
+        for end, name in reversed(definitions):
+            if end <= post.start() and _bracket_depth(blanked, end, post.start()) >= 1:
+                names.add(name)
+                break
+    return names
+
+
+def _import_bindings(source: str):
+    """Yield (local name, relative specifier) for each relative import."""
+    for match in _IMPORT_RE.finditer(source):
+        clause, spec = match.group("clause"), match.group("spec")
+        namespace = _NAMESPACE_IMPORT_RE.search(clause)
+        if namespace:
+            yield namespace.group(1), spec
+        named = _NAMED_IMPORT_RE.search(clause)
+        if named:
+            for item in named.group(1).split(","):
+                item = item.strip()
+                if item:
+                    yield item.split(" as ")[-1].strip(), spec
+        default = clause.split("{")[0].split("*")[0].strip().rstrip(",").strip()
+        if default:
+            leading = _LEADING_NAME_RE.match(default)
+            if leading:
+                yield leading.group(1), spec
+
+
+def _resolve_import(rel: str, spec: str) -> list[str]:
+    parts = rel.split("/")[:-1]
+    for segment in spec.split("/"):
+        if segment == "..":
+            if parts:
+                parts.pop()
+        elif segment not in ("", "."):
+            parts.append(segment)
+    stem = "/".join(parts)
+    candidates = [stem] if stem.endswith(_FRONTEND_EXTS) else []
+    return (candidates + [stem + ext for ext in _FRONTEND_EXTS]
+            + [f"{stem}/index{ext}" for ext in _FRONTEND_EXTS])
+
+
+def _client_create_calls(rel: str, source: str, files: dict[str, str]) -> list:
+    """Creates ``rel`` issues through an imported api-client module.
+
+    One entry per call site: its literal string arguments, or None when the
+    call names its resource through a variable (the generic
+    ``<EntityList entity={...}/>`` page). None means "a create happens here
+    but this call does not say which entity", which is exactly the evidence
+    the file-mention test already stands on.
+    """
+    calls = []
+    for binding, spec in _import_bindings(source):
+        target = next((c for c in _resolve_import(rel, spec) if c in files), None)
+        if target is None or not _POST_RE.search(files[target]):
+            continue
+        helpers = _post_helpers(files[target])
+        if not helpers:
+            continue
+        pattern = re.compile(
+            r"\b" + re.escape(binding) + r"\s*(?:\.\s*(?P<member>[\w$]+)\s*)?\("
+            r"(?P<args>[^()]{0,200})")
+        for call in pattern.finditer(source):
+            if (call.group("member") or binding) in helpers:
+                calls.append(_STRING_ARG_RE.findall(call.group("args")) or None)
+    return calls
 
 
 def _table_block_create_wired(content: str, cls: str) -> bool:
@@ -140,6 +295,10 @@ def build_acceptance_matrix(
             except Exception:
                 continue
 
+    by_path = dict(frontend_files)
+    client_calls = {rel: _client_create_calls(rel, content, by_path)
+                    for rel, content in frontend_files}
+
     matrix: dict[str, dict[str, bool]] = {}
     for cls in sorted(classes):
         forms = _entity_forms(cls)
@@ -151,7 +310,14 @@ def build_acceptance_matrix(
             if not about:
                 continue
             page = True
-            if _POST_RE.search(content) or _table_block_create_wired(content, cls):
+            # A resolved create that names another resource literally is that
+            # resource's create, not this entity's: `api.create('order', ...)`
+            # on a page that merely lists clerks in a dropdown proves nothing
+            # about Clerk.
+            resolved = any(args is None or _mentions(" ".join(args), forms)
+                           for args in client_calls.get(rel, ()))
+            if (_POST_RE.search(content) or resolved
+                    or _table_block_create_wired(content, cls)):
                 create = True
                 break
         matrix[cls] = {"route": route, "page": page, "create": create}
@@ -170,7 +336,7 @@ def matrix_issues(matrix: dict[str, dict[str, bool]] | None) -> list[str]:
         detail = {
             "route": "no backend REST route",
             "page": "no frontend page/component references it",
-            "create": "no frontend create path found (no POST call, and no TableBlock bound to it with editable form fields)",
+            "create": "no frontend create path found (no POST call, no api-client create resolved to it, and no TableBlock bound to it with editable form fields)",
         }
         issues.append(
             "acceptance: entity "

@@ -1,14 +1,137 @@
 """Source-only Python contract checks, independent of run orchestration."""
 
+import ast
 import os
 import re as _re
 
 from besser.generators.llm.checkpoint import _SNAPSHOT_DIR
 
 
+# Kept only because ``orchestrator`` re-exports them for external callers.
+# The check itself reads the syntax tree; these text patterns no longer
+# decide anything.
 _CREATE_MODEL_RE = _re.compile(r"^class\s+(\w+Create)\s*\(([^)]*)\)\s*:", _re.M)
 _CREATE_FIELD_RE = _re.compile(r"^\s{4}(\w+)\s*:", _re.M)
 _ROUTER_READ_RE = _re.compile(r"\b(\w+)_data\.(\w+)\b")
+
+
+# Bases that declare no fields of their own. Any other base has to resolve to a
+# class we can read, or the schema is unknown and nothing is reported about it.
+_FIELDLESS_BASES = frozenset({
+    "ABC", "BaseModel", "BaseSettings", "Generic", "TypedDict", "object",
+})
+_PAYLOAD_SUFFIX = "_data"
+
+
+def _base_name(node) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Subscript):
+        return _base_name(node.value)
+    return None
+
+
+def _own_fields(node: ast.ClassDef) -> set:
+    """Names bound in the class body itself, at whatever indent it uses."""
+    fields = set()
+    for statement in node.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            fields.add(statement.target.id)
+        elif isinstance(statement, ast.Assign):
+            fields.update(t.id for t in statement.targets if isinstance(t, ast.Name))
+    return fields
+
+
+def _class_index(output_dir: str) -> dict:
+    """class name -> (fields declared here, base class names)."""
+    classes: dict = {}
+    for path in _python_files(output_dir):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                tree = ast.parse(handle.read())
+        except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            fields = _own_fields(node)
+            bases = [_base_name(base) for base in node.bases]
+            if node.name in classes:
+                # Redefined (a duplicated block, or two modules): take the
+                # union, never the narrower of the two.
+                known_fields, known_bases = classes[node.name]
+                classes[node.name] = (known_fields | fields, known_bases + bases)
+            else:
+                classes[node.name] = (fields, bases)
+    return classes
+
+
+def _declared(name: str, classes: dict, seen: frozenset = frozenset()):
+    """Every field ``name`` accepts, or None when a base cannot be read.
+
+    Returning None matters: a base the workspace does not define could
+    declare the field, so "absent" is unprovable and nothing is reported.
+    """
+    if name in seen:
+        return set()
+    entry = classes.get(name)
+    if entry is None:
+        return None
+    fields, bases = entry
+    accepted = set(fields)
+    for base in bases:
+        if base is None:
+            return None
+        if base in _FIELDLESS_BASES:
+            continue
+        inherited = _declared(base, classes, seen | {name})
+        if inherited is None:
+            return None
+        accepted |= inherited
+    return accepted
+
+
+def _unguarded_payload_reads(tree: ast.AST) -> list:
+    """``(variable, field, line)`` for ``<x>_data.<field>`` reads.
+
+    A read the handler guards with ``hasattr``/``getattr`` on the same
+    attribute is skipped: the author already handles the field being
+    absent, so the access cannot raise. Live tree ``...-d71pocck`` shipped
+    ``booking_data.id if hasattr(booking_data, 'id') ... else True`` and
+    served 11/11 workflow checks.
+    """
+    reads: list = []
+    examined: set = set()
+    scopes = [node for node in ast.walk(tree)
+              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    scopes.append(tree)
+    for scope in scopes:
+        guarded = {
+            (node.args[0].id, node.args[1].value)
+            for node in ast.walk(scope)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ("hasattr", "getattr") and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        }
+        for node in ast.walk(scope):
+            if not (isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id.endswith(_PAYLOAD_SUFFIX)):
+                continue
+            position = (node.lineno, node.col_offset)
+            if position in examined:
+                continue
+            examined.add(position)
+            if (node.value.id, node.attr) in guarded:
+                continue
+            reads.append(
+                (node.value.id[:-len(_PAYLOAD_SUFFIX)], node.attr, node.lineno)
+            )
+    return reads
 
 
 def _create_schema_router_mismatches(output_dir: str) -> list[str]:
@@ -26,51 +149,34 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
 
     Purely structural, so it cannot fire on a schema that merely looks
     unusual: the field is either declared on the class (or one of its
-    Create bases) or it is not.
+    bases) or it is not. Both halves are read from the parsed syntax tree
+    rather than matched in the raw text, so a field at an unusual indent
+    counts as declared and an access named only in a comment or a string
+    is not a read at all.
     """
-    root = os.path.join(output_dir, "")
-    schema_bodies: dict[str, str] = {}
-    schema_bases: dict[str, list[str]] = {}
-    for path in _python_files(output_dir):
-        try:
-            text = open(path, "r", encoding="utf-8").read()
-        except OSError:
-            continue
-        for match in _CREATE_MODEL_RE.finditer(text):
-            name = match.group(1)
-            bases = [b.strip() for b in match.group(2).split(",")
-                     if b.strip().endswith("Create")]
-            end = text.find("\nclass ", match.end())
-            schema_bodies[name] = text[match.end(): end if end != -1 else len(text)]
-            schema_bases[name] = bases
-    if not schema_bodies:
+    classes = _class_index(output_dir)
+    create_schemas = {name.lower(): name for name in classes
+                      if name.endswith("Create")}
+    if not create_schemas:
         return []
 
-    def declared(name: str, seen: frozenset = frozenset()) -> set:
-        if name in seen or name not in schema_bodies:
-            return set()
-        fields = set(_CREATE_FIELD_RE.findall(schema_bodies[name]))
-        for base in schema_bases.get(name, ()):
-            fields |= declared(base, seen | {name})
-        return fields
-
-    lowered = {n.lower(): n for n in schema_bodies}
     problems: list[str] = []
     seen_pairs: set = set()
     for path in _python_files(output_dir):
-        rel = os.path.relpath(path, root).replace("\\", "/")
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
         if "/routers/" not in f"/{rel}" and not rel.startswith("routers/"):
             continue
         try:
-            text = open(path, "r", encoding="utf-8").read()
-        except OSError:
+            with open(path, "r", encoding="utf-8") as handle:
+                tree = ast.parse(handle.read())
+        except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
             continue
-        for match in _ROUTER_READ_RE.finditer(text):
-            entity, field = match.group(1), match.group(2)
-            schema = lowered.get(f"{entity}create")
+        for entity, field, line in _unguarded_payload_reads(tree):
+            schema = create_schemas.get(f"{entity.lower()}create")
             if not schema:
                 continue
-            if field in declared(schema):
+            accepted = _declared(schema, classes)
+            if accepted is None or field in accepted:
                 continue
             key = (schema, field)
             if key in seen_pairs:
@@ -78,7 +184,7 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
             seen_pairs.add(key)
             problems.append(
                 f"data contract: {rel} "
-                f"line {text.count(chr(10), 0, match.start()) + 1} "
+                f"line {line} "
                 f"reads `{entity}_data.{field}` but "
                 f"{schema} does not define `{field}` - this endpoint "
                 f"returns 500 on every request"

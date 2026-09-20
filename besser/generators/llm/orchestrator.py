@@ -353,17 +353,28 @@ _PHASE3_NO_EDIT_REMINDER = (
     "until every blocker is fixed.</system-reminder>"
 )
 
-# Consecutive no-progress rounds tolerated before the repair loop ends. Was 2.
-# Across 23 live runs on 2026-09-19, 522 turns (31% of every turn spent) came
-# after the blocker count stopped moving; mbzbzhq9 ran six attempts that each
-# ended at exactly 13 blockers, hit the 120-turn cap and shipped a dead app.
-_PHASE3_NO_PROGRESS_ROUNDS = 1
+# Consecutive no-progress rounds tolerated before the repair loop ends.
+#
+# Was 1, and that was measurably too tight. Every round rebuilds the prompt
+# from the freshly re-collected blocker list, so round n+1 is a new attempt,
+# not a replay of round n. Over the 221 spec-iteration runs recorded before
+# this guard existed (verification/spec-iterations, 2026-09-19..20), the round
+# after a single barren one wrote source 38% of the time and cut the blocker
+# count 19% of the time (n=127); after TWO consecutive barren rounds it wrote
+# 6% and cut 4% (n=116). One more round is worth its ~11 turns, a third is not.
+_PHASE3_NO_PROGRESS_ROUNDS = 2
 
 # Rounds that edit the tree without improving its score before the loop ends.
 # The unchanged-state guard cannot see these: its key includes a content hash
 # of every source file, so ANY write - including a different useless one each
 # round - reads as a new state and the guard never fires.
-_PHASE3_PLATEAU_ROUNDS = 2
+#
+# Was 2, which stopped the loop one round before the payoff. Same corpus,
+# counting a round as non-improving when the blocker count did not fall: after
+# two consecutive non-improving rounds the NEXT round still improved 36% of
+# the time (n=125) against a 46% baseline with no plateau behind it; only at
+# three does the payoff halve (23%, n=60) and at four collapse (15%, n=107).
+_PHASE3_PLATEAU_ROUNDS = 3
 
 # Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
 _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
@@ -743,6 +754,17 @@ class LLMOrchestrator:
         self._resume_messages: list[dict] | None = None
         self._checkpoint_phase = "phase2"
         self._phase3_interrupted = False
+        # Why the fix loop interrupted itself, when it did: a provider failure
+        # or a stop_reason the loop cannot answer. 40 of the 43 runs that ended
+        # mid-attempt across verification/spec-iterations were still making
+        # paid, working calls with most of their budget left, and the trace
+        # recorded only that repair "was interrupted" - not by what.
+        self._phase3_interrupt_detail: str = ""
+        # Which guard ended the Phase 3 repair loop ("no-progress streak",
+        # "plateau", "attempt cap", a budget/cancellation reason, or "all
+        # blockers fixed"). Traced so a run's exit can be attributed without
+        # replaying the loop by hand. Report-only.
+        self._phase3_exit_reason: str = "not reached"
         self._repair_progress: dict = {}
         # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
         # Anything else — API error, cost cap, timeout, cancellation —
@@ -932,7 +954,10 @@ class LLMOrchestrator:
         # -- Phase 2: LLM customization -----------------------------------
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2")
         self._run_phase2(instructions, extra_issues=phase1_issues)
-        self._trace.write(EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns)
+        self._trace.write(
+            EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns,
+            stop_reason=self._phase2_stop_reason,
+        )
 
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
         # If Phase 3 fixes make things worse, we roll back here
@@ -951,6 +976,7 @@ class LLMOrchestrator:
             unresolved_blockers=sum(
                 1 for i in self._validation_issues if i.severity == "blocker"
             ),
+            exit_reason=self._phase3_exit_reason,
         )
 
         elapsed = time.monotonic() - self._start_time
@@ -1088,7 +1114,10 @@ class LLMOrchestrator:
         if checkpoint.phase == "phase2":
             self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
             self._run_phase2(instructions, extra_issues=[])
-            self._trace.write(EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns)
+            self._trace.write(
+                EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns,
+                stop_reason=self._phase2_stop_reason,
+            )
         else:
             self._drop_redundant_generator_tools()
             self.executor.set_scaffold_family(self._scaffold_family())
@@ -1100,7 +1129,10 @@ class LLMOrchestrator:
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
-        self._trace.write(EVENT_PHASE_EXIT, phase="phase3")
+        self._trace.write(
+            EVENT_PHASE_EXIT, phase="phase3",
+            exit_reason=self._phase3_exit_reason,
+        )
 
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
@@ -1253,6 +1285,7 @@ class LLMOrchestrator:
         )
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
+            stop_reason=self._phase2_stop_reason,
         )
 
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 edits) --------
@@ -1270,6 +1303,7 @@ class LLMOrchestrator:
             unresolved_blockers=sum(
                 1 for i in self._validation_issues if i.severity == "blocker"
             ),
+            exit_reason=self._phase3_exit_reason,
         )
 
         # -- Fix/modify success gate --------------------------------------
@@ -3447,6 +3481,8 @@ class LLMOrchestrator:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
+            if self._phase3_interrupt_detail:
+                reason = f"{reason} ({self._phase3_interrupt_detail})"
         if reason:
             self._phase3_interrupted = True
         return reason
@@ -3513,6 +3549,7 @@ class LLMOrchestrator:
         stop_reason = self._phase3_stop_requested(check_turn_budget=False)
         if stop_reason:
             logger.warning("Skipping Phase 3 -- %s", stop_reason)
+            self._phase3_exit_reason = f"skipped: {stop_reason}"
             self._validation_issues.append(ValidationIssue(
                 "blocker", f"requirement unverified: Phase 3 validation did not run: {stop_reason}. "
                 "The current application has not completed final verification.",
@@ -3525,6 +3562,7 @@ class LLMOrchestrator:
 
         if not issues:
             logger.info("Phase 3: Validation passed -- no issues found")
+            self._phase3_exit_reason = "validation clean"
             self._validation_issues = self._with_model_contract([])
             self._complete_repair_if_verified()
             if self._checkpoint_phase == "phase3":
@@ -3562,12 +3600,14 @@ class LLMOrchestrator:
             logger.info(
                 "Phase 3: auto_fix_issues=False — issues recorded, no LLM fix loop."
             )
+            self._phase3_exit_reason = "auto-fix disabled"
             return
 
         # Auto-fix only consumes BLOCKER issues. Style warnings (unused
         # imports, line length) and soft warnings (tsc type hints) are
         # left as-is; they don't justify burning LLM turns.
         if not blockers_before:
+            self._phase3_exit_reason = "no blocker-class issues"
             logger.info(
                 "Phase 3: auto_fix_issues=True but no blocker-class issues — "
                 "skipping LLM fix loop. %d non-blocker issue(s) recorded.",
@@ -3622,10 +3662,16 @@ class LLMOrchestrator:
             self._save_phase3_checkpoint()
 
         max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
+        # Which guard ends this loop, for the trace. Reconstructing it from
+        # phase_enter/phase_exit pairs after the fact is guesswork, and the
+        # guard histogram is the only way to tell a tight guard from a weak
+        # model. Report-only: nothing reads it back as a decision input.
+        exit_reason = "attempt cap"
         for _ in range(max_attempts):
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
                 logger.warning("Phase 3: %s; preserving unresolved findings", stop_reason)
+                exit_reason = stop_reason
                 break
             is_first_attempt = attempts_run == 0
             attempts_run += 1
@@ -3653,7 +3699,9 @@ class LLMOrchestrator:
 
             # A stop during a repair is not permission to issue another paid
             # coverage judgment. Preserve last-known findings and the checkpoint.
-            if self._phase3_stop_requested(check_turn_budget=False):
+            mid_attempt_stop = self._phase3_stop_requested(check_turn_budget=False)
+            if mid_attempt_stop:
+                exit_reason = mid_attempt_stop
                 break
             # Re-validate. The bench's per-project compile-pass score
             # only cares about a clean toolchain, so re-running these
@@ -3682,6 +3730,7 @@ class LLMOrchestrator:
                 self._validation_issues = self._with_model_contract(issues_after)
                 self._complete_repair_if_verified()
                 checkpoint_progress()
+                self._phase3_exit_reason = "all blockers fixed"
                 return
 
             # Keep the best tree, not the last one. Strictly better only, so a
@@ -3707,26 +3756,39 @@ class LLMOrchestrator:
                 last_validated_revision, last_obligations_revision,
                 tuple(i.message for i in _hard_blockers(blockers_after)),
             )
-            # An attempt that wrote nothing AND left the tree byte-identical
-            # cannot have moved anything; another round against the same state
-            # is the same attempt again. 34 of 104 attempts across the 23 runs
-            # of 2026-09-19 produced zero writes - 222 turns.
-            wrote_nothing = edits == 0 and not source_changed
-            if wrote_nothing or (not source_changed and not obligations_changed) or state in seen_states:
+            # A round can move a run without writing a byte of source. Verifying
+            # a checklist item or correcting a scenario discharges a blocker on
+            # its own - that is exactly what ``_repair_obligations_revision``
+            # measures - and a re-validation can clear findings an earlier
+            # round's edits had already fixed. Run 053ydac9 (2026-09-20,
+            # gpt-5.6-terra) spent its last round on test_api / read_file /
+            # task_list, took 10 blockers to 4, wrote no source, and was stopped
+            # as "this attempt cannot have moved anything" still holding 86 of
+            # its 120 turns and $4.13 of its $5. So the question a stall guard
+            # has to ask is not "did it write" but "did anything measurably
+            # move": a better tree score, a changed source tree, or a
+            # discharged obligation. Zero writes is no longer its own stop -
+            # it is one no-progress round like any other.
+            improved = score_after < prev_score
+            if not improved and (
+                (not source_changed and not obligations_changed)
+                or state in seen_states
+            ):
                 no_progress_streak += 1
                 budget_left = (
                     self.max_cost_usd is None
                     or self.client.usage.estimated_cost < self.max_cost_usd
                 )
-                if (wrote_nothing or no_progress_streak >= _PHASE3_NO_PROGRESS_ROUNDS
-                        or not budget_left):
+                if no_progress_streak >= _PHASE3_NO_PROGRESS_ROUNDS or not budget_left:
                     logger.warning(
                         "Phase 3: Attempt %d made no progress (%d -> %d "
                         "blockers); ending fix loop (%d consecutive "
-                        "no-progress round(s), wrote_nothing=%s, budget_left=%s).",
+                        "no-progress round(s), writes=%s, budget_left=%s).",
                         attempts_run, prev_blocker_count, len(blockers_after),
-                        no_progress_streak, wrote_nothing, budget_left,
+                        no_progress_streak, edits, budget_left,
                     )
+                    exit_reason = ("no-progress streak" if budget_left
+                                   else "cost budget exhausted")
                     break
                 logger.info(
                     "Phase 3: Attempt %d made no progress (%d -> %d "
@@ -3758,6 +3820,7 @@ class LLMOrchestrator:
                         "%d (score %s, best %s); ending fix loop.",
                         attempts_run, plateau_streak, score_after, best_score,
                     )
+                    exit_reason = "plateau"
                     break
             else:
                 plateau_streak = 0
@@ -3773,6 +3836,7 @@ class LLMOrchestrator:
         # We get here either by ending the loop early (no progress)
         # or by exhausting the attempt cap. Record whatever the final
         # state is so the recipe surfaces it.
+        self._phase3_exit_reason = exit_reason
         if self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed):
             last_issues = list(self._validation_issues)
         else:
@@ -4253,14 +4317,24 @@ class LLMOrchestrator:
                     response = self.client.chat(
                         system=system, messages=request_messages, tools=self.tools,
                     )
+            except InvalidApiKeyError:
+                # Same rule as Phase 2: an auth failure must PROPAGATE so the
+                # runner reports INVALID_KEY. Swallowed here it read as
+                # "repair interrupted", which tells the user nothing about the
+                # one thing they can fix.
+                raise
             except Exception as exc:
                 # Surface the failure instead of silently exiting the fix
                 # loop — callers and logs need to see why validation bailed.
+                # No retry here on purpose: the client already spent its own
+                # 5-attempt backoff (and its outage-fallback model switch)
+                # before the exception reached us.
                 logger.warning(
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn, exc,
                 )
                 self._phase3_interrupted = True
+                self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
                 return edits
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
@@ -4290,6 +4364,8 @@ class LLMOrchestrator:
                     "request", response["stop_reason"], turn,
                 )
                 self._phase3_interrupted = True
+                self._phase3_interrupt_detail = (
+                    f"unexpected stop_reason {response['stop_reason']!r}")
                 return edits
             messages.append({"role": "assistant", "content": response["content"]})
             tool_blocks = [
@@ -4311,7 +4387,11 @@ class LLMOrchestrator:
             # Omitting them here left the bounded repair loop running on
             # _is_stuck alone, on a tighter budget than either.
             if self._apply_edit_loop_guards(messages, where="phase 3 repair"):
-                break
+                # Falling out of the loop without this returned ``None``, so
+                # an attempt that DID write reported zero writes to the outer
+                # cycle, to the trace and to the log line that says the
+                # attempt changed nothing.
+                return edits
             self._save_phase3_checkpoint()
 
     _FILE_LINE_RE = _re.compile(

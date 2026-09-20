@@ -19,8 +19,12 @@ import re
 _SKIP_DIRS = {"node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build"}
 _FRONTEND_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
 _MAX_FILE_BYTES = 1_000_000
+# Only a template literal may span lines. Without the newline bound on the
+# quoted alternatives, two apostrophes in JSX prose read as one string literal
+# and hid every <TableBlock> between them.
 _JS_NONCODE = re.compile(
-    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|//[^\r\n]*|/\*[\s\S]*?\*/'''
+    r'''"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`'''
+    r'''|//[^\r\n]*|/\*[\s\S]*?\*/'''
 )
 
 

@@ -126,6 +126,13 @@ def _forms(name: str) -> set[str]:
     return {f for f in forms if f}
 
 
+def _mentions_form(lowered_text: str, form: str) -> bool:
+    """``form`` as a whole word in already-lowercased text."""
+    return bool(re.search(
+        rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", lowered_text
+    ))
+
+
 def _singular_candidates(token: str) -> set[str]:
     """A token plus a couple of naive de-pluralisations."""
     low = re.sub(r"[^a-z0-9]", "", token.lower())
@@ -237,7 +244,7 @@ def parse_reported_target(
                 candidates.add(seg)
     low_text = text.lower()
     for cls in class_names:
-        if any(form in low_text for form in _forms(cls)):
+        if any(_mentions_form(low_text, form) for form in _forms(cls)):
             candidates.add(cls)
 
     entities = _derive_entities(candidates, class_names)
@@ -309,6 +316,12 @@ def finding_matches_target(
 
     A soft target (no entities) matches nothing — we never promote a
     finding we cannot attribute to what the user actually reported.
+
+    Each form has to stand on its own: matched as a bare substring,
+    ``Book`` matched inside ``booking``, so a ``POST /booking/`` failure
+    promoted unrelated ``Book`` findings to blockers and pointed the fix
+    loop at the wrong entity. ``_`` and punctuation still count as
+    boundaries, so ``book_id`` and ``routers/book.py`` keep matching.
     """
     if target is None or not target.entities:
         return False
@@ -317,6 +330,6 @@ def finding_matches_target(
         return False
     for entity in target.entities:
         for form in _forms(entity):
-            if form and form in low:
+            if form and _mentions_form(low, form):
                 return True
     return False

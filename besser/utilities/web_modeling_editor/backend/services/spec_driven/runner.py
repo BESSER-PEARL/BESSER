@@ -31,6 +31,7 @@ import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from itertools import chain, zip_longest
 from typing import Any, AsyncGenerator, Optional
 
 from pydantic import ValidationError as PydanticValidationError
@@ -92,6 +93,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     StartEvent,
     TextDeltaEvent,
     ToolCallEvent,
+    VerificationCounts,
+    VerificationItem,
+    VerificationReport,
     format_sse,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
@@ -158,6 +162,275 @@ def _dir_has_user_output(path: Optional[str]) -> bool:
             if not fn.startswith(".besser_"):
                 return True
     return False
+
+
+# ----------------------------------------------------------------------
+# What the run verified, could not verify, and shipped unenforced
+# ----------------------------------------------------------------------
+# Per list, so a large model can't push the recipe past _MAX_RECIPE_BYTES on
+# the next run that reads it back. counts carries the true totals.
+_MAX_VERIFICATION_ITEMS = 25
+
+# Per-field limits measured over 365 run recipes, not rounded off. The client
+# renders these in full, so a cut here is the last one in the chain.
+#   why  — the irreplaceable half ("why this rule is not enforced"). A rejected
+#          OCL constraint renders 263-750 characters, every one of them over
+#          the 240 this used to cut at; 1200 leaves zero truncated in the
+#          corpus, including the longest with a recovery verdict appended.
+#   what — validator messages reach 2550 at the extreme; 1300 (just over the
+#          p99 of 1275) cuts 93 of 2831 instead of 1043.
+#   how  — a request list or an evidence citation, which degrades gracefully,
+#          so it keeps the tighter p90 bound.
+# The three together cost a median 9.9 KB report, 22.7 KB at the corpus worst.
+_MAX_WHAT = 1300
+_MAX_WHY = 1200
+_MAX_HOW = 320
+_TRUNCATION_MARK = " …[truncated]"
+
+# ``_check_did_not_run`` / ``required_check_unverified`` wording. Follow the
+# convention rather than re-deriving which checks were skipped.
+_SKIPPED_CHECK_RE = re.compile(
+    r"^validation(?: unverified)?: (?P<check>.+?) did not run"
+    r"(?: completely)?(?: \((?P<reason>.*?)\))?"
+)
+
+# Validator prefixes from _classify_issue, split by which of the three states
+# they report. A modeled operation left as an HTTP 501 placeholder is the spec
+# stating something the delivered code does not implement; a task whose
+# verification never concluded is the opposite — unknown, not absent. Other
+# prefixes (ruff, frontend/data contract, create contract) describe code that
+# was built and is defective, which is a different question.
+_UNENFORCED_PREFIXES = ("action contract:", "model contract:")
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
+
+
+def _clip(text: Any, limit: int) -> str:
+    """Collapse whitespace; cut on a word boundary and say when it cut.
+
+    A silent mid-word cut turns "why this rule is not enforced" into a
+    fragment the reader cannot tell is incomplete.
+    """
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    return (text[:limit].rsplit(" ", 1)[0] or text[:limit]) + _TRUNCATION_MARK
+
+
+def _item(kind: str, ident: Any, what: str, *, how: str = "", why: str = "") -> VerificationItem:
+    return VerificationItem(
+        kind=kind,
+        id=str(ident or ""),
+        what=_clip(what, _MAX_WHAT),
+        how=_clip(how, _MAX_HOW) or None,
+        why=_clip(why, _MAX_WHY) or None,
+    )
+
+
+def _capped(items: list[VerificationItem]) -> list[VerificationItem]:
+    """Truncate round-robin across kinds.
+
+    86 unverified requirement verdicts would otherwise push the "no workflow
+    was ever run" note out of the list — the same hiding this report exists
+    to stop, one level down.
+    """
+    if len(items) <= _MAX_VERIFICATION_ITEMS:
+        return items
+    by_kind: dict[str, list[VerificationItem]] = {}
+    for item in items:
+        by_kind.setdefault(item.kind, []).append(item)
+    interleaved = zip_longest(*by_kind.values())
+    return [i for i in chain.from_iterable(interleaved) if i][:_MAX_VERIFICATION_ITEMS]
+
+
+def _conversion_label(issue: dict) -> str:
+    """The label ``_requirements_for_validation`` names the rule by."""
+    return issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
+
+
+def build_verification_report(recipe: dict) -> VerificationReport:
+    """Split the recipe's own evidence into the three states a count hides.
+
+    "we checked and it works", "we could not check" and "we checked and it is
+    missing" are different results. A run that scored 11/11 and passed its
+    booking workflow still double-sold rooms because two OCL constraints
+    failed conversion; the evidence was in the recipe, flattened into
+    "21 blockers".
+    """
+    verified: list[VerificationItem] = []
+    not_verified: list[VerificationItem] = []
+    unenforced: list[VerificationItem] = []
+
+    if recipe.get("warning") and not any(
+        recipe.get(key) for key in
+        ("requirements", "api_scenarios", "model_conversion_issues", "validation_issues")
+    ):
+        # _read_recipe dropped an oversized/unreadable recipe. Empty lists here
+        # would read as "there was nothing to verify".
+        not_verified.append(_item(
+            "check", "", "everything this run did",
+            why=f"the run's own report could not be read ({recipe['warning']})",
+        ))
+
+    verdicts = [v for v in (recipe.get("requirements") or []) if isinstance(v, dict)]
+    consumed: set[int] = set()
+
+    # 1. OCL constraints the converter rejected. These never reached the
+    #    generated code. The orchestrator re-raises each as a synthetic
+    #    "Recover model constraint '<label>'" requirement, so its verdict says
+    #    whether the agent actually put the rule back — absent that evidence
+    #    the rule ships unenforced, which is the double-booking case.
+    for issue in recipe.get("model_conversion_issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        label = _conversion_label(issue)
+        verdict = next(
+            (v for v in verdicts
+             if f"Recover model constraint '{label}'" in str(v.get("text", ""))),
+            None,
+        )
+        if verdict is not None:
+            consumed.add(id(verdict))
+        what = (
+            f"OCL {issue.get('kind') or 'constraint'} '{label}' on "
+            f"{issue.get('context') or 'an unknown context'}: "
+            f"{issue.get('expression') or issue.get('original_text') or ''}"
+        )
+        if verdict is not None and verdict.get("status") == "implemented":
+            verified.append(_item(
+                "ocl_constraint", label, what,
+                how="rejected by the OCL converter, then recovered in code: "
+                    + str(verdict.get("evidence") or "no citation"),
+            ))
+            continue
+        why = (
+            f"the OCL converter rejected it ({issue.get('reason') or 'no reason recorded'}), "
+            "so it never reached the generated code"
+        )
+        if verdict is None:
+            why += "; nothing checked whether it was re-implemented"
+        else:
+            why += f"; recovery verdict '{verdict.get('status')}'"
+            if verdict.get("note"):
+                why += f" ({verdict['note']})"
+        unenforced.append(_item("ocl_constraint", label, what, why=why))
+
+    # 2. Requirements the spec states, with Phase 3's last verdict. An
+    #    "implemented" verdict has had its citation re-checked against the
+    #    delivered tree by verify_evidence; "unverified" means the check did
+    #    not conclude, NOT that the behaviour is absent.
+    for verdict in verdicts:
+        if id(verdict) in consumed:
+            continue
+        status = verdict.get("status")
+        ident = f"R{verdict.get('id')}"
+        what = str(verdict.get("text") or "")
+        note = str(verdict.get("note") or "")
+        if status == "implemented":
+            verified.append(_item(
+                "requirement", ident, what,
+                how="implementation cited and re-checked against the delivered "
+                    f"source: {verdict.get('evidence') or 'no citation'}",
+            ))
+        elif status in ("missing", "partial"):
+            reason = ("the delivered code does not implement it" if status == "missing"
+                      else "the delivered code implements it only partly")
+            unenforced.append(_item(
+                "requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}",
+            ))
+        else:
+            not_verified.append(_item(
+                "requirement", ident, what, why=note or "no verdict was reached",
+            ))
+
+    # 3. API workflows — the only evidence in the recipe that something was
+    #    actually RUN against the app rather than read.
+    for scenario in recipe.get("api_scenarios") or []:
+        if not isinstance(scenario, dict):
+            continue
+        report = scenario.get("report") or {}
+        requests = (scenario.get("scenario") or {}).get("requests") or []
+        ident = str(scenario.get("scenario_id") or "")
+        what = f"API workflow '{ident}'"
+        ran = ", ".join(
+            f"{r.get('method', '?')} {r.get('path', '?')}"
+            for r in requests if isinstance(r, dict)
+        )
+        status = report.get("status")
+        if status == "passed":
+            verified.append(_item(
+                "api_workflow", ident, what,
+                how=f"{len(requests)} request(s) run against the app: {ran}",
+            ))
+        elif status == "failed":
+            unenforced.append(_item(
+                "api_workflow", ident, what,
+                why="exercised and failed: "
+                    + str(report.get("error") or "see the run report"),
+            ))
+        else:
+            not_verified.append(_item(
+                "api_workflow", ident, what,
+                why=str(report.get("error") or f"workflow status '{status}'"),
+            ))
+
+    # 3b. A run that judged its requirements but never ran the app has no
+    #     runtime evidence at all. Silence here reads as "it works".
+    if verdicts and not (recipe.get("api_scenarios") or []):
+        not_verified.append(_item(
+            "check", "", "runtime behaviour of the delivered app",
+            why="no API workflow was run against it, so nothing here shows the "
+                "app behaves as specified when it runs",
+        ))
+
+    # 4. Checks that were SKIPPED. A collector returning [] on a timeout is
+    #    indistinguishable from a clean result, so these must not read as
+    #    passes.
+    for issue in recipe.get("validation_issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        message = str(issue.get("message") or "")
+        match = _SKIPPED_CHECK_RE.match(message)
+        if match:
+            not_verified.append(_item(
+                "check", "", match.group("check"),
+                why=f"the check did not run ({match.group('reason') or 'no reason recorded'}), "
+                    "so this result does not cover it",
+            ))
+        elif message.startswith(_UNENFORCED_PREFIXES):
+            unenforced.append(_item(
+                "requirement", "", message.partition(": ")[2] or message,
+                why="the model states this operation and the delivered code "
+                    "does not implement it",
+            ))
+        elif message.startswith(_UNCHECKED_PREFIXES):
+            not_verified.append(_item(
+                "check", "", message.partition(": ")[2] or message,
+                why="verification never established it; this is unknown, not absent",
+            ))
+
+    # 5. The requirements ledger can fail before producing a single verdict
+    #    (extraction failed, verification budget exhausted). Its finding then
+    #    lives only in validation_issues, and an empty requirements list would
+    #    otherwise read as "there was nothing to check".
+    if not verdicts:
+        for issue in recipe.get("validation_issues") or []:
+            message = str((issue or {}).get("message") or "")
+            if message.startswith(("requirement unverified:", "requirement:")):
+                not_verified.append(_item(
+                    "check", "", "original-specification coverage", why=message,
+                ))
+                break
+
+    return VerificationReport(
+        verified=_capped(verified),
+        notVerified=_capped(not_verified),
+        shippedUnenforced=_capped(unenforced),
+        counts=VerificationCounts(
+            verified=len(verified),
+            notVerified=len(not_verified),
+            shippedUnenforced=len(unenforced),
+        ),
+    )
 
 
 class _EmptyGenerationError(Exception):
@@ -1908,6 +2181,17 @@ class SmartGenerationRunner:
 
         recipe = self._read_recipe(result_path)
         recipe["secret_findings"] = scrub.findings
+        try:
+            verification = build_verification_report(recipe)
+        except Exception:
+            # Never block the download on the report. An empty report would
+            # read as "nothing to verify", so say the report itself failed.
+            logger.exception("Verification report failed for run %s", self.run_id)
+            verification = VerificationReport(notVerified=[VerificationItem(
+                kind="check", what="everything this run did",
+                why="the run's verification report could not be built",
+            )])
+        recipe["verification"] = verification.model_dump(mode="json")
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
         if os.path.isfile(recipe_path):
             try:
@@ -1979,6 +2263,7 @@ class SmartGenerationRunner:
             fileCount=len(user_files),
             topLevel=top_level,
             tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
+            verification=verification,
         )
         return event, entry
 

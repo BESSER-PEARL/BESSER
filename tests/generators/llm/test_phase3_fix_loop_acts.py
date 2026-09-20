@@ -283,13 +283,15 @@ def test_phase3_tool_calls_are_recorded_like_phase2_ones(tmp_path):
 
 
 def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
-    """One attempt, not two.
+    """Two attempts, and the log names the streak that ended them.
 
-    The old expectation of two attempts was the defect, not the contract: an
-    attempt that made zero successful writes AND left the tree byte-identical
-    cannot have moved anything, so the second round was the first one again.
-    Across the 23 runs of 2026-09-19, 34 of 104 fix attempts produced zero
-    writes - 222 turns bought at full price for a tree nothing had touched.
+    "Zero writes, therefore nothing moved" turned out to be false: each round
+    rebuilds its prompt from the re-collected findings, and over the 221 runs
+    recorded before the zero-write stop existed, the round after a barren one
+    wrote source 38% of the time. So a barren round costs one round, and the
+    streak - two of them - ends the loop. What must never regress is the
+    summary line: it prints the real attempt count, never the cap, because
+    printing the cap is what got this misdiagnosed in the first place.
     """
     client = _PlainClient()
     orch = _build(tmp_path, client, auto_fix_issues=True)
@@ -302,11 +304,9 @@ def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
 
     text = caplog.text
     assert "no successful edit" in text, text
-    # One attempt ran: it wrote nothing and the tree is unchanged, so the loop
-    # ends there. The summary still prints the real number, never the cap -
-    # printing the cap is what got this misdiagnosed in the first place.
-    assert "remain after 1 attempt(s)" in text, text
-    assert "wrote_nothing=True" in text, text
+    assert "remain after 2 attempt(s)" in text, text
+    assert "2 consecutive no-progress round(s)" in text, text
+    assert "writes=0" in text, text
     assert f"after {_MAX_TOOLCHAIN_FIX_ITERATIONS} attempt(s)" not in text
 
 

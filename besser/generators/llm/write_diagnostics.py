@@ -47,6 +47,36 @@ def workspace_uses_sqlite(workspace: str | None) -> bool:
     return False
 
 
+_TERMINATORS = (ast.Return, ast.Raise, ast.Break, ast.Continue)
+
+
+def _unreachable_lines(tree: ast.AST) -> set[int]:
+    """Lines that follow an unconditional exit in the SAME statement list.
+
+    An undefined name there cannot raise: nothing runs the line. Two apps
+    in the 74-app working corpus shipped an orphan block left after a
+    ``return`` by a botched edit (``...-3jkm7pib`` reading ``ids``,
+    ``...-omtn74nk`` reading ``product_list``), and both were reported as
+    blockers claiming a NameError on a tree that passed 10/10 workflow
+    checks. Only a terminator at the same nesting level counts, so a
+    ``return`` inside an ``if`` leaves the rest of the body live.
+    """
+    dead: set[int] = set()
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
+                continue
+            for index, statement in enumerate(block):
+                if not isinstance(statement, _TERMINATORS):
+                    continue
+                for later in block[index + 1:]:
+                    end = getattr(later, "end_lineno", None) or later.lineno
+                    dead.update(range(later.lineno, end + 1))
+                break
+    return dead
+
+
 def _bound_names(statement: ast.stmt) -> list[str]:
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return [statement.name]
@@ -877,7 +907,10 @@ def _python_diagnostics(
 
     findings: list[dict[str, Any]] = list(unawaited)
     undefined_kinds = {"UndefinedName", "UndefinedExport", "UndefinedLocal"}
+    dead_lines = _unreachable_lines(tree)
     for item in sorted(messages, key=lambda msg: (msg.lineno, msg.col)):
+        if getattr(item, "lineno", None) in dead_lines:
+            continue  # unreachable: the name is never looked up at runtime
         kind = type(item).__name__
         if kind == "ImportStarUsage":
             if star_scope is None or item.message_args[0] in star_scope[1]:

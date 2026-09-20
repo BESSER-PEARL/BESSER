@@ -141,6 +141,54 @@ class CostEvent(BaseSseEvent):
     servedModel: Optional[str] = None
 
 
+VerificationKind = Literal["requirement", "ocl_constraint", "api_workflow", "check"]
+
+
+class VerificationItem(BaseModel):
+    """One thing the run checked, could not check, or found missing.
+
+    ``how`` is set on a verified item (what was actually run); ``why`` on the
+    other two (why nothing reached it, or what the delivered code is missing).
+    Rendered in full by the client, so a value cut server-side ends in a
+    visible truncation mark rather than mid-word.
+    """
+
+    kind: VerificationKind
+    id: str = ""
+    what: str
+    how: Optional[str] = None
+    why: Optional[str] = None
+
+
+class VerificationCounts(BaseModel):
+    """True totals, named in the schema.
+
+    As a bare dict the three keys were unenforced, and a typo would have read
+    as a missing key on the client rather than failing here.
+    """
+
+    verified: int = 0
+    notVerified: int = 0
+    shippedUnenforced: int = 0
+
+
+class VerificationReport(BaseModel):
+    """The three states a blocker count collapses into one number.
+
+    An app scored 11/11 with a passing booking workflow still double-sold
+    rooms: two OCL constraints failed conversion and never reached the code.
+    The run knew — it listed both and reported 21 blockers — but the number
+    hid which. ``verified`` is "we checked and it works", ``notVerified`` is
+    "we could not check", ``shippedUnenforced`` is "we checked and it is
+    missing". ``counts`` holds the true totals; the lists are capped.
+    """
+
+    verified: list[VerificationItem] = Field(default_factory=list)
+    notVerified: list[VerificationItem] = Field(default_factory=list)
+    shippedUnenforced: list[VerificationItem] = Field(default_factory=list)
+    counts: VerificationCounts = Field(default_factory=VerificationCounts)
+
+
 class DoneEvent(BaseSseEvent):
     """Terminal event on successful completion.
 
@@ -180,6 +228,10 @@ class DoneEvent(BaseSseEvent):
     # run that was genuinely cut short (which reports 0 here) — the two need
     # different user-facing framing. 0 when there is nothing to distinguish.
     blockerCount: int = 0
+    # What the run verified, could not verify, and shipped unenforced. This is
+    # the field to render: blockerCount is one number over all three states.
+    # Additive — existing clients that ignore it are unaffected.
+    verification: VerificationReport = Field(default_factory=VerificationReport)
     # Three-way authorship split over the final output tree —
     # ``{generator_untouched, generator_llm_modified, llm_authored, total,
     # *_pct}`` — how much of the app the deterministic pipeline carried vs.

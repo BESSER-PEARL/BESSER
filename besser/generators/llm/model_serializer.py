@@ -33,6 +33,53 @@ def _type_name(t) -> str:
     return t.name
 
 
+def ordered_literals(enum) -> list:
+    """Return an enumeration's literals in the order the user declared them.
+
+    The metamodel stores literals in a ``set``, so the editor's JSON order is
+    recorded separately on ``_ordered_literals`` by the json_to_buml
+    processor (``buml_to_json`` reads the same attribute). Declaration order
+    is a decision the user made when they typed the list — "the first
+    literal" is routinely taken as the initial state, and sorting by name
+    silently answers CANCELLED where the user wrote SCHEDULED.
+
+    Models built in Python carry no declared order; those fall back to a
+    name sort rather than to set iteration order, which differs between
+    processes for the same model.
+    """
+    literals = list(getattr(enum, "literals", None) or [])
+    declared = getattr(enum, "_ordered_literals", None)
+    if not declared:
+        return sorted(literals, key=lambda lit: lit.name)
+    remaining = {lit.name: lit for lit in literals}
+    result = [remaining.pop(lit.name) for lit in declared if lit.name in remaining]
+    # A literal added after the conversion still has to appear.
+    result.extend(sorted(remaining.values(), key=lambda lit: lit.name))
+    return result
+
+
+def _metadata_entry(element) -> dict[str, Any]:
+    """User-entered description / URI / synonyms for a named element.
+
+    A comment box the user drew in the editor and linked to a class becomes
+    that class's description; an unlinked one becomes the domain model's.
+    ``buml_to_json`` re-emits both as ``Comments`` elements, so the editor
+    keeps them across a save — they are the user's own prose and nothing
+    else in the pipeline carries them.
+    """
+    metadata = getattr(element, "metadata", None)
+    if metadata is None:
+        return {}
+    entry: dict[str, Any] = {}
+    if getattr(metadata, "description", None):
+        entry["description"] = metadata.description
+    if getattr(metadata, "uri", None):
+        entry["uri"] = metadata.uri
+    if getattr(metadata, "synonyms", None):
+        entry["synonyms"] = list(metadata.synonyms)
+    return entry
+
+
 def _attribute_entry(attr) -> dict[str, Any]:
     """Produce the compact dict representation of a single ``Property``."""
     entry: dict[str, Any] = {
@@ -41,6 +88,11 @@ def _attribute_entry(attr) -> dict[str, Any]:
     }
     if getattr(attr, "is_id", False):
         entry["is_id"] = True
+    # The natural identifier the user says identifies the object ("every room
+    # is identified by its room number"): client-supplied, and unique. Without
+    # it the stated uniqueness rule reads as an ordinary string column.
+    if getattr(attr, "is_external_id", False):
+        entry["is_external_id"] = True
     # Computed by the server; without this the agent sees an ordinary field.
     if getattr(attr, "is_derived", False):
         entry["is_derived"] = True
@@ -66,6 +118,20 @@ def _constraint_entry(constraint) -> dict[str, Any]:
     return entry
 
 
+def _parameter_entry(param) -> dict[str, Any]:
+    """Produce the compact dict representation of a single ``Parameter``.
+
+    A declared default is what makes the argument optional. Omitting it
+    reads as "required" and the generated handler then rejects a call that
+    leaves the parameter out — the zero-argument failure, one argument along.
+    """
+    entry: dict[str, Any] = {"name": param.name, "type": _type_name(param.type)}
+    default = getattr(param, "default_value", None)
+    if default is not None:
+        entry["default"] = default
+    return entry
+
+
 def _method_entry(method) -> dict[str, Any]:
     """Produce the compact dict representation of a single ``Method``."""
     entry: dict[str, Any] = {"name": method.name}
@@ -73,10 +139,9 @@ def _method_entry(method) -> dict[str, Any]:
         entry["return_type"] = _type_name(method.type)
     # Always stated, empty list included: an omitted key reads as "not shown",
     # and a modelled action's parameter list is the callable contract.
-    entry["parameters"] = [
-        {"name": p.name, "type": _type_name(p.type)}
-        for p in method.parameters or []
-    ]
+    entry["parameters"] = [_parameter_entry(p) for p in method.parameters or []]
+    if getattr(method, "is_abstract", False):
+        entry["is_abstract"] = True
     visibility = getattr(method, "visibility", None)
     if visibility and visibility != "public":
         entry["visibility"] = visibility
@@ -192,12 +257,9 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
             ]
 
         # Metadata
-        if hasattr(cls, "metadata") and cls.metadata:
-            meta = {}
-            if cls.metadata.description:
-                meta["description"] = cls.metadata.description
-            if meta:
-                cls_data["metadata"] = meta
+        meta = _metadata_entry(cls)
+        if meta:
+            cls_data["metadata"] = meta
 
         if isinstance(cls, AssociationClass):
             cls_data["association"] = cls.association.name
@@ -210,19 +272,31 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
     for enum in sorted(model.get_enumerations(), key=lambda e: e.name):
         enumerations.append({
             "name": enum.name,
-            "literals": [lit.name for lit in sorted(enum.literals, key=lambda lit_: lit_.name)],
+            "literals": [lit.name for lit in ordered_literals(enum)],
         })
 
     # Associations
     associations = []
     for assoc in sorted(model.associations, key=lambda a: a.name):
+        # ``Association.ends`` is a set: unsorted, the two ends swap places
+        # between processes, so "the first end" means nothing and the prompt
+        # is not byte-stable for the same model.
+        assoc_ends = sorted(assoc.ends, key=lambda e: (e.name, _type_name(e.type)))
         ends = []
-        for end in assoc.ends:
+        for end in assoc_ends:
             end_data: dict[str, Any] = {
                 "role": end.name,
                 "class": _type_name(end.type),
                 "multiplicity": _multiplicity_str(end.multiplicity),
             }
+            # UML puts an end typed X on the class at the OPPOSITE end, so
+            # ``role`` is a property of ``owner``, not of ``class``. Leaving
+            # that to inference has produced the relation the wrong way round
+            # before; state it. (Binary associations only — an n-ary end has
+            # no single opposite.)
+            if len(assoc_ends) == 2:
+                other = assoc_ends[1] if end is assoc_ends[0] else assoc_ends[0]
+                end_data["owner"] = _type_name(other.type)
             if not end.is_navigable:
                 end_data["navigable"] = False
             if end.is_composite:
@@ -248,6 +322,11 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
 
     # Build output — only include non-empty sections
     result: dict[str, Any] = {"name": model.name}
+    # An unlinked comment box lands on the model itself. It survives a save in
+    # the editor; it used to be the one piece of user prose the spec dropped.
+    model_meta = _metadata_entry(model)
+    if model_meta:
+        result["metadata"] = model_meta
     if classes:
         result["classes"] = classes
     if association_classes:

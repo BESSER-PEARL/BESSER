@@ -24,6 +24,7 @@ from besser.generators.llm.model_serializer import (
     serialize_quantum_circuit,
     serialize_state_machines,
 )
+from besser.generators.llm.runbook import runbook_section
 from besser.generators.llm.stack_metadata import idiom_guidance_section
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ def build_system_prompt(
     endpoint_manifest: str = "",
     modify_mode: bool = False,
     requirements: str = "",
+    allow_shell: bool = False,
+    output_dir: str | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -80,6 +83,12 @@ def build_system_prompt(
             "quantum". Used to
             frame the LLM's task (e.g. "this is a state-machine-driven
             run — emit the transition code").
+        allow_shell: Whether ``run_command`` / ``install_dependencies`` are
+            in this run's tool list. Only then is the runtime-verification
+            runbook rendered — a procedure built on commands the model
+            cannot issue is worse than no procedure at all.
+        output_dir: The run workspace. Required for the runbook, which
+            installs its helper script there and names the backend it found.
         modify_mode: When True the run is an incremental vibe-modify — the
             output_dir was seeded from a previous run's generated files and
             the LLM edits them in place. Prepends a directive that biases
@@ -312,6 +321,18 @@ def build_system_prompt(
             "Fix them in addition to implementing the user request:\n\n"
             f"{formatted}\n"
         )
+
+    # The runtime-verification runbook. Rendered only when the run actually
+    # holds the shell tools it tells the model to use, and only for the
+    # backend scaffold its helper knows how to drive; otherwise "". Lives at
+    # the end of the variable tail, where the last substantive instruction
+    # before "summarize what you changed" is the one about verifying first.
+    runbook_block = ""
+    if allow_shell and output_dir:
+        try:
+            runbook_block = runbook_section(output_dir)
+        except Exception:
+            logger.debug("Runbook section build failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Cache strategy
@@ -575,7 +596,7 @@ implement what the user asked for, on top of the generator output:
 {_render_gap_section(gap_tasks)}
 Plan your own work from the request — pick the right files to edit, the
 right packages to add, the right order. Do NOT exceed the request scope.
-{issues_section}
+{issues_section}{runbook_block}
 When done, briefly summarize what you changed.
 """
 

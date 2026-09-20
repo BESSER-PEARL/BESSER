@@ -220,15 +220,16 @@ def _match_but_for_trim(whole_lines: list[str], part_lines: list[str]) -> str | 
     return _uniform_indent_prefix(whole_lines, part_lines)
 
 
-def _first_line_overindent(
+def _first_line_indent_delta(
     whole_lines: list[str], part_lines: list[str]
 ) -> int | None:
-    """Excess leading whitespace carried by the quote's FIRST line alone.
+    """Signed leading-whitespace difference on the quote's FIRST line alone.
 
     Tier 8. Lines 2..n must match the window under tier 6's rule with no
-    indent widening at all; only then is the first line matched after dropping
-    a strictly-positive whitespace prefix the file does not have. Returns that
-    prefix's length, else ``None``.
+    indent widening at all; only then is the first line matched after
+    absorbing a whitespace difference the rest of the quote does not have.
+    Positive means the quote is over-indented against the file, negative
+    under-indented. ``None`` when the shape does not apply.
     """
     n = len(whole_lines)
     if n != len(part_lines) or n < 2:
@@ -236,40 +237,84 @@ def _first_line_overindent(
     w0, p0 = whole_lines[0], part_lines[0]
     if not p0.strip() or w0.strip() != p0.strip():
         return None
-    extra = (len(p0) - len(p0.lstrip())) - (len(w0) - len(w0.lstrip()))
-    if extra <= 0:
+    delta = (len(p0) - len(p0.lstrip())) - (len(w0) - len(w0.lstrip()))
+    if delta == 0:
         return None
     if _match_but_for_trim(whole_lines[1:], part_lines[1:]) != "":
         return None
-    return extra
+    return delta
 
 
-def _replace_with_overindented_first_line(
+def _base_indent(lines: list[str]) -> int | None:
+    """Smallest leading-whitespace width over the non-blank lines, or None."""
+    widths = [len(ln) - len(ln.lstrip()) for ln in lines if ln.strip()]
+    return min(widths) if widths else None
+
+
+def _first_line_replacement(
+    delta: int, whole_first: str, part_lines: list[str], replace_lines: list[str],
+) -> list[str] | None:
+    """``replace_lines`` with its first line re-aligned to the file, or None.
+
+    Both directions require the model to have repeated its own mistake in
+    ``new_text``; a replacement that disagrees with the quote is refused
+    rather than guessed at, because an edit landing at the wrong indent is
+    worse than one that misses.
+    """
+    if not replace_lines or not replace_lines[0].strip():
+        return None
+    if delta > 0:
+        # Over-indented. The prefix comes off new_text too: 17 of the 18
+        # Python cases this tier was calibrated on would not parse if the
+        # replacement's first line were written verbatim.
+        if replace_lines[0][:delta].strip():
+            return None
+        return [replace_lines[0][delta:]] + replace_lines[1:]
+    # Under-indented: the file carries -delta MORE whitespace than the quote.
+    add = whole_first[: -delta]
+    if add.strip():
+        return None
+    # (a) the replacement's opening line must sit where the quote's did, and
+    if (len(replace_lines[0]) - len(replace_lines[0].lstrip())
+            != len(part_lines[0]) - len(part_lines[0].lstrip())):
+        return None
+    # (b) its body must not sit SHALLOWER than the body the quote matched -
+    #     that is a replacement authored against a different indent level, and
+    #     shifting only its first line would splice it in broken.
+    part_body, replace_body = _base_indent(part_lines[1:]), _base_indent(replace_lines[1:])
+    if part_body is not None and replace_body is not None and replace_body < part_body:
+        return None
+    return [add + replace_lines[0]] + replace_lines[1:]
+
+
+def _replace_with_first_line_indent(
     whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
     protected_spans: tuple[tuple[int, int], ...] = (),
     require_unique: bool = False,
 ) -> str | None:
-    """Tier 8: forgive extra indentation on the quote's first line only.
+    """Tier 8: forgive a wrong indent on the quote's first line only.
 
     The model reconstructs the opening line from a prior instead of copying it
     - a decorator quoted at indent 4 above a body at 0, because "decorated
-    functions are methods and methods are indented". It repeats the same
-    mistake in ``new_text``, so the prefix is dropped from both; a replacement
-    that does not carry it is refused rather than guessed at.
+    functions are methods and methods are indented", or a JSX tag quoted one
+    space short of where it sits. Both directions occur; see
+    ``_first_line_replacement`` for what the replacement must satisfy.
     """
     n = len(part_lines)
     if n < 2 or not replace_lines or not replace_lines[0].strip():
         return None
     result = None
     for i in range(len(whole_lines) - n + 1):
-        extra = _first_line_overindent(whole_lines[i:i + n], part_lines)
-        if extra is None or replace_lines[0][:extra].strip():
+        delta = _first_line_indent_delta(whole_lines[i:i + n], part_lines)
+        if delta is None:
+            continue
+        fixed = _first_line_replacement(delta, whole_lines[i], part_lines, replace_lines)
+        if fixed is None:
             continue
         if _protected_window(whole_lines, i, i + n, protected_spans):
             continue
         if result is not None:
             raise AmbiguousEdit("Multiple first-line-indent-corrected windows")
-        fixed = [replace_lines[0][extra:]] + replace_lines[1:]
         result = "".join(whole_lines[:i] + fixed + whole_lines[i + n:])
         if not require_unique:
             return result
@@ -491,7 +536,7 @@ def replace_most_similar_chunk(
     if res is not None:
         return res
 
-    res = _replace_with_overindented_first_line(
+    res = _replace_with_first_line_indent(
         whole_lines, part_lines, replace_lines, protected_spans, require_unique,
     )
     if res is not None:
@@ -566,6 +611,44 @@ def locate_anchored_span(whole: str, part: str) -> tuple[int, int] | None:
                 return None
             found = (i + 1, j + 1)
     return found
+
+
+_ESCAPE_HINT = (
+    "old_text escapes its backslashes twice: it has {q} where line {n} of the "
+    "file has {f}. The JSON encoder already escapes them, so copy the line "
+    "exactly as read_file printed it - one backslash, not two."
+)
+
+
+def describe_escape_mismatch(whole: str, part: str) -> str | None:
+    """Name a doubled-backslash quote that the file spells with one, or None.
+
+    A DIAGNOSTIC, not a tier. Applying the correction is unsafe here in a way
+    the other tiers are not: BESSER's pydantic generator emits the same regex
+    twice one line apart, raw in the check and re-escaped in the message ::
+
+        if not (re.fullmatch(r'^[^\\s@]+@...', v) is not None):
+            raise ValueError("email must match '^[^\\\\s@]+@...'")
+
+    so a quote spanning both carries BOTH conventions and no whole-quote
+    un-doubling can be right. Worse, an un-doubled ``new_text`` would write
+    ``r'[^\\\\s@]'`` - valid Python, valid regex, and a different regex from
+    the one the model read. 11 refused quotes across the 2026-09-20 corpus
+    carry the shape and a global un-double rescues none of them, so the model
+    gets told what it did instead.
+    """
+    if "\\\\" not in part:
+        return None
+    file_lines = whole.splitlines()
+    stripped = {ln.strip(): n for n, ln in enumerate(file_lines, 1)}
+    for q in part.splitlines():
+        qs = q.strip()
+        if "\\\\" not in qs or qs in stripped:
+            continue
+        n = stripped.get(qs.replace("\\\\", "\\"))
+        if n:
+            return _ESCAPE_HINT.format(q=qs[:80], n=n, f=file_lines[n - 1].strip()[:80])
+    return None
 
 
 def find_similar_lines(

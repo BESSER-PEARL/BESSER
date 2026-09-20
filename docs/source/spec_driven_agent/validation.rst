@@ -117,12 +117,16 @@ The bounded auto-fix loop
 -------------------------
 
 Blocker-level findings drive a repair/recheck loop within the remaining turn,
-cost and runtime budgets. The loop stops when blockers reach zero or after two
-consecutive unchanged/repeated source states. A larger error count does not
-trigger an automatic rollback: fixing one import may expose several previously
-unreachable CRUD failures. Unresolved output remains explicitly incomplete.
-Startup and data-entry failures are repaired before spending tokens on business
-requirement judgment.
+cost and runtime budgets. The loop stops when blockers reach zero, after two
+consecutive unchanged/repeated source states, or after three consecutive rounds
+that change the tree without improving it. A round is progress when the tree
+scores better, the source changed, or a verification obligation was discharged
+— writing no source is not by itself a stop, because a round spent closing
+checklist items or correcting a scenario can resolve blockers without touching
+a file. A larger error count does not trigger an automatic rollback: fixing one
+import may expose several previously unreachable CRUD failures. Unresolved
+output remains explicitly incomplete. Startup and data-entry failures are
+repaired before spending tokens on business requirement judgment.
 
 For concrete code defects, an attempt without a successful edit — the model explained
 the fix instead of making it, or read files until its turn budget ran out — is

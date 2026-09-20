@@ -426,11 +426,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "delete_file",
         "description": (
-            "Delete a file from the workspace. Use this to remove dead files "
-            "the deterministic generator left behind that no longer fit the "
-            "customised stack — e.g. a leftover FastAPI `main_api.py` after "
-            "you switched the project to Flask, or unused Pydantic schemas "
-            "after you replaced them with Marshmallow. "
+            "Delete a file from the workspace. Use it only for a file YOU "
+            "created this run and no longer want — a scratch module, a "
+            "duplicate you superseded. Never delete a generated scaffold "
+            "file: the framework is fixed, and a protected run refuses it. "
+            "To change a generated file, edit it with modify_file (or "
+            "write_file after reading it in full). "
             "Only deletes regular files (not directories). Path must be "
             "relative to the workspace root."
         ),

@@ -81,10 +81,16 @@ services:
       - BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION=true
       # Shell tools ON here, and ONLY here. This is why the worker exists: the
       # backend keeps all nine secrets and never runs model-authored commands,
-      # while this container holds three LLM tokens, is off besser_network (so
-      # it cannot reach the backend, frontend or agent), and is disposable.
-      # It is a narrowed blast radius, not a sandbox -- a compromise still
-      # reaches the LLM tokens and outbound internet.
+      # while this container holds three LLM tokens, is off besser_network, and
+      # is disposable.
+      # Correction (measured 2026-09-20): being off besser_network hides the
+      # other services' NAMES, not their ports. The backend publishes 9000 on
+      # 0.0.0.0, so 172.19.0.1:9000 -- this bridge's gateway -- still serves its
+      # real openapi.json from in here. Bind that publish to 127.0.0.1 (as this
+      # service already does for 9001) to actually close it.
+      # It is a narrowed blast radius, not a whole-container sandbox -- a
+      # compromise still reaches the LLM tokens and outbound internet. Each
+      # RUN's shell is confined (security_opt below); the worker process is not.
       - BESSER_LLM_ENABLE_SHELL_TOOLS=true
       - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=false
       # Shared with the backend so push-to-github can still read a finished
@@ -127,6 +133,21 @@ services:
     volumes:
       - smartgen_workspace:/workspace
       - ./telemetry-logs:/app/telemetry
+    # run_command wraps every model-authored command in bubblewrap, which needs
+    # an unprivileged user namespace. Docker's default seccomp profile gates
+    # unshare/mount/pivot_root behind CAP_SYS_ADMIN and the docker-default
+    # AppArmor profile carries `deny mount`, so both have to step aside.
+    # Measured: default -> "No permissions to create a new namespace";
+    # seccomp=unconfined alone -> works; cap_add SYS_ADMIN alone -> still fails
+    # on pivot_root. So NO capability is added here -- the container keeps
+    # Docker's reduced cap set, and in exchange each run's shell gets its own
+    # PID namespace and sees only its own workspace, instead of every other
+    # user's run directory and this container's own /proc/1/environ.
+    # Without these two lines the worker fails closed: every run_command is
+    # refused. Deploy the image and this compose change together.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     # NOT on besser_network: generation has no reason to reach the backend, the

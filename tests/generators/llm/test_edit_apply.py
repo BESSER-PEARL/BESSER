@@ -535,12 +535,18 @@ def test_first_line_overindent_comes_off_the_replacement_too():
             _OVERINDENTED_QUOTE.lstrip(), _OVERINDENTED_REPLACEMENT, 1))
 
 
-def test_first_line_tier_refuses_an_under_indented_first_line():
-    """Widening is tier 2/6 business; this tier never adds indent it invented."""
+def test_first_line_tier_corrects_an_under_indented_first_line():
+    """Superseded 2026-09-20: the tier used to refuse this direction on the
+    principle that it "never adds indent it invented". Two of the three real
+    ladder gaps left in the Qwen corpus are exactly this shape (App.jsx t51,
+    bill_methods.py t16), and tier 2/6 cannot take them - the shift is not
+    uniform, so their single-prefix rule rejects the window. The file's own
+    leading whitespace is restored on the replacement, never invented; the
+    contradicting-body case stays refused (see test_edit_apply_weak_model)."""
     whole = "    @deco\n    def f():\n        pass\n"
     assert replace_most_similar_chunk(
         whole, "@deco\n    def f():\n", "@deco2\n    def f():\n", require_unique=True,
-    ) is None
+    ) == "    @deco2\n    def f():\n        pass\n"
 
 
 def test_first_line_tier_refuses_when_a_second_line_also_shifts():

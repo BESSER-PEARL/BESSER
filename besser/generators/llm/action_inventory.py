@@ -147,7 +147,13 @@ def _read_action_file(workspace: Path, path: Path) -> list[ActionEndpoint]:
                 stub_reason=_placeholder_reason(function),
                 router_binding=binding, router_prefix=router_prefixes.get(binding),
             ))
-    return endpoints
+    # One entry per (handler function, route). A function carrying the same
+    # decorator twice is one handler, not two competing for the route: read as
+    # two, the ambiguity guard in _current_endpoint resolved to nothing and a
+    # present, fully implemented handler was reported "missing or unreadable"
+    # — a hard blocker, so it can roll back a genuine repair. Two *different*
+    # functions on one route differ by line and are still both kept.
+    return list(dict.fromkeys(endpoints))
 
 
 def collect_action_endpoints(workspace: str | Path) -> list[ActionEndpoint]:

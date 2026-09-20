@@ -189,8 +189,16 @@ Service layer (`backend/services/spec_driven/`):
 
 Behaviour is configured entirely through `BESSER_LLM_*` / `BESSER_FREE_LLM_*` environment
 variables, defined in one place: `backend/constants/constants.py`. Two security-relevant
-defaults: `BESSER_LLM_ENABLE_SHELL_TOOLS` is **off** (arbitrary shell on a shared BYOK host
-is RCE) and `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` is **off** (SSRF). Do not flip either default.
+flags:
+
+- `BESSER_LLM_ENABLE_SHELL_TOOLS` — code default **off**, because arbitrary shell on a
+  shared BYOK host is RCE. It is deliberately **on** for the hosted experimental
+  deployment (`besser-wme-smartgen`), an owner decision taken so the agent has the same
+  capabilities as the tools it is measured against. That container is isolated and carries
+  no `env_file`; the sibling `besser-wme-backend` holds nine secrets and must stay off, so
+  enable it per service and never through the shared `.env`. Changing the *code* default,
+  or turning it on for any other service, is still a decision to bring to the owner.
+- `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` — **off** (SSRF). No exception has been granted.
 
 See `docs/source/spec_driven_agent/` for the user-facing documentation.
 
@@ -480,7 +488,7 @@ output = template.render(model=domain_model, config=config)
 5. **Keep converters symmetric**: If JSON→BUML supports a feature, BUML→JSON must too
 6. **Test round-trips**: Especially for converters (JSON→BUML→JSON should be identity)
 7. **Update docs**: Backend changes often require `docs/source/` updates
-8. **Don't loosen the agent's security defaults**: `BESSER_LLM_ENABLE_SHELL_TOOLS` and `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` are off on purpose
+8. **Know which security default is settled and which was decided**: `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` is off on purpose and stays off. `BESSER_LLM_ENABLE_SHELL_TOOLS` defaults off but is **intentionally enabled on the hosted experimental deployment** — see the Spec-Driven Agent section. Don't re-litigate that call; do keep it scoped to the isolated container
 9. **A new agent tool needs two edits**: `tools.py` *and* `_TOOL_MODEL_REQUIREMENTS`, or it will be offered on projects that cannot satisfy it
 
 ## Debugging Tips

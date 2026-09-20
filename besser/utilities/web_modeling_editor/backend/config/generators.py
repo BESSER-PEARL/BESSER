@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEPLOYMENT_DIAGRAM_TYPE,
 )
 from besser.generators.docker_compose import DockerComposeGenerator
+from besser.generators.alloy import AlloyGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -78,7 +79,6 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="object_oriented",
         requires_class_diagram=True
     ),
-
     "test_case": GeneratorInfo(
         generator_class=TestCaseGenerator,
         output_type="file",
@@ -86,7 +86,6 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="object_oriented",
         requires_class_diagram=True
     ),
-
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
         generator_class=DjangoGenerator,
@@ -116,7 +115,6 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="web_framework",
         requires_class_diagram=True
     ),
-
     # Database generators (class diagram based)
     "sqlalchemy": GeneratorInfo(
         generator_class=SQLAlchemyGenerator,
@@ -221,7 +219,6 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="deployment",
         requires_class_diagram=False
     ),
-
     # BPMN generator (vendor-neutral BPMN 2.0 XML; reads BPMNDiagram)
     "bpmn": GeneratorInfo(
         generator_class=BPMNGenerator,
@@ -242,6 +239,14 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         requires_class_diagram=False,
         required_diagram_type=DEPLOYMENT_DIAGRAM_TYPE,
     ),
+    # Formal methods / Verification (Based on class diagrams)
+    "alloy": GeneratorInfo(
+        generator_class=AlloyGenerator,
+        output_type="zip",
+        file_extension=".als",
+        category="formal_methods",
+        requires_class_diagram=True
+    )
 }
 
 # Neural network generators are conditionally registered since they
@@ -300,6 +305,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "classes.py"
     elif generator_type == "test_case":
         return "test_hypothesis.py"
+    elif generator_type == "alloy":
+        return "alloy_specification.zip"
     elif generator_type == "pydantic":
         return "pydantic_classes.py"
     elif generator_type == "sqlalchemy":
@@ -332,7 +339,6 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "docker_compose.zip"
     else:
         return f"{generator_type}_output{info.file_extension}"
-
 
 def is_generator_supported(generator_type: str) -> bool:
     """Check if a generator type is supported."""

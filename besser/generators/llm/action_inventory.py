@@ -169,7 +169,7 @@ def format_action_inventory(endpoints: list[ActionEndpoint]) -> str:
         "These are executable action extension points, not ORM declarations. "
         "Paths are decorator routes; application/router mount prefixes may apply. "
         "Implement each unresolved handler or wire it to an implemented service. "
-        "A body-present result is structural evidence only, not behavioral verification."
+        "A body-present result is structural evidence only; prove behavior with test_api."
     ]
     for endpoint in endpoints:
         state = f"UNIMPLEMENTED: {endpoint.stub_reason}" if endpoint.stub_reason else "body present"
@@ -212,13 +212,11 @@ def action_gap_tasks(
     return [
         {
             "text": (
-                f"Implement {endpoint.http_method} {endpoint.route} in {endpoint.path}, "
-                f"function {endpoint.function}, according to the user's specification; "
-                f"it currently contains {endpoint.stub_reason}. Keep the action route "
-                "and wire any service/ORM implementation into this handler. Verify "
-                "the requested successful and refused outcomes. The checklist's "
-                "structural check only rejects missing handlers and known stubs; "
-                "it does not prove business behavior."
+                f"Implement {endpoint.http_method} {endpoint.route} ({endpoint.path}, "
+                f"{endpoint.function}) per the spec; it contains {endpoint.stub_reason}. "
+                "Keep the route and wire the implementation into this handler, not the "
+                "ORM alone. Then call test_api with one scenario driving this action to "
+                "its successful AND its refused outcome; not done until that passes."
             ),
             "verify": lambda endpoint=endpoint: action_body_present(workspace, endpoint),
             "_action_contract": _endpoint_key(endpoint),
@@ -289,6 +287,7 @@ def action_implementation_issues(
                 f"{current.line if current else endpoint.line}: "
                 f"{endpoint.http_method} {endpoint.route} "
                 f"({current.function if current else endpoint.function}): {reason}. "
-                "Implement and verify this route; an ORM-only edit does not complete it."
+                "Implement this route and prove it with test_api; an ORM-only edit "
+                "does not complete it."
             )
     return issues

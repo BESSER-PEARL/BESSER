@@ -34,6 +34,31 @@ direct comparison against it, 2026-09-19:
    the TRAILING end of the block, or both, just as often as the leading end
    that aider issue #25 covers - opencode's ``TrimmedBoundaryReplacer``.
 
+Tier 8 is ours, calibrated 2026-09-20 over the 411 refused ``old_text``
+values of 197 completed runs:
+
+8. extra indentation on the quote's FIRST line alone is forgiven, lines 2..n
+   matching exactly. Of the 128 Qwen refusals tiers 1-7 cannot apply, 20 have
+   a window matching modulo whitespace; 18 are this one shape - a decorator
+   quoted at indent 4 above a body at 0, because the model reconstructs the
+   opening line from a prior instead of copying it - 2 are irregular, and NONE
+   is a uniform shift, so tier 2 never sees them. gpt-5.6 produces the shape
+   0 times in 116 refusals. The tier rescues 21 (the 18, plus 3 mixed-numbered
+   quotes whose unnumbered first line kept the model's own indent), each
+   byte-identical to what an exact apply of the same edit produces, and 17 of
+   the 18 Python ones would NOT parse if the replacement's first line were
+   written verbatim - which is why the prefix comes off new_text too, and why
+   a replacement that does not carry it is refused rather than guessed at.
+   Over 4.7M line windows of besser/ and 4,712 generated app files a quote
+   built this way never landed on a window other than its own; 283k ambiguous
+   ones are refused by require_unique. One run resent the same six edits from
+   turn 19 to turn 38 and landed none of them.
+
+   7 of the 21 still leave a file that does not parse, unchanged by this tier:
+   those quotes stop one line short of a docstring's closing triple quote, a
+   separate defect that the same-turn write diagnostics name and the
+   "old_text not found" message could not.
+
 Three tiers are deliberately NOT ported. Opencode's
 ``WhitespaceNormalizedReplacer`` collapses runs of internal whitespace, which
 also collapses them inside a string literal: quoting ``BANNER = "Room 101"``
@@ -193,6 +218,62 @@ def _match_but_for_trim(whole_lines: list[str], part_lines: list[str]) -> str | 
     if not all(whole_lines[i].strip() == part_lines[i].strip() for i in range(n)):
         return None
     return _uniform_indent_prefix(whole_lines, part_lines)
+
+
+def _first_line_overindent(
+    whole_lines: list[str], part_lines: list[str]
+) -> int | None:
+    """Excess leading whitespace carried by the quote's FIRST line alone.
+
+    Tier 8. Lines 2..n must match the window under tier 6's rule with no
+    indent widening at all; only then is the first line matched after dropping
+    a strictly-positive whitespace prefix the file does not have. Returns that
+    prefix's length, else ``None``.
+    """
+    n = len(whole_lines)
+    if n != len(part_lines) or n < 2:
+        return None
+    w0, p0 = whole_lines[0], part_lines[0]
+    if not p0.strip() or w0.strip() != p0.strip():
+        return None
+    extra = (len(p0) - len(p0.lstrip())) - (len(w0) - len(w0.lstrip()))
+    if extra <= 0:
+        return None
+    if _match_but_for_trim(whole_lines[1:], part_lines[1:]) != "":
+        return None
+    return extra
+
+
+def _replace_with_overindented_first_line(
+    whole_lines: list[str], part_lines: list[str], replace_lines: list[str],
+    protected_spans: tuple[tuple[int, int], ...] = (),
+    require_unique: bool = False,
+) -> str | None:
+    """Tier 8: forgive extra indentation on the quote's first line only.
+
+    The model reconstructs the opening line from a prior instead of copying it
+    - a decorator quoted at indent 4 above a body at 0, because "decorated
+    functions are methods and methods are indented". It repeats the same
+    mistake in ``new_text``, so the prefix is dropped from both; a replacement
+    that does not carry it is refused rather than guessed at.
+    """
+    n = len(part_lines)
+    if n < 2 or not replace_lines or not replace_lines[0].strip():
+        return None
+    result = None
+    for i in range(len(whole_lines) - n + 1):
+        extra = _first_line_overindent(whole_lines[i:i + n], part_lines)
+        if extra is None or replace_lines[0][:extra].strip():
+            continue
+        if _protected_window(whole_lines, i, i + n, protected_spans):
+            continue
+        if result is not None:
+            raise AmbiguousEdit("Multiple first-line-indent-corrected windows")
+        fixed = [replace_lines[0][extra:]] + replace_lines[1:]
+        result = "".join(whole_lines[:i] + fixed + whole_lines[i + n:])
+        if not require_unique:
+            return result
+    return result
 
 
 def _replace_with_normalized_lines(
@@ -407,6 +488,12 @@ def replace_most_similar_chunk(
             return res
 
     res = _replace_with_collapsed_blank_runs(whole_lines, part_lines, replace_lines, protected_spans, require_unique)
+    if res is not None:
+        return res
+
+    res = _replace_with_overindented_first_line(
+        whole_lines, part_lines, replace_lines, protected_spans, require_unique,
+    )
     if res is not None:
         return res
 

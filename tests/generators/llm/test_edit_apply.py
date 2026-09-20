@@ -6,6 +6,7 @@ tiers we deliberately did NOT port (similarity matching and ``...`` elision),
 which must therefore FAIL to match rather than guess.
 """
 
+import ast
 import json
 import os
 
@@ -467,3 +468,127 @@ def test_anchored_span_is_a_locator_and_never_applies():
     part = "head\nSOMETHING ELSE ENTIRELY\ntail\n"
     assert locate_anchored_span(whole, part) == (1, 3)
     assert replace_most_similar_chunk(whole, part, "x\n", require_unique=True) is None
+
+
+# -- tier 8: the quote's FIRST line alone is over-indented ----------------
+# Calibrated 2026-09-20 over 411 refused old_text values from 197 completed
+# runs: of the 20 Qwen misses with a window matching modulo whitespace, 18 are
+# this shape and none is a uniform shift, so tier 2 cannot reach them.
+
+_STUB_ROUTER = (
+    '@router.post("/bill/{bill_id}/methods/registerPayment/", tags=["Bill Methods"])\n'
+    "async def execute_bill_registerPayment(\n"
+    "    bill_id: int,\n"
+    "):\n"
+    '    """Execute the registerPayment method on a Bill instance.\n'
+    '    """\n'
+    "    raise HTTPException(status_code=501)\n"
+)
+# The quote as Qwen sends it: the decorator reconstructed at indent 4 above a
+# body at 0, and new_text repeating the same mistake.
+_OVERINDENTED_QUOTE = (
+    '    @router.post("/bill/{bill_id}/methods/registerPayment/", tags=["Bill Methods"])\n'
+    "async def execute_bill_registerPayment(\n"
+    "    bill_id: int,\n"
+    "):\n"
+    '    """Execute the registerPayment method on a Bill instance.\n'
+    '    """\n'
+)
+_OVERINDENTED_REPLACEMENT = (
+    '    @router.post("/bill/{bill_id}/methods/registerPayment/", tags=["Bill Methods"])\n'
+    "async def execute_bill_registerPayment(\n"
+    "    bill_id: int,\n"
+    "    database: Session = Depends(get_db),\n"
+    "):\n"
+    '    """Execute the registerPayment method on a Bill instance.\n'
+    '    """\n'
+)
+
+
+def test_first_line_only_overindent_is_forgiven():
+    out = replace_most_similar_chunk(
+        _STUB_ROUTER, _OVERINDENTED_QUOTE, _OVERINDENTED_REPLACEMENT, require_unique=True,
+    )
+    assert out == (
+        '@router.post("/bill/{bill_id}/methods/registerPayment/", tags=["Bill Methods"])\n'
+        "async def execute_bill_registerPayment(\n"
+        "    bill_id: int,\n"
+        "    database: Session = Depends(get_db),\n"
+        "):\n"
+        '    """Execute the registerPayment method on a Bill instance.\n'
+        '    """\n'
+        "    raise HTTPException(status_code=501)\n"
+    )
+
+
+def test_first_line_overindent_comes_off_the_replacement_too():
+    """The model repeats the mistake in new_text. Writing it verbatim puts a
+    decorator at indent 4 above a module-level def - 17 of the 18 live Python
+    rescues would not parse."""
+    out = replace_most_similar_chunk(
+        _STUB_ROUTER, _OVERINDENTED_QUOTE, _OVERINDENTED_REPLACEMENT, require_unique=True,
+    )
+    assert out.startswith("@router.post(")
+    ast.parse("from x import *\n" + out)
+    with pytest.raises(IndentationError):
+        ast.parse("from x import *\n" + _STUB_ROUTER.replace(
+            _OVERINDENTED_QUOTE.lstrip(), _OVERINDENTED_REPLACEMENT, 1))
+
+
+def test_first_line_tier_refuses_an_under_indented_first_line():
+    """Widening is tier 2/6 business; this tier never adds indent it invented."""
+    whole = "    @deco\n    def f():\n        pass\n"
+    assert replace_most_similar_chunk(
+        whole, "@deco\n    def f():\n", "@deco2\n    def f():\n", require_unique=True,
+    ) is None
+
+
+def test_first_line_tier_refuses_when_a_second_line_also_shifts():
+    """One of the 2 irregular live cases shifts the first TWO lines. Refused:
+    the tier is first-line-only by construction."""
+    whole = "#--- Relationships\nGuest.x = relationship()\nBooking.y = relationship()\n"
+    part = "    #--- Relationships\n    Guest.x = relationship()\nBooking.y = relationship()\n"
+    assert replace_most_similar_chunk(whole, part, "z = 1\n", require_unique=True) is None
+
+
+def test_first_line_tier_refuses_a_replacement_without_the_same_prefix():
+    """An unindented replacement first line could be the model's intent or a
+    second mistake. We cannot tell, so we do not guess."""
+    whole = "@deco\ndef f():\n    pass\n"
+    assert replace_most_similar_chunk(
+        whole, "    @deco\ndef f():\n", "@deco2\ndef f():\n", require_unique=True,
+    ) is None
+
+
+def test_first_line_tier_ambiguity_is_refused():
+    whole = "    x = 1\n    y = 2\nx = 1\n    y = 2\n"
+    with pytest.raises(AmbiguousEdit):
+        replace_most_similar_chunk(
+            whole, "        x = 1\n    y = 2\n", "        x = 9\n    y = 8\n",
+            require_unique=True,
+        )
+
+
+def test_first_line_tier_does_not_match_a_different_tail():
+    whole = "@deco\ndef f():\n    return 1\n"
+    assert replace_most_similar_chunk(
+        whole, "    @deco\ndef g():\n", "    @deco\ndef h():\n", require_unique=True,
+    ) is None
+
+
+def test_modify_file_applies_the_overindented_first_line(tmp_path):
+    """The whole point: run w7zoeszt resent these six edits from turn 19 to
+    turn 38 and never landed one."""
+    _seed(tmp_path, "bill_methods.py", _STUB_ROUTER)
+    ex = ToolExecutor(workspace=str(tmp_path))
+    res = _call(ex, "modify_file", {
+        "path": "bill_methods.py",
+        "old_text": _OVERINDENTED_QUOTE,
+        "new_text": _OVERINDENTED_REPLACEMENT,
+    })
+    assert res.get("status") == "modified", res
+    with open(os.path.join(str(tmp_path), "bill_methods.py"), encoding="utf-8") as f:
+        written = f.read()
+    # at column 0, not the indent 4 the model quoted it at
+    assert "\n@router.post(" in written and "    @router.post(" not in written
+    assert "    database: Session = Depends(get_db),\n" in written

@@ -852,3 +852,41 @@ async def execute_order_approve(order_id):
     merged = merge_action_tasks(action_gap_tasks(tmp_path, both) + multi + [other], both)
     assert len(merged) == 4
     assert multi[0] in merged and other in merged
+
+
+def test_action_task_names_the_instrument_rather_than_only_saying_verify(tmp_path):
+    """Measured 2026-09-20 over 211 completed runs: 1,189 of 2,985 checklist
+    items say "verif*" and NOT ONE names a tool (``write_file`` is the only
+    tool name that appears anywhere, in 159). Over 214 runs gpt-5.6 called
+    ``test_api`` 13.1 times a run and Qwen 0.4 - 6 of 66 Qwen runs used it at
+    all. The checklist gates completion and is re-listed verbatim by the
+    end-turn nudge, so the item has to carry the call itself.
+    """
+    from besser.generators.llm.action_inventory import (
+        action_gap_tasks, action_implementation_issues, collect_action_endpoints,
+        format_action_inventory,
+    )
+
+    source = tmp_path / "backend" / "routers" / "bill_methods.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        '@router.post("/bill/{bill_id}/methods/registerPayment/")\n'
+        "async def execute_bill_registerPayment(bill_id):\n"
+        '    raise HTTPException(status_code=501, detail="No implementation")\n',
+        encoding="utf-8",
+    )
+    endpoints = collect_action_endpoints(tmp_path)
+    text = action_gap_tasks(tmp_path, endpoints)[0]["text"]
+
+    assert "test_api" in text
+    # still actionable: route, file, function and the 501 fact all survive
+    for fact in ("POST", "/bill/{bill_id}/methods/registerPayment/",
+                 "backend/routers/bill_methods.py", "execute_bill_registerPayment",
+                 "HTTP 501"):
+        assert fact in text, fact
+    # and it gates the item on the scenario, not on the structural check
+    assert "not done until" in text
+    assert "structural check" not in text
+
+    assert "test_api" in format_action_inventory(endpoints)
+    assert "test_api" in action_implementation_issues(tmp_path, endpoints)[0]

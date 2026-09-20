@@ -3804,26 +3804,45 @@ class LLMOrchestrator:
         return {i.message for i in issues
                 if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
 
-    @classmethod
-    def _phase3_tree_score(cls, issues: list[ValidationIssue]) -> tuple[int, int, int, int]:
+    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int]:
         """Rank one tree. LOWER is better; compare lexicographically.
 
-        ``(boot broken, entities not confirmed created, actions not confirmed,
-        hard blockers)`` - the runtime evidence the boot probe emits one line
-        per entity and per action, with the blocker count last because it is
-        the weakest signal there is: across the 23 runs of 2026-09-19 it
-        correlated +0.21 with whether the delivered app worked, i.e. the wrong
-        sign at noise magnitude. Boot dominates on purpose, so a tree that
-        starts can never be discarded for one that does not.
+        ``(boot broken, entities not confirmed created, actions not confirmed
+        effective, hard blockers)`` - the runtime evidence, with the blocker
+        count last because it is the weakest signal there is: across the 23
+        runs of 2026-09-19 it correlated +0.21 with whether the delivered app
+        worked, i.e. the wrong sign at noise magnitude. Boot dominates on
+        purpose, so a tree that starts can never be discarded for one that
+        does not.
+
+        The middle two come from the probe's own per-entity and per-action
+        records where it measured THIS tree. Counting issue strings instead
+        was a re-derivation of facts we already had, and it counts what was
+        rendered: an action the probe silently confirmed effective and one it
+        never reached scored the same. Strings remain the fallback for a tree
+        no probe measured (no backend, or the probe did not run).
         """
-        boot_broken = int(bool(cls._startup_blockers(issues)))
-        entities = actions = 0
-        for issue in issues:
-            message = issue.message.lower()
-            if "create contract:" in message or "create unverified:" in message:
-                entities += 1
-            elif "action call:" in message or "action unverified:" in message:
-                actions += 1
+        boot_broken = int(bool(self._startup_blockers(issues)))
+        facts = getattr(self, "_runtime_probe_facts", None)
+        measured = None
+        if facts and facts[0] == self._workspace_revision():
+            entities = actions = 0
+            for backend in facts[1]:
+                if backend.get("boot") != "ok":
+                    continue
+                measured = True
+                for entry in (backend.get("entities") or {}).values():
+                    entities += int(entry.get("verdict") != "created")
+                for call in backend.get("action_calls") or []:
+                    actions += int(call.get("verdict") != "effective")
+        if measured is None:
+            entities = actions = 0
+            for issue in issues:
+                message = issue.message.lower()
+                if "create contract:" in message or "create unverified:" in message:
+                    entities += 1
+                elif "action call:" in message or "action unverified:" in message:
+                    actions += 1
         return boot_broken, entities, actions, len(_hard_blockers(issues))
 
     # Findings this prefix carries are the Phase 3 exit gate's own verdict on
@@ -4441,8 +4460,14 @@ class LLMOrchestrator:
         issues.extend(mapper_issues)
         if not any(i.startswith("mapper config:") for i in mapper_issues):
             try:
-                from besser.generators.llm.constructibility import collect_constructibility_issues
-                issues.extend(collect_constructibility_issues(self.output_dir))
+                from besser.generators.llm.constructibility import (
+                    collect_constructibility_report,
+                )
+                probe = collect_constructibility_report(self.output_dir, self.domain_model)
+                issues.extend(probe["issues"])
+                # The runtime facts themselves, not just their rendering - see
+                # _phase3_tree_score.
+                self._runtime_probe_facts = (revision, probe["backends"])
             except Exception as exc:
                 issues.append(f"runtime unverified: isolated app verification failed: {type(exc).__name__}: {exc}")
         issues = ["runtime unverified: " + item if item.startswith("validation:") else item

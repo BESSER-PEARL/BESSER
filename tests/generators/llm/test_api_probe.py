@@ -203,7 +203,8 @@ def test_orchestration_retains_workflows_reruns_changed_source_and_never_evicts_
     from besser.generators.llm import orchestrator as orchestrator_module, constructibility
     unknown = "create unverified: web_app/backend: POST /room/ - guessed fixture was rejected"
     monkeypatch.setattr(orchestrator_module, "_import_smoke_issues", lambda _root: [])
-    monkeypatch.setattr(constructibility, "collect_constructibility_issues", lambda _root: [unknown])
+    monkeypatch.setattr(constructibility, "collect_constructibility_report",
+                        lambda _root, _model=None: {"issues": [unknown], "backends": []})
     coverage = scenario_orchestrator(tmp_path)
     assert any(unknown in issue for issue in coverage._collect_execution_issues())
     proof = {"status": "passed", "boot": "ok", "backend": "web_app/backend", "responses": [
@@ -215,8 +216,10 @@ def test_orchestration_retains_workflows_reruns_changed_source_and_never_evicts_
     proof["backend"] = "another/backend"
     assert any(unknown in issue for issue in coverage._collect_execution_issues())
     proof["backend"] = "web_app/backend"
-    monkeypatch.setattr(constructibility, "collect_constructibility_issues", lambda _root: [
-        "create contract: web_app/backend: POST /room/ - observed 500"])
+    monkeypatch.setattr(constructibility, "collect_constructibility_report",
+                        lambda _root, _model=None: {"issues": [
+                            "create contract: web_app/backend: POST /room/ - observed 500"],
+                            "backends": []})
     # The boot probe is now cached per source revision - it costs up to 90s a
     # backend and Phase 3 re-validates after every fix attempt. Swapping the
     # probe's answer without touching a byte of source is something only a

@@ -1,4 +1,29 @@
-"""Phase 3: can every entity actually be created through the generated API?
+"""Phase 3: does the delivered app actually do the job, when driven?
+
+The harness verifies the application rather than asking the model to.
+Measured across ~150 Qwen runs, the agent called ``test_api`` 0.06 times per
+run against gpt-5.6's 13.1, left 14-21 of ~20 checklist items open, and
+reported ``completed`` once in 135 - on a median 66 turns of 120, so not a
+budget limit. Rewriting the checklist to name ``test_api`` literally produced
+0.00 calls across 24 runs. Three attempts at persuasion failed, so this
+module drives the workflow: create each aggregate, call each modelled action
+on it with the literal ``{}`` the generated button posts, and read the record
+back.
+
+A status code is not a result. A live gpt-5.6-terra run answered its Renew
+button ``200 {"success": false, "message": "a dueDate is required"}`` and the
+acceptance oracle scored it 10/10, because nothing read past the status line.
+The probe snapshots the entity and the size of every collection either side
+of the call; an action that declares a refusal and changes nothing did not
+run. Refusing is often correct, though - cancelling a checked-out booking
+SHOULD fail - so the hard finding is entity-scoped and needs the aggregate to
+have been created one request earlier, no modelled action to have moved it in
+any lifecycle state its own create schema can select, and the model to state
+that the action takes no parameters. Anything short of that is
+``action unverified:``.
+
+The first question it asked is still the first one it asks:
+can every entity actually be created through the generated API?
 
 Live run 9a6063ed (2026-09-18): the gap analyser asked for "validation in
 create_booking that the guests do not exceed the room capacities across all
@@ -34,11 +59,15 @@ fix prompt's excerpt. When the refusal is a NOT NULL violation, the column
 is named too, and the create-time-rule advice (right for 9a6063ed, wrong
 here) is left out.
 
-Runs in two halves. The parent (``collect_constructibility_issues``) is
-ordinary orchestrator code. The child is this same file executed by PATH as
-a script inside the app copy, so it imports only the standard library and
-what the app itself needs - never ``besser``, which is not installed where
-the harness interpreter runs the generated code.
+Runs in two halves. The parent (``collect_constructibility_report``) is
+ordinary orchestrator code; it also hands the child the modelled action list
+in a JSON file, since the model is what states an action's parameters. The
+child is this same file executed by PATH as a script inside the app copy, so
+it imports only the standard library and what the app itself needs - never
+``besser``, which is not installed where the harness interpreter runs the
+generated code. The child's structured record is returned alongside the
+rendered findings, so a caller that wants runtime facts reads them rather
+than matching prefixes back out of prose.
 """
 
 from __future__ import annotations
@@ -65,6 +94,7 @@ ACTION_UNVERIFIED_PREFIX = "action unverified:"
 
 _PROBE_TIMEOUT_SECONDS = 90
 _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
+_ACTIONS_ENV = "BESSER_PROBE_MODEL_ACTIONS"
 _SKIP_DIRS = frozenset({
     "node_modules", "__pycache__", ".besser_snapshot", "dist", "build", "data",
 })
@@ -81,16 +111,78 @@ _NOT_NULL_PATTERNS = (
 # Parent: locate backends, run the child, turn its report into findings
 # ---------------------------------------------------------------------------
 
-def collect_constructibility_issues(output_dir: str) -> list[str]:
-    """Observed server defects and explicit gaps in create-route verification."""
+def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
+    """``{"issues": [...], "backends": [{"backend": rel, ...}]}``.
+
+    The probe already computed per-entity and per-action runtime facts; the
+    caller used to see only the rendered strings and had to re-derive the
+    facts by matching prefixes back out of them. ``backends`` carries the
+    child's own report so ``_phase3_tree_score`` can rank a tree on what the
+    running app actually did.
+    """
     from besser.generators.llm.execution.process import _safe_subprocess_env
 
+    model_actions = _model_actions(domain_model)
     issues: list[str] = []
+    backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
         rel = os.path.relpath(folder, output_dir).replace("\\", "/")
-        report = _run_probe(folder, _safe_subprocess_env())
+        report = _run_probe(folder, _safe_subprocess_env(), model_actions)
         issues.extend(_issues_from_report(report, rel))
-    return issues
+        backends.append({"backend": rel, **report})
+    return {"issues": issues, "backends": backends}
+
+
+def collect_constructibility_issues(output_dir: str, domain_model=None) -> list[str]:
+    """Observed server defects and explicit gaps in create-route verification."""
+    return collect_constructibility_report(output_dir, domain_model)["issues"]
+
+
+def _model_actions(domain_model) -> dict:
+    """``entity -> [{"name", "parameters", "return_type"}]`` from the MODEL.
+
+    The parameter list and the return type only became readable today:
+    ``_method_entry`` omitted ``parameters`` for a zero-argument method
+    (a886947f) and the editor's newer format dropped the return type
+    (ab03f9d7). Both keys are read defensively - an absent ``parameters``
+    means "this serializer does not say", which disables every finding that
+    leans on the zero-argument contract rather than asserting it.
+    """
+    if domain_model is None:
+        return {}
+    try:
+        from besser.generators.llm.model_serializer import (
+            _collect_inherited_methods, _method_entry,
+        )
+        classes = list(domain_model.get_classes())
+    except Exception:
+        logger.debug("constructibility probe: no modelled actions", exc_info=True)
+        return {}
+    out: dict = {}
+    for cls in classes:
+        pairs = [(m, None) for m in getattr(cls, "methods", None) or ()]
+        try:
+            pairs += _collect_inherited_methods(cls)
+        except Exception:
+            pass
+        entries = []
+        for method, _owner in pairs:
+            try:
+                entry = _method_entry(method)
+            except Exception:
+                continue
+            name = str(entry.get("name") or "").split("(")[0].strip()
+            if not name:
+                continue
+            entries.append({
+                "name": name,
+                # None (key absent) is "unstated", which is not "takes none".
+                "parameters": entry.get("parameters"),
+                "return_type": entry.get("return_type"),
+            })
+        if entries:
+            out[cls.name] = sorted(entries, key=lambda e: e["name"])
+    return out
 
 
 def _fastapi_backends(output_dir: str) -> list[str]:
@@ -107,7 +199,7 @@ def _fastapi_backends(output_dir: str) -> list[str]:
     return found
 
 
-def _run_probe(folder: str, env: dict) -> dict:
+def _run_probe(folder: str, env: dict, model_actions: dict | None = None) -> dict:
     """Execute the child on a scratch copy of ``folder``; never raises."""
     work = tempfile.mkdtemp(prefix="besser_probe_")
     try:
@@ -118,6 +210,14 @@ def _run_probe(folder: str, env: dict) -> dict:
         )
         env = dict(env)
         env["DATABASE_URL"] = "sqlite:///" + os.path.join(work, "probe.db").replace("\\", "/")
+        if model_actions:
+            actions_path = os.path.join(work, "model_actions.json")
+            try:
+                with open(actions_path, "w", encoding="utf-8") as fh:
+                    json.dump(model_actions, fh)
+                env[_ACTIONS_ENV] = actions_path
+            except (OSError, TypeError, ValueError):
+                logger.debug("constructibility probe: modelled actions not passed", exc_info=True)
         try:
             result = subprocess.run(
                 [sys.executable, os.path.abspath(__file__)],
@@ -234,7 +334,9 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
 def _action_issue_text(entry: dict, rel: str) -> str:
     """Render one action-endpoint finding (see ``_probe_actions``)."""
     site = entry.get("site")
-    if entry["verdict"] == "crashed":
+    if entry["verdict"] in ("inert", "inert unverified"):
+        text = _inert_action_text(entry, rel)
+    elif entry["verdict"] == "crashed":
         attempt = entry["attempt"]
         body = (attempt.get("body") or "")[:_BODY_CHARS]
         text = (
@@ -261,6 +363,51 @@ def _action_issue_text(entry: dict, rel: str) -> str:
         )
     if site:
         text += f". Fix site: {site['function']} in {rel}/{site['file']} line {site['line']}"
+    return text
+
+
+def _inert_action_text(entry: dict, rel: str) -> str:
+    """Render a 2xx that declared failure and left the world unchanged.
+
+    The status code is not the result. A live gpt-5.6-terra run answered the
+    Renew button ``200 {"success": false, "message": "a dueDate is required"}``
+    and the acceptance oracle scored it 10/10, because nothing read past the
+    status line. So the probe reads the record back: a call that reports a
+    refusal and changes no row did not happen, whatever it returned.
+
+    Refusing is often right, which is why this is entity-scoped: it fires only
+    when NO modelled action moved a freshly created instance, i.e. the
+    aggregate has no first transition at all. "Cancel a checked-out booking"
+    legitimately fails, but a booking created one request ago is not
+    checked out.
+    """
+    call = entry["call"]
+    body = (call.get("body") or "")[:_BODY_CHARS]
+    prefix = ACTION_PREFIX if entry["verdict"] == "inert" else ACTION_UNVERIFIED_PREFIX
+    text = (
+        f"{prefix} {rel}: POST {entry['route']} - {entry['action']} answered HTTP "
+        f"{call.get('status')} but declared failure ({call.get('marker')}) and changed "
+        f"nothing: the {entry['entity']} created one request earlier, still in its initial "
+        f"state, reads back identical after the call and no other record appeared "
+        f"({body}). None of the modelled actions on {entry['entity']} "
+        f"({', '.join(entry.get('siblings') or [entry['action']])}) moved a freshly created "
+        "instance, so this aggregate has no first transition and the workflow cannot start"
+    )
+    if entry.get("zero_param"):
+        text += (
+            f". The model declares {entry['action']}() with no parameters and the generated "
+            "button posts an empty body, so the call cannot be refused for want of an input: "
+            "default whatever the specification leaves open"
+        )
+    text += (
+        ". A 2xx is not a result - return the refusal as 4xx, or make the action perform the "
+        "transition it models. Do not satisfy this by deleting a business rule"
+    )
+    if entry["verdict"] != "inert":
+        text += (
+            "; this probe reaches only the state the create route accepts, so the refusal "
+            "may have a precondition it cannot construct"
+        )
     return text
 
 
@@ -528,6 +675,13 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
         if variant[0] in ("enum", "bool") and variant[1] == field:
             payload[field] = variant[2]
             continue
+        # "Freshly created, in its initial state" has to mean it: a lifecycle
+        # flag starts false. Sampling True made the probe approve an
+        # already-approved timesheet and then read the handler's correct
+        # refusal as a defect (gpt-5.6-terra-1s14uohe, 5/5 checks passed).
+        if variant[0] == "initial" and resolved.get("type") == "boolean":
+            payload[field] = False
+            continue
         offset = 1
         if field in date_fields:
             index = date_fields.index(field)
@@ -642,7 +796,82 @@ def _handler_site(app, path: str, entity: str) -> dict | None:
 _ACTION_ROUTE_RE = re.compile(r"^/(?P<entity_seg>[^/{}]+)/\{[^/{}]+\}/methods/(?P<action>[^/{}]+)/?$")
 _STATUS_FIELD_TOKENS = ("status", "state", "stage", "phase")
 _MAX_STATE_LITERALS = 6      # literals sampled per status-like field
-_MAX_ACTION_PROBE_REQUESTS = 200  # extra creates + action calls, combined
+_MAX_ACTION_PROBE_REQUESTS = 300  # extra creates + action calls, combined
+_MAX_COUNTED_ENTITIES = 16   # collections re-counted around one action call
+_MAX_INERT_PER_ENTITY = 3
+_MAX_STATE_VARIANTS = 5      # initial state + lifecycle literals, per aggregate
+# A body that says the call did not do its job. ``success``/``ok``/``error``
+# are the shapes LLM-authored handlers use; ``result: false`` is the
+# deterministic scaffold's own, and is exactly what MethodButton.tsx reads as
+# "the method declined to act" (``wasDeclined``). ``result: false`` alone is
+# the weak one - a bool-returning query says the same thing honestly - so it
+# never carries a blocker on its own.
+_FAILURE_STATUS_WORDS = frozenset({
+    "failed", "failure", "error", "errored", "rejected", "declined", "refused",
+})
+
+
+def _declared_failure(text: str) -> tuple[str, bool] | None:
+    """``(marker, decisive)`` when the response admits it did not act."""
+    try:
+        body = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    for key in ("success", "ok", "succeeded"):
+        value = body.get(key)
+        if value is False or (isinstance(value, str) and value.strip().lower() == "false"):
+            return f"{key}=false", True
+    status = body.get("status")
+    if isinstance(status, str) and status.strip().lower() in _FAILURE_STATUS_WORDS:
+        return f"status={status.strip()}", True
+    if body.get("error"):
+        return "error", True
+    result = body.get("result")
+    if result is False or (isinstance(result, str) and result.strip().lower() == "false"):
+        return "result=false", False
+    return None
+
+
+def _read_routes(spec: dict, creates: dict) -> dict:
+    """entity -> the ``GET /<entity>/{id}/`` route that reads one back."""
+    found: dict = {}
+    for entity, (path, _schema) in creates.items():
+        pattern = re.compile(r"^" + re.escape(path.rstrip("/")) + r"/\{[^/{}]+\}/?$")
+        for candidate, ops in spec.get("paths", {}).items():
+            if "get" in ops and pattern.match(candidate):
+                found[entity] = candidate
+                break
+    return found
+
+
+def _count_routes(spec: dict, creates: dict) -> dict:
+    """entity -> its ``/count/`` route. An action that creates a row elsewhere
+    (``produceBill``) leaves its own entity untouched; without this the probe
+    would read that correct action as having done nothing."""
+    found: dict = {}
+    for entity, (path, _schema) in sorted(creates.items()):
+        candidate = path.rstrip("/") + "/count/"
+        if "get" in (spec.get("paths", {}).get(candidate) or {}):
+            found[entity] = candidate
+    return dict(itertools.islice(found.items(), _MAX_COUNTED_ENTITIES))
+
+
+def _effect(before, after) -> bool | None:
+    """Did the call change anything the probe can see? None = cannot tell."""
+    if not before or not after:
+        return None
+    known = False
+    if before.get("entity") is not None and after.get("entity") is not None:
+        known = True
+        if before["entity"] != after["entity"]:
+            return True
+    if before.get("counts") and after.get("counts"):
+        known = True
+        if before["counts"] != after["counts"]:
+            return True
+    return False if known else None
 
 
 def _status_like_fields(schema: dict, schemas: dict) -> list[tuple[str, list]]:
@@ -698,47 +927,168 @@ def _action_handler_site(app, path: str) -> dict | None:
     return None
 
 
-async def _probe_actions(app, spec, request, schemas, orm, subclasses, unique_fields,
-                         creates, entities, ids, ordinal) -> tuple[list, int]:
-    """One best-effort call per constructed state; never chained across actions."""
+async def _create_instance(request, schema, schemas, orm, subclasses, unique_fields,
+                           entity, path, ids, variant, ordinal, label):
+    """One fresh instance of ``entity``; ``(id or None, ordinal)``."""
+    ordinal += 1
+    payload, unresolved = _build_payload(
+        schema, schemas, orm.get(entity, {}), ids, subclasses, variant,
+        entity=entity, ordinal=ordinal,
+        unique_fields=unique_fields.get(entity, frozenset()))
+    if unresolved:
+        return None, ordinal
+    response, attempt = await request(path, payload, label)
+    if attempt["outcome"] != "created":
+        return None, ordinal
+    try:
+        return _extract_id(response.json()), ordinal
+    except Exception:
+        return None, ordinal
+
+
+async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasses,
+                         unique_fields, creates, entities, ids, ordinal,
+                         model_actions) -> tuple[list, list, int]:
+    """Drive the workflow, not just the creates.
+
+    Two passes, both on instances created for this action alone so one
+    action's side effects can never taint another's evidence:
+
+    A. the aggregate's own first move - create it, read it, call the action
+       with the literal ``{}`` the generated button posts, read it again.
+       An action that reports a refusal and changes nothing did not run.
+    B. the state sweep that was here before - vary a status-like create field
+       and see whether the action ever succeeds in ANY state it can build.
+    """
     reports: list = []
+    calls: list = []
     budget = [_MAX_ACTION_PROBE_REQUESTS]
 
     def spend() -> bool:
         budget[0] -= 1
         return budget[0] >= 0
 
+    read_routes = _read_routes(spec, creates)
+    count_routes = _count_routes(spec, creates)
+
     for entity, actions in _action_routes(spec, creates).items():
         if entities.get(entity, {}).get("verdict") != "created":
             continue  # the create probe already reports this entity, if broken
         path, schema_name = creates[entity]
         schema = schemas[schema_name]
+        declared = {a.get("name"): a for a in model_actions.get(entity) or []}
+        read_route = read_routes.get(entity)
+
+        # ---------------------------------------------------- pass A: first move
+        #
+        # "Initial state" is a guess, and a wrong guess invents a defect. The
+        # enum literal the create schema lists first is not the lifecycle's
+        # start: SessionStatus sorts CANCELLED before SCHEDULED, so the first
+        # build of this pass created a cancelled session and read cancel()'s
+        # correct refusal as a dead workflow (gpt-5.6-terra-5d9otfvo /
+        # jl_vbrf2, both 2/4). So where the entity's own create schema can
+        # select a lifecycle state, every literal is tried before concluding
+        # that nothing moves - and only for an aggregate that would otherwise
+        # be reported, so a healthy app pays for one pass.
+        state_variants: list[tuple] = [("initial",)]
+        for field, literals in _status_like_fields(schema, schemas):
+            state_variants += [("enum", field, literal) for literal in literals]
+        state_variants = state_variants[:_MAX_STATE_VARIANTS]
+
+        fresh: list[dict] = []
+        crashed_actions: set = set()
+        moved = False
+        for index, state in enumerate(state_variants):
+            observed: list[dict] = []
+            for action, route in actions:
+                if not spend():
+                    break
+                new_id, ordinal = await _create_instance(
+                    request, schema, schemas, orm, subclasses, unique_fields,
+                    entity, path, ids, state, ordinal, ("action-fresh", entity, action))
+                if new_id is None:
+                    continue
+                before = await read_state(read_route, new_id, count_routes)
+                if not spend():
+                    break
+                call_path = re.sub(r"\{[^/{}]+\}", str(new_id), route, count=1)
+                _, attempt = await request(call_path, {}, ("action-fresh-call", action))
+                if attempt.get("status") == 501:
+                    if index == 0:
+                        calls.append({"entity": entity, "action": action, "route": route,
+                                      "verdict": "stub", "status": attempt.get("status")})
+                    continue
+                after = await read_state(read_route, new_id, count_routes)
+                changed = _effect(before, after)
+                marker = _declared_failure(attempt.get("body") or "")
+                parameters = (declared.get(action) or {}).get("parameters")
+                call = {
+                    "entity": entity, "action": action, "route": route,
+                    "status": attempt.get("status"), "outcome": attempt["outcome"],
+                    "body": attempt.get("body"), "changed": changed,
+                    "marker": marker[0] if marker else None,
+                    "decisive": bool(marker and marker[1]),
+                    # None where the serializer did not state the list at all.
+                    "zero_param": None if parameters is None else not parameters,
+                    "verdict": "crashed" if attempt["outcome"] == "crashed"
+                               else "effective" if changed is True and attempt["outcome"] == "created"
+                               else "refused" if attempt["outcome"] not in ("created",)
+                               else "inert" if changed is False else "unknown",
+                }
+                observed.append(call)
+                if index == 0:
+                    fresh.append(call)
+                    calls.append(call)
+                if attempt["outcome"] == "crashed" and action not in crashed_actions:
+                    crashed_actions.add(action)
+                    reports.append({
+                        "route": route, "action": action, "entity": entity, "verdict": "crashed",
+                        "state": "freshly created", "attempt": attempt,
+                        "site": _action_handler_site(app, route),
+                    })
+            # One action that moves the aggregate is its first transition; the
+            # rest may then be refusing correctly.
+            if any(c["changed"] is True and c["outcome"] == "created" for c in observed):
+                moved = True
+                break
+            if index == 0 and not any(c["outcome"] == "created" and c["changed"] is False
+                                      and c["marker"] for c in fresh):
+                break  # nothing to report anyway; do not pay for the sweep
+
+        if not moved:
+            inert = [c for c in fresh if c["outcome"] == "created"
+                     and c["changed"] is False and c["marker"]]
+            decisive = [c for c in inert if c["decisive"] and c["zero_param"]]
+            decisive_ids = {id(c) for c in decisive}
+            siblings = sorted({c["action"] for c in fresh})
+            for call in (decisive or inert)[:_MAX_INERT_PER_ENTITY]:
+                reports.append({
+                    "route": call["route"], "action": call["action"], "entity": entity,
+                    "verdict": "inert" if id(call) in decisive_ids else "inert unverified",
+                    "call": call, "siblings": siblings, "zero_param": call["zero_param"],
+                    "site": _action_handler_site(app, call["route"]),
+                })
+
+        # ---------------------------------------------------- pass B: state sweep
         status_fields = _status_like_fields(schema, schemas)
         if not status_fields:
             continue  # no own-field lever to vary state; stay silent
         for action, route in actions:
             if not spend():
                 break
+            if action in crashed_actions:
+                continue  # pass A already watched this handler raise
             samples: list[tuple[str, object]] = []
             for field, literals in status_fields:
                 for literal in literals:
                     if not spend():
                         break
-                    ordinal += 1
-                    payload, unresolved = _build_payload(
-                        schema, schemas, orm.get(entity, {}), ids, subclasses,
-                        ("enum", field, literal), entity=entity, ordinal=ordinal,
-                        unique_fields=unique_fields.get(entity, frozenset()))
-                    if unresolved:
-                        continue
-                    response, attempt = await request(path, payload, ("action-state", field, literal))
-                    if attempt["outcome"] == "created":
-                        try:
-                            new_id = _extract_id(response.json())
-                        except Exception:
-                            new_id = None
-                        if new_id is not None:
-                            samples.append((f"{field}={literal}", new_id))
+                    new_id, ordinal = await _create_instance(
+                        request, schema, schemas, orm, subclasses, unique_fields,
+                        entity, path, ids, ("enum", field, literal), ordinal,
+                        ("action-state", field, literal))
+                    if new_id is not None:
+                        samples.append((f"{field}={literal}", new_id))
             if not samples:
                 continue
             call_path_template = route
@@ -775,7 +1125,20 @@ async def _probe_actions(app, spec, request, schemas, orm, subclasses, unique_fi
                     "statuses": [a.get("status") for _, a in attempts],
                     "site": _action_handler_site(app, route),
                 })
-    return reports, ordinal
+    return reports, calls, ordinal
+
+
+def _load_model_actions() -> dict:
+    """The modelled action list the parent wrote out, if it had a model."""
+    path = os.environ.get(_ACTIONS_ENV)
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _probe_cwd() -> dict:
@@ -898,6 +1261,30 @@ def _probe_cwd() -> dict:
                     attempt["unique_collision"] = True
                 return response, attempt
 
+            async def read_state(read_path, entity_id, count_routes):
+                """What the app says exists right now: the row itself and the
+                size of every collection. A key the app will not serve comes
+                back None, which makes the effect unknown, never a finding."""
+                snapshot: dict = {"entity": None, "counts": {}}
+                if read_path:
+                    url = re.sub(r"\{[^/{}]+\}", str(entity_id), read_path, count=1)
+                    try:
+                        response = await client.get(url)
+                        if response.status_code == 200:
+                            snapshot["entity"] = json.loads(
+                                json.dumps(response.json(), sort_keys=True, default=str))
+                    except Exception:
+                        pass
+                for name, route in count_routes.items():
+                    try:
+                        response = await client.get(route)
+                        if response.status_code == 200:
+                            snapshot["counts"][name] = json.dumps(
+                                response.json(), sort_keys=True, default=str)
+                    except Exception:
+                        continue
+                return snapshot
+
             progress = True
             while pending and progress:
                 progress = False
@@ -970,16 +1357,17 @@ def _probe_cwd() -> dict:
                     schemas[schema_name], schemas, orm.get(entity, {}), ids, subclasses, ("base",))
                 entities[entity] = {"path": path, "verdict": "unresolved", "unresolved": unresolved}
 
-            actions, _ordinal = await _probe_actions(
-                app, spec, request, schemas, orm, subclasses, unique_fields,
-                creates, entities, ids, ordinal)
-        return {"entities": entities, "actions": actions}
+            actions, action_calls, _ordinal = await _probe_actions(
+                app, spec, request, read_state, schemas, orm, subclasses, unique_fields,
+                creates, entities, ids, ordinal, _load_model_actions())
+        return {"entities": entities, "actions": actions, "action_calls": action_calls}
 
     try:
         result = asyncio.run(run())
     except Exception as exc:
         return {"boot": "probe_error", "error": f"{type(exc).__name__}: {exc}"[:300]}
-    return {"boot": "ok", "entities": result["entities"], "actions": result["actions"]}
+    return {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
+            "action_calls": result["action_calls"]}
 
 
 if __name__ == "__main__":

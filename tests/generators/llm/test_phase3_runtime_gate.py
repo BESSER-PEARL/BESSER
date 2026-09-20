@@ -221,12 +221,12 @@ def test_an_entity_that_cannot_be_created_outranks_lint_volume(orch):
 def _probe_recorder(monkeypatch, orchestrator, findings=()):
     calls = {"n": 0}
 
-    def fake_probe(output_dir):
+    def fake_probe(output_dir, domain_model=None):
         calls["n"] += 1
-        return list(findings)
+        return {"issues": list(findings), "backends": []}
 
     import besser.generators.llm.constructibility as constructibility
-    monkeypatch.setattr(constructibility, "collect_constructibility_issues", fake_probe)
+    monkeypatch.setattr(constructibility, "collect_constructibility_report", fake_probe)
     monkeypatch.setattr(
         "besser.generators.llm.orchestrator._import_smoke_issues", lambda _d: [])
     monkeypatch.setattr(orchestrator, "_probeable_backends", lambda: ["web_app/backend"])

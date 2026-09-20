@@ -171,6 +171,17 @@ def _is_free_local_model(model_lower: str) -> bool:
         # Served by the gateway, so somebody is being billed for it. Fall
         # through to the paid pricing path rather than assuming $0.
         return False
+    if model_lower.endswith("-latest"):
+        # A vendor API alias, not a checkout. Mistral's paid ids are tagless
+        # and un-namespaced - ``mistral-small-latest``, ``codestral-latest``,
+        # ``devstral-small-latest``, ``devstral-medium-latest`` - so they fell
+        # to the family list below, matched "mistral-small"/"codestral"/
+        # "devstral", and were priced at $0, which silently disabled the cost
+        # cap on four paid models. One of them is the Mistral planning model,
+        # so it ran uncapped on every Mistral run. Self-hosted Ollama says
+        # ``mistral-small:latest`` with a colon, which rule 2 already caught
+        # above, so nothing free is lost by treating the hyphen as billed.
+        return False
     return any(marker in model_lower for marker in _FREE_LOCAL_MODEL_MARKERS)
 
 

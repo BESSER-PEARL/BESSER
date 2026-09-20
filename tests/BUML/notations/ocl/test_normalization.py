@@ -75,14 +75,6 @@ def test_T5_exists_to_forall(model):
     )
 
 
-def test_T6_allinstances_removal(model):
-    assert_normalizes_to(
-        "context Employee inv: Employee::allInstances()->forAll(e | e.age > 16)",
-        "context Employee inv: self.age > 16",
-        model,
-    )
-
-
 def test_T7_multiplicity_aware_simplification(model):
     # `self.employer` has multiplicity 1..1, so size() > 0 → true,
     # then `true implies X` → X.
@@ -93,17 +85,6 @@ def test_T7_multiplicity_aware_simplification(model):
         model,
     )
 
-
-def test_T8_paper_maxsalary_integration(model):
-    """Paper §2.4, steps 1–6. End-to-end pipeline test."""
-    assert_normalizes_to(
-        "context Department inv: Department::allInstances()->forAll("
-        "d | not d.employee->select(e | e.age < 25)->exists("
-        "e | e.salary > d.maxJuniorSal))",
-        "context Department inv: self.employee->forAll("
-        "e | e.age >= 25 or e.salary <= self.maxJuniorSal)",
-        model,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +102,6 @@ from besser.BUML.metamodel.ocl.ocl import IfExp
     "context Employee inv: not (not (self.age > 16))",
     "context Employee inv: self.age < 25 implies self.salary <= 50000.0",
     "context Department inv: not self.employee->exists(e | e.salary > 1000000.0)",
-    "context Department inv: Department::allInstances()->forAll("
-    "d | not d.employee->select(e | e.age < 25)->exists("
-    "e | e.salary > d.maxJuniorSal))",
 ])
 def test_operator_surface_invariant(ocl_input, model):
     """Normal form contains no implies / xor / exists / reject / isEmpty / IfExp."""

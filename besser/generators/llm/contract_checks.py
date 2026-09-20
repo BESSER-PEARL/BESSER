@@ -979,25 +979,19 @@ def _resolve_bases(declared: dict) -> dict:
     return {name: members(name, frozenset()) for name in declared}
 
 
-def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> list:
-    """Association ends the delivered app reads off the wrong class.
+def _walk_python(app_dir: str, known: frozenset) -> tuple:
+    """Every parsed .py in the delivered tree, plus what it declares.
 
-    A workspace sweep, not a per-file lint: the access and the declaration
-    that would excuse it live in different files. Returns ``data contract:``
-    strings, ready for the Phase 3 issue list.
+    ``(rel, tree, source)`` per file and ``class -> member names`` across
+    all of them: the read and the declaration that would excuse it live in
+    different files, so both sweeps need the whole workspace at once.
     """
-    if contract is None or contract.ends is None:
-        return []
-    ends = contract.ends
-    known = frozenset(ends.members)
-    roles = tuple(ends.owner)
-
     parsed: list = []
     declared: dict = {}
-    for root, dirs, files in os.walk(app_dir):
+    for root, dirs, names in os.walk(app_dir):
         dirs[:] = [d for d in dirs
                    if d not in ("node_modules", "dist", "build", "__pycache__")]
-        for name in sorted(files):
+        for name in sorted(names):
             if not name.endswith(".py"):
                 continue
             path = os.path.join(root, name)
@@ -1016,11 +1010,28 @@ def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> 
             except (SyntaxError, ValueError):
                 continue  # a half-written file is python_source's problem
             _declared_members(tree, known, declared)
-            if any(role in content for role in roles):
-                parsed.append((rel, tree))
+            parsed.append((rel, tree, content))
+    return parsed, _resolve_bases(declared)
+
+
+def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> list:
+    """Association ends the delivered app reads off the wrong class.
+
+    A workspace sweep, not a per-file lint: the access and the declaration
+    that would excuse it live in different files. Returns ``data contract:``
+    strings, ready for the Phase 3 issue list.
+    """
+    if contract is None or contract.ends is None:
+        return []
+    ends = contract.ends
+    known = frozenset(ends.members)
+    roles = tuple(ends.owner)
+
+    files, app_members = _walk_python(app_dir, known)
+    parsed = [(rel, tree) for rel, tree, content in files
+              if any(role in content for role in roles)]
     if not parsed:
         return []
-    app_members = _resolve_bases(declared)
 
     def misplaced(receiver: str, role: str) -> bool:
         owner = ends.owner.get(role)
@@ -1104,6 +1115,212 @@ def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> 
                                    f"`{shown}` is a `{receiver}` here, so "
                                    f"`{shown}.{node.attr}` raises AttributeError",
                                    receiver, node.attr, ends, hops == 0)))
+    return [message for _, message in sorted(issues)]
+
+
+# An instance answers these without the app declaring them: SQLAlchemy's
+# declarative base and Pydantic's BaseModel both contribute a public API,
+# and one domain class name is frequently reused for both halves.
+_INHERITED_MEMBERS = frozenset({
+    "metadata", "registry", "awaitable_attrs",
+    "dict", "json", "copy", "schema", "construct", "parse_obj", "parse_raw",
+    "model_dump", "model_dump_json", "model_copy", "model_validate",
+    "model_fields", "model_fields_set", "model_config", "model_extra",
+    "model_rebuild", "model_json_schema",
+})
+
+_INJECTING_CALLS = frozenset({"Depends", "Security"})
+
+
+def _injected_parameters(function) -> set:
+    """Parameters FastAPI fills in.
+
+    Their annotation names a dependency, not a domain instance. When the
+    model happens to contain a class called ``Session``, ``database:
+    Session = Depends(get_db)`` otherwise types every ``database.query``
+    in the file as a read on that class.
+    """
+    args = function.args
+    positional = list(args.posonlyargs) + list(args.args)
+    pairs = list(zip(positional[len(positional) - len(args.defaults):],
+                     args.defaults))
+    pairs += [(a, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d]
+    return {argument.arg for argument, default in pairs
+            if isinstance(default, ast.Call)
+            and (getattr(default.func, "id", None)
+                 or getattr(default.func, "attr", "")) in _INJECTING_CALLS}
+
+
+def _shadowing_imports(tree, app_modules: frozenset) -> set:
+    """Class names this module binds to something from OUTSIDE the app.
+
+    ``from sql_alchemy import Clerk`` is the domain class itself; ``from
+    sqlalchemy.orm import Session`` is not, however the model spells its
+    own ``Session``. Only the second kind shadows.
+    """
+    out: set = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level or (node.module or "").split(".")[0] in app_modules:
+                continue
+        elif not isinstance(node, ast.Import):
+            continue
+        out.update(alias.asname or alias.name.split(".")[0]
+                   for alias in node.names)
+    return out
+
+
+def _probed_attributes(function) -> set:
+    """Attribute names the author checks with hasattr/getattr first."""
+    return {node.args[1].value
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ("hasattr", "getattr") and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)}
+
+
+def _conditional_nodes(function) -> set:
+    """Nodes that run only in some states, not on every call.
+
+    Per child, not per statement: an ``if`` TEST evaluates whenever control
+    reaches it and only the branches do not, ``for`` evaluates its iterable
+    but may never enter the body, ``try`` always runs its body, and ``a and
+    b`` always evaluates ``a``. Marking a whole statement conditional
+    demoted the exact reads the runtime probe watched crash, among them
+    ``if db_clerk.warehouse_id is None`` on ``...2507-2fqm5uj6``.
+    """
+    conditional: set = set()
+
+    def always(node) -> list:
+        if isinstance(node, (ast.If, ast.While, ast.IfExp)):
+            return [node.test]
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            return [node.iter]
+        if isinstance(node, ast.Try):
+            return list(node.body)
+        if isinstance(node, ast.BoolOp):
+            return node.values[:1]
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
+                             ast.DictComp)):
+            return [node.generators[0].iter] if node.generators else []
+        if isinstance(node, ast.Match):
+            return [node.subject]
+        return list(ast.iter_child_nodes(node))
+
+    def walk(node, under: bool) -> None:
+        if under:
+            conditional.add(node)
+        unconditional = {id(child) for child in always(node)}
+        for child in ast.iter_child_nodes(node):
+            walk(child, under or id(child) not in unconditional)
+
+    for child in ast.iter_child_nodes(function):
+        walk(child, False)
+    return conditional
+
+
+def collect_undeclared_attribute_issues(app_dir: str,
+                                        contract: DataContract | None) -> list:
+    """Attributes read off a model instance that nothing declares.
+
+    The sibling of :func:`collect_inverted_end_issues`: same receiver
+    typing, same "does anything declare it" test, but for any member name
+    rather than only association roles. Roles stay that function's, so the
+    two never report one read twice.
+
+    This is the largest runtime-crash class in the recorded corpus: a
+    column named on the wrong class (``db_clerk.warehouse_id`` when
+    ``warehouse_id`` is Product's), an audit field the scaffold never
+    wrote (``db_loan.created_at``), a value the model invented
+    (``db_warehouse.total_stock``). Each is an ``AttributeError`` - or a
+    ``TypeError: invalid keyword argument`` when the same wrong name
+    reaches the constructor - on the first request that runs the line.
+
+    Only reads that execute on EVERY call of their function are reported.
+    A read inside a branch is just as wrong, but the runtime probe cannot
+    always reach it, and a blocker on a path nothing exercises spends fix
+    turns on an app that works: ``...2507-n19svhnc`` passes its probe with
+    a real ``Loan.returnDate`` crash behind ``if status == RETURNED``.
+    """
+    if contract is None or contract.ends is None:
+        return []
+    ends = contract.ends
+    known = frozenset(ends.members)
+    files, app_members = _walk_python(app_dir, known)
+    if not files:
+        return []
+
+    app_modules = frozenset(
+        rel.rsplit("/", 1)[-1][:-3] for rel, _tree, _content in files)
+
+    issues: list = []
+    for rel, tree, _content in files:
+        scopes = _class_scopes(tree)
+        shadowed = _shadowing_imports(tree, app_modules) & known
+        seen: set = set()
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            injected = _injected_parameters(function)
+            types = {name: cls for name, cls
+                     in _local_instance_types(function, known,
+                                              scopes.get(function)).items()
+                     if cls not in shadowed and name not in injected}
+            if not types:
+                continue
+            probed = _probed_attributes(function)
+            conditional = _conditional_nodes(function)
+            for node in ast.walk(function):
+                # `Loan(processingFee=...)` is the same defect through the
+                # constructor: SQLAlchemy answers it `TypeError: invalid
+                # keyword argument` before any attribute is read.
+                if isinstance(node, ast.Call)                         and isinstance(node.func, ast.Name)                         and node.func.id in ends.members                         and node.func.id not in shadowed                         and node not in conditional:
+                    built = node.func.id
+                    for keyword in node.keywords:
+                        name = keyword.arg
+                        if not name or name.startswith("_")                                 or name in ends.owner                                 or name in ends.members[built]                                 or name in app_members.get(built, ()):
+                            continue
+                        issues.append(((rel, node.lineno, name), (
+                            f"data contract: {rel} line {node.lineno}: "
+                            f"`{built}(...)` is constructed with `{name}=`, and "
+                            f"nothing in the model or the app declares "
+                            f"`{built}.{name}` - this line runs on every call "
+                            f"and raises `TypeError: '{name}' is an invalid "
+                            f"keyword argument for {built}`. Pass a member "
+                            f"`{built}` actually has, or declare `{name}` "
+                            f"on it")))
+                if not isinstance(node, ast.Attribute):
+                    continue
+                if not isinstance(node.ctx, ast.Load):
+                    continue  # a write binds the name, it never raises
+                if not isinstance(node.value, ast.Name):
+                    continue  # a hop is the inverted-end check's territory
+                receiver = types.get(node.value.id)
+                attribute = node.attr
+                if not receiver or receiver not in ends.members:
+                    continue
+                if attribute.startswith("_") or attribute in _INHERITED_MEMBERS:
+                    continue
+                if attribute in probed or attribute in ends.owner:
+                    continue
+                if attribute in ends.members[receiver] \
+                        or attribute in app_members.get(receiver, ()):
+                    continue
+                if node in conditional:
+                    continue
+                key = (node.lineno, node.col_offset, receiver, attribute)
+                if key in seen:
+                    continue  # a nested function is walked by its parent too
+                seen.add(key)
+                issues.append(((rel, node.lineno, attribute), (
+                    f"data contract: {rel} line {node.lineno}: "
+                    f"`{node.value.id}` is a `{receiver}` here, and nothing in "
+                    f"the model or the app declares `{receiver}.{attribute}` - "
+                    f"this line runs on every call and raises `AttributeError: "
+                    f"'{receiver}' object has no attribute '{attribute}'`. "
+                    f"Read a member `{receiver}` actually has, or declare "
+                    f"`{attribute}` on it")))
     return [message for _, message in sorted(issues)]
 
 

@@ -5318,7 +5318,12 @@ class LLMOrchestrator:
         are reported as warnings.
         """
         try:
-            from besser.generators.llm.contract_checks import build_data_contract, lint_file
+            from besser.generators.llm.contract_checks import (
+                build_data_contract,
+                collect_inverted_end_issues,
+                collect_undeclared_attribute_issues,
+                lint_file,
+            )
             contract = build_data_contract(self.domain_model)
         except Exception as exc:
             # Returning [] here reported "no data-contract violations" when the
@@ -5354,6 +5359,23 @@ class LLMOrchestrator:
                     issues.append(
                         f"{prefix} {finding.path} line {finding.line}: {finding.message}"
                     )
+
+        # Two workspace-wide sweeps, not per-file lints: the bad read and the
+        # declaration that would excuse it live in different files, so neither
+        # can be decided from one file's text. Both were written, tested and
+        # measured against the labelled corpus while having no call site at
+        # all - they scored zero false positives on every known-working app
+        # and never ran on a real generation.
+        for finding in collect_inverted_end_issues(self.output_dir, contract):
+            prefix = "data contract:" if finding.blocker else "data contract (advisory):"
+            issues.append(
+                f"{prefix} {finding.path} line {finding.line}: {finding.message}"
+            )
+        for finding in collect_undeclared_attribute_issues(self.output_dir, contract):
+            prefix = "data contract:" if finding.blocker else "data contract (advisory):"
+            issues.append(
+                f"{prefix} {finding.path} line {finding.line}: {finding.message}"
+            )
         return issues
 
     def _planner_instructions(self, instructions: str) -> str:

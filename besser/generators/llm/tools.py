@@ -322,11 +322,13 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "name": "write_file",
         "description": (
             "Create a new file, or replace an existing file's full contents. "
-            "Use it for NEW files (configs, new modules, pages). For an "
-            "existing file use modify_file - one call per change site, as "
-            "many as needed, in the same turn - and reach for write_file only "
-            "when you have just read the whole file and genuinely need to "
-            "replace most of it. Never rewrite a file from memory."
+            "Use it for NEW files (configs, new modules, pages), and for any "
+            "existing file you have just read in full: rewrite the whole file "
+            "when you have just read it in full. That is a first-class way to "
+            "change a file here, not a last resort - it is the most reliable "
+            "write tool. Use modify_file for a small edit to a file you would "
+            "rather not reproduce in full. Do not rewrite a file you have not "
+            "read this run."
         ),
         "input_schema": {
             "type": "object",

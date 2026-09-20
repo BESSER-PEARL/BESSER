@@ -39,11 +39,42 @@ def _prompt(scaffold: bool) -> str:
 class TestRulesDoNotPrescribeTheFailures:
 
     def test_no_rule_prefers_a_whole_file_rewrite(self):
+        """A rewrite may be ESCALATED TO after refusals; it must never be
+        prescribed by a count of SUCCESSFUL edits, nor on an unread file.
+
+        7cb06829 deleted "three or more changes -> one write_file" because it
+        counted *successful* edits: three good edits to one router became a
+        whole-file rewrite. The 2026-09-20 edit-ladder change puts a
+        whole-file rewrite back in these rules, but keyed on two *refused*
+        edits on one path - the same trigger class the guard was re-pointed
+        at, and the executor pops that counter on every landed edit (pinned
+        behaviourally by
+        test_repeat_rejection_escalation.test_successful_edits_never_escalate_to_a_rewrite).
+
+        The read-first constraint survives the rewording, so this test moved
+        with it rather than dropping: "Never rewrite a file from memory"
+        became "Do not rewrite a file you have not read this run", which is
+        the wording ``ToolExecutor._write_file`` actually enforces through
+        its ``_known_paths`` check. The phrases are matched against a
+        whitespace-flattened prompt because the new rule wraps over lines.
+        """
         for scaffold in (True, False):
             prompt = _prompt(scaffold)
+            flat = " ".join(prompt.split())
+            # Never again: a rewrite ordered by a count of edits that WORKED.
             assert "three or more changes" not in prompt
             assert "is cheaper than a chain" not in prompt
-            assert "Never rewrite a file from memory" in prompt
+            for banned in ("after three edits", "after three changes",
+                           "three good edits", "after two successful edits",
+                           "after three successful edits"):
+                assert banned not in flat.lower(), banned
+            # The escalation that is allowed, and the only trigger for it.
+            assert "After two refused edits on one file, switch strategy:" in flat
+            assert "read_file` the WHOLE file, then `write_file` it back" in flat
+            # Read-first: the rewrite is of a file just read, never of memory.
+            assert "Do not rewrite a file you have not read this run." in flat
+            assert ("Use `write_file` for new files, and to replace any file "
+                    "you have just read in full") in flat
 
     def test_scaffold_runs_do_not_recreate_project_files_or_add_a_readme(self):
         prompt = _prompt(True)

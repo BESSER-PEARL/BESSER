@@ -208,7 +208,15 @@ def test_an_ambiguous_quote_gets_no_range(executor):
 
 def test_no_range_once_range_edits_are_exhausted_for_the_path(executor):
     """Run se7k3zbx failed 17 of 20 range edits on one file; past the give-up
-    count the ladder steers back to quoting and must not offer a span."""
+    count the ladder must not offer a span.
+
+    What it steers to instead changed on 2026-09-20. It used to hand the
+    model back to ``modify_file`` with the smallest unique quote; three
+    refusals is also past the two that now escalate to a whole-file
+    rewrite, so the rewrite tier answers first. The half that matters here
+    is unchanged and still asserted: no ``located_range`` is offered once
+    the range editor has been given up on, so nothing steers back into it.
+    """
     read = call(executor, "read_file", path="bill_methods.py")
     for _ in range(executor._RANGE_EDIT_GIVE_UP):
         refused = call(executor, "replace_file_lines", path="bill_methods.py",
@@ -219,4 +227,5 @@ def test_no_range_once_range_edits_are_exhausted_for_the_path(executor):
     result = miss(executor)
 
     assert "located_range" not in result, result
-    assert result["edit_recovery"]["next_tool"] == "modify_file"
+    assert result["edit_recovery"]["next_tool"] == "write_file"
+    assert "read_file on the WHOLE file" in result["edit_recovery"]["instruction"]

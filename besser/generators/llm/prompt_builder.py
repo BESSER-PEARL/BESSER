@@ -428,14 +428,14 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    and are the fastest way to finish — as long as every `old_text` comes from your
    most recent read of that file. Once an edit is refused, go back to one edit per
    turn until one lands: a batch built on a stale view fails as a batch.
-   After matching failures, switch strategy: `read_file` the target
-   block, then `replace_file_lines` with its `read_id`, inclusive line numbers,
-   and complete replacement. This avoids re-quoting old code; never repeat a
-   rejected edit or treat a refused edit as done. A successful range edit expires
-   the read, so re-read before the next same-file range edit.
-   Use `write_file` only for new files, or
-   to replace a file you have just read in full.
-   Never rewrite a file from memory.
+   After two refused edits on one file, switch strategy: `read_file` the WHOLE
+   file, then `write_file` it back with your change applied. Do not keep
+   re-quoting old code; never repeat a rejected edit or treat a refused edit as
+   done.
+   Use `write_file` for new files, and to replace any file you have just read
+   in full: rewrite the whole file when you have just read it in full. This is
+   preferred over a chain of refused targeted edits. Do not rewrite a file you
+   have not read this run.
 3. **The user's original specification is the behavior authority.** The models
    define the existing structure, names and relationships; inspect them instead
    of guessing. Preserve that structure unless completing an explicit requirement

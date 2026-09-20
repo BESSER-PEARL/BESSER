@@ -45,6 +45,7 @@ class StuckClient:
     def __init__(self):
         self.turns = []          # (turn, force_tool)
         self.texts_seen = []
+        self.tool_results = []   # (turn, tool_result JSON as the model sees it)
 
     def chat(self, system, messages, tools, force_tool=None, model_override=None):
         n = len(self.turns) + 1
@@ -55,6 +56,8 @@ class StuckClient:
                 for b in c:
                     if isinstance(b, dict) and b.get("type") == "text":
                         self.texts_seen.append(b["text"])
+                    elif isinstance(b, dict) and b.get("type") == "tool_result":
+                        self.tool_results.append((n, b.get("content")))
         if force_tool == "task_list":
             return {"stop_reason": "tool_use", "content": [
                 MockBlock("tool_use", name="task_list", id=f"t{n}", input={"action": "list"}),
@@ -75,11 +78,40 @@ def _run(simple_model, tmp_path, max_turns=20):
     return orch, client
 
 
-def test_two_refusals_force_a_fresh_read_on_the_next_turn(simple_model, tmp_path):
+def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model, tmp_path):
+    """Renamed from ``test_two_refusals_force_a_fresh_read_on_the_next_turn``.
+
+    Two refusals still change the strategy on the very next turn, and the
+    new strategy still starts with a read - but it is now carried as the
+    tool result's ``edit_recovery`` rather than as a forced ``read_file``.
+    The orchestrator only forces a tool for ``read_file`` /
+    ``replace_file_lines`` / ``modify_file`` (see the allowlist beside
+    ``_force_tool_next``), and ``write_file`` is deliberately not forceable
+    - forcing it would order a rewrite before the read the instruction
+    requires.
+
+    So the hard steer arrives one refusal later, from the orchestrator's
+    own ``_REPEAT_FORCE_AT = 3``: turn 4 instead of turn 3. Both halves are
+    asserted, because dropping either one is how this escalation could
+    silently stop happening. The surviving ``replace_file_lines``
+    assertion is that orchestrator reminder's wording, which the ladder
+    change did not update; it is left in place deliberately so that
+    re-pointing it at the rewrite shows up here as a failing test rather
+    than as two guards quietly disagreeing.
+    """
     orch, client = _run(simple_model, tmp_path)
+
+    escalated = [n for n, content in client.tool_results
+                 if isinstance(content, str) and '"next_tool": "write_file"' in content]
+    assert escalated, client.tool_results
+    assert escalated[0] == 3, "refusals on turns 1 and 2 -> rewrite hint delivered on turn 3"
+    hint = next(c for n, c in client.tool_results
+                if isinstance(c, str) and '"next_tool": "write_file"' in c)
+    assert "read_file on the WHOLE file" in hint
+
     forced = [n for n, f in client.turns if f == "read_file"]
     assert forced, client.turns
-    assert forced[0] == 3, "two rejected text edits -> fresh read -> range edit"
+    assert forced[0] == 4, "the hard steer is _REPEAT_FORCE_AT, one refusal later"
     assert any("replace_file_lines" in t and "app.py" in t for t in client.texts_seen)
 
 
@@ -225,3 +257,79 @@ def test_a_range_edit_target_counts_across_redrafts(tmp_path):
         assert refused["rejection_kind"] == "syntax_error", refused
 
     assert ex.last_repeat == ("app.py", 4)
+
+
+# -- two refusals -> rewrite the whole file (2026-09-20) ------------------
+
+
+def test_two_refusals_on_one_path_escalate_to_a_whole_file_rewrite(tmp_path):
+    """The top of the ladder is now ``read_file`` whole, then ``write_file``.
+
+    Adopted for robustness, not for throughput. The 96-run A/B (48 per arm,
+    qwen30b, three cases, arms run concurrently) moved the pass rate not at
+    all: 12/48 control vs 16/48 treatment, p=0.501, CI [-9.7, +25.7], and a
+    first wave's 3/24 vs 9/24 did not replicate. What it did move is lost
+    scaffold code: 27 items across 6 apps in the control (one app lost four
+    ORM classes, another eight routes, another a spec-required `ship`
+    endpoint) against 0 in the treatment, p=0.027. Those losses were traced
+    by hand to SUCCESSFUL ``replace_file_lines`` edits on a drifted view
+    overwriting neighbouring classes - damage done by the tool the old
+    ladder escalated toward.
+
+    The escalation is only safe because the rewrite it names is itself
+    gated: ``_write_file`` refuses a file this run has not read, so the
+    "read the WHOLE file first" instruction is backed by an executor check
+    and not by the model's goodwill. Both halves are asserted here.
+    """
+    ex = _executor(tmp_path)
+
+    assert "edit_recovery" not in _miss(ex, "# A\n"), "one refusal is not an escalation"
+    recovery = _miss(ex, "# B\n")["edit_recovery"]
+
+    assert recovery["next_tool"] == "write_file"
+    assert recovery["path"] == "app.py"
+    assert "read_file on the WHOLE file (no offset/limit)" in recovery["instruction"]
+    assert "do not summarise, elide, or drop code" in recovery["instruction"]
+    assert "No rejected edit was applied" in recovery["instruction"]
+
+    # The tool it names refuses to run before that read happens.
+    unread = ex.execute_typed("write_file", {"path": "app.py", "content": "x = 1\n"}).payload
+    assert "error" in unread, unread
+    assert "you have not read it this run" in unread["error"]
+
+    ex.execute_typed("read_file", {"path": "app.py"})
+    rewritten = ex.execute_typed("write_file", {"path": "app.py", "content": "x = 1\n"}).payload
+    assert rewritten["status"] == "written", rewritten
+
+
+def test_successful_edits_never_escalate_to_a_rewrite(tmp_path):
+    """The 7cb06829 regression guard, at the behaviour level.
+
+    The per-file rule deleted in 7cb06829 counted edits that WORKED and
+    ordered a whole-file rewrite after three, so "three good edits to one
+    router became a whole-file rewrite". The rewrite is back, but on the
+    counter that replaced it: consecutive refusals, cleared by any landed
+    edit. Five good edits in a row must arm nothing, and one landed edit
+    between two misses must put the count back to zero - otherwise the new
+    tier is the old bug with a new trigger word.
+    """
+    ex = _executor(tmp_path)
+    source = (tmp_path / "app.py")
+    source.write_text("".join(f"v{n} = {n}\n" for n in range(5)), encoding="utf-8")
+
+    for n in range(5):
+        landed = ex.execute_typed("modify_file", {
+            "path": "app.py", "old_text": f"v{n} = {n}",
+            "new_text": f"v{n} = {n + 100}"}).payload
+        assert landed["status"] == "modified", landed
+        assert "edit_recovery" not in landed, landed.get("edit_recovery")
+
+    _miss(ex, "# A\n")
+    cleared = ex.execute_typed("modify_file", {
+        "path": "app.py", "old_text": "v0 = 100", "new_text": "v0 = 0"}).payload
+    assert cleared["status"] == "modified", cleared
+
+    assert "edit_recovery" not in _miss(ex, "# B\n"), (
+        "a landed edit must reset the refusal count, or an ordinary "
+        "miss-fix-miss rhythm escalates to a rewrite"
+    )

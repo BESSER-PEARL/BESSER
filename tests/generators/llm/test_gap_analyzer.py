@@ -294,25 +294,47 @@ def test_phase2_not_skipped_when_scoped_issues_present(tmp_path, monkeypatch):
 # ----------------------------------------------------------------------
 
 
-def test_write_file_allowed_after_two_modifies(tmp_path):
+def _generated_file(tmp_path, lines: int, read: bool = True) -> tuple[ToolExecutor, str]:
+    """A generator-owned file of ``lines`` lines, read this run unless told not to."""
     executor = ToolExecutor(workspace=str(tmp_path))
     rel = "backend/api.py"
     full = os.path.join(str(tmp_path), rel)
     os.makedirs(os.path.dirname(full), exist_ok=True)
     with open(full, "w", encoding="utf-8") as fh:
-        fh.write("line_a = 1\nline_b = 2\n")
+        fh.write("".join(f"line_{n} = {n}\n" for n in range(lines)))
     executor._generator_files.add(rel)
-    executor._read_file({"path": rel})      # seen this run: the generator-file guardrail is what fires
+    if read:
+        executor._read_file({"path": rel})   # seen this run: the SIZE guardrail is what fires
+    return executor, rel
 
-    # Cold write on a small generated file → rejected, with both escapes named
+
+def test_write_file_allowed_after_two_modifies(tmp_path):
+    """The size rule inverted on 2026-09-20: this is now the LARGE-file case.
+
+    It used to be the small-file case (<=200 lines had to be modified twice
+    before a rewrite unlocked, while anything larger could be rewritten
+    cold). That is backwards: a small file is the one a model can reproduce
+    faithfully from one read, and a large one is where a rewrite drops code.
+    So the threshold swapped sides, and this test swapped with it - the
+    assertion "two modify attempts unlock the rewrite" is unchanged, it just
+    now guards the files where it matters.
+
+    The rejection text changed with it and the assertion follows the text:
+    "delete_file + write_file" is gone because wholesale replacement is the
+    very thing the guard exists to discourage, and the message now names the
+    unlock rule instead. Neither escape was removed from the executor.
+    """
+    executor, rel = _generated_file(tmp_path, 300)
+
     cold = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))
     assert "error" in cold
     assert "modify_file" in cold["error"]
-    assert "delete_file" in cold["error"]
+    assert "after two modify_file attempts" in cold["error"]
 
-    for old, new in (("line_a = 1", "line_a = 10"), ("line_b = 2", "line_b = 20")):
+    for n in (0, 1):
         result = json.loads(executor.execute(
-            "modify_file", {"path": rel, "old_text": old, "new_text": new},
+            "modify_file",
+            {"path": rel, "old_text": f"line_{n} = {n}", "new_text": f"line_{n} = {n + 10}"},
         ))
         assert result.get("status") == "modified"
 
@@ -321,6 +343,32 @@ def test_write_file_allowed_after_two_modifies(tmp_path):
         "write_file", {"path": rel, "content": "x = 1\n"},
     ))
     assert rewrite.get("status") == "written"
+
+
+def test_a_small_generated_file_may_be_rewritten_once_it_has_been_read(tmp_path):
+    """The other half of the inversion: <=200 lines unlocks with no modifies.
+
+    This is the tier the edit ladder now escalates into after two refused
+    edits, so it has to be reachable without first spending two refusals
+    against the guardrail itself. It is unlocked by the READ, not by the
+    size alone: an unread file is still refused, which is the guarantee the
+    prompt's "Do not rewrite a file you have not read this run" rests on.
+
+    Adopted for robustness, not throughput: the 96-run A/B behind the change
+    moved no pass rate (12/48 vs 16/48, p=0.501) and is claimed only for
+    lost scaffold code (27 items across 6 apps vs 0, p=0.027).
+    """
+    executor, rel = _generated_file(tmp_path, 50)
+
+    rewrite = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))
+    assert rewrite.get("status") == "written", rewrite
+
+    unread_executor, unread_rel = _generated_file(tmp_path / "second", 50, read=False)
+    refused = json.loads(unread_executor.execute(
+        "write_file", {"path": unread_rel, "content": "x = 1\n"},
+    ))
+    assert "error" in refused, refused
+    assert "you have not read it this run" in refused["error"]
 
 
 # ----------------------------------------------------------------------

@@ -1913,7 +1913,10 @@ class ToolExecutor:
         # so steer on the FIRST miss: the two turns this used to cost (re-read,
         # then guess line numbers) are exactly what the span removes.
         located = result.get("located_range") if tool == "modify_file" else None
-        if located:
+        # The located-range assist is a FIRST-miss aid only. Once two edits on
+        # this path have been refused the ladder escalates to a whole-file
+        # rewrite rather than to replace_file_lines.
+        if located and self._edit_recovery.get(path, 0) < 2:
             result["edit_recovery"] = {
                 "next_tool": "replace_file_lines", "path": path,
                 "read_id": located["read_id"],
@@ -1922,6 +1925,26 @@ class ToolExecutor:
             }
             return
         if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
+            return
+        # Two refused edits on this path -> rewrite the whole file.
+        # NOT because write_file is more reliable - measured, it is not: of 108
+        # corpus calls, 99 are new frontend files at 0% refusal, while on
+        # existing scaffold files it was 5 calls and 5 refusals. The reason is
+        # damage. A 96-run A/B found 27 lost scaffold items across 6 apps when
+        # the ladder ended at replace_file_lines and 0 when it ended here
+        # (p=0.027, the only significant result in that experiment), and the
+        # losses were traced to successful range edits on a drifted view
+        # overwriting neighbouring classes.
+        if tool in {"modify_file", "replace_file_lines", "read_file"}:
+            result["edit_recovery"] = {
+                "next_tool": "write_file", "path": path,
+                "instruction": "Two edits on this file have been refused. Stop editing it "
+                               "piecemeal: call read_file on the WHOLE file (no offset/limit), "
+                               "then write_file the complete file back with your change "
+                               "applied. Reproduce every line you read - do not summarise, "
+                               "elide, or drop code you were not asked to change. No rejected "
+                               "edit was applied; do not mark the requirement done.",
+            }
             return
         if tool == "read_file" and "read_id" in result and not exhausted:
             result["edit_recovery"] = {
@@ -2128,22 +2151,22 @@ class ToolExecutor:
                     ),
                 }
 
-        # Guardrail for small generated files: suggest modify_file instead.
-        # For large files (>200 lines), allow rewriting — it's more efficient
-        # than 20 modify_file calls on a 5000-line file. The guard also
-        # relaxes once the LLM has already made >= 2 modify_file edits on
-        # the path: at that point a full rewrite is exactly what the
-        # modify-streak reminder asks for, so rejecting it would put the
-        # two guardrails in direct contradiction.
+        # ARM B: size rule INVERTED. A whole-file rewrite is cheapest and
+        # safest on a SMALL file (<=200 lines), which the model can reproduce
+        # faithfully after one read; it is a large file that risks dropping
+        # code. So small generated files unlock write_file immediately and
+        # large ones keep the targeted-edit requirement until two modify_file
+        # attempts have been made.
         if rel_path in self._generator_files and os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 existing_lines = f.read().count("\n") + 1
-            if existing_lines <= 200 and self._modify_counts.get(rel_path, 0) < 2:
+            if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
                 return {
                     "error": (
-                        f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines). "
-                        "Use modify_file for targeted edits, or delete_file + "
-                        "write_file to replace it wholesale."
+                        f"'{rel_path}' was created by a BESSER generator and is large "
+                        f"({existing_lines} lines) - too large to reproduce faithfully "
+                        "from one read. Use modify_file for targeted edits. write_file "
+                        "unlocks for this file after two modify_file attempts."
                     ),
                 }
             # Rewrite allowed (large file, or repeated modifies already tried) — log it

@@ -55,24 +55,45 @@ def test_first_elision_wins():
     assert find_elision(block)[0] == 1
 
 
+# Files the detector is known to fire on, and why each is acceptable. A bare
+# count was the wrong shape: it scanned 2,000+ files with no headroom, so any
+# new file anywhere in the product broke this test for reasons unrelated to
+# edit_apply - it tripped twice in one day on unrelated work. Naming them
+# makes a new offender an explicit decision rather than a mystery failure.
+_ACCEPTED_ELISION_HITS = {
+    # Legal Python stub bodies: a dots-only line IS the statement.
+    "error_handler.py",
+    "quantum_diagram_processor.py",
+    # The detector's own module, describing the form it catches.
+    "edit_apply.py",
+}
+
+
 def test_false_positives_stay_bounded():
     """The detector is useless if it fires all over our own source.
 
-    Accepting the dots-only line costs exactly two: a stub body in
-    error_handler.py and one in quantum_diagram_processor.py. That is the
-    measured price of catching the form that corrupted booking_methods.py.
-    This fails if a change makes the detector materially noisier.
+    Accepting the dots-only line costs a handful of legal stub bodies. That
+    is the measured price of catching the form that corrupted
+    booking_methods.py. This fails if a change makes the detector noisier,
+    and names what it newly fired on.
     """
     import pathlib
-    flagged = []
+    flagged = set()
     root = pathlib.Path(__file__).resolve().parents[3] / "besser"
     for path in root.rglob("*.py"):
         try:
             if find_elision(path.read_text(encoding="utf-8")):
-                flagged.append(path.name)
+                flagged.add(path.name)
         except OSError:
             continue
-    assert len(flagged) <= 3, f"detector got noisy: {flagged}"
+
+    unexpected = flagged - _ACCEPTED_ELISION_HITS
+    assert not unexpected, (
+        f"the elision detector newly fires on {sorted(unexpected)}. Either that "
+        f"source has an ellipsis reading as an elided edit - reword it - or it "
+        f"is a genuine new stub body, in which case add it to "
+        f"_ACCEPTED_ELISION_HITS with the reason."
+    )
 
 
 # -- executor behaviour -------------------------------------------------

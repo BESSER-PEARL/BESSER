@@ -17,7 +17,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
 
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
@@ -107,36 +106,71 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests that exceed MAX_REQUEST_SIZE."""
+class RequestSizeLimitMiddleware:
+    """Reject requests that exceed MAX_REQUEST_SIZE.
 
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_REQUEST_SIZE:
-            return StarletteResponse("Request too large", status_code=413)
+    Pure ASGI on purpose, and not ``BaseHTTPMiddleware``. The previous
+    version read the body to enforce the cap, which consumes the receive
+    channel, and then every attempt to put it back was wrong on one
+    Starlette or the other:
 
-        # For requests without content-length or to prevent spoofing,
-        # read the body and enforce the limit on what actually arrived.
-        if request.method in ("POST", "PUT", "PATCH"):
-            body = await request.body()
-            if len(body) > MAX_REQUEST_SIZE:
-                return StarletteResponse("Request too large", status_code=413)
+    * consuming and NOT replaying deadlocks every POST on 0.27.0 - the
+      endpoint waits forever for a body that is already gone;
+    * replaying a constant ``http.request`` fixes 0.27.0 and breaks 0.36.3,
+      where ``BaseHTTPMiddleware`` polls receive again to await the client
+      disconnect, sees a second ``http.request`` and raises "Unexpected
+      message received" - a 500 on every POST;
+    * replaying then returning ``http.disconnect`` still breaks 0.36.3,
+      because that version already caches and replays the body itself, so
+      any manual ``_receive`` collides with its own machinery.
 
-            # Put it back. ``await request.body()`` drains the receive
-            # channel, and ``call_next`` builds a FRESH Request from that
-            # same channel - so without this the endpoint waits forever for
-            # a body that has already been consumed, and every POST, PUT and
-            # PATCH to this application deadlocks. Whether it does depends on
-            # the installed Starlette: 0.27.0 hangs, later versions replay it
-            # themselves, and `fastapi` is unpinned in requirements.txt, so
-            # which behaviour an install gets is down to the resolver.
-            # Replaying it explicitly is correct on every version.
-            async def _replay() -> dict:
-                return {"type": "http.request", "body": body, "more_body": False}
+    `fastapi` is unpinned in this package's requirements, so a fresh build
+    takes whichever Starlette pip resolves. The size check therefore must
+    not depend on that at all - so it never reads the body. It inspects
+    ``content-length`` and otherwise counts bytes as they stream past,
+    leaving the body untouched for the application to read normally.
+    """
 
-            request._receive = _replay
+    def __init__(self, app, max_size: int = None):
+        self.app = app
+        self.max_size = MAX_REQUEST_SIZE if max_size is None else max_size
 
-        return await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        headers = dict(scope.get("headers") or [])
+        declared = headers.get(b"content-length")
+        if declared:
+            try:
+                if int(declared) > self.max_size:
+                    return await StarletteResponse(
+                        "Request too large", status_code=413)(scope, receive, send)
+            except ValueError:
+                pass  # malformed header; the byte counter below still applies
+
+        seen = 0
+
+        async def counting_receive():
+            """Count what actually arrives, without holding on to it.
+
+            Covers an absent or understated ``content-length``. Once the cap
+            is passed the body is cut off with a disconnect rather than
+            streamed on: we are already past the point where a clean 413 can
+            be sent, and continuing would defeat the limit entirely.
+            """
+            nonlocal seen
+            message = await receive()
+            if message.get("type") == "http.request":
+                seen += len(message.get("body", b"") or b"")
+                if seen > self.max_size:
+                    logger.warning(
+                        "Request body exceeded %d bytes with content-length %r; "
+                        "cutting the stream", self.max_size, declared)
+                    return {"type": "http.disconnect"}
+            return message
+
+        return await self.app(scope, counting_receive, send)
 
 
 # ---------------------------------------------------------------------------

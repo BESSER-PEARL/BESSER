@@ -20,8 +20,32 @@ def rolling_on(monkeypatch):
     monkeypatch.setattr(llm_client, "_ROLLING_MESSAGE_CACHE", True)
 
 
-def test_disabled_by_default_is_noop():
-    # The module default is OFF (must be explicitly enabled after a paid check).
+@pytest.fixture
+def rolling_off(monkeypatch):
+    monkeypatch.setattr(llm_client, "_ROLLING_MESSAGE_CACHE", False)
+
+
+def test_enabled_by_default():
+    """The paid check this default was waiting on has happened.
+
+    claude-sonnet-5 through the PIA gateway, four growing turns, flag off then
+    on, nothing else different -- cumulative ``input_tokens`` 890/2,602/5,136/
+    8,492 off against 2/4/6/8 on, ``cache_read`` 4,845 -> 24,510. Off, re-sent
+    history is billed as fresh input and per-turn cost grows with the
+    transcript; a real 54-turn run measured 4,097,784 uncached input tokens at
+    a 25.2% hit rate, about half its cost.
+
+    A saving nobody enables is no saving, so the default is the point.
+    """
+    import importlib
+
+    importlib.reload(llm_client)
+    assert llm_client._ROLLING_MESSAGE_CACHE is True
+
+
+def test_opting_out_is_a_noop(rolling_off):
+    """BESSER_LLM_ROLLING_CACHE=0 must restore the previous request shape
+    exactly -- an escape hatch that still altered the payload is not one."""
     msgs = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "x"}]}]
     assert _with_message_cache(msgs) is msgs
 

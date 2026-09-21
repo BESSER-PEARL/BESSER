@@ -59,13 +59,54 @@ def test_gateway_models_are_billed_not_free(model_id):
     assert pricing["input"] > 0 and pricing["output"] > 0
 
 
-@pytest.mark.parametrize("model_id, expected_key", [
-    ("gpt-5.6-luna", "gpt-5.6-luna"),
-    ("gpt-5.6-sol", "gpt-5.6-sol"),
-    ("gpt-4o", "gpt-4o"),
+@pytest.mark.parametrize("model_id, input_rate, output_rate", [
+    # Anthropic. The coarse ``_MODEL_PRICING`` tiers cannot express these:
+    # one ``sonnet`` row cannot be both 4-6 and 5, and its ``opus`` row still
+    # carries Claude-3-era $15/$75 -- 3x over, which trips ``max_cost_usd`` at
+    # a third of the intended spend and aborts a healthy run.
+    ("claude-sonnet-5", 2.0, 10.0),
+    ("claude-sonnet-4-6", 3.0, 15.0),
+    ("claude-opus-5", 5.0, 25.0),
+    ("claude-opus-4-8", 5.0, 25.0),
+    ("claude-haiku-4-5", 1.0, 5.0),
+    # OpenAI.
+    ("gpt-5.6-terra", 2.0, 12.0),
+    ("gpt-5.6-luna", 0.2, 1.2),
+    ("gpt-4o", 2.5, 10.0),
+    # Resolved through a vendor prefix: the bare id is not published, and the
+    # id alone is ambiguous -- ``azure/mistral-large-latest`` is $8/$24
+    # against $0.50/$1.50 direct, so the vendor order decides, not chance.
+    ("mistral-large-latest", 0.5, 1.5),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", 0.1, 0.3),
 ])
-def test_known_paid_models_keep_their_real_rates(model_id, expected_key):
-    assert _get_pricing(model_id) == _MODEL_PRICING[expected_key]
+def test_known_paid_models_bill_at_published_rates(model_id, input_rate, output_rate):
+    """Pinned as literals, not as ``_MODEL_PRICING[key]``.
+
+    Asserting equality with the fallback table only proved the two agreed --
+    it passed happily while that table billed every Opus 3x over. These are
+    the published per-1M rates; a mismatch means either the vendored table
+    went stale or a lookup regressed.
+    """
+    pricing = _get_pricing(model_id)
+    assert pricing["input"] == pytest.approx(input_rate)
+    assert pricing["output"] == pytest.approx(output_rate)
+
+
+def test_an_unpublished_paid_model_still_falls_back_rather_than_going_free():
+    """A missing price must never read as $0 -- that is the cost cap gone."""
+    pricing = _get_pricing("some-unlisted-vendor-model-2099")
+    assert pricing != _ZERO_PRICING
+    assert pricing == _MODEL_PRICING["gpt-4o"]
+
+
+def test_the_vendored_table_ships_and_is_readable():
+    """Packaged via ``setup.cfg`` package_data; ``packages=find:`` does not
+    see ``data/`` as a package, so a key naming it would be inert and every
+    install would silently fall back to the coarse tiers."""
+    from besser.generators.llm.llm_client import _vendored_prices
+    table = _vendored_prices()
+    assert table, "vendored price table is missing or empty"
+    assert table["claude-sonnet-5"]["input_cost_per_token"] == pytest.approx(2e-06)
 
 
 def test_the_self_hosted_fallback_stays_free():

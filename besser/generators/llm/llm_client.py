@@ -14,10 +14,13 @@ Features:
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
 """
 
+import json
 import logging
 import os
 import time
 from abc import ABC, abstractmethod
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -185,8 +188,95 @@ def _is_free_local_model(model_lower: str) -> bool:
     return any(marker in model_lower for marker in _FREE_LOCAL_MODEL_MARKERS)
 
 
+_VENDORED_PRICES_PATH = Path(__file__).with_name("data") / "model_prices.json"
+
+# Order is the tie-break, not a preference: one bare id can appear under
+# several vendors at wildly different rates (``mistral-large-latest`` is
+# $0.50/$1.50 direct and $8/$24 on Azure). Only vendors we actually call are
+# listed, so a resold id can never be priced at some third party's rate.
+_PRICE_LOOKUP_PREFIXES = ("", "anthropic/", "openai/", "mistral/", "nebius/")
+
+
+@lru_cache(maxsize=1)
+def _vendored_price_index() -> dict[str, dict[str, float]]:
+    """``_vendored_prices`` re-keyed lower-case for case-insensitive lookup.
+
+    Model ids reach us in whatever case the caller typed, and the published
+    keys are mixed case themselves (``nebius/Qwen/Qwen3-30B-A3B-Instruct-2507``).
+    An exact-case ``dict.get`` silently missed and fell through to the coarse
+    tier table.
+    """
+    return {key.lower(): value for key, value in _vendored_prices().items()}
+
+
+@lru_cache(maxsize=1)
+def _vendored_prices() -> dict[str, dict[str, float]]:
+    """Published per-model rates, keyed by exact model id.
+
+    Vendored from litellm's ``model_prices_and_context_window.json`` (MIT),
+    reduced to the providers we call and the four fields we read. The data
+    file rather than the package: an ``import litellm`` would break the
+    offline on-prem install. Refresh with::
+
+        curl -s https://raw.githubusercontent.com/BerriAI/litellm/main/\\
+model_prices_and_context_window.json
+
+    then keep rows whose ``litellm_provider`` is anthropic/openai/mistral/
+    nebius/bedrock and the ``*_cost_per_token`` fields.
+
+    Returns ``{}`` if the file is missing (a wheel built without it), which
+    falls the caller through to ``_MODEL_PRICING`` rather than to $0 — an
+    absent price must never read as free, or the cost cap stops existing.
+    """
+    try:
+        with open(_VENDORED_PRICES_PATH, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        logger.warning("Vendored model price table unreadable at %s; "
+                       "falling back to the built-in tier table",
+                       _VENDORED_PRICES_PATH)
+        return {}
+
+
+def _published_pricing(model_id: str) -> dict[str, float] | None:
+    """Exact-id rate for ``model_id``, or ``None`` when it is not published."""
+    table = _vendored_price_index()
+    if not table:
+        return None
+    # Per-TOKEN costs scaled to per-million land on values like
+    # 0.19999999999999998. Rounding keeps the published figure exact, so a
+    # rate reads as 0.2 rather than as float noise in every cost report.
+    def per_million(value: float) -> float:
+        return round(value * 1_000_000.0, 6)
+
+    for prefix in _PRICE_LOOKUP_PREFIXES:
+        row = table.get(f"{prefix}{model_id}".lower())
+        if row and row.get("input_cost_per_token") is not None:
+            read = row.get("cache_read_input_token_cost")
+            return {
+                "input": per_million(row["input_cost_per_token"]),
+                "output": per_million(row["output_cost_per_token"]),
+                "cache_write": per_million(
+                    row.get("cache_creation_input_token_cost", 0.0)),
+                # No published cache discount means reads bill at the input
+                # rate, not free — same reasoning as the Mistral/Nebius rows.
+                "cache_read": per_million(
+                    read if read is not None else row["input_cost_per_token"]),
+            }
+    return None
+
+
 def _get_pricing(model_id: str) -> dict[str, float]:
-    """Get pricing tier based on model ID.
+    """Get the per-1M-token rates for a model ID.
+
+    Published per-model rates come first, from the vendored table. The
+    hand-typed ``_MODEL_PRICING`` below it is a fallback for ids nobody
+    publishes, and its Anthropic rows are coarse *tiers*: they cannot tell
+    ``claude-sonnet-4-6`` ($3/$15) from ``claude-sonnet-5`` ($2/$10), and the
+    ``opus`` row still carries Claude-3-era $15/$75 — 3x over every current
+    Opus, which trips ``max_cost_usd`` at a third of the intended spend.
+    Prices are external facts that drift silently, so prefer the table that
+    is refreshed over the one that is remembered.
 
     Order matters in the OpenAI loop — longer / more-specific keys
     must come first so e.g. ``gpt-5.5`` doesn't get mis-matched to
@@ -199,6 +289,9 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     # Self-hosted / free local models — never bill, never trip the cost cap.
     if _is_free_local_model(model_lower):
         return _ZERO_PRICING
+    published = _published_pricing(model_id)
+    if published is not None:
+        return published
     # Anthropic tiers — unambiguous identifiers so order doesn't matter.
     for tier in ("haiku", "sonnet", "opus"):
         if tier in model_lower:

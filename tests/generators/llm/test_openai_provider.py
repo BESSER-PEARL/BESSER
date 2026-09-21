@@ -353,7 +353,12 @@ class TestOpenAIPricing:
     @pytest.mark.parametrize(
         ("model", "input_rate", "output_rate"),
         [
-            ("gpt-5.6-sol", 5.0, 30.0),
+            # sol: sources DISAGREE -- the hand-typed table said 5.0/30.0,
+            # the vendored table says 4.0/20.0, OpenRouter (resale) 2.0/10.0.
+            # Pinned to the vendored figure because that is the table we
+            # refresh; unlike terra/luna below it was never checked against an
+            # official page. Re-verify if sol ever becomes a model we run.
+            ("gpt-5.6-sol", 4.0, 20.0),
             ("gpt-5.6-terra", 2.0, 12.0),
             ("gpt-5.6-luna", 0.2, 1.2),
         ],
@@ -364,9 +369,16 @@ class TestOpenAIPricing:
         assert pricing["output"] == output_rate
 
     def test_o3_pricing(self):
+        """Was pinned at 10.0/40.0 -- o3's launch price, cut ~80% since.
+
+        The vendored table and OpenRouter independently agree on 2.0/8.0, so
+        the old expectation was 5x over: it asserted that a stale hand-typed
+        number stayed stale, and would have kept ``max_cost_usd`` firing at a
+        fifth of the intended spend.
+        """
         p = _get_pricing("o3")
-        assert p["input"] == 10.0
-        assert p["output"] == 40.0
+        assert p["input"] == 2.0
+        assert p["output"] == 8.0
 
     def test_o3_mini_pricing(self):
         p = _get_pricing("o3-mini")

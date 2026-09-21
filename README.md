@@ -101,3 +101,6 @@ Website: https://besser-pearl.org
 ## License
 
 This project is licensed under the [MIT](https://mit-license.org/) license.
+
+Some optional features rely on third-party software; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.

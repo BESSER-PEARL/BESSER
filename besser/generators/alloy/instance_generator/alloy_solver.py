@@ -1,7 +1,6 @@
 import logging
 import os
 import tempfile
-from pathlib import Path
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.alloy.alloy_generator import AlloyGenerator
 from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyAnalyzerExecutor, AlloyResult
@@ -11,6 +10,9 @@ from besser.utilities.buml_code_builder.domain_model_builder import domain_model
 logger = logging.getLogger(__name__)
 
 class AlloySolver:
+    """Performs different kinds of automated analyses on B-UML models annotated with OCL invarints. 
+    It can check for model consistency (i.e., satisfiability) and generate object diagrams for the model. 
+    It employs the Alloy Analyzer as a backend for analysis."""
 
     def __init__(self, model: DomainModel, output_dir: str | None = None, scope: int = 5):
         if output_dir is None:

@@ -116,11 +116,25 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
             return StarletteResponse("Request too large", status_code=413)
 
         # For requests without content-length or to prevent spoofing,
-        # wrap the body stream to enforce the limit
+        # read the body and enforce the limit on what actually arrived.
         if request.method in ("POST", "PUT", "PATCH"):
             body = await request.body()
             if len(body) > MAX_REQUEST_SIZE:
                 return StarletteResponse("Request too large", status_code=413)
+
+            # Put it back. ``await request.body()`` drains the receive
+            # channel, and ``call_next`` builds a FRESH Request from that
+            # same channel - so without this the endpoint waits forever for
+            # a body that has already been consumed, and every POST, PUT and
+            # PATCH to this application deadlocks. Whether it does depends on
+            # the installed Starlette: 0.27.0 hangs, later versions replay it
+            # themselves, and `fastapi` is unpinned in requirements.txt, so
+            # which behaviour an install gets is down to the resolver.
+            # Replaying it explicitly is correct on every version.
+            async def _replay() -> dict:
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            request._receive = _replay
 
         return await call_next(request)
 

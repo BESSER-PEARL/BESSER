@@ -13,8 +13,8 @@ For a complete example of using the Object Diagram Generator's API to
 perform different kinds of analyses on a B-UML/OCL model, refer to:
 ``tests/generators/alloy/run_object_diagram_generator_API.py``.
 
-Installation
-------------
+Manual Installation (no Docker)
+-------------------------------
 
 This generator depends on the following software:
 
@@ -27,6 +27,14 @@ Afterwards, you must set the following environment variables:
 - ``BESSER_ALLOY_JAR``: The path to the downloaded Alloy Analyzer .jar file.
 
 Now we are ready to automatically generate object diagrams from B-UML/OCL models.
+
+.. note::
+   Alloy Analyzer 6.2 is distributed under the MIT License, Copyright (c) the Alloy
+   project (see
+   `LICENSE <https://github.com/AlloyTools/org.alloytools.alloy/blob/v6.2.0/LICENSE>`_).
+   The official BESSER Docker image bundles the Alloy jar (see ``Dockerfile``); a manual
+   installation as above does not. See the project's ``THIRD_PARTY_LICENSES.md`` for
+   details.
 
 Consistency Checks
 ------------------

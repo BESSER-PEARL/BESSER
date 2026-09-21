@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 BESSER is a low-code platform for building software through model-driven engineering. It consists of:
 - **B-UML**: A Python-based metamodel for describing domain models, object (instance) models, state machines, GUI designs, agents, BPMN processes, neural networks, quantum circuits, deployments, feature models, and OCL constraints
 - **Code Generators**: Transform B-UML models into executable code (Django, FastAPI, SQLAlchemy, Flutter, React, etc.)
-- **Spec-Driven Agent**: A *hybrid* generator — deterministic scaffold, then an LLM customization loop, then validation with a bounded auto-fix loop. Lives in `besser/generators/llm/` (the engine) and `besser/utilities/web_modeling_editor/backend/services/spec_driven/` (the service layer). It is a first-class part of the system, not an add-on.
+- **Spec-Driven Agent**: A *hybrid* generator — deterministic scaffold, then an LLM customization loop, then validation with a bounded auto-fix loop. Lives in `besser/spec_driven_agent/` (the engine) and `besser/utilities/web_modeling_editor/backend/services/spec_driven/` (the service layer). It is a first-class part of the system, not an add-on.
 - **Web Modeling Editor Backend**: FastAPI services powering the online visual editor at https://editor.besser-pearl.org
 - **Frontend Submodule**: TypeScript/React UI at `besser/utilities/web_modeling_editor/frontend` (maintained separately)
 
@@ -157,12 +157,12 @@ class GeneratorInterface(ABC):
 - **Quantum**: `QiskitGenerator`
 - **Deployment**: `TerraformGenerator`
 - **Business Process**: `BPMNGenerator`
-- **Hybrid / LLM**: `besser/generators/llm/` — see below. Not in `SUPPORTED_GENERATORS`;
+- **Hybrid / LLM**: `besser/spec_driven_agent/` — see below. Not in `SUPPORTED_GENERATORS`;
   it is driven by its own router rather than `/generate-output`.
 
 **Key Pattern**: Template-based generation with Jinja2. Templates live in `generators/[type]/templates/`.
 
-#### 4. Spec-Driven Agent (`besser/generators/llm/`)
+#### 4. Spec-Driven Agent (`besser/spec_driven_agent/`)
 
 The hybrid generator. Treat it as a peer of the deterministic generators, not a side project.
 
@@ -172,7 +172,7 @@ The hybrid generator. Treat it as a peer of the deterministic generators, not a 
   - Phase 3 validation + bounded auto-fix (`_MAX_TOOLCHAIN_FIX_ITERATIONS = 5` is a FLOOR - the loop runs `max(5, max_turns - total_turns)` rounds, best-tree snapshot/restore). A **runtime gate** runs on every Phase 3 exit including budget exhaustion: a run cannot report complete while the delivered app cannot boot or create a record
   - Severity classification lives in `_classify_issue`: `blocker` / `warning` / `style`
   - Guards worth knowing: turn cap (`MAX_TURNS = 120`), cost/runtime caps checked at turn boundaries, truncation recovery (`_MAX_TRUNCATION_RETRIES = 4`, per run, never reset), per-file modify-loop detection (`_PER_FILE_MODIFY_THRESHOLD = 3`), parallel tool execution grouped by write path (`_MAX_PARALLEL_WORKERS = 4`), checklist end_turn gate (`_MAX_TASK_NUDGES = 2`, 4 when an open item carries a verifier)
-- **`tools.py`** — declares the LLM's tool surface (files, model queries, validation/bookkeeping, generators, shell). **If you add a tool, add it to `_TOOL_MODEL_REQUIREMENTS` in the same file** so it is only offered when the models it needs are present; `tests/generators/llm/test_added_generator_tools.py` asserts every generator tool has an entry.
+- **`tools.py`** — declares the LLM's tool surface (files, model queries, validation/bookkeeping, generators, shell). **If you add a tool, add it to `_TOOL_MODEL_REQUIREMENTS` in the same file** so it is only offered when the models it needs are present; `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has an entry.
 - **`tool_executor.py`** — implements the tools, plus the `task_list` checklist (batch `ids=[...]`, bounded verification retries: `_MAX_TASK_VERIFY_ATTEMPTS = 3`, after which an item is recorded *blocked* and stops holding the gate open).
 - **`llm_client.py`** — provider clients (`anthropic`, `openai`, `mistral`), the keyless `free` tier and the `sponsored` tier, pricing tables, the cheap planning-model routing, and the free-tier fallback chain.
 - **`gap_analyzer.py`** — the cheap planning call that produces the Phase 2 checklist. Its return value is load-bearing: `None` = analysis failed, `[]` = scaffold already sufficient (Phase 2 *may* be skipped), a list = the task list.
@@ -358,7 +358,7 @@ To add a new deterministic generator:
 4. Register in `utilities/web_modeling_editor/backend/config/generators.py` (`SUPPORTED_GENERATORS`, plus `get_filename_for_generator`)
 5. Add tests in `tests/generators/[name]/`
 6. Write `docs/source/generators/[name].rst` and add it to a toctree **and** the "Choosing a Generator" table in `docs/source/generators.rst`
-7. If the LLM agent should be able to call it, add a tool to `besser/generators/llm/tools.py` **and** an entry to `_TOOL_MODEL_REQUIREMENTS`
+7. If the LLM agent should be able to call it, add a tool to `besser/spec_driven_agent/tools.py` **and** an entry to `_TOOL_MODEL_REQUIREMENTS`
 
 ### Resource Management
 - Temp directories use the `besser_*` prefixes listed above so the cleanup task can find them

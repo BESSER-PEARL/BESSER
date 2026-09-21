@@ -84,7 +84,7 @@ failed validation instead of generating.
 New features
 ------------
 
-**Spec-Driven Agent** (``besser/generators/llm/``)
+**Spec-Driven Agent** (``besser/spec_driven_agent/``)
 
 A hybrid generator, documented at :doc:`/spec_driven_agent/index`. It runs in phases:
 

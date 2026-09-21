@@ -13,7 +13,7 @@ production:
 
 import pytest
 
-from besser.generators.llm.llm_client import (
+from besser.spec_driven_agent.llm_client import (
     _get_pricing,
     create_llm_client,
     free_alt_choice,

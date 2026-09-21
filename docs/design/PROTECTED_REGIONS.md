@@ -27,7 +27,7 @@ Concrete evidence:
   but that code lives in the **model**, not in the generated file.
   Editing the rendered Python and regenerating discards the edit.
 - The LLM orchestrator
-  (`besser/generators/llm/orchestrator.py::_phase1_generate`, around
+  (`besser/spec_driven_agent/orchestrator.py::_phase1_generate`, around
   line 558) calls the deterministic generator into `self.output_dir`
   and then runs the gap-analyzer / Phase 2 LLM loop on top.
   Snapshot/rollback (`_create_snapshot`, `_restore_snapshot`,

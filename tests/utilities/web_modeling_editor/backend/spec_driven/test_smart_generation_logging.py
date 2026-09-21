@@ -155,7 +155,7 @@ class TestApiKeyNeverInLogs:
 
         def _reject(**kwargs):
             # Simulate real provider error. The plain-text message
-            # from besser.generators.llm.llm_client does NOT echo the
+            # from besser.spec_driven_agent.llm_client does NOT echo the
             # actual key — it just says "No Anthropic API key found...".
             raise ValueError("No Anthropic API key found. Set ANTHROPIC_API_KEY.")
 

@@ -1,0 +1,533 @@
+"""Tests for incremental vibe-modify on ``LLMOrchestrator``.
+
+``modify()`` seeds ``output_dir`` from a previous run's files and edits
+them in place instead of rebuilding from scratch. These tests pin the
+hard-separation contract:
+
+  * the from-scratch ``run()`` path is byte-identical (Phase 1 still runs,
+    the system prompt is unchanged when ``modify_mode`` is False);
+  * ``modify()`` SKIPS Phase 1, so a customised file the LLM never touches
+    survives untouched;
+  * ``_seed_generator_files_from_recipe`` replays generator tags from the
+    seed recipe and ``_save_recipe`` re-emits them as ``generator``;
+  * the prompt directive appears only in modify mode.
+
+The full LLM loop is driven with a scripted stub client (same shape the
+real ``ClaudeLLMClient.chat`` returns) so Phase 2 runs end to end without
+a provider.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from besser.BUML.metamodel.structural import (
+    Class,
+    DomainModel,
+    PrimitiveDataType,
+    Property,
+)
+from besser.spec_driven_agent.llm_client import (
+    ClaudeLLMClient,
+    FROM_SCRATCH_MAX_TOKENS,
+    MODIFY_MAX_TOKENS,
+)
+from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.prompt_builder import build_system_prompt
+
+
+_MODIFY_DIRECTIVE = "You are MODIFYING an existing, working app."
+
+
+# ----------------------------------------------------------------------
+# Test doubles
+# ----------------------------------------------------------------------
+
+
+class _Block:
+    """Duck-typed content block matching what ``chat()`` returns."""
+
+    def __init__(self, block_type, **kwargs):
+        self.type = block_type
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class _Usage:
+    def __init__(self):
+        self.estimated_cost = 0.0
+
+    def summary(self) -> dict:
+        return {"api_calls": 1, "cost_usd": 0.0}
+
+
+class _ScriptedClient:
+    """LLM client stub that returns queued ``chat`` responses in order.
+
+    No ``_client`` attribute, so the gap analyser and the structured
+    generator selector both skip it. No ``chat_stream``, so Phase 2 takes
+    the non-streaming path.
+    """
+
+    def __init__(self, responses):
+        self.model = "test-model"
+        self.usage = _Usage()
+        self.max_tokens = 4096
+        self._responses = list(responses)
+        self.chat_calls = 0
+
+    def chat(self, system=None, messages=None, tools=None, **kwargs):
+        self.chat_calls += 1
+        if self._responses:
+            return self._responses.pop(0)
+        return {"stop_reason": "end_turn", "content": [_Block("text", text="done")]}
+
+
+def _tool_use(name: str, tool_id: str, tool_input: dict) -> dict:
+    return {
+        "stop_reason": "tool_use",
+        "content": [_Block("tool_use", name=name, id=tool_id, input=tool_input)],
+    }
+
+
+def _end_turn(text: str = "done") -> dict:
+    return {"stop_reason": "end_turn", "content": [_Block("text", text=text)]}
+
+
+def _make_domain() -> DomainModel:
+    string_type = PrimitiveDataType("str")
+    book = Class(name="Book")
+    book.attributes = {Property(name="title", type=string_type, is_id=True)}
+    return DomainModel(name="Library", types={book})
+
+
+def _make_orchestrator(tmp_path, client) -> LLMOrchestrator:
+    return LLMOrchestrator(
+        llm_client=client,
+        domain_model=_make_domain(),
+        output_dir=str(tmp_path),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+
+
+# ----------------------------------------------------------------------
+# (a) From-scratch parity — prompt is byte-identical when modify_mode=False
+# ----------------------------------------------------------------------
+
+
+def test_build_system_prompt_default_is_byte_identical():
+    """Omitting ``modify_mode`` and passing ``modify_mode=False`` must
+    produce the exact same string — the from-scratch prompt is frozen."""
+    domain = _make_domain()
+    common = dict(
+        domain_model=domain,
+        gui_model=None,
+        agent_model=None,
+        inventory="Generated 5 files",
+        instructions="Build a library API",
+        max_turns=20,
+    )
+    default = build_system_prompt(**common)
+    explicit_false = build_system_prompt(**common, modify_mode=False)
+    assert default == explicit_false
+    assert _MODIFY_DIRECTIVE not in default
+
+
+def test_modify_mode_prepends_directive_only():
+    """modify_mode=True prepends the directive; the rest of the prompt is
+    the same body that from-scratch would emit (directive is additive)."""
+    domain = _make_domain()
+    common = dict(
+        domain_model=domain,
+        gui_model=None,
+        agent_model=None,
+        inventory="Generated 5 files",
+        instructions="Add a dark theme",
+        max_turns=20,
+    )
+    base = build_system_prompt(**common)
+    modified = build_system_prompt(**common, modify_mode=True)
+    assert modified != base
+    assert modified.startswith(_MODIFY_DIRECTIVE)
+    assert "prefer `modify_file` over `write_file`" in modified
+    # Additive: the from-scratch body is still present verbatim after the
+    # prepended directive.
+    assert base in modified
+
+
+def test_run_calls_phase1_but_modify_skips_it(tmp_path, monkeypatch):
+    """The load-bearing separation: run() scaffolds via Phase 1; modify()
+    never calls Phase 1 (so the generator can't overwrite seeded files)."""
+    client = _ScriptedClient([])
+    orch = _make_orchestrator(tmp_path, client)
+
+    calls: list[str] = []
+    monkeypatch.setattr(orch, "_run_phase1", lambda instr: calls.append("phase1"))
+    # Neutralise the rest of the pipeline so this is a pure control-flow test.
+    monkeypatch.setattr(orch, "_run_phase0_5_metadata", lambda instr: None)
+    monkeypatch.setattr(orch, "_apply_adaptive_budget", lambda: None)
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.run("build it")
+    assert calls == ["phase1"]
+
+    calls.clear()
+    orch2 = _make_orchestrator(tmp_path, client)
+    monkeypatch.setattr(orch2, "_run_phase1", lambda instr: calls.append("phase1"))
+    monkeypatch.setattr(orch2, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch2, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch2, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch2, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch2, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch2, "_remove_snapshot", lambda: None)
+
+    orch2.modify("add a feature")
+    assert calls == []  # Phase 1 was never entered in modify mode
+    assert orch2._modify_mode is True
+
+
+# ----------------------------------------------------------------------
+# (b) modify() does not overwrite a customised, untargeted file
+# ----------------------------------------------------------------------
+
+
+def test_modify_preserves_untouched_customised_file(tmp_path, monkeypatch):
+    """Seed a customised file + a target file. Drive Phase 2 with a stub
+    LLM that only edits the target. The customised file must survive
+    byte-for-byte, and Phase 1 must never run."""
+    # Gap analysis short-circuits to None with the stub client anyway, but
+    # pin it so the test doesn't depend on that detail.
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        lambda **kwargs: None,
+    )
+
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    custom = seed / "custom_theme.css"
+    custom_content = "body { background: #0d1117; color: #e6edf3; }\n"
+    custom.write_text(custom_content, encoding="utf-8")
+    (seed / "README.md").write_text("# Old Title\nWelcome.\n", encoding="utf-8")
+
+    # Scripted: edit README.md, then finish.
+    client = _ScriptedClient([
+        _tool_use(
+            "modify_file",
+            "t1",
+            {"path": "README.md", "old_text": "# Old Title", "new_text": "# New Title"},
+        ),
+        _end_turn("Updated the README."),
+    ])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+
+    phase1_calls: list[str] = []
+    monkeypatch.setattr(orch, "_run_phase1", lambda instr: phase1_calls.append("x"))
+
+    result = orch.modify("Rename the README heading")
+
+    assert result == str(seed)
+    assert phase1_calls == []  # Phase 1 skipped
+    # The untouched customised file is byte-identical.
+    assert custom.read_text(encoding="utf-8") == custom_content
+    # The targeted file WAS edited.
+    assert "# New Title" in (seed / "README.md").read_text(encoding="utf-8")
+    # Phase 2 ran to a clean end_turn.
+    assert orch._phase2_exited_cleanly is True
+    assert client.chat_calls == 2
+
+
+# ----------------------------------------------------------------------
+# (c) recipe helper loads generator tags; _save_recipe re-tags them
+# ----------------------------------------------------------------------
+
+
+def test_seed_generator_files_from_recipe_and_resave(tmp_path):
+    seed = tmp_path / "seed"
+    (seed / "backend").mkdir(parents=True)
+    (seed / "frontend").mkdir()
+    (seed / "backend" / "main.py").write_text("print('api')\n", encoding="utf-8")
+    (seed / "frontend" / "app.css").write_text(".x{}\n", encoding="utf-8")
+
+    seed_recipe = {
+        "generator_used": "generate_fastapi_backend",
+        "output_files": [
+            {"path": "backend/main.py", "size": 12, "source": "generator"},
+            {"path": "frontend/app.css", "size": 5, "source": "llm"},
+        ],
+    }
+    (seed / ".besser_recipe.json").write_text(
+        json.dumps(seed_recipe), encoding="utf-8"
+    )
+
+    client = _ScriptedClient([])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+
+    orch._seed_generator_files_from_recipe()
+
+    assert orch._seed_generator_used == "generate_fastapi_backend"
+    assert "backend/main.py" in orch.executor._generator_files
+    assert "frontend/app.css" not in orch.executor._generator_files
+
+    # _save_recipe re-emits the generator tag for the seeded file.
+    orch._save_recipe("add feature", elapsed=1.0)
+    new_recipe = json.loads(
+        (seed / ".besser_recipe.json").read_text(encoding="utf-8")
+    )
+    by_path = {f["path"]: f["source"] for f in new_recipe["output_files"]}
+    assert by_path["backend/main.py"] == "generator"
+    assert by_path["frontend/app.css"] == "llm"
+
+
+def test_seed_recipe_missing_is_harmless(tmp_path):
+    """No recipe → every file treated as llm; helper must not raise."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "main.py").write_text("x = 1\n", encoding="utf-8")
+
+    orch = LLMOrchestrator(
+        llm_client=_ScriptedClient([]),
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+    orch._seed_generator_files_from_recipe()  # must not raise
+    assert orch._seed_generator_used is None
+    assert orch.executor._generator_files == set()
+
+
+# ----------------------------------------------------------------------
+# Seed-issue forwarding (D1): a modify run pays down the seed's debt
+# ----------------------------------------------------------------------
+
+
+def test_seed_unresolved_blockers_are_loaded_from_recipe(tmp_path):
+    """Only blocker-severity issues from the seed recipe are forwarded —
+    warnings/style would flood the prompt with ruff noise."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / ".besser_recipe.json").write_text(json.dumps({
+        "generator_used": "generate_web_app",
+        "output_files": [],
+        "validation_issues": [
+            {"severity": "blocker", "message": "data contract: routers/book.py line 4: `id: int`"},
+            {"severity": "warning", "message": "ruff: F401 unused import"},
+            {"severity": "style", "message": "ruff: E501 line too long"},
+        ],
+    }), encoding="utf-8")
+
+    orch = LLMOrchestrator(
+        llm_client=_ScriptedClient([]),
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+    orch._seed_generator_files_from_recipe()
+    assert orch._seed_unresolved_issues == [
+        "Unresolved from the previous run: data contract: routers/book.py line 4: `id: int`",
+    ]
+
+
+def test_modify_forwards_seed_blockers_into_phase2(tmp_path, monkeypatch):
+    """modify() hands the seed's unresolved blockers to Phase 2 alongside
+    the fresh Phase 1.5 findings."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / ".besser_recipe.json").write_text(json.dumps({
+        "generator_used": "generate_web_app",
+        "output_files": [],
+        "validation_issues": [
+            {"severity": "blocker", "message": "Syntax error in main.py line 3: bad"},
+        ],
+    }), encoding="utf-8")
+
+    orch = LLMOrchestrator(
+        llm_client=_ScriptedClient([]),
+        domain_model=_make_domain(),
+        output_dir=str(seed),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+    captured: dict = {}
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: ["fresh issue"])
+    monkeypatch.setattr(
+        orch, "_run_phase2",
+        lambda instr, extra_issues=None: captured.update(issues=extra_issues),
+    )
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.modify("add a feature")
+    assert captured["issues"] == [
+        "fresh issue",
+        "Unresolved from the previous run: Syntax error in main.py line 3: bad",
+    ]
+
+
+# ----------------------------------------------------------------------
+# Session history (P2): runs remember what previous runs did
+# ----------------------------------------------------------------------
+
+
+def test_save_recipe_accumulates_history(tmp_path):
+    orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    orch.tool_calls_log = [
+        {"turn": 1, "tool": "write_file", "input": {"path": "a.py"}, "success": True},
+        {"turn": 2, "tool": "read_file", "input": {"path": "b.py"}, "success": True},
+    ]
+    orch._save_recipe("build a library app", elapsed=1.0)
+
+    orch2 = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    orch2._modify_mode = True
+    orch2.tool_calls_log = [
+        {"turn": 1, "tool": "modify_file", "input": {"path": "a.py"}, "success": True},
+    ]
+    orch2._save_recipe("add a search bar", elapsed=1.0)
+
+    recipe = json.loads(
+        (tmp_path / ".besser_recipe.json").read_text(encoding="utf-8")
+    )
+    history = recipe["history"]
+    assert len(history) == 2
+    assert history[0]["mode"] == "create"
+    assert history[0]["instructions"] == "build a library app"
+    assert history[0]["files_touched"] == ["a.py"]  # read_file not counted
+    assert history[1]["mode"] == "modify"
+    assert history[1]["instructions"] == "add a search bar"
+
+
+def test_load_recipe_history_synthesizes_from_legacy_recipe(tmp_path):
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({
+        "instructions": "build a hotel app",
+        "tool_calls": [
+            {"turn": 1, "tool": "write_file", "input": {"path": "main.py"}, "success": True},
+        ],
+    }), encoding="utf-8")
+    history = LLMOrchestrator._load_recipe_history(
+        str(tmp_path / ".besser_recipe.json")
+    )
+    assert len(history) == 1
+    assert history[0]["instructions"] == "build a hotel app"
+    assert history[0]["files_touched"] == ["main.py"]
+    assert history[0]["mode"] == "create"
+
+
+def test_modify_inventory_carries_session_history(tmp_path, monkeypatch):
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({
+        "generator_used": "generate_web_app",
+        "output_files": [],
+        "history": [
+            {"instructions": "build a library app", "mode": "create",
+             "files_touched": ["backend/main.py"]},
+            {"instructions": "add a search bar", "mode": "modify",
+             "files_touched": ["frontend/src/App.tsx"]},
+        ],
+    }), encoding="utf-8")
+
+    orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.modify("make search fuzzy")
+
+    assert "Previous work on this app" in orch._inventory
+    assert '"add a search bar"' in orch._inventory
+    assert "frontend/src/App.tsx" in orch._inventory
+    assert "must survive your edits" in orch._inventory
+
+
+# ----------------------------------------------------------------------
+# (g) Output-token budget — modify/fix gets the wider per-call ceiling,
+# a scaffolded first generation keeps the client default.
+# ----------------------------------------------------------------------
+
+
+def test_modify_run_raises_output_budget(tmp_path, monkeypatch):
+    """A modify run must raise the client's per-call output ceiling to
+    ``MODIFY_MAX_TOKENS`` so a single-turn file rewrite truncates far
+    less, while a scaffolded first-generation ``run()`` keeps the client
+    default (16384). The pipeline is neutralised so this is a pure
+    budget-wiring test."""
+    default = ClaudeLLMClient.DEFAULT_MAX_TOKENS
+    assert default == 16384  # pins the from-scratch/scaffold default
+    assert MODIFY_MAX_TOKENS == 32768  # pins the raised modify budget
+
+    # --- modify() raises the ceiling to the modify budget ---
+    modify_client = _ScriptedClient([])
+    modify_client.max_tokens = default
+    orch = _make_orchestrator(tmp_path, modify_client)
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+    orch.modify("rewrite the whole endpoints file")
+
+    assert modify_client.max_tokens == MODIFY_MAX_TOKENS
+    assert orch._adaptive_budget_applied is True
+
+    # --- a scaffolded first-gen run() ALSO raises the ceiling ---
+    # Changed 2026-09-10. This used to assert the scaffolded path kept the
+    # 16384 default, on the theory that a scaffold underneath means smaller
+    # responses. Live evidence says otherwise: a scaffolded run asked for a
+    # React frontend, overran 16384 on its FIRST customisation turn, and
+    # Phase 2 ended with zero LLM writes. A customisation turn writes whole
+    # NEW files the generator never emitted, so it is the same large-response
+    # case as from-scratch and modify — both of which already got the raise.
+    scaffold_client = _ScriptedClient([])
+    scaffold_client.max_tokens = default
+    orch2 = _make_orchestrator(tmp_path, scaffold_client)
+
+    def _fake_phase1(instr):
+        # Simulate that a deterministic generator ran (scaffolded path).
+        orch2._generator_used = "python"
+
+    monkeypatch.setattr(orch2, "_run_phase1", _fake_phase1)
+    monkeypatch.setattr(orch2, "_run_phase0_5_metadata", lambda instr: None)
+    monkeypatch.setattr(orch2, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch2, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch2, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch2, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch2, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch2, "_remove_snapshot", lambda: None)
+
+    orch2.run("build a library app")
+
+    assert scaffold_client.max_tokens == FROM_SCRATCH_MAX_TOKENS
+    assert orch2._adaptive_budget_applied is True

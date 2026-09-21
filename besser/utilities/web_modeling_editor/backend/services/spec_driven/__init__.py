@@ -1,6 +1,6 @@
 """Smart generation service package.
 
-Glue between the LLM orchestrator (``besser.generators.llm``) and the
+Glue between the LLM orchestrator (``besser.spec_driven_agent``) and the
 FastAPI SSE endpoint. Exposes:
 
 - Event models and the ``format_sse`` serializer used by the router.

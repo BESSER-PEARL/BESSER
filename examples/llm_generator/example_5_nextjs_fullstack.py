@@ -24,7 +24,7 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation, Multiplicity, UNLIMITED_MAX_MULTIPLICITY,
     Enumeration, EnumerationLiteral,
 )
-from besser.generators.llm import LLMGenerator
+from besser.spec_driven_agent import LLMGenerator
 
 # ── Task management model ────────────────────────────────────────────
 

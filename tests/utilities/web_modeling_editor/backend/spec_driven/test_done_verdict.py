@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from besser.generators.llm.orchestrator import ValidationIssue
+from besser.spec_driven_agent.orchestrator import ValidationIssue
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
@@ -72,7 +72,7 @@ def test_unfixed_phase3_blocker_marks_run_incomplete(monkeypatch):
 
 @pytest.mark.parametrize("required_check", [False, True])
 def test_no_blockers_stays_complete(monkeypatch, required_check):
-    from besser.generators.llm.validation.issues import _check_did_not_run, required_check_unverified
+    from besser.spec_driven_agent.validation.issues import _check_did_not_run, required_check_unverified
 
     class SkippedCheck(_StubOrchestrator):
         def __init__(self, **kwargs):

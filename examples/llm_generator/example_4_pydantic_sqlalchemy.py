@@ -20,7 +20,7 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation, Multiplicity, UNLIMITED_MAX_MULTIPLICITY,
     Constraint,
 )
-from besser.generators.llm import LLMGenerator
+from besser.spec_driven_agent import LLMGenerator
 
 # ── Simple inventory model ───────────────────────────────────────────
 

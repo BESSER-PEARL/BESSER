@@ -16,7 +16,7 @@ Usage:
 from besser.BUML.metamodel.structural import (
     Class, Property, DomainModel, PrimitiveDataType,
 )
-from besser.generators.llm import LLMGenerator
+from besser.spec_driven_agent import LLMGenerator
 
 # ── Minimal model ────────────────────────────────────────────────────
 

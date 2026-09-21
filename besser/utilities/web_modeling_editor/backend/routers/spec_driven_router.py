@@ -1,6 +1,6 @@
 """Smart Generation Router.
 
-Server-Sent Events endpoint that drives ``besser.generators.llm.LLMOrchestrator``
+Server-Sent Events endpoint that drives ``besser.spec_driven_agent.LLMOrchestrator``
 and streams phase markers, tool calls, text deltas, cost ticks, and a
 final download URL back to the browser.
 
@@ -94,8 +94,8 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
 )
 from besser.generators.web_app.web_app_generator import agent_slug
-from besser.generators.llm.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
-from besser.generators.llm.llm_client import (
+from besser.spec_driven_agent.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
+from besser.spec_driven_agent.llm_client import (
     free_alt_models,
     free_fallback_model,
     free_pilot_model,

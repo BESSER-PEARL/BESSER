@@ -2,7 +2,7 @@ How it works
 ============
 
 A run is a three-phase pipeline (``LLMOrchestrator.run`` in
-``besser/generators/llm/orchestrator.py``).
+``besser/spec_driven_agent/orchestrator.py``).
 
 The three phases
 ----------------

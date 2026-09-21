@@ -257,6 +257,6 @@ only there so a runaway command cannot fill the disk.
 
 .. note::
    Adding a tool is a two-line change in
-   ``besser/generators/llm/tools.py`` — the declaration *and* an entry in
+   ``besser/spec_driven_agent/tools.py`` — the declaration *and* an entry in
    ``_TOOL_MODEL_REQUIREMENTS``, so the tool is only offered when the models it
    needs are present. See :doc:`../contributor_guide`.

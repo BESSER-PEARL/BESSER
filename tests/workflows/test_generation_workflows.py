@@ -3,7 +3,7 @@
   * "only a database"    -> SQL + SQLAlchemy generators
   * "database + backend" -> FastAPI backend generator
 
-Unlike the UNIT tests (which mock isolated functions, e.g. tests/generators/llm/
+Unlike the UNIT tests (which mock isolated functions, e.g. tests/spec_driven_agent/
 test_openai_provider.py), these run the REAL generator on a domain model
 end-to-end and assert the *produced code* has the expected structure — the
 regression net for "does generation actually work and stay complete".

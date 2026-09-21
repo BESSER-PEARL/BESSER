@@ -70,7 +70,7 @@ def test_the_value_survives_the_round_trip(builder):
 
 def test_the_contract_checker_still_reads_a_multi_line_table(builder, tmp_path):
     """The newline-tolerant scan is load-bearing; pin it."""
-    from besser.generators.llm.validation.frontend_schema import _table_metadata
+    from besser.spec_driven_agent.validation.frontend_schema import _table_metadata
 
     builder._prop_indent = 8
     options = builder._format_prop("options", LARGE)

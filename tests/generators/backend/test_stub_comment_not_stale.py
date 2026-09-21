@@ -33,7 +33,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.generators.backend import BackendGenerator
 from besser.generators.backend import api_generator as _api_generator_module
-from besser.generators.llm.action_inventory import _placeholder_reason
+from besser.spec_driven_agent.action_inventory import _placeholder_reason
 
 TEMPLATE_PATH = os.path.join(
     os.path.dirname(_api_generator_module.__file__), "templates", "router_methods.py.j2",

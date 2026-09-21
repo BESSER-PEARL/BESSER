@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 
-from besser.generators.llm.orchestrator import ValidationIssue
+from besser.spec_driven_agent.orchestrator import ValidationIssue
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )

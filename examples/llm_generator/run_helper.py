@@ -21,8 +21,8 @@ def run_generator(model, instructions: str, output_dir: str,
     """
     Run the LLM generator with streaming text + progress output.
     """
-    from besser.generators.llm import LLMGenerator
-    from besser.generators.llm.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent import LLMGenerator
+    from besser.spec_driven_agent.orchestrator import LLMOrchestrator
 
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)

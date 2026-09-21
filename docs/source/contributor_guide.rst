@@ -247,7 +247,7 @@ Working in core packages
   FastAPI app uses a modular router architecture (routers, middleware,
   services, models). Prefer extending an existing module over creating
   bespoke helpers.
-* **Spec-Driven Agent** (``besser/generators/llm/`` plus
+* **Spec-Driven Agent** (``besser/spec_driven_agent/`` plus
   ``.../backend/services/spec_driven/``) — the hybrid generation pipeline:
   a deterministic generator, then an LLM customization loop, then validation
   with a bounded auto-fix loop. ``orchestrator.py`` owns the three phases and

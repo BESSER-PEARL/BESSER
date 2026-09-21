@@ -4,7 +4,7 @@ Configuration reference
 Everything the Spec-Driven Agent reads from the environment. All of it is
 optional — the agent runs without any of it, minus the keyless tiers. These
 variables are read by the :doc:`web editor backend <../web_editor_backend>`
-and by ``besser/generators/llm/``; the live values of the caps and feature
+and by ``besser/spec_driven_agent/``; the live values of the caps and feature
 flags are reported by ``GET /besser_api/spec-driven/config``, which is what a
 client should read rather than hardcoding the figures below.
 

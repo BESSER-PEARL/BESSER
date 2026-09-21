@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from besser.generators.llm import gap_analyzer
+from besser.spec_driven_agent import gap_analyzer
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     PhaseEvent,
     PhaseUpdateEvent,

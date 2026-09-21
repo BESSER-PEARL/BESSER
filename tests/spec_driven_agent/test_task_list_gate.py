@@ -1,0 +1,318 @@
+"""Tests for the task_list tool and the end_turn checklist gate.
+
+"Done" means the checklist is closed, not "the model said done": Phase 2
+seeds the gap-analysis tasks into the executor's checklist, the LLM
+manages them through the ``task_list`` tool, and the end_turn gate sends
+the model back to open items (bounded by ``_MAX_TASK_NUDGES``).
+"""
+
+import json
+
+from besser.BUML.metamodel.structural import (
+    Class,
+    DomainModel,
+    PrimitiveDataType,
+    Property,
+)
+import besser.spec_driven_agent.orchestrator as orchestrator_module
+from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.tool_executor import ToolExecutor
+
+
+class _Block:
+    def __init__(self, block_type, **kwargs):
+        self.type = block_type
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class _Usage:
+    def __init__(self):
+        self.estimated_cost = 0.0
+
+    def summary(self) -> dict:
+        return {"api_calls": 1, "cost_usd": 0.0}
+
+
+class _ScriptedClient:
+    def __init__(self, responses):
+        self.model = "test-model"
+        self.usage = _Usage()
+        self.max_tokens = 4096
+        self._responses = list(responses)
+        self.chat_calls = 0
+
+    def chat(self, system=None, messages=None, tools=None, **kwargs):
+        self.chat_calls += 1
+        if self._responses:
+            return self._responses.pop(0)
+        return {"stop_reason": "end_turn", "content": [_Block("text", text="done")]}
+
+
+def _end_turn():
+    return {"stop_reason": "end_turn", "content": [_Block("text", text="done")]}
+
+
+def _tool_use(name, tool_id, tool_input):
+    return {
+        "stop_reason": "tool_use",
+        "content": [_Block("tool_use", name=name, id=tool_id, input=tool_input)],
+    }
+
+
+def _make_domain() -> DomainModel:
+    string_type = PrimitiveDataType("str")
+    book = Class(name="Book")
+    book.attributes = {Property(name="title", type=string_type, is_id=True)}
+    return DomainModel(name="Library", types={book})
+
+
+def _make_orch(tmp_path, client) -> LLMOrchestrator:
+    return LLMOrchestrator(
+        llm_client=client,
+        domain_model=_make_domain(),
+        output_dir=str(tmp_path),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+
+
+# ----------------------------------------------------------------------
+# Executor checklist CRUD
+# ----------------------------------------------------------------------
+
+
+def test_task_list_tool_crud(tmp_path):
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.set_tasks(["Add auth", "Style the pages", "  "])  # blank dropped
+
+    listing = json.loads(executor.execute("task_list", {"action": "list"}))
+    assert listing["open"] == 2
+    assert listing["tasks"][0] == {"id": 1, "text": "Add auth", "status": "open", "verification": "unverified"}
+
+    executor._write_file({"path": "auth.py", "content": "enabled = True\n"})
+    done = json.loads(executor.execute("task_list", {"action": "done", "id": 1,
+        "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}))
+    assert done["open_remaining"] == 1
+    assert done["open_items"] == [{"id": 2, "text": "Style the pages"}]
+
+    added = json.loads(executor.execute("task_list", {"action": "add", "text": "Wire delete"}))
+    assert added == {"status": "added", "id": 3, "open": 2}
+
+    bad = json.loads(executor.execute("task_list", {"action": "done", "id": 99}))
+    assert "No task with id 99" in bad["error"]
+    assert [t["id"] for t in executor.open_tasks()] == [2, 3]
+
+
+def test_task_snapshot_restore_preserves_done_state_and_verifier(tmp_path):
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.set_tasks([
+        {"text": "Build frontend", "verify": lambda: True},
+        "Write README",
+    ])
+    executor._write_file({"path": "README.md", "content": "Run python main.py\n"})
+    json.loads(executor.execute("task_list", {"action": "done", "id": 2,
+        "evidence": [{"id": 2, "path": "README.md", "quote": "Run python main.py"}]}))
+    snapshot = executor.task_snapshot()
+
+    restored = ToolExecutor(workspace=str(tmp_path))
+    verifier = lambda: False
+    restored.restore_tasks(
+        snapshot,
+        verification_tasks=[{"text": "Build frontend", "verify": verifier}],
+    )
+
+    assert restored.task_snapshot() == snapshot
+    assert restored._tasks[0]["verify"] is verifier
+    assert [t["text"] for t in restored.open_tasks()] == ["Build frontend"]
+
+# ----------------------------------------------------------------------
+# end_turn gate
+# ----------------------------------------------------------------------
+
+
+def test_end_turn_with_open_tasks_is_nudged_then_released(tmp_path, monkeypatch):
+    """A model that end_turns past open items gets 2 nudges, then the run
+    completes anyway (bounded — no budget loop)."""
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm",
+        lambda **kwargs: ["Add auth", "Style the pages"],
+    )
+    client = _ScriptedClient([_end_turn(), _end_turn(), _end_turn()])
+    orch = _make_orch(tmp_path, client)
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    assert client.chat_calls == 3  # initial end_turn + 2 nudged retries
+    assert orch._end_turn_task_nudges == 2
+    assert orch._phase2_stop_reason == "completed"
+    assert orch._phase2_exited_cleanly is True
+
+
+def test_end_turn_with_closed_checklist_finishes_immediately(tmp_path, monkeypatch):
+    """Marking every item done releases the gate with zero nudges."""
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm",
+        lambda **kwargs: ["Add auth", "Style the pages"],
+    )
+    client = _ScriptedClient([
+        _tool_use("write_file", "w1", {"path": "auth.py", "content": "enabled = True\n"}),
+        _tool_use("write_file", "w2", {"path": "style.css", "content": "body { color: black; }\n"}),
+        _tool_use("task_list", "t1", {"action": "done", "id": 1,
+            "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}),
+        _tool_use("task_list", "t2", {"action": "done", "id": 2,
+            "evidence": [{"id": 2, "path": "style.css", "quote": "body { color: black; }"}]}),
+        _end_turn(),
+    ])
+    orch = _make_orch(tmp_path, client)
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    assert client.chat_calls == 5
+    assert orch._end_turn_task_nudges == 0
+    assert orch._phase2_stop_reason == "completed"
+
+
+def test_no_gap_tasks_means_no_gate(tmp_path, monkeypatch):
+    """When gap analysis fails (None), the gate is inert."""
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: None,
+    )
+    client = _ScriptedClient([_end_turn()])
+    orch = _make_orch(tmp_path, client)
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    assert client.chat_calls == 1
+    assert orch._end_turn_task_nudges == 0
+    assert orch._phase2_stop_reason == "completed"
+
+
+# ----------------------------------------------------------------------
+# Edit-first guardrail (modify runs)
+# ----------------------------------------------------------------------
+
+
+def _existing_file(tmp_path, name="app.py", lines=30):
+    p = tmp_path / name
+    p.write_text("\n".join(f"line{i}" for i in range(lines)), encoding="utf-8")
+    return p
+
+
+def test_modify_guard_off_by_default(tmp_path):
+    """From-scratch runs keep today's behavior: rewriting a non-generator
+    file the model has read is allowed."""
+    _existing_file(tmp_path)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor._read_file({"path": "app.py"})
+    result = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten",
+    }))
+    assert result["status"] == "written"
+
+
+def test_modify_guard_blocks_rewrite_of_existing_file(tmp_path):
+    _existing_file(tmp_path)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor._read_file({"path": "app.py"})     # seen: it is the MODIFY-run guard that fires
+    executor.enable_modify_guard()
+    result = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten",
+    }))
+    assert "MODIFY run" in result["error"]
+    assert "modify_file" in result["error"]
+    # File untouched.
+    assert (tmp_path / "app.py").read_text(encoding="utf-8").startswith("line0")
+
+
+def test_modify_guard_allows_new_and_trivial_files(tmp_path):
+    _existing_file(tmp_path, name="tiny.py", lines=5)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor._read_file({"path": "tiny.py"})
+    executor.enable_modify_guard()
+    new = json.loads(executor.execute("write_file", {
+        "path": "brand_new.py", "content": "x = 1",
+    }))
+    assert new["status"] == "written"
+    tiny = json.loads(executor.execute("write_file", {
+        "path": "tiny.py", "content": "y = 2",
+    }))
+    assert tiny["status"] == "written"
+
+
+def test_modify_guard_unlocks_after_two_targeted_edits(tmp_path):
+    _existing_file(tmp_path)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.enable_modify_guard()
+    # NB: the fixture writes line0..line29, so a bare "line1" also matches
+    # line10-line19 (11 occurrences). _modify_file now refuses a short
+    # ambiguous anchor rather than silently editing whichever came first, so
+    # these anchors carry their line ending to be unique - which is exactly
+    # the guidance the tool description gives the model.
+    for old, new_text in (("line1\n", "line1_edited\n"),
+                          ("line2\n", "line2_edited\n")):
+        r = json.loads(executor.execute("modify_file", {
+            "path": "app.py", "old_text": old, "new_text": new_text,
+        }))
+        assert r["status"] == "modified", r
+    # Valid Python: since 2026-09-18 a rewrite that would leave a parseable
+    # .py file unparseable is refused, and "rewritten as last resort" is not
+    # Python.
+    result = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten = 'as last resort'\n",
+    }))
+    assert result["status"] == "written", result
+
+
+def test_modify_run_enables_the_guard(tmp_path, monkeypatch):
+    """modify() flips the executor into edit-first mode."""
+    orch = _make_orch(tmp_path, _ScriptedClient([]))
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+    assert orch.executor._modify_guard is False
+    orch.modify("add a feature")
+    assert orch.executor._modify_guard is True
+
+
+def test_webapp_ask_without_frontend_seeds_deterministic_task(tmp_path, monkeypatch):
+    """Devstral finding: nobody explicitly ORDERS the frontend when the
+    scaffold is backend-only. The harness now adds it as a checklist item
+    so the end_turn gate enforces it."""
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: None,
+    )
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "main.py").write_text("x = 1\n", encoding="utf-8")
+    client = _ScriptedClient([_end_turn(), _end_turn(), _end_turn()])
+    orch = _make_orch(tmp_path, client)
+    orch._instructions = "Build a library management web app"
+
+    orch._run_phase2("Build a library management web app", extra_issues=[])
+
+    # Deterministic VERIFIED task seeded -> extended nudge cap (2+2)
+    # because a verified task cannot be cheat-marked done.
+    assert orch._end_turn_task_nudges == 4
+    tasks = orch.executor._tasks
+    assert any("React frontend" in t["text"] for t in tasks)
+    # And the cheat-proofing itself: done is refused while no frontend.
+    import json as _json
+    tid = next(t["id"] for t in tasks if "React frontend" in t["text"])
+    refused = _json.loads(orch.executor.execute("task_list", {"action": "done", "id": tid}))
+    assert "NOT done" in refused.get("error", "")
+
+
+def test_backend_ask_seeds_no_deterministic_frontend_task(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: None,
+    )
+    client = _ScriptedClient([_end_turn()])
+    orch = _make_orch(tmp_path, client)
+    orch._instructions = "Build an invoicing backend"
+    orch._run_phase2("Build an invoicing backend", extra_issues=[])
+    assert orch._end_turn_task_nudges == 0
+    assert orch.executor._tasks == []

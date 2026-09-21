@@ -39,7 +39,7 @@ from typing import Any, Callable
 
 import pytest
 
-from besser.generators.llm.model_serializer import serialize_domain_model
+from besser.spec_driven_agent.model_serializer import serialize_domain_model
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )

@@ -38,7 +38,7 @@ The agent is also a normal BESSER generator: ``LLMGenerator`` implements
 
 .. code-block:: python
 
-   from besser.generators.llm import LLMGenerator
+   from besser.spec_driven_agent import LLMGenerator
 
    gen = LLMGenerator(
        model=library_model,

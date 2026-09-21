@@ -75,6 +75,15 @@ RUN rm -f /usr/local/share/ca-certificates/*.crt \
 
 ENV PYTHONPATH=/app
 
+# Stamp the commit so a deploy can be VERIFIED rather than assumed. The
+# registry has served a stale tag before, and `docker compose pull` exits 0
+# either way, so "the pull succeeded" is not evidence the running container
+# is the code that was just built. `.git` is not copied into the image (and
+# should not be), so reading it back at runtime returns nothing - this is
+# the value the deploy workflow compares against.
+ARG GIT_SHA=unknown
+ENV BESSER_BUILD_SHA=${GIT_SHA}
+
 EXPOSE 9000
 
 CMD ["python", "-m", "besser.utilities.web_modeling_editor.backend.backend"]

@@ -74,7 +74,9 @@ jobs:
       # ── Backend (also the smartgen worker's image) ───────────
       - name: Build backend image
         if: inputs.target == 'all' || inputs.target == 'backend'
-        run: docker build -t ${{ env.REGISTRY }}/backend:${{ steps.env.outputs.tag }} -f Dockerfile .
+        run: |
+          docker build --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
+            -t ${{ env.REGISTRY }}/backend:${{ steps.env.outputs.tag }} -f Dockerfile .
 
       - name: Push backend image
         if: inputs.target == 'all' || inputs.target == 'backend'
@@ -133,19 +135,40 @@ jobs:
       # been reported deployed from log lines alone while the container was
       # unchanged, and the registry has served a stale tag before - which a
       # successful `docker compose pull` does not distinguish from a fresh one.
-      - name: Verify the running container is the code we just built
+      - name: Verify the running containers are the code we just built
+        if: inputs.target == 'all' || inputs.target == 'backend' || inputs.target == 'smartgen'
         run: |
-          DEPLOYED=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ steps.env.outputs.ssh_target }} \
-            "docker exec besser-wme-backend git -C /app rev-parse HEAD 2>/dev/null || echo unknown")
-          echo "built from : ${{ steps.src.outputs.sha }}"
-          echo "running    : $DEPLOYED"
-          if [[ "$DEPLOYED" != "unknown" && "$DEPLOYED" != "${{ steps.src.outputs.sha }}" ]]; then
-            echo "::error::The running container is not the commit that was just built."
+          # An earlier version of this step read `git rev-parse` inside the
+          # container. `.git` is not in the image, so it always returned
+          # "unknown" and degraded to a warning - a check that could never
+          # fail, guarding the exact thing it was written for. The commit is
+          # now stamped at build time as BESSER_BUILD_SHA.
+          EXPECTED="${{ steps.src.outputs.sha }}"
+          FAILED=0
+          for C in besser-wme-backend besser-wme-smartgen; do
+            RUNNING=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              ${{ steps.env.outputs.ssh_target }} \
+              "docker exec $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
+            echo "$C: running=$RUNNING expected=$EXPECTED"
+            if [[ "$RUNNING" == "missing" || "$RUNNING" == "unknown" ]]; then
+              if [[ "${{ inputs.target }}" == "smartgen" ]]; then
+                # A smartgen-only run restarts the existing image without
+                # rebuilding, so before the first stamped image is rolled out
+                # there is nothing to compare. Say so; do not pretend to have
+                # verified it.
+                echo "::warning::$C carries no build stamp. A smartgen-only restart cannot verify the code - run target=backend once to roll out a stamped image."
+              else
+                echo "::error::$C carries no build stamp although this run built one - the pull served a stale image."
+                FAILED=1
+              fi
+            elif [[ "$RUNNING" != "$EXPECTED" ]]; then
+              echo "::error::$C is running $RUNNING, not the commit just built. The registry likely served a stale tag."
+              FAILED=1
+            fi
+          done
+          if [[ "$FAILED" == "1" ]]; then
+            echo "::error::Deploy verification failed. Do not treat this deploy as landed."
             exit 1
-          fi
-          if [[ "$DEPLOYED" == "unknown" ]]; then
-            echo "::warning::No git metadata in the image, so the commit could not be confirmed. Check a known symbol by hand."
           fi
 
       - name: Health check

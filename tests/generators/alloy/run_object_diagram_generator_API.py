@@ -75,6 +75,6 @@ assert len(buml_instances) == 4, "The number of generated instances is not corre
 
 # Generates a complete BUML project code including: The class diagram in BUML, and an instance 
 # automatically generated using Alloy.
-solver = AlloySolver(library_model, output_dir="ouotro_dir", scope=3)
+solver = AlloySolver(library_model, output_dir="outdir", scope=3)
 solver.generate_class_and_object_model()
 assert result == AlloyResult.SAT, "The model is not consistent."

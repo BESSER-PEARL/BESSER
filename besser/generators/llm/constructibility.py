@@ -346,6 +346,19 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
         if dependents:
             text += (f". Dependent create probes for {', '.join(dependents)} could not "
                      f"run without a {name} id")
+        if not failure and _is_duplicate_refusal(
+                attempt.get("status") or 0, attempt.get("body") or ""):
+            # Without this the advice is unactionable: the model is told to
+            # "use a valid fixture", but its fixture WAS valid -- the pair was
+            # already linked by the parent create this probe performed. It then
+            # hunts for a bug in correct code. Name the cause and the way out.
+            text += (
+                ". This refusal looks correct: the probe had already linked "
+                "this pair when it created the parent, so the row exists. Do "
+                "not weaken the duplicate check. Demonstrate the route with "
+                "test_api using a FRESH pair (create another related record "
+                "first), or leave it as designed"
+            )
         if not failure and entry.get("deferred_relationships") and attempt.get("status") == 400:
             text += (
                 ". Creation-order check: " + ", ".join(entry["deferred_relationships"])
@@ -531,6 +544,43 @@ def _resolve(schema: dict, schemas: dict, _depth: int = 0) -> dict:
             merged.update(properties=props, required=required)
         return merged
     return schema
+
+
+_DB_DUPLICATE_MARKERS = (
+    "unique constraint failed",
+    "duplicate key value violates unique constraint",
+)
+# An app that catches the integrity error and answers cleanly. Deliberately
+# narrow: a refusal has to name duplication, not merely be a 400.
+_APP_DUPLICATE_MARKERS = (
+    "already exists",
+    "already linked",
+    "already assigned",
+    "already booked",
+    "duplicate",
+)
+
+
+def _is_duplicate_refusal(status: int, text: str) -> bool:
+    """True when the app refused this create because the row already exists.
+
+    Recognising it lets the caller retry against a FRESH reference instead of
+    reporting an unverified create. Matching only raw database errors -- the
+    previous rule, 409 plus a SQLite/Postgres constraint string -- penalised
+    exactly the apps that handle the error properly: a scaffold that lets
+    ``UNIQUE constraint failed`` escape got the retry, while one returning a
+    clean ``400 {"error": "Relationship already exists"}`` was reported as an
+    unverified create route and blocked a run.
+
+    Observed on run claude-sonnet-5-3s9nd9go: the probe creates a Booking,
+    which materialises its own Room<->Booking link, then POSTs that same pair
+    to /reservedroom/ and is correctly refused. The app was right; the finding
+    was ours, and it held the fix loop open for two attempts.
+    """
+    if status not in (400, 409, 422):
+        return False
+    lowered = text.lower()
+    return any(m in lowered for m in _DB_DUPLICATE_MARKERS + _APP_DUPLICATE_MARKERS)
 
 
 def _association_link_schema(schema: dict, schemas: dict, _depth: int = 0) -> dict | None:
@@ -1292,8 +1342,7 @@ def _probe_cwd() -> dict:
                 column = _missing_not_null_column(text)
                 if column:
                     attempt["missing_column"] = column
-                if status == 409 and ("UNIQUE constraint failed" in text
-                                      or "duplicate key value violates unique constraint" in text):
+                if _is_duplicate_refusal(status, text):
                     attempt["unique_collision"] = True
                 return response, attempt
 

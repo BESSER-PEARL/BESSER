@@ -2985,10 +2985,18 @@ class LLMOrchestrator:
                 # re-execute the same tool calls on resume. We save
                 # after appending results so the rehydrated message
                 # list starts cleanly with the next assistant turn.
+                # Cost alone cannot explain itself. A run that re-bills its
+                # history reads as "expensive" with no way to see why until
+                # the recipe is written at the end; run
+                # claude-sonnet-5-q0yzuo43 ended at a 25.2% cache hit rate and
+                # nothing before its final summary would have shown it. The
+                # tracker already holds all four counters, so carry them.
                 self._trace.write(
                     EVENT_COST_UPDATE,
                     turn=turn + 1,
                     estimated_cost_usd=float(current_cost),
+                    **{k: v for k, v in self.client.usage.summary().items()
+                       if k.endswith("_tokens")},
                 )
                 self._save_checkpoint_for_turn(
                     turn=turn + 1,

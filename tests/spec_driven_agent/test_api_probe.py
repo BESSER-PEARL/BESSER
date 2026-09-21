@@ -55,7 +55,20 @@ def test_real_sequence_references_and_failed_business_assertion_are_not_false_su
     clean = api_probe.probe_api_scenario(str(tmp_path), [{"method": "GET", "path": "/room/count/", "expected_fields": {"count": 0}}])
     assert clean["status"] == "passed", clean
     assert api_probe.confirmed_create_paths(clean) == set(), "a health/count read is not creation evidence"
-    assert api_probe.confirmed_create_paths(report) == set(), "a failing scenario cannot certify a guessed create probe"
+    # This scenario's POST created a Room (201) and request 2 read that same id
+    # back. Requests 1 and 3 failed on a deliberately wrong expected value and an
+    # unresolvable reference -- neither says anything about whether Room can be
+    # created, and the create check re-derives its verdict from the raw
+    # responses rather than trusting any assertion in the scenario.
+    #
+    # Gating this on the scenario's overall verdict made the function inert:
+    # tools.py tells the model to "Test happy paths AND invalid input/state
+    # transitions", and across 784 recorded scenarios from 177 runs, 583 of the
+    # 784 (74% of create-bearing ones) carry at least one request the model
+    # deliberately expects to fail. Following our own instruction emptied this
+    # set, so "create unverified:" could not be retired and was promoted to a
+    # blocker against apps that demonstrably created the record.
+    assert api_probe.confirmed_create_paths(report) == {"/room"}, "a peer failure discarded proof the app created and read back a Room"
     persisted = api_probe.probe_api_scenario(str(tmp_path), [
         {"method": "POST", "path": "/room/", "json": ROOM},
         {"method": "GET", "path": "/room/{{0.room.id}}/"},

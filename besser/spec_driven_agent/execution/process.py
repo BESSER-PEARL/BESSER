@@ -49,11 +49,20 @@ def _safe_subprocess_env() -> dict[str, str]:
     deliberately drops anything whose name contains a secret-like
     substring, even if it's in the allowlist.
     """
+    # Case-folded, because Windows env var names are case-insensitive and
+    # os.environ ITERATES them upper-cased: the loop below sees PROGRAMFILES
+    # while the allowlist said "ProgramFiles", so the entry never matched and
+    # every LLM-invoked subprocess on Windows ran without it. "SystemRoot" was
+    # spelled twice for exactly this reason; the other two were missed. The
+    # deny-by-default shape is unchanged, and the secret-substring check below
+    # already compared upper-cased, so nothing new is admitted beyond the
+    # allowlist's own entries.
+    allowed = {name.upper() for name in _SAFE_ENV_ALLOWLIST}
     safe: dict[str, str] = {}
     for name, value in os.environ.items():
-        if name not in _SAFE_ENV_ALLOWLIST:
-            continue
         upper = name.upper()
+        if upper not in allowed:
+            continue
         if any(substr in upper for substr in _SECRET_SUBSTRINGS):
             continue
         safe[name] = value

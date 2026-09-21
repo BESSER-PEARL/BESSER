@@ -746,7 +746,15 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
                 cwd=output_dir,
                 env=_safe_subprocess_env(),
             )
-        except (subprocess.TimeoutExpired, OSError):
+        except subprocess.TimeoutExpired:
+            # Was a bare `continue`: a timed-out module read as "compiled clean".
+            # cargo/tsc/ruff all report it; kotlinc was the only one that didn't.
+            issues.append(_check_did_not_run(f"kotlinc [{module_rel}]", "timed out after 180s"))
+            continue
+        except OSError as exc:
+            issues.append(
+                _check_did_not_run(f"kotlinc [{module_rel}]", f"could not be launched: {exc}")
+            )
             continue
 
         # kotlinc reports diagnostics on stderr as

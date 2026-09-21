@@ -4,7 +4,9 @@ For every class in the domain model, three static discovery signals
 indicate whether the entity appears in the app (not executed acceptance):
 
 * ``route``  — the backend exposes REST routes for it (checked against
-  the same static route parse the endpoint manifest uses);
+  the same static route parse the endpoint manifest uses). That parse
+  reads FastAPI decorators in ``.py`` files only, so on any other stack
+  the cell is ``None`` (unmeasured) rather than ``False``;
 * ``page``   — some frontend file is about it (name or content match);
 * ``create`` — a frontend file about it contains a POST, OR calls a
   shared api-client helper that issues one, OR a ``<TableBlock>`` bound
@@ -240,7 +242,7 @@ def build_acceptance_matrix(
     domain_model,
     endpoint_manifest: str = "",
     snapshot_dir: str = ".besser_snapshot",
-) -> dict[str, dict[str, bool]] | None:
+) -> dict[str, dict[str, bool | None]] | None:
     """Compute {class name: {route, page, create}} for the workspace.
 
     ``endpoint_manifest`` is the statically parsed route listing (from
@@ -290,10 +292,15 @@ def build_acceptance_matrix(
     client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache)
                     for rel, content in frontend_files}
 
-    matrix: dict[str, dict[str, bool]] = {}
+    matrix: dict[str, dict[str, bool | None]] = {}
     for cls in sorted(classes):
         forms = _entity_forms(cls)
-        route = any(f in manifest_low for f in forms)
+        # None, not False, when the manifest is empty: build_endpoint_manifest
+        # parses FastAPI decorators out of .py files only, so an Express,
+        # Django, Spring or axum backend yields "" and every entity would read
+        # "no backend REST route" for a route the app genuinely serves. An
+        # unparsed stack is unmeasured, not empty.
+        route = any(f in manifest_low for f in forms) if manifest_low else None
         page = False
         create = False
         for rel, content in frontend_files:
@@ -315,13 +322,15 @@ def build_acceptance_matrix(
     return matrix
 
 
-def matrix_issues(matrix: dict[str, dict[str, bool]] | None) -> list[str]:
+def matrix_issues(matrix: dict[str, dict[str, bool | None]] | None) -> list[str]:
     """Render missing matrix cells as advisory issue strings."""
     if not matrix:
         return []
     issues: list[str] = []
     for cls, cells in matrix.items():
-        missing = [k for k in ("route", "page", "create") if not cells.get(k)]
+        # `is False` and not falsiness: None means the signal was never
+        # collected, and "we did not look" is not a finding.
+        missing = [k for k in ("route", "page", "create") if cells.get(k) is False]
         if not missing:
             continue
         detail = {

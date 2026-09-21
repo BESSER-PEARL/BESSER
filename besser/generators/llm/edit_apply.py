@@ -716,17 +716,41 @@ def find_similar_lines(
 
     n = len(search_lines)
     search_text = "\n".join(search_lines)
-    best_ratio = 0.0
-    best_i = -1
     matcher = SequenceMatcher(None, search_text, "", autojunk=False)
+
+    # Score every window by its cheap upper bound first, then walk them in
+    # DESCENDING bound order. Both ratios below are upper bounds on ratio(),
+    # so once the incumbent reaches the next window's bound, nothing left can
+    # beat it and the scan stops. Same answer as a file-order scan; far less
+    # work, because the first exact ratio computed is already a strong
+    # incumbent instead of whatever happened to be at the top of the file.
+    #
+    # In file order the prefilter barely fires: best_ratio starts at 0, so
+    # windows are compared against a weak incumbent and pay for the exact
+    # ratio anyway. Measured on the 468-line router in
+    # test_applied_edit_resend: 228 of 458 windows reached ratio(), 21.2s of
+    # the test's 21.7s. A missed anchor is not rare -- Qwen refuses about a
+    # third of its edits -- so this was seconds of latency per miss in live
+    # runs, spent building a diagnostic hint.
+    windows = []
     for i in range(len(content_lines) - n + 1):
         matcher.set_seq2("\n".join(content_lines[i:i + n]))
-        # quick_ratio is a cheap upper bound: if it cannot beat the incumbent,
-        # the exact ratio cannot either.
-        if matcher.quick_ratio() <= best_ratio:
+        if matcher.real_quick_ratio() <= 0.0:
             continue
+        bound = matcher.quick_ratio()
+        if bound > 0.0:
+            windows.append((bound, i))
+    windows.sort(key=lambda pair: (-pair[0], pair[1]))
+
+    best_ratio = 0.0
+    best_i = -1
+    for bound, i in windows:
+        if bound <= best_ratio:
+            break
+        matcher.set_seq2("\n".join(content_lines[i:i + n]))
         ratio = matcher.ratio()
-        if ratio > best_ratio:
+        # Ties keep the earliest window, as a file-order scan did.
+        if ratio > best_ratio or (ratio == best_ratio and 0 <= i < best_i):
             best_ratio, best_i = ratio, i
 
     if best_i < 0 or best_ratio < threshold:

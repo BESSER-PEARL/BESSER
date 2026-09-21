@@ -84,18 +84,29 @@ _PYTHON_STACK_KEYWORDS: frozenset[str] = frozenset(
 
 
 def _contains_word(text: str, needle: str) -> bool:
-    """Case-insensitive substring match with word-boundary fallback.
+    r"""Case-insensitive match, bounded only at the ends that are word chars.
 
-    Falls back to plain substring when the needle contains punctuation
-    that ``\b`` would treat as a non-word character (``next.js``).
+    A boundary belongs where the needle's own edge is alphanumeric -- that is
+    what stops ``rust`` matching ``trustworthy``. Anchoring an edge that is
+    punctuation does the opposite: ``\b`` before the ``.`` of ``.net`` requires
+    the PRECEDING character to be a word character, so ``\b\.net\b`` matches
+    only inside ``asp.net`` and never after a space. "Build a .NET 8 API"
+    silently got no idiom guidance, which is the one spelling someone added
+    ``.net`` to the keyword list for.
+
+    The previous test decided on the needle with its punctuation stripped and
+    then built the pattern from the unstripped needle, so ``.net`` (-> "net",
+    alnum) took the boundary branch it could never satisfy, and ``next.js``
+    (-> "nextjs", alnum) also took it -- working only by luck, since its
+    leading ``n`` is a word character.
     """
     lowered = text.lower()
     needle = needle.lower()
-    if needle.replace(".", "").replace(" ", "").replace("-", "").isalnum():
-        # Pure alphanumeric — use a word boundary so "rust" doesn't
-        # match "trustworthy".
-        return bool(re.search(r"\b" + re.escape(needle) + r"\b", lowered))
-    return needle in lowered
+    if not needle:
+        return False
+    prefix = r"\b" if needle[0].isalnum() else ""
+    suffix = r"\b" if needle[-1].isalnum() else ""
+    return bool(re.search(prefix + re.escape(needle) + suffix, lowered))
 
 
 def detect_stack(instructions: str) -> str | None:

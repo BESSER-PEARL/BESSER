@@ -1,4 +1,11 @@
-fastapi
+# Pinned to a minor, not left open. Unpinned, the SAME middleware code
+# deadlocked every POST on starlette 0.27.0, returned 500 on every POST on
+# 0.36.3, and worked on 1.6.0 - so a developer machine, CI and a fresh
+# install each got different behaviour from one commit, and a Docker build
+# rolled the dice at exactly the moment of deploying. This range is what CI
+# resolves and tests against.
+fastapi>=0.110,<0.111
+starlette>=0.36,<0.37
 uvicorn
 pydantic
 python-multipart

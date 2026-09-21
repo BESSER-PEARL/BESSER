@@ -160,6 +160,10 @@ reading a trace and wondering why a run did what it did.
        behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
        resume against a project whose fingerprint has changed and seeds the
        already-spent cost so a crash-and-resume cycle cannot double the bill.
+       Because the file's *absence* is what marks a clean finish, a write that
+       fails would otherwise be indistinguishable from one: such a run is not
+       resumable, and an ``error`` record naming the reason is appended to the
+       trace so a post-mortem can tell the two apart.
        Toggle with ``BESSER_LLM_ENABLE_CHECKPOINTING`` (default on).
    * - Tracing
      - Every phase transition, turn, tool call, cost update, compaction,

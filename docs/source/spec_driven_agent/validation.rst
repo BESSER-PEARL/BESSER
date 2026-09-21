@@ -209,6 +209,21 @@ broken artifact as a green success is worse than spending a few more turns.
    a duration and cost regression on non-Python stacks. Every other check
    above runs on every run.
 
+.. note::
+   A check that could not run reports that it did not, rather than returning
+   nothing. A collector that times out or cannot be launched emits a
+   ``validation: <tool> did not run (...) - its checks were SKIPPED`` finding,
+   because an empty result is otherwise identical to a clean one and the run
+   would report "0 blockers" having verified nothing. These are ``warning``
+   findings on purpose: not looking is not evidence of a defect.
+
+   For the same reason the acceptance matrix's ``route`` cell is *unmeasured*,
+   not *missing*, on stacks its route parser does not read. That parser
+   understands FastAPI decorators in ``.py`` files, so an Express, Django,
+   Spring or axum backend reports no route finding at all rather than one per
+   entity. The ``page`` and ``create`` cells are stack-independent and still
+   apply.
+
 .. warning::
    Validation includes isolated backend execution, not a deployment or full
    browser acceptance run. Phase 3 does not build a container, and passing

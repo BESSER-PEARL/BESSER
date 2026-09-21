@@ -416,6 +416,8 @@ def _collapse_repeated_names(err_lines: list[str]) -> list[str]:
 # one names a package. Only the first is checkable without an install.
 _TSC_MISSING_MODULE_RE = _re.compile(
     r"error TS2307:.*?Cannot find module ['\"](?P<spec>[^'\"]+)['\"]")
+# TS1000-TS1999 is the syntactic range; no dependency install can change it.
+_TSC_SYNTAX_RE = _re.compile(r"error TS1\d{3}:")
 
 
 # Written next to the real tsconfig so its relative include/exclude/baseUrl
@@ -533,6 +535,11 @@ def _demote_tsc_without_deps(
         if match and match.group("spec").startswith("."):
             real.append(line)
         elif _is_real_undefined_name(line):
+            real.append(line)
+        elif _TSC_SYNTAX_RE.search(line):
+            # TS1xxx is the grammar, not the type system: an unparseable file
+            # is unparseable installed or not. Demoting these is how a
+            # Booking.tsx that no bundler can read reached "workflow_ok".
             real.append(line)
         else:
             demoted += 1

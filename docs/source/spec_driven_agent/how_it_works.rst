@@ -146,10 +146,12 @@ reading a trace and wondering why a run did what it did.
        reason=...)`` rather than marked done.
    * - Per-write diagnostics
      - Every file the model writes is parsed immediately — ``ast`` plus
-       pyflakes' undefined-name checks for Python, and the respective parser
-       for JSON, YAML and TOML — and any finding comes back in the same tool
-       result, while the file is still in context. Data-contract violations
-       ride along the same way. Toggle with
+       pyflakes' undefined-name checks for Python, a structural scanner for
+       TS/TSX/JS/JSX, and the respective parser for JSON, YAML and TOML — and
+       any finding comes back in the same tool result, while the file is still
+       in context. An edit that would turn a file the harness can parse into
+       one it cannot is refused outright and never reaches disk, in those same
+       languages. Data-contract violations ride along the same way. Toggle with
        ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (default on).
    * - Checkpointing
      - A checkpoint is written to ``.besser_checkpoint.json`` in the workspace

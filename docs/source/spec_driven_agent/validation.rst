@@ -5,6 +5,11 @@ Phase 3 attempts validation within the run's budget. Core checks need no network
 and no Docker. Missing runtime prerequisites do not count as verified execution:
 
 - Python syntax on every ``.py`` file.
+- Structural syntax on every ``.ts`` / ``.tsx`` / ``.js`` / ``.jsx`` file:
+  delimiter balance across comments, strings, template literals, regexes and
+  JSX, plus strict-JSON parsing of the ``attr={{...}}`` containers the
+  generated table configuration is written as. No Node toolchain is required,
+  so this holds when ``tsc`` is unavailable or disabled.
 - Python declaration contracts: invalid enum members, overwritten declarations,
   and SQLite-incompatible constant CHECK constraints.
 - Isolated backend startup and create-request probes. An import or DDL failure

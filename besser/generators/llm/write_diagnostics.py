@@ -20,6 +20,8 @@ import sys
 import tomllib
 from typing import Any
 
+from besser.generators.llm.validation import frontend_source
+
 
 logger = logging.getLogger(__name__)
 
@@ -965,6 +967,28 @@ def _yaml_diagnostics(content: str) -> list[dict[str, Any]]:
     return []
 
 
+_FRONTEND_SOURCE_EXTENSIONS = frozenset(frontend_source.SUPPORTED_EXTENSIONS)
+
+
+def _frontend_source_diagnostics(content: str) -> list[dict[str, Any]]:
+    """Structural faults in TS/TSX/JS/JSX, for a file already broken on disk.
+
+    ``_new_syntax_error`` refuses an edit that BREAKS a good file; this names
+    the damage in one that arrived broken, so the repair loop can see it
+    without a Node toolchain.
+    """
+    broke = frontend_source.structure_error(content)
+    if broke:
+        message, line = broke
+        return [_finding("frontend-source", message, code="parse", line=line)]
+    return [
+        _finding("frontend-source",
+                 f"the JSON in {attribute}={{{{...}}}} does not parse ({reason})",
+                 code="json-container", line=line)
+        for line, attribute, reason in frontend_source.json_container_faults(content)[:5]
+    ]
+
+
 def _toml_diagnostics(content: str) -> list[dict[str, Any]]:
     try:
         tomllib.loads(content)
@@ -999,6 +1023,8 @@ def diagnose_written_content(
             findings = _json_diagnostics(content)
         elif extension in {".yaml", ".yml"}:
             findings = _yaml_diagnostics(content)
+        elif extension in _FRONTEND_SOURCE_EXTENSIONS:
+            findings = _frontend_source_diagnostics(content)
         elif extension == ".toml":
             findings = _toml_diagnostics(content)
         else:

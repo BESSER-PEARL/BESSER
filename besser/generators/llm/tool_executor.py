@@ -56,6 +56,7 @@ from besser.generators.llm.edit_apply import (
     replacement_spans,
     _strip_line_numbers,
 )
+from besser.generators.llm.validation import frontend_source
 
 logger = logging.getLogger(__name__)
 
@@ -298,8 +299,17 @@ def _anchored_occurrences(content: str, old_text: str) -> list[int]:
 
 
 def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int] | None:
-    """``(message, line)`` when ``after`` fails to parse as Python although
-    ``before`` parsed; ``None`` otherwise (non-Python, or already broken)."""
+    """``(message, line)`` when ``after`` no longer parses although ``before``
+    did; ``None`` otherwise (unsupported language, or already broken).
+
+    Python compiles; TS/TSX/JS/JSX go through the structural scanner in
+    ``validation.frontend_source``. This guard was Python-only until
+    2026-09-21, which is how 42 of 143 ``web_app`` runs shipped a
+    ``Booking.tsx`` that esbuild cannot parse - all 42 valid as generated and
+    corrupted by an edit this function waved through.
+    """
+    if frontend_source.supports(rel_path):
+        return frontend_source.new_syntax_error(before, after)
     if not rel_path.lower().endswith(".py"):
         return None
     try:

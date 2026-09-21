@@ -93,8 +93,32 @@ def _declared(name: str, classes: dict, seen: frozenset = frozenset()):
     return accepted
 
 
+def _annotated_payloads(scope) -> dict:
+    """``{parameter name: annotation}`` for this function's arguments.
+
+    The ``<entity>_data`` naming convention was the only way a payload was
+    recognised, so a handler written ``payload: BookingCreate`` was invisible
+    to this check however wrong its reads were. The annotation is the better
+    signal anyway: it NAMES the schema instead of guessing it from a
+    variable, so it also cannot mis-resolve when the two disagree.
+    """
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {}
+    args = scope.args
+    annotated = {}
+    for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+        name = getattr(arg.annotation, "id", None)
+        if name:
+            annotated[arg.arg] = name
+    return annotated
+
+
 def _unguarded_payload_reads(tree: ast.AST) -> list:
-    """``(variable, field, line)`` for ``<x>_data.<field>`` reads.
+    """``(variable, annotation, field, line)`` for payload attribute reads.
+
+    ``annotation`` is the declared type when the handler annotated the
+    parameter, and ``None`` when the receiver was recognised only by the
+    ``_data`` suffix; the caller resolves the schema from whichever it has.
 
     A read the handler guards with ``hasattr``/``getattr`` on the same
     attribute is skipped: the author already handles the field being
@@ -108,6 +132,7 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
     scopes.append(tree)
     for scope in scopes:
+        annotated = _annotated_payloads(scope)
         guarded = {
             (node.args[0].id, node.args[1].value)
             for node in ast.walk(scope)
@@ -119,18 +144,19 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
         }
         for node in ast.walk(scope):
             if not (isinstance(node, ast.Attribute)
-                    and isinstance(node.value, ast.Name)
-                    and node.value.id.endswith(_PAYLOAD_SUFFIX)):
+                    and isinstance(node.value, ast.Name)):
+                continue
+            receiver = node.value.id
+            annotation = annotated.get(receiver)
+            if not (receiver.endswith(_PAYLOAD_SUFFIX) or annotation):
                 continue
             position = (node.lineno, node.col_offset)
             if position in examined:
                 continue
             examined.add(position)
-            if (node.value.id, node.attr) in guarded:
+            if (receiver, node.attr) in guarded:
                 continue
-            reads.append(
-                (node.value.id[:-len(_PAYLOAD_SUFFIX)], node.attr, node.lineno)
-            )
+            reads.append((receiver, annotation, node.attr, node.lineno))
     return reads
 
 
@@ -171,8 +197,16 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
                 tree = ast.parse(handle.read())
         except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
             continue
-        for entity, field, line in _unguarded_payload_reads(tree):
-            schema = create_schemas.get(f"{entity.lower()}create")
+        for receiver, annotation, field, line in _unguarded_payload_reads(tree):
+            # An annotation names the schema outright; the ``_data`` suffix
+            # only guesses it. Prefer the annotation, and fall back so the
+            # unannotated handlers this check was written for still work.
+            schema = None
+            if annotation and annotation in classes and annotation.endswith("Create"):
+                schema = annotation
+            elif receiver.endswith(_PAYLOAD_SUFFIX):
+                entity = receiver[:-len(_PAYLOAD_SUFFIX)]
+                schema = create_schemas.get(f"{entity.lower()}create")
             if not schema:
                 continue
             accepted = _declared(schema, classes)
@@ -185,7 +219,7 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
             problems.append(
                 f"data contract: {rel} "
                 f"line {line} "
-                f"reads `{entity}_data.{field}` but "
+                f"reads `{receiver}.{field}` but "
                 f"{schema} does not define `{field}` - this endpoint "
                 f"returns 500 on every request"
             )

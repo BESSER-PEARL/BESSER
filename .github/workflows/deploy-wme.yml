@@ -1,8 +1,30 @@
 name: Deploy WME to EC2
 
+# Two hosts, and they are NOT the same machine:
+#
+#   production   16.16.223.38   editor.besser-pearl.org
+#   experimental 13.48.129.214  experimental.besser-pearl.org
+#
+# Until now this workflow could only reach production, and only restarted
+# besser-wme-backend and besser-wme-frontend - so it could not deploy the
+# experimental host at all, and could not restart besser-wme-smartgen, the
+# worker that actually runs the spec-driven agent. Both are fixed here.
+#
+# besser-wme-smartgen runs the SAME image as the backend (see
+# docker-compose.prod.yml), so building the backend image covers it; it only
+# needs its own restart target.
+
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Which host'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - experimental
       target:
         description: 'What to deploy'
         required: true
@@ -10,76 +32,132 @@ on:
         type: choice
         options:
           - all
-          - backend
+          - backend          # restarts besser-wme-backend AND besser-wme-smartgen
           - frontend
+          - smartgen         # restart the spec-driven worker only, no rebuild
 
 env:
   REGISTRY: artefacts.list.lu/besser/web_modeling_editor
-  SSH_TARGET: ec2-user@ec2-16-16-223-38.eu-north-1.compute.amazonaws.com
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
+      - name: Resolve the target host and tag
+        id: env
+        run: |
+          if [[ "${{ inputs.environment }}" == "experimental" ]]; then
+            echo "ssh_target=ec2-user@13.48.129.214" >> "$GITHUB_OUTPUT"
+            echo "ssh_host=13.48.129.214" >> "$GITHUB_OUTPUT"
+            echo "tag=smart-gen" >> "$GITHUB_OUTPUT"
+            echo "url=https://experimental.besser-pearl.org" >> "$GITHUB_OUTPUT"
+          else
+            echo "ssh_target=ec2-user@ec2-16-16-223-38.eu-north-1.compute.amazonaws.com" >> "$GITHUB_OUTPUT"
+            echo "ssh_host=ec2-16-16-223-38.eu-north-1.compute.amazonaws.com" >> "$GITHUB_OUTPUT"
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "url=https://editor.besser-pearl.org" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
 
+      - name: Record the commit being deployed
+        id: src
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Login to Docker registry
         run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
 
-      # ── Backend ──────────────────────────────────────────────
+      # ── Backend (also the smartgen worker's image) ───────────
       - name: Build backend image
         if: inputs.target == 'all' || inputs.target == 'backend'
-        run: docker build -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
+        run: docker build -t ${{ env.REGISTRY }}/backend:${{ steps.env.outputs.tag }} -f Dockerfile .
 
       - name: Push backend image
         if: inputs.target == 'all' || inputs.target == 'backend'
-        run: docker push ${{ env.REGISTRY }}/backend:latest
+        run: docker push ${{ env.REGISTRY }}/backend:${{ steps.env.outputs.tag }}
 
       # ── Frontend ─────────────────────────────────────────────
       - name: Build frontend image
         if: inputs.target == 'all' || inputs.target == 'frontend'
         run: |
-          docker build -t ${{ env.REGISTRY }}/frontend:latest \
+          docker build -t ${{ env.REGISTRY }}/frontend:${{ steps.env.outputs.tag }} \
             -f besser/utilities/web_modeling_editor/frontend/Dockerfile \
             besser/utilities/web_modeling_editor/frontend/
 
       - name: Push frontend image
         if: inputs.target == 'all' || inputs.target == 'frontend'
-        run: docker push ${{ env.REGISTRY }}/frontend:latest
+        run: docker push ${{ env.REGISTRY }}/frontend:${{ steps.env.outputs.tag }}
 
-      # ── Deploy to EC2 ───────────────────────────────────────
+      # ── Deploy ───────────────────────────────────────────────
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ec2-16-16-223-38.eu-north-1.compute.amazonaws.com >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H ${{ steps.env.outputs.ssh_host }} >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy on EC2
         run: |
           SERVICES=""
           if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "backend" ]]; then
-            SERVICES="$SERVICES besser-wme-backend"
+            # One image, two containers. Restarting only the backend leaves the
+            # spec-driven worker on the old code, which is how a deploy gets
+            # reported successful while the agent is unchanged.
+            SERVICES="$SERVICES besser-wme-backend besser-wme-smartgen"
           fi
           if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
             SERVICES="$SERVICES besser-wme-frontend"
           fi
+          if [[ "${{ inputs.target }}" == "smartgen" ]]; then
+            SERVICES="$SERVICES besser-wme-smartgen"
+          fi
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }} << EOF
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ steps.env.outputs.ssh_target }} << EOF
             set -e
-            echo "Pulling latest images..."
+            echo "Disk before:"; df -h / | tail -1
+            echo "Pulling images..."
             docker compose pull $SERVICES
             echo "Restarting services..."
             docker compose up -d $SERVICES
             echo "Pruning dangling images..."
             docker image prune -f
-            echo "Running containers:"
+            echo "Disk after:"; df -h / | tail -1
             docker compose ps
           EOF
+
+      # A deploy is not done when the script says so. This host has previously
+      # been reported deployed from log lines alone while the container was
+      # unchanged, and the registry has served a stale tag before - which a
+      # successful `docker compose pull` does not distinguish from a fresh one.
+      - name: Verify the running container is the code we just built
+        run: |
+          DEPLOYED=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ steps.env.outputs.ssh_target }} \
+            "docker exec besser-wme-backend git -C /app rev-parse HEAD 2>/dev/null || echo unknown")
+          echo "built from : ${{ steps.src.outputs.sha }}"
+          echo "running    : $DEPLOYED"
+          if [[ "$DEPLOYED" != "unknown" && "$DEPLOYED" != "${{ steps.src.outputs.sha }}" ]]; then
+            echo "::error::The running container is not the commit that was just built."
+            exit 1
+          fi
+          if [[ "$DEPLOYED" == "unknown" ]]; then
+            echo "::warning::No git metadata in the image, so the commit could not be confirmed. Check a known symbol by hand."
+          fi
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              "${{ steps.env.outputs.url }}/besser_api/" || true)
+            [[ "$CODE" == "200" ]] && echo "API healthy" && exit 0
+            echo "attempt $i: $CODE"; sleep 5
+          done
+          echo "::error::API did not return 200 after the deploy"
+          exit 1
 
       - name: Cleanup SSH key
         if: always()

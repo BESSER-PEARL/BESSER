@@ -5,7 +5,7 @@ the file never imported, the module stops importing, every router that
 star-imports it dies, and Phase 3 rolls the whole repair back.
 
     trilraak  booking_guest = Table(...)   sqlalchemy.Table never imported
-    trilraak  dt_date / datetime           datetime never imported
+    trilraak  datetime                     datetime never imported
     pcovsppe  datetime                     same
 
 trilraak shipped a backend that could not start. pcovsppe and se7k3zbx lost
@@ -144,3 +144,67 @@ def test_the_repair_reaches_the_file_through_a_real_edit(tmp_path):
     # And the file still parses.
     import ast
     ast.parse(on_disk)
+
+
+class TestTheDocumentedBoundary:
+    """What this repair deliberately will NOT do.
+
+    Each of these is a case where the answer is a guess, and the module's
+    premise is that a wrong import is worse than a missing one: it turns a
+    legible NameError into a working import of the wrong thing.
+
+    trilraak's other failure was ``dt_date`` -- an ALIAS. No allowlisted module
+    exports that attribute, so it is not repaired. Recovering it means inferring
+    that ``dt_date`` stands for ``date``, which is the inference this module
+    refuses. Both the module and this file used to cite it as a case they
+    handled; they did not.
+    """
+
+    @pytest.mark.parametrize("src", [
+        "d: dt_date = dt_date.today()\n",
+        "x = dt_datetime.now()\n",
+        "x: Mapped_[int] = 1\n",
+        "t = sa_Table('x')\n",
+    ])
+    def test_an_aliased_name_is_left_alone(self, src):
+        content, notes = repair_missing_imports("m.py", src)
+
+        assert notes == []
+        assert content == src, "an aliased name was repaired by guessing"
+
+    @pytest.mark.parametrize("src", [
+        "d = date.today()\n",     # datetime.date, but too generic to attribute
+        "x = id\n",
+        "x = type\n",
+        "x: Any = 1\n",
+    ])
+    def test_a_name_on_the_never_list_is_left_alone(self, src):
+        """Too generic to attribute to one module, or shadowing one is the bug."""
+        content, notes = repair_missing_imports("m.py", src)
+
+        assert notes == []
+        assert content == src
+
+    def test_a_name_two_allowlisted_modules_export_is_left_alone(self):
+        """The ambiguity rule, on names that really are exported by both."""
+        from besser.spec_driven_agent.repair.import_repair import _exporting_modules
+
+        ambiguous = [n for n in ("Field", "BaseModel", "Enum", "UUID", "Decimal")
+                     if len(_exporting_modules(n)) > 1]
+        if not ambiguous:
+            pytest.skip("no allowlisted name is currently exported by two modules")
+
+        for name in ambiguous:
+            src = "x = " + name + "\n"
+            assert repair_missing_imports("m.py", src) == (src, []), name
+
+    def test_a_non_python_file_is_left_alone(self):
+        src = "const Table = 1;\n"
+        assert repair_missing_imports("app.tsx", src) == (src, [])
+
+    def test_the_plain_names_it_does_cover_still_work(self):
+        """The boundary tests above must not be satisfied by repairing nothing."""
+        content, notes = repair_missing_imports("m.py", "t = Table('x')\n")
+
+        assert notes, "the repair stopped working entirely"
+        assert "from sqlalchemy import Table" in content

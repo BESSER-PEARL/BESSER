@@ -139,7 +139,24 @@ def confirmed_create_paths(report: dict) -> set[str]:
     narrow check recognizes the generated API's id-bearing record envelopes;
     unfamiliar/truncated shapes stay unverified instead of guessing.
     """
-    if report.get("status") != "passed" or report.get("boot") != "ok":
+    # Boot is a whole-report precondition: nothing a dead app said is evidence.
+    # The scenario's overall verdict is NOT, and gating on it discarded proof
+    # this function had already checked itself. _run_requests marks a report
+    # "failed" if ANY request had an assertion failure, while the loop below
+    # independently rejects a request whose own POST or GET failed, was
+    # truncated, or answered outside 2xx. So one unrelated failure -- a POST to
+    # a different entity, or a deliberate negative probe -- threw away a Room
+    # that was demonstrably created and read back.
+    #
+    # The harness causes that case: tools.py tells the model to "Test happy
+    # paths AND invalid input/state transitions", and action_gap_tasks asks for
+    # an action driven to its successful AND refused outcome -- in one
+    # scenario. Following our own instruction emptied this set, which left
+    # _apply_scenario_evidence unable to retire the "create unverified:"
+    # finding, so it was re-prefixed "runtime unverified:" and PROMOTED to a
+    # blocker. A run that created and read back a Room was told it could not
+    # create a Room, and drove the Phase 3 fix loop against a non-defect.
+    if report.get("boot") != "ok":
         return set()
 
     def records(value):

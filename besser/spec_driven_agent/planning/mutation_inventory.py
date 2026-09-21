@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+from besser.spec_driven_agent.parsed_source import parse_source
 
 
 _SKIP = {"node_modules", "venv", "env", "dist", "build", "__pycache__", "tests", "test", "fixtures", "verification"}
@@ -46,7 +47,7 @@ def _type_names(annotation, depth=0):
         for node in ast.walk(annotation):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) < 2000:
                 try:
-                    result |= _type_names(ast.parse(node.value, mode="eval"), depth + 1)
+                    result |= _type_names(parse_source(node.value, mode="eval"), depth + 1)
                 except SyntaxError:
                     pass
     return result
@@ -73,7 +74,7 @@ def _source_files(root):
                 if not path.resolve().is_relative_to(root.resolve()) or path.stat().st_size > 500_000:
                     unknown.append(f"excluded/outsize source: {relative}")
                     continue
-                parsed[path] = ast.parse(path.read_text(encoding="utf-8-sig"))
+                parsed[path] = parse_source(path.read_text(encoding="utf-8-sig"))
             except (OSError, UnicodeError, SyntaxError) as exc:
                 unknown.append(f"unreadable source: {relative} ({type(exc).__name__})")
     return parsed, unknown
@@ -452,7 +453,7 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
         lines.append(f"- {name}: " + ", ".join(f"{field}:{annotation}" for field, annotation in sorted(fields.items())))
         for annotation in fields.values():
             try:
-                nested = _type_names(ast.parse(annotation, mode="eval"))
+                nested = _type_names(parse_source(annotation, mode="eval"))
             except SyntaxError:
                 nested = set()
             pending |= (nested & schema_names) - rendered

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+from besser.spec_driven_agent.parsed_source import parse_source
 
 
 _SKIP_DIRS = {"node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build"}
@@ -69,7 +70,7 @@ def _request_schemas(sources):
         if not path.endswith(".py"):
             continue
         try:
-            tree = ast.parse(text)
+            tree = parse_source(text)
         except SyntaxError:
             continue
         imports = {alias.asname or alias.name: alias.name

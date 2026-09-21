@@ -21,6 +21,7 @@ import tomllib
 from typing import Any
 
 from besser.spec_driven_agent.validation import frontend_source
+from besser.spec_driven_agent.parsed_source import parse_source
 
 
 logger = logging.getLogger(__name__)
@@ -339,7 +340,7 @@ def _star_exports(path: str, root: str, visited: set[str]) -> set[str] | None:
     visited.add(path)
     try:
         with open(path, encoding="utf-8") as handle:
-            tree = ast.parse(handle.read())
+            tree = parse_source(handle.read())
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return None
     names: set[str] = set()
@@ -434,7 +435,7 @@ def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | N
     """
     try:
         with open(path, encoding="utf-8") as handle:
-            tree = ast.parse(handle.read(), filename=path)
+            tree = parse_source(handle.read(), filename=path)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return None
 
@@ -638,7 +639,7 @@ def _scan_star_import_bindings(path: str, workspace: str) -> dict[str, object] |
     """
     try:
         with open(path, encoding="utf-8") as handle:
-            tree = ast.parse(handle.read(), filename=path)
+            tree = parse_source(handle.read(), filename=path)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return None
 
@@ -854,7 +855,7 @@ def _python_diagnostics(
     rel_path: str, content: str, workspace: str | None = None
 ) -> list[dict[str, Any]]:
     try:
-        tree = ast.parse(content, filename=rel_path)
+        tree = parse_source(content, filename=rel_path)
     except SyntaxError as exc:
         return [_finding(
             "python",

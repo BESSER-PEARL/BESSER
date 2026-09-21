@@ -29,6 +29,7 @@ import ast
 import os
 import re
 from dataclasses import dataclass, field
+from besser.spec_driven_agent.parsed_source import parse_source
 
 # Model type names that serialize to a string on the wire.
 _STRING_TYPES = frozenset({"str", "string", "uuid"})
@@ -578,7 +579,7 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
     if not contract.action_arity or "/methods/" not in content:
         return []
     try:
-        tree = ast.parse(content)
+        tree = parse_source(content)
     except (SyntaxError, ValueError):
         return []  # a half-written file is python_source's problem, not ours
     findings: list = []
@@ -681,7 +682,7 @@ def _coin_flip_outcome_issues(rel: str, content: str) -> list:
     if not any(word in content for word in ("random", "secrets")):
         return []
     try:
-        tree = ast.parse(content)
+        tree = parse_source(content)
     except (SyntaxError, ValueError):
         return []  # a half-written file is python_source's problem, not ours
     aliases = _random_aliases(tree)
@@ -1014,7 +1015,7 @@ def _walk_python(app_dir: str, known: frozenset) -> tuple:
             except OSError:
                 continue
             try:
-                tree = ast.parse(content)
+                tree = parse_source(content)
             except (SyntaxError, ValueError):
                 continue  # a half-written file is python_source's problem
             _declared_members(tree, known, declared)

@@ -26,6 +26,7 @@ from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import _check_did_not_run
 from besser.spec_driven_agent.validation.python_source import _python_files
+from besser.spec_driven_agent.parsed_source import parse_source
 
 
 # The stdlib half of the allowlist, taken from the interpreter rather than
@@ -208,7 +209,7 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     for path in py_files:
         try:
             with open(path, "r", encoding="utf-8") as handle:
-                tree = _ast.parse(handle.read())
+                tree = parse_source(handle.read())
         except (OSError, SyntaxError, UnicodeDecodeError):
             continue  # syntax errors are reported by their own check
 

@@ -5,6 +5,7 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.parsed_source import parse_source
 
 
 # Kept only because ``orchestrator`` re-exports them for external callers.
@@ -50,7 +51,7 @@ def _class_index(output_dir: str) -> dict:
     for path in _python_files(output_dir):
         try:
             with open(path, "r", encoding="utf-8") as handle:
-                tree = ast.parse(handle.read())
+                tree = parse_source(handle.read())
         except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
             continue
         for node in ast.walk(tree):
@@ -194,7 +195,7 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
             continue
         try:
             with open(path, "r", encoding="utf-8") as handle:
-                tree = ast.parse(handle.read())
+                tree = parse_source(handle.read())
         except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
             continue
         for receiver, annotation, field, line in _unguarded_payload_reads(tree):

@@ -12,6 +12,7 @@ import ast
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from besser.spec_driven_agent.parsed_source import parse_source
 
 
 _SKIP_DIRS = {
@@ -104,7 +105,7 @@ def _read_action_file(workspace: Path, path: Path) -> list[ActionEndpoint]:
     try:
         # Never read a source symlink outside the output tree.
         path.resolve().relative_to(workspace.resolve())
-        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        tree = parse_source(path.read_text(encoding="utf-8-sig"), filename=str(path))
     except (OSError, UnicodeError, ValueError, SyntaxError):
         return []
     endpoints = []

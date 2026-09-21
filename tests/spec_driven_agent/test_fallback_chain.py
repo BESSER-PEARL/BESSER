@@ -13,8 +13,8 @@ so a model id can never be sent with another endpoint's bearer.
 
 import pytest
 
-from besser.spec_driven_agent import llm_client as lc
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers import llm_client as lc
+from besser.spec_driven_agent.providers.llm_client import (
     OpenAIProvider,
     _resolve_free_fallback_chain,
 )

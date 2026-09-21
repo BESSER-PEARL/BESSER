@@ -29,8 +29,8 @@ from unittest.mock import patch
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.stack_metadata import (
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.stack_metadata import (
     detect_stack,
     files_for,
     pre_generate_metadata,

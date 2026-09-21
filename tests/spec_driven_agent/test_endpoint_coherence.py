@@ -1,6 +1,6 @@
 """Frontend HTTP calls must resolve against the generated backend manifest."""
 
-from besser.spec_driven_agent.endpoint_coherence import collect_endpoint_coherence_issues
+from besser.spec_driven_agent.validation.endpoint_coherence import collect_endpoint_coherence_issues
 
 
 def _seed(tmp_path, rel_path: str, content: str) -> None:

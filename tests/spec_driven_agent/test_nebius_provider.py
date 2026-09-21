@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     LLMProvider,
     NebiusProvider,
@@ -194,7 +194,7 @@ class TestNebiusApiKeyResolution:
 
 class TestCreateNebiusClient:
 
-    @patch("besser.spec_driven_agent.llm_client.NebiusProvider")
+    @patch("besser.spec_driven_agent.providers.llm_client.NebiusProvider")
     def test_factory_builds_a_nebius_provider(self, MockNebius):
         MockNebius.return_value = MagicMock(spec=LLMProvider)
         create_llm_client(provider="nebius", api_key="nebius-test")
@@ -253,7 +253,7 @@ class TestNebiusContextWindow:
     """
 
     def test_namespaced_nebius_id_is_not_clamped_to_the_ollama_window(self):
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         nebius = effective_threshold("Qwen/Qwen3-30B-A3B-Instruct-2507")
         ollama = effective_threshold("qwen3-coder:30b")
         assert nebius > ollama, (
@@ -261,17 +261,17 @@ class TestNebiusContextWindow:
 
     def test_self_hosted_qwen3_still_uses_the_measured_window(self):
         """The row protects the production free tier — it must keep working."""
-        from besser.spec_driven_agent.compaction import (
+        from besser.spec_driven_agent.agent.compaction import (
             COMPACT_RESERVE_TOKENS, COMPACT_TOKEN_THRESHOLD, effective_threshold)
         got = effective_threshold("qwen3-coder:30b")
         assert got <= min(COMPACT_TOKEN_THRESHOLD, 60_000 - COMPACT_RESERVE_TOKENS)
 
     def test_other_self_hosted_rows_are_unaffected(self):
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         for bare in ("devstral:latest", "mistral-small", "mistral-7b"):
             assert effective_threshold(bare) <= 32_000
 
     def test_namespaced_mistral_small_is_not_clamped_either(self):
         """The guard is about self-hosted vs cloud, not about qwen."""
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         assert effective_threshold("mistralai/Mistral-Small-Instruct") >             effective_threshold("mistral-small")

@@ -9,8 +9,8 @@ items, so the run silently skipped every requirement check.
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
 @pytest.fixture

@@ -29,7 +29,7 @@ from besser.BUML.metamodel.structural import (
     Property, StringType,
 )
 from besser.generators.backend import BackendGenerator
-from besser.spec_driven_agent.constructibility import (
+from besser.spec_driven_agent.validation.constructibility import (
     PREFIX, collect_constructibility_issues,
 )
 
@@ -99,7 +99,7 @@ def test_the_probe_reports_the_entity_created(tmp_path, build_model, entity):
     """The absence of a blocker is not the same as a successful POST — an
     unverified route produces no ``create contract:`` issue either. This
     asserts the request the probe actually made came back created."""
-    from besser.spec_driven_agent.constructibility import _run_probe
+    from besser.spec_driven_agent.validation.constructibility import _run_probe
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
     report = _run_probe(_generate(build_model(), tmp_path), _safe_subprocess_env())

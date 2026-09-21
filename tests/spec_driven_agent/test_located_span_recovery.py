@@ -17,7 +17,7 @@ import tempfile
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 # The w7zoeszt shape: 16 of its refusals quoted the decorator indented four

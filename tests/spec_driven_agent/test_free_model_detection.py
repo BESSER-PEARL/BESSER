@@ -15,7 +15,7 @@ The rule now keys on how a model is IDENTIFIED rather than its family.
 """
 import pytest
 
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     _MODEL_PRICING,
     _ZERO_PRICING,
     _get_pricing,
@@ -103,7 +103,7 @@ def test_the_vendored_table_ships_and_is_readable():
     """Packaged via ``setup.cfg`` package_data; ``packages=find:`` does not
     see ``data/`` as a package, so a key naming it would be inert and every
     install would silently fall back to the coarse tiers."""
-    from besser.spec_driven_agent.llm_client import _vendored_prices
+    from besser.spec_driven_agent.providers.llm_client import _vendored_prices
     table = _vendored_prices()
     assert table, "vendored price table is missing or empty"
     assert table["claude-sonnet-5"]["input_cost_per_token"] == pytest.approx(2e-06)
@@ -111,7 +111,7 @@ def test_the_vendored_table_ships_and_is_readable():
 
 def test_the_self_hosted_fallback_stays_free():
     """The one model this heuristic exists for must not regress into billing."""
-    from besser.spec_driven_agent.llm_client import free_fallback_model
+    from besser.spec_driven_agent.providers.llm_client import free_fallback_model
     import os
 
     os.environ.setdefault("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3-coder:30b")

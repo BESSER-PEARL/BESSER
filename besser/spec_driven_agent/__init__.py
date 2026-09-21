@@ -49,14 +49,14 @@ nor invents behaviour for them.  Body inference lives in each generator's
 ``templates/method_body.py.j2`` macro.
 """
 
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     LLMProvider,
     MistralProvider,
     NebiusProvider,
     OpenAIProvider,
     create_llm_client,
 )
-from besser.spec_driven_agent.llm_generator import LLMGenerator
+from besser.spec_driven_agent.generator import LLMGenerator
 
 __all__ = [
     "LLMGenerator",

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 FIXTURE_0C53 = Path(__file__).parent / "fixtures" / "run_0c537a4e"
 ROUTER = "web_app/backend/routers/booking_methods.py"

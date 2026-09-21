@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
 pytest.importorskip("pyflakes")
 
@@ -66,7 +66,7 @@ def test_names_the_star_modules_that_were_searched(workspace):
 
 def test_the_executor_reports_it_in_the_same_turn(workspace):
     """The result the model reads back must carry the finding."""
-    from besser.spec_driven_agent.tool_executor import ToolExecutor
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
     executor = ToolExecutor(workspace=str(workspace))
     content = (workspace / ROUTER).read_text(encoding="utf-8")

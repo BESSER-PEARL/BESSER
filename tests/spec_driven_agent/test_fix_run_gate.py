@@ -23,8 +23,8 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.fix_target import parse_reported_target
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
 
 # ----------------------------------------------------------------------

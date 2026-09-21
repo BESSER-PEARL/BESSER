@@ -11,9 +11,9 @@ import os
 import re
 from typing import Any
 
-from besser.spec_driven_agent.contract_checks import build_data_contract
+from besser.spec_driven_agent.validation.contract_checks import build_data_contract
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
-from besser.spec_driven_agent.mutation_inventory import build_mutation_manifest
+from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
 from besser.spec_driven_agent.model_serializer import (
     serialize_agent_model,
     serialize_bpmn_model,
@@ -24,8 +24,8 @@ from besser.spec_driven_agent.model_serializer import (
     serialize_quantum_circuit,
     serialize_state_machines,
 )
-from besser.spec_driven_agent.runbook import runbook_section
-from besser.spec_driven_agent.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.agent.runbook import runbook_section
+from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
 
 logger = logging.getLogger(__name__)
 

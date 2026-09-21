@@ -18,8 +18,8 @@ that a loop exists.
 
 import pytest
 
-from besser.spec_driven_agent import requirements_ledger as ledger
-from besser.spec_driven_agent.llm_client import UsageTracker
+from besser.spec_driven_agent.planning import requirements_ledger as ledger
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
 REQUIREMENTS = [
     {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"},

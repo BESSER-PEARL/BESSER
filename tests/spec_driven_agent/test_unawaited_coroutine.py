@@ -9,7 +9,7 @@ POSTing to the route produced ``'coroutine' object is not subscriptable``.
 The check flagged 0 of 564 known-good files (BESSER, the modeling agent,
 fastapi, starlette, anyio, httpx) and exactly this one call.
 """
-from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
 
 def codes(content, path="routers/booking_methods.py"):

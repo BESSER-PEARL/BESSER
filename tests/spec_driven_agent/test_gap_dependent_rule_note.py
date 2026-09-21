@@ -32,7 +32,7 @@ from besser.BUML.metamodel.structural import (
     Property,
     StringType,
 )
-from besser.spec_driven_agent.gap_analyzer import (
+from besser.spec_driven_agent.planning.gap_analyzer import (
     _note_dependent_rule_placement,
     analyze_gaps_via_llm,
 )

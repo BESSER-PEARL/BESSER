@@ -18,19 +18,19 @@ import shutil
 
 import pytest
 
-from besser.spec_driven_agent.acceptance import (
+from besser.spec_driven_agent.validation.acceptance import (
     _post_helpers, build_acceptance_matrix, matrix_issues)
-from besser.spec_driven_agent.action_inventory import (
+from besser.spec_driven_agent.planning.action_inventory import (
     action_body_present, action_implementation_issues, collect_action_endpoints)
-from besser.spec_driven_agent.endpoint_coherence import collect_endpoint_coherence_issues
-from besser.spec_driven_agent.fix_target import finding_matches_target, parse_reported_target
-from besser.spec_driven_agent.frontend_bindings import literal_component_props
-from besser.spec_driven_agent.requirements_ledger import verify_evidence
+from besser.spec_driven_agent.validation.endpoint_coherence import collect_endpoint_coherence_issues
+from besser.spec_driven_agent.planning.fix_target import finding_matches_target, parse_reported_target
+from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
+from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
 from besser.spec_driven_agent.validation.frontend_contract import _method_button_source_issues
 from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_issues
 from besser.spec_driven_agent.validation.issues import _classify_issue
 from besser.spec_driven_agent.validation.python_source import _create_schema_router_mismatches
-from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
 
 def _write(root, rel: str, text: str) -> None:

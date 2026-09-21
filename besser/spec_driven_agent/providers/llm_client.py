@@ -25,7 +25,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
-from besser.spec_driven_agent.model_settings import (
+from besser.spec_driven_agent.providers.model_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     max_output_tokens,
     reasoning_effort_for_tools,

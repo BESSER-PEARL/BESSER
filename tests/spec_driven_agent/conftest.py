@@ -42,6 +42,6 @@ def _no_model_catalog(monkeypatch):
     this directory. Pin the cache as already loaded and empty; a test that
     wants a catalog resets ``_CATALOG_LOADED`` and injects ``_fetch_catalog``.
     """
-    import besser.spec_driven_agent.compaction as compaction
+    import besser.spec_driven_agent.agent.compaction as compaction
     monkeypatch.setattr(compaction, "_CATALOG", {}, raising=False)
     monkeypatch.setattr(compaction, "_CATALOG_LOADED", True, raising=False)

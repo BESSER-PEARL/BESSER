@@ -20,7 +20,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
-from besser.spec_driven_agent.specification import MAX_SPECIFICATION_CHARS
+from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_DEFAULT_MAX_COST_USD,
     LLM_DEFAULT_MAX_RUNTIME_SECONDS,
@@ -174,7 +174,7 @@ class SmartGenerateRequest(BaseModel):
         value = value.strip()
         if not value:
             return None
-        from besser.spec_driven_agent.tools import GENERATOR_TOOLS
+        from besser.spec_driven_agent.agent.tools import GENERATOR_TOOLS
 
         registered = {tool["name"] for tool in GENERATOR_TOOLS}
         if value not in registered:

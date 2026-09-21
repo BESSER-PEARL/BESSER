@@ -25,7 +25,7 @@ fine (they had merely run out of turns).
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _classify_issue,
     _tool_call_detail,
     _unresolvable_local_imports,
@@ -177,7 +177,7 @@ def test_a_three_argument_on_progress_callback_still_works():
     """``on_progress`` is public API of a published package: a caller may still
     pass the original (turn, tool, status) callback. Passing `detail`
     unconditionally raised TypeError for them and aborted the turn."""
-    from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
     seen = []
     orch = object.__new__(LLMOrchestrator)       # no heavy __init__ needed
@@ -190,7 +190,7 @@ def test_a_three_argument_on_progress_callback_still_works():
 
 
 def test_a_four_argument_callback_receives_the_detail():
-    from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
     seen = []
     orch = object.__new__(LLMOrchestrator)
@@ -200,7 +200,7 @@ def test_a_four_argument_callback_receives_the_detail():
 
 
 def test_a_raising_callback_never_breaks_the_run():
-    from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
     def explode(*_args):
         raise RuntimeError("callback bug")
@@ -301,7 +301,7 @@ _FATAL_LINE_NO = _LIVE52_SQL_ALCHEMY.splitlines().index(_FATAL_LINE) + 1
 
 def test_the_live_mapper_failure_is_a_blocker_that_names_the_line(tmp_path):
     """Nested web_app/backend/ layout, as downloaded."""
-    from besser.spec_driven_agent.orchestrator import _import_smoke_issues
+    from besser.spec_driven_agent.pipeline.orchestrator import _import_smoke_issues
 
     _write(tmp_path, "web_app/backend/sql_alchemy.py", _LIVE52_SQL_ALCHEMY)
     issues = _import_smoke_issues(str(tmp_path))
@@ -315,7 +315,7 @@ def test_the_live_mapper_failure_is_a_blocker_that_names_the_line(tmp_path):
 
 def test_the_same_file_without_that_line_is_clean(tmp_path):
     """Flat backend/ layout: the file is found wherever it is."""
-    from besser.spec_driven_agent.orchestrator import _import_smoke_issues
+    from besser.spec_driven_agent.pipeline.orchestrator import _import_smoke_issues
 
     _write(tmp_path, "backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY)
     assert _import_smoke_issues(str(tmp_path)) == []
@@ -323,7 +323,7 @@ def test_the_same_file_without_that_line_is_clean(tmp_path):
 
 def test_an_import_time_name_error_is_caught_with_its_own_line(tmp_path):
     """The star-import blind spot: ruff excuses the name, the import dies."""
-    from besser.spec_driven_agent.orchestrator import _import_smoke_issues
+    from besser.spec_driven_agent.pipeline.orchestrator import _import_smoke_issues
 
     _write(tmp_path, "backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY)
     _write(tmp_path, "backend/pydantic_classes.py",
@@ -337,7 +337,7 @@ def test_an_import_time_name_error_is_caught_with_its_own_line(tmp_path):
 
 
 def test_a_missing_interpreter_is_reported_as_not_run(tmp_path, monkeypatch):
-    from besser.spec_driven_agent.orchestrator import _import_smoke_issues
+    from besser.spec_driven_agent.pipeline.orchestrator import _import_smoke_issues
 
     _write(tmp_path, "backend/sql_alchemy.py", _LIVE52_SQL_ALCHEMY)
     monkeypatch.setattr("sys.executable", str(tmp_path / "no-such-python"))
@@ -350,7 +350,7 @@ def test_a_missing_interpreter_is_reported_as_not_run(tmp_path, monkeypatch):
 def test_a_dependency_the_harness_lacks_is_not_the_apps_fault(tmp_path):
     """The check runs in the harness interpreter, not the app's venv. A
     third-party module missing HERE proves nothing about the app."""
-    from besser.spec_driven_agent.orchestrator import _import_smoke_issues
+    from besser.spec_driven_agent.pipeline.orchestrator import _import_smoke_issues
 
     _write(tmp_path, "backend/sql_alchemy.py",
            "import no_such_third_party_package_xyz\n" + _HEALTHY_SQL_ALCHEMY)
@@ -364,7 +364,7 @@ def test_the_phantom_secondary_is_named_at_write_time():
     through lint_file, so the model hears about it while the file is still
     in context. Advisory, not blocker - the table could be defined in another
     module; the import smoke check above is the gate that proves it."""
-    from besser.spec_driven_agent.contract_checks import DataContract, lint_file
+    from besser.spec_driven_agent.validation.contract_checks import DataContract, lint_file
 
     findings = lint_file("web_app/backend/sql_alchemy.py", _LIVE52_SQL_ALCHEMY,
                          DataContract(pk_types={}))
@@ -376,7 +376,7 @@ def test_the_phantom_secondary_is_named_at_write_time():
 
 
 def test_a_secondary_that_names_a_real_table_is_not_flagged():
-    from besser.spec_driven_agent.contract_checks import DataContract, lint_file
+    from besser.spec_driven_agent.validation.contract_checks import DataContract, lint_file
 
     contract = DataContract(pk_types={})
     assert lint_file("backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY, contract) == []

@@ -33,12 +33,12 @@ from pathlib import Path
 
 import pytest
 
-from besser.spec_driven_agent.constructibility import (
+from besser.spec_driven_agent.validation.constructibility import (
     ACTION_PREFIX,
     ACTION_UNVERIFIED_PREFIX,
     collect_constructibility_issues,
 )
-from besser.spec_driven_agent.orchestrator import _classify_issue
+from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")

@@ -260,7 +260,7 @@ def build_acceptance_matrix(
 
     if not endpoint_manifest:
         try:
-            from besser.spec_driven_agent.prompt_builder import build_endpoint_manifest
+            from besser.spec_driven_agent.agent.prompt_builder import build_endpoint_manifest
             endpoint_manifest = build_endpoint_manifest(output_dir) or ""
         except Exception:
             endpoint_manifest = ""

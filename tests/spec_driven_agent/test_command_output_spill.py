@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
-from besser.spec_driven_agent.tool_executor import (
+from besser.spec_driven_agent.agent.tool_executor import (
     MAX_OUTPUT_SIZE,
     MAX_SPILL_SIZE,
     ToolExecutor,
@@ -63,7 +63,7 @@ def _failing_build_log() -> str:
 
 def _run(ex: ToolExecutor, command: str, stdout: str = "", stderr: str = "") -> dict:
     completed = _completed(1 if stderr else 0, stdout=stdout, stderr=stderr)
-    with patch("besser.spec_driven_agent.tool_executor.subprocess.run", return_value=completed):
+    with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
         return ex._run_command({"command": command})
 
 
@@ -167,7 +167,7 @@ def test_each_spill_gets_its_own_file(tmp_path):
 def test_a_runaway_command_cannot_fill_the_disk(tmp_path, monkeypatch):
     """The spill is deliberately huge next to the context cap, but bounded."""
     monkeypatch.setattr(
-        "besser.spec_driven_agent.tool_executor.MAX_SPILL_SIZE", MAX_OUTPUT_SIZE * 2,
+        "besser.spec_driven_agent.agent.tool_executor.MAX_SPILL_SIZE", MAX_OUTPUT_SIZE * 2,
     )
     ex = _executor(tmp_path)
     runaway = "x" * (MAX_OUTPUT_SIZE * 10)
@@ -210,7 +210,7 @@ def test_the_spill_is_not_advertised_as_a_project_file(tmp_path):
 
 
 def test_the_scaffold_inventory_ignores_the_spill(tmp_path):
-    from besser.spec_driven_agent.prompt_builder import build_inventory
+    from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 
     ex = _executor(tmp_path)
     (tmp_path / "main_api.py").write_text("app = 1\n", encoding="utf-8")
@@ -223,7 +223,7 @@ def test_the_scaffold_inventory_ignores_the_spill(tmp_path):
 
 
 def test_the_recipe_manifest_excludes_the_spill():
-    from besser.spec_driven_agent.orchestrator import _RECIPE_EXCLUDED_DIRS
+    from besser.spec_driven_agent.pipeline.orchestrator import _RECIPE_EXCLUDED_DIRS
 
     assert COMMAND_OUTPUT_DIR in _RECIPE_EXCLUDED_DIRS
 

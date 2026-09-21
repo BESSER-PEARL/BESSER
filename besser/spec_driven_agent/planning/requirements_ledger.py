@@ -25,9 +25,9 @@ from pathlib import Path
 import re
 import time
 
-from besser.spec_driven_agent.gap_analyzer import _chat_supports_kwargs, _is_real_provider
-from besser.spec_driven_agent.specification import validate_specification
-from besser.spec_driven_agent.write_diagnostics import (
+from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
+from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
 

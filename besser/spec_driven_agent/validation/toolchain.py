@@ -22,7 +22,7 @@ import os
 import re as _re
 import tempfile
 
-from besser.spec_driven_agent.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,

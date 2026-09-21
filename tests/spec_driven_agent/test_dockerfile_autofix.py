@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _is_dockerfile,
     _project_has_npm_lockfile,
     _strip_missing_lockfile_copy,

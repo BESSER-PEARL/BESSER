@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
 class _MockBlock:
@@ -114,7 +114,7 @@ def test_phase2_loop_reports_switch_after_llm_call(tmp_path, monkeypatch):
     client = _FallbackSwitchingClient()
     orch = _make_orchestrator(tmp_path, client)
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: None,
     )
     progress: list[tuple] = []
@@ -131,7 +131,7 @@ def test_phase2_loop_silent_when_model_stable(tmp_path, monkeypatch):
     client = _MockClient()
     orch = _make_orchestrator(tmp_path, client)
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: None,
     )
     progress: list[tuple] = []

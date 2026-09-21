@@ -1,4 +1,4 @@
-"""Tests for ``besser.spec_driven_agent.checkpoint``.
+"""Tests for ``besser.spec_driven_agent.state.checkpoint``.
 
 Covers the public save / load / delete API plus the fingerprint function
 used to validate resume requests.
@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from besser.spec_driven_agent.checkpoint import (
+from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_FILENAME,
     CHECKPOINT_SCHEMA_VERSION,
     Checkpoint,
@@ -94,7 +94,7 @@ def test_save_load_round_trip(tmp_path):
 
 
 def test_real_provider_blocks_survive_checkpoint_round_trip(tmp_path):
-    from besser.spec_driven_agent.llm_client import _TextBlock, _ToolUseBlock
+    from besser.spec_driven_agent.providers.llm_client import _TextBlock, _ToolUseBlock
 
     arguments = {"path": "app.py", "old_text": "x = 1", "new_text": "y = 2\nx = 1"}
     original = _make_checkpoint(messages=[

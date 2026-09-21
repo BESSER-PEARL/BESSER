@@ -46,7 +46,7 @@ import logging
 import re
 from typing import Any, Callable
 
-from besser.spec_driven_agent.action_inventory import ActionEndpoint, format_action_inventory
+from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
 
 logger = logging.getLogger(__name__)

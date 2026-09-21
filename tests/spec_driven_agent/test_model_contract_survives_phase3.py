@@ -26,7 +26,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
 StringType = PrimitiveDataType("str")
 

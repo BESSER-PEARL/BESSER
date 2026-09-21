@@ -94,8 +94,8 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
 )
 from besser.generators.web_app.web_app_generator import agent_slug
-from besser.spec_driven_agent.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
+from besser.spec_driven_agent.providers.llm_client import (
     free_alt_models,
     free_fallback_model,
     free_pilot_model,

@@ -4,7 +4,7 @@ import ast
 import os
 import re as _re
 
-from besser.spec_driven_agent.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 
 
 # Kept only because ``orchestrator`` re-exports them for external callers.

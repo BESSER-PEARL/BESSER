@@ -36,9 +36,9 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.contract_checks import build_data_contract, lint_file
+from besser.spec_driven_agent.validation.contract_checks import build_data_contract, lint_file
 from besser.spec_driven_agent.model_serializer import serialize_domain_model
-from besser.spec_driven_agent.orchestrator import _classify_issue
+from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
 
 StringType = PrimitiveDataType("str")
 IntegerType = PrimitiveDataType("int")

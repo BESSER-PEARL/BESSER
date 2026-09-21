@@ -35,13 +35,13 @@ from unittest.mock import patch
 import pytest
 
 from besser.spec_driven_agent.errors import InvalidApiKeyError
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _PHASE3_NO_PROGRESS_ROUNDS,
     _PHASE3_PLATEAU_ROUNDS,
     LLMOrchestrator,
     ValidationIssue,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.validation.issues import _hard_blockers
 
 

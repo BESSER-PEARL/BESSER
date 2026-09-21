@@ -23,13 +23,13 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.contract_checks import (
+from besser.spec_driven_agent.validation.contract_checks import (
     build_data_contract,
     lint_file,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, _classify_issue
-from besser.spec_driven_agent.prompt_builder import build_system_prompt
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
+from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 StringType = PrimitiveDataType("str")
 IntegerType = PrimitiveDataType("int")

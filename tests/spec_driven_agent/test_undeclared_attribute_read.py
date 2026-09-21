@@ -42,7 +42,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.contract_checks import (
+from besser.spec_driven_agent.validation.contract_checks import (
     build_data_contract,
     collect_undeclared_attribute_issues,
 )

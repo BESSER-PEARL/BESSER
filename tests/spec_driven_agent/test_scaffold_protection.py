@@ -18,8 +18,8 @@ from __future__ import annotations
 import json
 import os
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.tools import FILE_TOOLS
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tools import FILE_TOOLS
 
 
 def _protected(tmp_path, lines: int) -> tuple[ToolExecutor, str]:

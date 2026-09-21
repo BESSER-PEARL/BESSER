@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.spec_driven_agent.constructibility import (
+from besser.spec_driven_agent.validation.constructibility import (
     PREFIX,
     UNVERIFIED_PREFIX,
     _NetworkBlocked,
@@ -40,7 +40,7 @@ from besser.spec_driven_agent.constructibility import (
     collect_constructibility_report,
 )
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue, _classify_issue
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue, _classify_issue
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")

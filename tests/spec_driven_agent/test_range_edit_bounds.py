@@ -16,8 +16,8 @@ import tempfile
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 SOURCE = "# keep\nasync def action():\n    return False\n\ndef unrelated():\n    return False\n"

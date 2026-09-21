@@ -1,4 +1,4 @@
-"""Tests for ``besser.spec_driven_agent.tracing``.
+"""Tests for ``besser.spec_driven_agent.state.tracing``.
 
 The TraceWriter is append-only and best-effort — these tests lock
 down the record shape and verify it doesn't raise on degraded
@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from besser.spec_driven_agent.tracing import (
+from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
     EVENT_TOOL_CALL,
     EVENT_TURN_START,

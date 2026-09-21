@@ -3,12 +3,12 @@ json_object, baf, bpmn, pytorch, tensorflow) must be exposed ONLY when the
 matching model is loaded, and must register without importing torch/tensorflow
 (both optional and absent in the hosted backend image).
 """
-from besser.spec_driven_agent.tools import (
+from besser.spec_driven_agent.agent.tools import (
     GENERATOR_TOOLS,
     _TOOL_MODEL_REQUIREMENTS,
     get_tools_for,
 )
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 def _names(**flags):

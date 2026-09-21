@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
 
 class _MockStateMachine:

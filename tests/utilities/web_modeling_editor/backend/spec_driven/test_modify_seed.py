@@ -24,7 +24,7 @@ import time
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from besser.spec_driven_agent.checkpoint import CHECKPOINT_FILENAME
+from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,

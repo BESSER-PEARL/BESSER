@@ -17,8 +17,8 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator, _check_did_not_run, _classify_issue,
 )
 from besser.spec_driven_agent.validation.issues import is_completion_issue, required_check_unverified
@@ -67,7 +67,7 @@ def test_a_skipped_check_is_a_warning_not_a_blocker(orch, tmp_path, monkeypatch)
     monkeypatch.setattr(orch.client, "chat", lambda *a, **kw: pytest.fail("environment gaps must not spend repair turns"))
     orch._run_phase3_validation()
     orch._finish_checkpoint()
-    from besser.spec_driven_agent.checkpoint import load_checkpoint
+    from besser.spec_driven_agent.state.checkpoint import load_checkpoint
     assert load_checkpoint(str(tmp_path)).phase == "phase3"
     orch._validation_issues = [_classify_issue(note)]
     orch._finish_checkpoint()
@@ -88,7 +88,7 @@ def test_a_skipped_check_is_a_warning_not_a_blocker(orch, tmp_path, monkeypatch)
 
 
 def test_requirement_judgment_is_stable_until_source_changes(orch, tmp_path, monkeypatch):
-    from besser.spec_driven_agent import requirements_ledger as ledger
+    from besser.spec_driven_agent.planning import requirements_ledger as ledger
 
     orch._requirements = [{"id": 1, "text": "An action works", "kind": "action"}]
     calls = []
@@ -151,7 +151,7 @@ def test_requirement_judgment_is_stable_until_source_changes(orch, tmp_path, mon
 
 
 def test_failed_requirement_extraction_stays_unknown_and_retries_once(orch, monkeypatch):
-    from besser.spec_driven_agent import requirements_ledger as ledger
+    from besser.spec_driven_agent.planning import requirements_ledger as ledger
 
     calls = []
     monkeypatch.setattr(ledger, "_is_real_provider", lambda client: True)
@@ -169,7 +169,7 @@ def test_failed_requirement_extraction_stays_unknown_and_retries_once(orch, monk
 
 
 def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, tmp_path, monkeypatch):
-    from besser.spec_driven_agent import requirements_ledger as ledger
+    from besser.spec_driven_agent.planning import requirements_ledger as ledger
 
     expression = "context User inv nonnegative: self.missing >= 0"
     diagnostic = {
@@ -249,7 +249,7 @@ def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, 
 
 
 def test_core_rejects_oversized_spec_before_work(orch):
-    from besser.spec_driven_agent.specification import MAX_SPECIFICATION_CHARS
+    from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
 
     for entry in (orch.run, orch.resume, orch.modify):
         with pytest.raises(ValueError, match="specification was not truncated"):
@@ -460,7 +460,7 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
 # data contract
 # --------------------------------------------------------------------------- #
 def test_a_failed_contract_build_is_reported(orch, monkeypatch):
-    import besser.spec_driven_agent.contract_checks as cc
+    import besser.spec_driven_agent.validation.contract_checks as cc
 
     def _boom(_model):
         raise RuntimeError("contract build exploded")

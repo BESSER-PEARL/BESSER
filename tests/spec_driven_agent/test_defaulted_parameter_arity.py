@@ -18,7 +18,7 @@ last two tests pin that boundary.
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, Method, Parameter, StringType, IntegerType,
 )
-from besser.spec_driven_agent.contract_checks import build_data_contract
+from besser.spec_driven_agent.validation.contract_checks import build_data_contract
 
 
 def _model(*parameters) -> DomainModel:

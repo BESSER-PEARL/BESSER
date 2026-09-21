@@ -18,7 +18,7 @@ run can finish, and reported.
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import (
+from besser.spec_driven_agent.agent.tool_executor import (
     _MAX_TASK_VERIFY_ATTEMPTS,
     ToolExecutor,
 )
@@ -65,7 +65,7 @@ def test_a_single_id_still_works(executor):
 
 
 def test_batching_is_what_the_tool_advertises(executor):
-    from besser.spec_driven_agent.tools import VALIDATION_TOOLS
+    from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
     assert "ids" in spec["input_schema"]["properties"]
     assert spec["input_schema"]["properties"]["ids"]["type"] == "array"
@@ -415,7 +415,7 @@ def test_an_empty_batch_is_refused_clearly(executor):
 
 def test_the_tool_advertises_batched_adds(executor):
     """A capability the description does not mention is a capability unused."""
-    from besser.spec_driven_agent.tools import VALIDATION_TOOLS
+    from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
     assert "texts" in spec["input_schema"]["properties"], spec["input_schema"]["properties"].keys()
     assert "texts" in spec["description"]

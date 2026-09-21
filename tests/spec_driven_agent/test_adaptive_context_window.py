@@ -12,8 +12,8 @@ import logging
 
 import pytest
 
-import besser.spec_driven_agent.compaction as c
-from besser.spec_driven_agent.compaction import (
+import besser.spec_driven_agent.agent.compaction as c
+from besser.spec_driven_agent.agent.compaction import (
     COMPACT_RESERVE_TOKENS,
     COMPACT_TOKEN_THRESHOLD,
     _MIN_WORKABLE_THRESHOLD,
@@ -143,7 +143,7 @@ class TestCatalogLayer:
 
     def test_advertised_path_keeps_the_workable_floor_and_warning(self, monkeypatch, caplog):
         _install_catalog(monkeypatch, {"tiny-model": 40_000})
-        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.compaction"):
+        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.agent.compaction"):
             threshold = effective_threshold("tiny-model", reserve=RESERVE)
         assert threshold == 8_000
         assert threshold < _MIN_WORKABLE_THRESHOLD

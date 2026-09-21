@@ -122,7 +122,7 @@ class Checkpoint:
 
 def api_scenario_snapshot(records, *, include_reports: bool = False) -> list[dict]:
     """Bounded, detached workflow definitions for checkpoints and recipes."""
-    from besser.spec_driven_agent.api_probe import _validate_requests
+    from besser.spec_driven_agent.validation.api_probe import _validate_requests
 
     records = list(records)
     if len(records) > 10:

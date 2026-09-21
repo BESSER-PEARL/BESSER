@@ -11,7 +11,7 @@ answer about code it cannot edit and did not ask about.
 """
 import pytest
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 def _workspace(tmp_path):

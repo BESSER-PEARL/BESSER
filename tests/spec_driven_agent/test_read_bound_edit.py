@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from besser.spec_driven_agent import tool_executor
-from besser.spec_driven_agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
-from besser.spec_driven_agent.llm_client import UsageTracker
+from besser.spec_driven_agent.agent import tool_executor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
 
 SOURCE = "# keep\nasync def action():\n    return False\n\ndef unrelated():\n    return False\n"

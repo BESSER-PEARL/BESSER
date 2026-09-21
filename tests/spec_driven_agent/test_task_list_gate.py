@@ -14,9 +14,9 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-import besser.spec_driven_agent.orchestrator as orchestrator_module
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 class _Block:

@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.tools import (
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tools import (
     GENERATOR_TOOLS,
     get_all_tools_including_generators,
     get_tools_for,
@@ -178,7 +178,7 @@ def test_generator_tools_cover_every_model_requirement():
     it into no-domain runs. This test forces the mapping to stay
     complete.
     """
-    from besser.spec_driven_agent.tools import _TOOL_MODEL_REQUIREMENTS
+    from besser.spec_driven_agent.agent.tools import _TOOL_MODEL_REQUIREMENTS
 
     for tool in GENERATOR_TOOLS:
         assert tool["name"] in _TOOL_MODEL_REQUIREMENTS, (

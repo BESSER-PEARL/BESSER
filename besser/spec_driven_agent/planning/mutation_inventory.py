@@ -132,7 +132,7 @@ def _mounts(parsed, bindings, unknown):
 
 def _input_shape(value, previous):
     """Describe supplied keys/types, not secrets or unobserved reference values."""
-    from besser.spec_driven_agent.api_probe import _resolve_references
+    from besser.spec_driven_agent.validation.api_probe import _resolve_references
 
     shapes, keys, complete = {}, set(), True
 
@@ -169,7 +169,7 @@ def _input_shape(value, previous):
 
 def _observed_inputs(routes, relations, schema_fields, records, current_revision, *, max_chars=4500):
     """Join retained observations to static candidates without inventing coverage."""
-    from besser.spec_driven_agent.api_probe import _NO_JSON
+    from besser.spec_driven_agent.validation.api_probe import _NO_JSON
 
     lines = [
         "Observed/requested API inputs (planning only; NOT invariant coverage):",

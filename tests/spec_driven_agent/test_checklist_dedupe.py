@@ -10,7 +10,7 @@ state your plan" - read as before ANY edit, not once per run.
 
 import json
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 class _Planner:
@@ -25,7 +25,7 @@ class _Planner:
 
 
 def _analyse(tasks):
-    from besser.spec_driven_agent.gap_analyzer import analyze_gaps_via_llm
+    from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
     return analyze_gaps_via_llm(
         instructions="Hotel bookings.",
         generator_used="generate_fastapi_backend",
@@ -51,7 +51,7 @@ class TestGapAnalyserDedupes:
     def test_the_cap_applies_after_dedupe(self):
         """A planner that repeats itself must not crowd unique work out of
         the capped list."""
-        from besser.spec_driven_agent.gap_analyzer import _MAX_TASKS
+        from besser.spec_driven_agent.planning.gap_analyzer import _MAX_TASKS
 
         unique = [f"Implement method_{i} in methods.py" for i in range(_MAX_TASKS // 2)]
         repeated = unique * 3
@@ -82,7 +82,7 @@ class TestChecklistAddDedupes:
 class TestPlanOnce:
 
     def test_prompt_asks_for_the_plan_once_not_before_every_edit(self):
-        from besser.spec_driven_agent.prompt_builder import build_system_prompt
+        from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
 
         prompt = build_system_prompt(
             None, None, None, inventory="", instructions="Build the hotel app.", max_turns=10,

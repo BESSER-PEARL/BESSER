@@ -17,8 +17,8 @@ be unmistakable, and the untruncated value must survive somewhere.
 """
 from __future__ import annotations
 
-from besser.spec_driven_agent.edit_apply import find_elision
-from besser.spec_driven_agent.orchestrator import _sanitize_for_log
+from besser.spec_driven_agent.agent.edit_apply import find_elision
+from besser.spec_driven_agent.pipeline.orchestrator import _sanitize_for_log
 
 
 def _long_python(n: int = 600) -> str:

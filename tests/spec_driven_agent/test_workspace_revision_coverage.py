@@ -30,7 +30,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 StringType = PrimitiveDataType("str")
 

@@ -11,7 +11,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 @pytest.fixture
@@ -178,7 +178,7 @@ class TestPathNormalization:
     """
 
     def test_strips_windows_extended_path_prefix(self):
-        from besser.spec_driven_agent.tool_executor import _normalize_path_for_comparison
+        from besser.spec_driven_agent.agent.tool_executor import _normalize_path_for_comparison
 
         # ``\\?\C:\...`` → ``C:\...``
         assert (
@@ -187,7 +187,7 @@ class TestPathNormalization:
         )
 
     def test_strips_unc_extended_path_prefix(self):
-        from besser.spec_driven_agent.tool_executor import _normalize_path_for_comparison
+        from besser.spec_driven_agent.agent.tool_executor import _normalize_path_for_comparison
 
         # ``\\?\UNC\server\share\...`` → ``\\server\share\...``
         assert (
@@ -196,7 +196,7 @@ class TestPathNormalization:
         )
 
     def test_passes_regular_paths_through(self):
-        from besser.spec_driven_agent.tool_executor import _normalize_path_for_comparison
+        from besser.spec_driven_agent.agent.tool_executor import _normalize_path_for_comparison
 
         assert _normalize_path_for_comparison("/home/test/file.txt") == "/home/test/file.txt"
         assert (
@@ -286,7 +286,7 @@ class TestExecutionTools:
 
     def test_run_command_timeout(self, shell_executor):
         """Commands that exceed timeout return an error."""
-        import besser.spec_driven_agent.tool_executor as mod
+        import besser.spec_driven_agent.agent.tool_executor as mod
         old_timeout = mod.COMMAND_TIMEOUT
         mod.COMMAND_TIMEOUT = 1  # 1 second
         try:
@@ -371,7 +371,7 @@ class TestOrchestratorIntegration:
 
         turn_counter = {"n": 0}
 
-        from besser.spec_driven_agent.llm_client import UsageTracker
+        from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
         class MockClient:
             model = "mock-model"
@@ -414,7 +414,7 @@ class TestOrchestratorIntegration:
                         MockBlock("text", text="Done!"),
                     ]}
 
-        from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+        from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
         orchestrator = LLMOrchestrator(
             llm_client=MockClient(),
@@ -621,7 +621,7 @@ class TestExtendedPathPrefixNeverEscapes:
         monkeypatch.setattr(os.path, "realpath", _realpath)
 
     def test_safe_path_returns_a_prefix_free_path(self, tmp_path, monkeypatch):
-        from besser.spec_driven_agent.tool_executor import ToolExecutor
+        from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
         ex = ToolExecutor(workspace=str(tmp_path))
         self._flaky_realpath(monkeypatch, ex.workspace)
@@ -634,7 +634,7 @@ class TestExtendedPathPrefixNeverEscapes:
         )
 
     def test_safe_cwd_returns_a_prefix_free_path(self, tmp_path, monkeypatch):
-        from besser.spec_driven_agent.tool_executor import ToolExecutor
+        from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
         ex = ToolExecutor(workspace=str(tmp_path))
         self._flaky_realpath(monkeypatch, ex.workspace)
@@ -646,7 +646,7 @@ class TestExtendedPathPrefixNeverEscapes:
     def test_write_file_survives_the_first_file_in_a_new_directory(self, tmp_path, monkeypatch):
         """The exact live shape: write_file creating a file whose parent does
         not exist yet, with the resolve failing transiently."""
-        from besser.spec_driven_agent.tool_executor import ToolExecutor
+        from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
         ex = ToolExecutor(workspace=str(tmp_path))
         self._flaky_realpath(monkeypatch, ex.workspace)
@@ -660,7 +660,7 @@ class TestExtendedPathPrefixNeverEscapes:
 
     def test_traversal_is_still_blocked_when_the_prefix_is_present(self, tmp_path, monkeypatch):
         """Normalising the return value must not soften the containment check."""
-        from besser.spec_driven_agent.tool_executor import ToolExecutor
+        from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
         ex = ToolExecutor(workspace=str(tmp_path))
         self._flaky_realpath(monkeypatch, ex.workspace)

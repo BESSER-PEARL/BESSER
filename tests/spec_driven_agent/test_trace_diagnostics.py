@@ -10,7 +10,7 @@ finished run — which is the one question a trace exists to answer.
 
 import json
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator as O
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator as O
 
 
 # ------------------------------------------------------------- extraction

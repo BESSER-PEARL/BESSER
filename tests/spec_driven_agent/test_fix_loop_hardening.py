@@ -16,7 +16,7 @@ import tempfile
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
 BLOCKER = (
     "Syntax error in web_app/backend/routers/booking_methods.py line 37: "

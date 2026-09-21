@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
-from besser.spec_driven_agent.compaction import (
+from besser.spec_driven_agent.agent.compaction import (
     COMPACT_RESERVE_TOKENS,
     # Re-exported on purpose: callers and tests import the threshold from
     # here as well as from compaction, and assert the two agree so the
@@ -43,16 +43,16 @@ from besser.spec_driven_agent.compaction import (
     maybe_compact,
     _summarize_messages,
 )
-from besser.spec_driven_agent.user_request import user_request
-from besser.spec_driven_agent.specification import validate_specification
+from besser.spec_driven_agent.planning.user_request import user_request
+from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.model_serializer import serialize_domain_model
-from besser.spec_driven_agent.history_eviction import evict_stale_file_bodies, without_rejected_edit_drafts
+from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies, without_rejected_edit_drafts
 from besser.spec_driven_agent.validation.frontend_contract import (
     _method_button_source_issues as _method_button_source_issues,
     collect_frontend_contract_issues,
 )
-from besser.spec_driven_agent import requirements_ledger as _requirements_ledger
-from besser.spec_driven_agent.scaffold_repair import (
+from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
+from besser.spec_driven_agent.repair.scaffold_repair import (
     _DEFAULT_BACKEND_REQUIREMENTS as _DEFAULT_BACKEND_REQUIREMENTS,
     _IMPORT_TO_REQUIREMENT as _IMPORT_TO_REQUIREMENT,
     _ensure_requirements_txt,
@@ -61,7 +61,7 @@ from besser.spec_driven_agent.scaffold_repair import (
     _strip_missing_lockfile_copy,
     ensure_frontend_scaffold,
 )
-from besser.spec_driven_agent.checkpoint import (
+from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_FILENAME,
     CHECKPOINT_SCHEMA_VERSION,
     _SNAPSHOT_DIR,
@@ -76,29 +76,29 @@ from besser.spec_driven_agent.errors import (
     EmptyInstructionsError,
     InvalidApiKeyError,
 )
-from besser.spec_driven_agent.gap_analyzer import analyze_gaps_via_llm
-from besser.spec_driven_agent.action_inventory import (
+from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
+from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, format_action_inventory,
     action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
     MODIFY_MAX_TOKENS,
     _is_free_local_model,
 )
-from besser.spec_driven_agent.prompt_builder import (
+from besser.spec_driven_agent.agent.prompt_builder import (
     build_scaffold_snapshot,
     build_system_prompt,
     build_inventory,
     build_endpoint_manifest,
 )
-from besser.spec_driven_agent.stack_metadata import (
+from besser.spec_driven_agent.planning.stack_metadata import (
     detect_stack,
     pre_generate_metadata,
     stack_label,
 )
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR, _safe_subprocess_env,
 )
@@ -137,7 +137,7 @@ from besser.spec_driven_agent.validation.issues import (
     _RUFF_BLOCKER_CODES as _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE as _RUFF_LINE_RE,
 )
-from besser.spec_driven_agent.mutation_inventory import build_mutation_manifest
+from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
 from besser.spec_driven_agent.validation.python_source import (
     _create_schema_router_mismatches,
     _python_files,
@@ -145,7 +145,7 @@ from besser.spec_driven_agent.validation.python_source import (
     _CREATE_FIELD_RE as _CREATE_FIELD_RE,
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
-from besser.spec_driven_agent.tracing import (
+from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
     EVENT_COST_UPDATE,
     EVENT_PHASE_ENTER,
@@ -610,7 +610,7 @@ class LLMOrchestrator:
         # sandbox), so the web runner disables them; trusted local/CLI/bench
         # runs keep them for self-verification.
         self.allow_shell_tools = allow_shell_tools
-        from besser.spec_driven_agent.tools import get_tools_for
+        from besser.spec_driven_agent.agent.tools import get_tools_for
         self.tools = get_tools_for(
             has_domain_model=self.domain_model is not None,
             has_gui_model=self.gui_model is not None,
@@ -1111,7 +1111,7 @@ class LLMOrchestrator:
             for i in checkpoint.validation_issues
         ]
         self._project_fingerprint = checkpoint.project_fingerprint
-        from besser.spec_driven_agent.checkpoint import restore_api_scenarios
+        from besser.spec_driven_agent.state.checkpoint import restore_api_scenarios
         self._api_scenarios = restore_api_scenarios(checkpoint.api_scenarios)
         # A resumed loop must retain the same definition of done. Rebuild the
         # harness-owned verifier callables from the current workspace/model and
@@ -1459,7 +1459,7 @@ class LLMOrchestrator:
         is untouched.
         """
         try:
-            from besser.spec_driven_agent.fix_target import parse_reported_target
+            from besser.spec_driven_agent.planning.fix_target import parse_reported_target
             self._fix_target = parse_reported_target(
                 instructions, self.domain_model,
             )
@@ -1478,7 +1478,7 @@ class LLMOrchestrator:
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
         try:
-            from besser.spec_driven_agent.acceptance import (
+            from besser.spec_driven_agent.validation.acceptance import (
                 build_acceptance_matrix,
                 matrix_issues,
             )
@@ -1499,7 +1499,7 @@ class LLMOrchestrator:
         """
         if not self._is_fix_run or self._fix_target is None:
             return []
-        from besser.spec_driven_agent.fix_target import finding_matches_target
+        from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
         issues: list[str] = [
             "The user reported this failure and it must be resolved in this "
@@ -1530,7 +1530,7 @@ class LLMOrchestrator:
         """
         if not self._is_fix_run or self._fix_target is None:
             return issues
-        from besser.spec_driven_agent.fix_target import finding_matches_target
+        from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
         promoted: list[ValidationIssue] = []
         for issue in issues:
@@ -1569,7 +1569,7 @@ class LLMOrchestrator:
                 self._fix_target.descriptor,
             )
             return
-        from besser.spec_driven_agent.fix_target import finding_matches_target
+        from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
         unresolved = [
             i for i in self._validation_issues
@@ -2037,7 +2037,7 @@ class LLMOrchestrator:
     def _select_generator_with_llm(self, instructions: str) -> str | None:
         """Use a cheap LLM call to pick the best generator for Phase 1."""
         try:
-            from besser.spec_driven_agent.tools import get_available_generator_names
+            from besser.spec_driven_agent.agent.tools import get_available_generator_names
 
             classes = [c.name for c in self.domain_model.get_classes()] if self.domain_model else []
 
@@ -2086,7 +2086,7 @@ class LLMOrchestrator:
             # with no GUI model) lets the LLM pick it, Phase 1 fails,
             # and the run silently degrades to expensive from-scratch
             # generation — seen in production logs.
-            from besser.spec_driven_agent.tools import GENERATOR_TOOLS
+            from besser.spec_driven_agent.agent.tools import GENERATOR_TOOLS
             selectable_names = get_available_generator_names(
                 has_domain_model=self.domain_model is not None,
                 has_gui_model=self.gui_model is not None,
@@ -3435,7 +3435,7 @@ class LLMOrchestrator:
         if not self._checkpointing_enabled:
             return
         try:
-            from besser.spec_driven_agent.checkpoint import api_scenario_snapshot
+            from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot
             if phase not in {"phase2", "phase3"}:
                 raise ValueError("Unknown checkpoint phase")
             self._checkpoint_phase = phase
@@ -4571,7 +4571,7 @@ class LLMOrchestrator:
         This path never calls an LLM, installs packages, or grants shell access.
         It is available during editing as well as at the final verification gate.
         """
-        from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+        from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
         raw: list[str] = []
         for path in _python_files(self.output_dir):
@@ -4644,7 +4644,7 @@ class LLMOrchestrator:
         issues.extend(mapper_issues)
         if not any(i.startswith("mapper config:") for i in mapper_issues):
             try:
-                from besser.spec_driven_agent.constructibility import (
+                from besser.spec_driven_agent.validation.constructibility import (
                     collect_constructibility_report,
                 )
                 probe = collect_constructibility_report(self.output_dir, self.domain_model)
@@ -4669,7 +4669,7 @@ class LLMOrchestrator:
         re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
         blocker instead of a warning nothing consumes.
         """
-        from besser.spec_driven_agent.api_probe import confirmed_create_paths
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 
         revision = self._workspace_revision()
         current = [record for record in self._api_scenarios.values()
@@ -4707,7 +4707,7 @@ class LLMOrchestrator:
     def _probeable_backends(self) -> list[str]:
         """Generated FastAPI services the constructibility probe can drive."""
         try:
-            from besser.spec_driven_agent.constructibility import _fastapi_backends
+            from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
 
             return _fastapi_backends(self.output_dir)
         except Exception:
@@ -4766,7 +4766,7 @@ class LLMOrchestrator:
             }))
         if not self.enable_import_smoke_check:
             return {"error": "Runtime execution is disabled; API workflows have not been verified."}
-        from besser.spec_driven_agent.api_probe import probe_api_scenario
+        from besser.spec_driven_agent.validation.api_probe import probe_api_scenario
 
         if "requests" not in args:
             if previous is None:
@@ -5003,7 +5003,7 @@ class LLMOrchestrator:
             self.output_dir, self._expected_action_endpoints(),
         ))
         try:
-            from besser.spec_driven_agent.endpoint_coherence import (
+            from besser.spec_driven_agent.validation.endpoint_coherence import (
                 collect_endpoint_coherence_issues,
             )
 
@@ -5022,7 +5022,7 @@ class LLMOrchestrator:
         # field): a GUI-scoped run may legitimately omit entities, so
         # these are visibility, never blockers.
         try:
-            from besser.spec_driven_agent.acceptance import build_acceptance_matrix, matrix_issues
+            from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
             self._acceptance_matrix = build_acceptance_matrix(
                 self.output_dir, self.domain_model,
             )
@@ -5372,7 +5372,7 @@ class LLMOrchestrator:
         are reported as warnings.
         """
         try:
-            from besser.spec_driven_agent.contract_checks import (
+            from besser.spec_driven_agent.validation.contract_checks import (
                 build_data_contract,
                 collect_inverted_end_issues,
                 collect_undeclared_attribute_issues,
@@ -6120,7 +6120,7 @@ class LLMOrchestrator:
         ``_collect_data_contract_issues`` enforces.
         """
         try:
-            from besser.spec_driven_agent.contract_checks import build_data_contract
+            from besser.spec_driven_agent.validation.contract_checks import build_data_contract
 
             contract = build_data_contract(self.domain_model)
         except Exception:
@@ -6636,7 +6636,7 @@ class LLMOrchestrator:
         })
         history = history[-10:]
 
-        from besser.spec_driven_agent.checkpoint import api_scenario_snapshot
+        from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot
         recipe = {
             "instructions": instructions,
             "history": history,

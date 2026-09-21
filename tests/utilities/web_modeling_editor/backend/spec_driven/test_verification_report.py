@@ -15,7 +15,7 @@ import json
 import os
 from types import SimpleNamespace
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.issues import (
     _check_did_not_run,
     required_check_unverified,

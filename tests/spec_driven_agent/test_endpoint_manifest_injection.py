@@ -8,7 +8,7 @@ as top-level system-prompt content. Class names, descriptions and OCL are
 JSON-escaped on the way in; this path was not.
 """
 
-from besser.spec_driven_agent.prompt_builder import (
+from besser.spec_driven_agent.agent.prompt_builder import (
     _ENDPOINT_DECORATOR_RE,
     _norm_path,
     build_endpoint_manifest,

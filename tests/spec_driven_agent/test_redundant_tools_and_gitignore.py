@@ -8,7 +8,7 @@ because the Phase-2 agent was handed the standalone sub-generator tools that
 """
 import os
 
-from besser.spec_driven_agent.orchestrator import _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY
+from besser.spec_driven_agent.pipeline.orchestrator import _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY
 from tests.spec_driven_agent.test_phase3_toolchain import _build_orchestrator
 
 

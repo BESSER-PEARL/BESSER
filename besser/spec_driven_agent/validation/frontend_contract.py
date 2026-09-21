@@ -16,8 +16,8 @@ from __future__ import annotations
 import os
 import re as _re
 
-from besser.spec_driven_agent.checkpoint import _SNAPSHOT_DIR
-from besser.spec_driven_agent.frontend_bindings import literal_component_props
+from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
 
 
 def _method_button_source_issues(output_dir: str) -> list[str]:

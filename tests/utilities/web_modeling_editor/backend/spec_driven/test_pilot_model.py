@@ -10,7 +10,7 @@ frontend release.
 """
 import pytest
 
-from besser.spec_driven_agent.llm_client import free_pilot_model
+from besser.spec_driven_agent.providers.llm_client import free_pilot_model
 
 
 @pytest.fixture(autouse=True)

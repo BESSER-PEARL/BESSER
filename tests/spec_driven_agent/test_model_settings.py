@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from besser.spec_driven_agent import model_settings
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers import model_settings
+from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     ClaudeLLMClient,
     MistralProvider,
@@ -24,7 +24,7 @@ from besser.spec_driven_agent.llm_client import (
     OpenAIProvider,
     _needs_reasoning_none_for_tools,
 )
-from besser.spec_driven_agent.model_settings import (
+from besser.spec_driven_agent.providers.model_settings import (
     max_output_tokens,
     reasoning_effort_for_tools,
     sampling_kwargs,
@@ -304,7 +304,7 @@ class TestContextWindowsStayInCompaction:
         assert not hasattr(model_settings.ModelSettings(), "context_window")
 
     def test_nebius_qwen_window_still_resolves_from_compaction(self):
-        from besser.spec_driven_agent import compaction
+        from besser.spec_driven_agent.agent import compaction
 
         # 262,144 native (Nebius console + the model card), so the threshold
         # must stay far above the 80k flat default rather than be clamped by

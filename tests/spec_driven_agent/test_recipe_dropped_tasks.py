@@ -10,8 +10,8 @@ import os
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
 def test_dropped_items_land_in_the_recipe_with_their_reason(tmp_path):

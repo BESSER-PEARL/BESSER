@@ -26,7 +26,7 @@ exist and none of these files are ever written.
 import json
 import os
 
-from besser.spec_driven_agent.scaffold_repair import ensure_frontend_scaffold
+from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 
 
 # The exact shape the frontend checklist produces, reduced to what matters.

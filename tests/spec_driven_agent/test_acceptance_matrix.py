@@ -8,8 +8,8 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.acceptance import build_acceptance_matrix, matrix_issues
-from besser.spec_driven_agent.orchestrator import _classify_issue
+from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
+from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
 
 StringType = PrimitiveDataType("str")
 

@@ -17,9 +17,9 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-import besser.spec_driven_agent.orchestrator as orchestrator_module
-from besser.spec_driven_agent.llm_client import FROM_SCRATCH_MAX_TOKENS
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+from besser.spec_driven_agent.providers.llm_client import FROM_SCRATCH_MAX_TOKENS
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
 class _Block:

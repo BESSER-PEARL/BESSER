@@ -43,16 +43,16 @@ from besser.spec_driven_agent.errors import (
     UpstreamLLMError,
 )
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
     free_alt_choice,
     free_tier_model,
     is_free_fallback_choice,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.scaffold_repair import ensure_frontend_scaffold
-from besser.spec_driven_agent.tools import get_available_generator_names
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
+from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.validation.issues import is_completion_issue, required_check_unverified
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
@@ -830,7 +830,7 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
     """
     if not run_id:
         return None
-    from besser.spec_driven_agent.checkpoint import CHECKPOINT_FILENAME
+    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
     tempdir = _run_workspace_root()
     prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
@@ -918,7 +918,7 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     while deliberately KEEPING ``.besser_recipe.json`` so the orchestrator
     can replay the previous run's generator-file tags.
     """
-    from besser.spec_driven_agent.checkpoint import CHECKPOINT_FILENAME
+    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
     shutil.copytree(
         base_dir,
@@ -1058,7 +1058,7 @@ class SmartGenerationRunner:
         # validator nulls anything not matching the collection pattern.
         if not self.request.telemetry_participant:
             return self.request.llm_model
-        from besser.spec_driven_agent.llm_client import free_pilot_model
+        from besser.spec_driven_agent.providers.llm_client import free_pilot_model
 
         return free_pilot_model() or self.request.llm_model
 
@@ -1096,7 +1096,7 @@ class SmartGenerationRunner:
                     or "free"
                 )
         elif self.request.provider == "sponsored":
-            from besser.spec_driven_agent.llm_client import sponsored_tier_model
+            from besser.spec_driven_agent.providers.llm_client import sponsored_tier_model
             llm_model = self.request.llm_model or sponsored_tier_model() or "sponsored"
         else:
             llm_model = (
@@ -1911,7 +1911,7 @@ class SmartGenerationRunner:
             # fix run actually do" answerable (the P2 lesson). No-op unless
             # BESSER_INCIDENT_LOG_DIR / BESSER_TELEMETRY_DIR is configured.
             try:
-                from besser.spec_driven_agent.tracing import TRACE_FILENAME
+                from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
                 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
                     incidents,
                 )

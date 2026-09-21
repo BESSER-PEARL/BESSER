@@ -8,10 +8,10 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator, _estimate_tokens, COMPACT_TOKEN_THRESHOLD,
 )
-from besser.spec_driven_agent.compaction import (
+from besser.spec_driven_agent.agent.compaction import (
     _compact_model_recap,
     _estimate_tokens as standalone_estimate_tokens,
     _tail_cut_index,
@@ -89,7 +89,7 @@ class TestTokenEstimation:
     def test_chars_per_four_fallback_when_tiktoken_is_absent(self, monkeypatch):
         """The fallback must still work on a host without tiktoken - it is a
         declared dependency now, but compaction must never hard-fail on it."""
-        import besser.spec_driven_agent.compaction as c
+        import besser.spec_driven_agent.agent.compaction as c
         monkeypatch.setattr(c, "_TOKENIZER", None)
         monkeypatch.setattr(c, "_TOKENIZER_LOADED", True)
         est = _estimate_tokens([{"role": "user", "content": "a" * 400}])
@@ -124,7 +124,7 @@ class TestTokenEstimation:
 class TestCompaction:
 
     def _make_orchestrator(self, simple_model, tmp_path):
-        from besser.spec_driven_agent.llm_client import UsageTracker
+        from besser.spec_driven_agent.providers.llm_client import UsageTracker
         class MockClient:
             model = "mock"
             usage = UsageTracker("mock")
@@ -283,7 +283,7 @@ class TestHarnessUpgrades:
     """Headroom threshold, safe cut boundaries, file-op memory."""
 
     def test_effective_threshold_clamps_genuinely_small_models(self):
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         # Self-hosted on the LIST ollama box at a server-configured 32k.
         assert effective_threshold("devstral:24b") == 16_000
         assert effective_threshold("mistral-small-latest") == 16_000
@@ -307,7 +307,7 @@ class TestHarnessUpgrades:
           binding cost and >64k prompts get truncated. It is clamped again, now
           at 60k - see test_self_hosted_qwen_is_clamped_to_fit_its_prefill_budget.
         """
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         assert effective_threshold("mistral-large-latest") >= STANDALONE_THRESHOLD
         # Evidence-based clamp, not a guess: strictly tighter than the default,
         # and never so tight that a couple of file reads trip compaction.
@@ -321,7 +321,7 @@ class TestHarnessUpgrades:
         directly into per-turn latency, and a >64k prompt came back truncated.
         The clamp must keep history + max output inside 60k.
         """
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         reserve = 32_768          # the scaffolded/from-scratch output budget
         for tag in ("qwen3-coder:30b", "qwen3.8:27b"):
             threshold = effective_threshold(tag, reserve=reserve)
@@ -330,7 +330,7 @@ class TestHarnessUpgrades:
 
     def test_cloud_models_keep_the_full_threshold(self):
         """The local clamp must not leak onto cloud-served models."""
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         for tag in ("meituan/LongCat-2.0:free", "claude-sonnet-4-6",
                     "mistral-large-latest", "gpt-5.6-terra"):
             assert effective_threshold(tag, reserve=32_768) >= STANDALONE_THRESHOLD, tag
@@ -338,11 +338,11 @@ class TestHarnessUpgrades:
     def test_clamped_threshold_never_goes_below_a_workable_size(self):
         """Whatever the reserve, we never hand back a threshold that cannot
         hold a couple of tool results - that is the spiral condition."""
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         assert effective_threshold("devstral:24b", reserve=32_768) >= 8_000
 
     def test_effective_threshold_keeps_default_for_unknown_and_never_clamps_frontier(self):
-        from besser.spec_driven_agent.compaction import effective_threshold
+        from besser.spec_driven_agent.agent.compaction import effective_threshold
         assert effective_threshold("gpt-5-mini") == STANDALONE_THRESHOLD
         assert effective_threshold(None) == STANDALONE_THRESHOLD
         # Known 1M-class window: raised above the default, never clamped.
@@ -792,7 +792,7 @@ def test_compaction_makes_no_llm_call(tmp_path, monkeypatch):
     summarize its own transcript at the moment its context is failing is a
     reliability liability. Deliberate - do not 'improve' it.
     """
-    import besser.spec_driven_agent.compaction as c
+    import besser.spec_driven_agent.agent.compaction as c
 
     def explode(*args, **kwargs):     # any outbound HTTP at all
         raise AssertionError("compaction must not call out to a model")

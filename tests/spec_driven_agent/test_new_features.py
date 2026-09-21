@@ -9,8 +9,8 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, _SNAPSHOT_DIR
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _SNAPSHOT_DIR
 
 
 @pytest.fixture
@@ -256,7 +256,7 @@ class TestSnapshotRollback:
             output_dir=str(tmp_path),
         )
 
-        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.orchestrator"):
+        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.pipeline.orchestrator"):
             orchestrator._restore_snapshot()
         assert any("No snapshot" in r.message for r in caplog.records)
 
@@ -417,7 +417,7 @@ class TestPromptBuilderModule:
 
     def test_build_system_prompt(self, simple_model):
         """build_system_prompt embeds the model and the user request."""
-        from besser.spec_driven_agent.prompt_builder import build_system_prompt
+        from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
@@ -432,7 +432,7 @@ class TestPromptBuilderModule:
         assert "User request" in prompt
 
     def test_build_system_prompt_with_inventory(self, simple_model):
-        from besser.spec_driven_agent.prompt_builder import build_system_prompt
+        from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
@@ -445,7 +445,7 @@ class TestPromptBuilderModule:
         assert "What was already generated" in prompt
 
     def test_build_system_prompt_no_inventory(self, simple_model):
-        from besser.spec_driven_agent.prompt_builder import build_system_prompt
+        from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
@@ -459,7 +459,7 @@ class TestPromptBuilderModule:
     def test_scoped_issues_appear_separately_from_user_request(self, simple_model):
         """Validator-detected issues must be presented as bugs to fix, not
         merged into the user's feature request."""
-        from besser.spec_driven_agent.prompt_builder import build_system_prompt
+        from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
@@ -476,7 +476,7 @@ class TestPromptBuilderModule:
 
     def test_build_inventory(self, simple_model, tmp_path):
         """build_inventory lists files and model info."""
-        from besser.spec_driven_agent.prompt_builder import build_inventory
+        from besser.spec_driven_agent.agent.prompt_builder import build_inventory
         os.makedirs(str(tmp_path), exist_ok=True)
         with open(os.path.join(str(tmp_path), "main_api.py"), "w") as f:
             f.write("from fastapi import FastAPI\napp = FastAPI()\n")

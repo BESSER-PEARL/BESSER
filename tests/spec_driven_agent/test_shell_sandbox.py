@@ -334,7 +334,7 @@ def test_a_sandbox_that_cannot_start_refuses(monkeypatch):
 
 def test_run_command_refuses_and_does_not_execute_when_the_sandbox_is_gone(tmp_path, monkeypatch):
     """The whole point: a refusal, not a fallback."""
-    from besser.spec_driven_agent import tool_executor as te
+    from besser.spec_driven_agent.agent import tool_executor as te
 
     marker = tmp_path / "executed"
 
@@ -369,7 +369,7 @@ def test_a_bwrap_startup_failure_is_not_reported_as_the_commands_own_failure():
 def test_run_command_surfaces_a_startup_failure_instead_of_a_fake_compile_error(
     tmp_path, monkeypatch,
 ):
-    from besser.spec_driven_agent import tool_executor as te
+    from besser.spec_driven_agent.agent import tool_executor as te
 
     monkeypatch.setattr(
         te, "sandboxed_command",
@@ -470,7 +470,7 @@ def test_the_argv_keeps_the_pid_namespace_and_the_command_intact(tmp_path, monke
 # The protections that already worked must keep working
 # --------------------------------------------------------------------------- #
 def test_the_denylist_still_refuses_before_the_sandbox_is_even_built(tmp_path, monkeypatch):
-    from besser.spec_driven_agent import tool_executor as te
+    from besser.spec_driven_agent.agent import tool_executor as te
 
     called = []
     monkeypatch.setattr(te, "sandboxed_command", lambda *a, **k: called.append(a))
@@ -484,7 +484,7 @@ def test_the_denylist_still_refuses_before_the_sandbox_is_even_built(tmp_path, m
 
 
 def test_the_working_dir_lock_still_blocks_traversal(tmp_path):
-    from besser.spec_driven_agent.tool_executor import ToolExecutor
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
     ex = ToolExecutor(workspace=str(tmp_path), allow_shell=True)
     with pytest.raises(ValueError):

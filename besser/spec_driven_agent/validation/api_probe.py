@@ -181,7 +181,7 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
     multiple deterministic FastAPI backends. References such as ``{{0.room.id}}``
     use preceding response JSON only, preserving types for whole JSON values.
     """
-    from besser.spec_driven_agent.constructibility import _fastapi_backends, _SKIP_DIRS
+    from besser.spec_driven_agent.validation.constructibility import _fastapi_backends, _SKIP_DIRS
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
     try:

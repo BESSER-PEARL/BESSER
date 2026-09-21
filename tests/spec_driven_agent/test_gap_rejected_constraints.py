@@ -9,7 +9,7 @@ the planner happens to raise them the run ships them as comments.
 
 import pytest
 
-from besser.spec_driven_agent import gap_analyzer
+from besser.spec_driven_agent.planning import gap_analyzer
 
 
 HOTEL_ISSUES = [

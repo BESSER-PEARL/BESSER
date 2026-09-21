@@ -8,7 +8,7 @@ restores it deterministically instead of relying on the LLM fix loop.
 """
 import os
 
-from besser.spec_driven_agent.orchestrator import _ensure_requirements_txt
+from besser.spec_driven_agent.pipeline.orchestrator import _ensure_requirements_txt
 
 
 def test_writes_base_stack_when_missing(tmp_path):

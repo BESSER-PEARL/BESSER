@@ -30,7 +30,7 @@ from unittest.mock import patch
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_FIX_TURNS,
     LLMOrchestrator,
@@ -227,7 +227,7 @@ def test_the_fix_prompt_asks_for_an_edit_up_front(tmp_path):
     }]
     orch._recent_tool_failures = [{"tool": "read_file", "path": "models/booking.py", "error": "File not found"}]
     with patch.object(client, "chat", wraps=client.chat) as spy, patch(
-        "besser.spec_driven_agent.orchestrator.build_mutation_manifest",
+        "besser.spec_driven_agent.pipeline.orchestrator.build_mutation_manifest",
         return_value="Relationship mutation coverage: reverse create, update and unlink paths",
     ):
         orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
@@ -301,7 +301,7 @@ def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
     with patch.object(orch, "_collect_validation_issues", return_value=[BLOCKER]), \
          patch.object(orch, "_create_snapshot"), \
          patch.object(orch, "_restore_snapshot"), \
-         caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.orchestrator"):
+         caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.pipeline.orchestrator"):
         orch._run_phase3_validation()
 
     text = caplog.text

@@ -6,7 +6,7 @@ instead of reading whole files (aider's repo-map idea, kept to top-level
 names so it stays a few hundred tokens).
 """
 
-from besser.spec_driven_agent.prompt_builder import build_inventory
+from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 
 PY = (
     "import io\n"                                   # 1

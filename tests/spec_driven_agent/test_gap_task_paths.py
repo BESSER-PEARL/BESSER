@@ -31,7 +31,7 @@ that matches none so the model stops hunting for it.
 """
 from __future__ import annotations
 
-from besser.spec_driven_agent.gap_analyzer import _resolve_task_paths
+from besser.spec_driven_agent.planning.gap_analyzer import _resolve_task_paths
 
 
 # The scaffold from the run above, trimmed to the paths under test.

@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from besser.spec_driven_agent.specification import MAX_SPECIFICATION_CHARS, validate_specification
+from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS, validate_specification
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_MAX_COST_USD_HARD_CAP,
     LLM_MAX_RUNTIME_SECONDS_HARD_CAP,

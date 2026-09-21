@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _classify_issue,
     _star_import_undefined_names,
 )
@@ -113,7 +113,7 @@ def test_a_missing_pyflakes_is_reported_as_not_checked(tmp_path, monkeypatch):
 
 
 def test_snapshot_and_node_modules_are_not_walked(tmp_path):
-    from besser.spec_driven_agent.orchestrator import _SNAPSHOT_DIR
+    from besser.spec_driven_agent.pipeline.orchestrator import _SNAPSHOT_DIR
     for folder in (_SNAPSHOT_DIR, "node_modules"):
         (tmp_path / folder).mkdir()
         (tmp_path / folder / "m.py").write_text("", encoding="utf-8")

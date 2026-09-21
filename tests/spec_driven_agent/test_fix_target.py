@@ -14,7 +14,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.fix_target import (
+from besser.spec_driven_agent.planning.fix_target import (
     ReportedTarget,
     finding_matches_target,
     looks_like_fix_request,

@@ -19,10 +19,10 @@ import tempfile
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.validation import frontend_source
 from besser.spec_driven_agent.validation.toolchain import _demote_tsc_without_deps
-from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
 
 PAGE = """import React from 'react';

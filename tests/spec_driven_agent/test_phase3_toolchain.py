@@ -36,8 +36,8 @@ from unittest.mock import patch
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     LLMOrchestrator,
     ValidationIssue,
@@ -194,7 +194,7 @@ def test_collect_tsc_issues_soft_skips_when_binary_missing(tmp_path) -> None:
 
     # Force a "binary not found" outcome by patching the resolver
     # rather than mutating PATH (cleaner across platforms).
-    with patch("besser.spec_driven_agent.orchestrator.shutil.which", return_value=None):
+    with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
         from besser.spec_driven_agent.validation.issues import is_completion_issue
         findings = orch._collect_tsc_issues()
         assert len(findings) == 1 and "unavailable" in findings[0]
@@ -210,7 +210,7 @@ def test_collect_cargo_issues_soft_skips_when_binary_missing(tmp_path) -> None:
         encoding="utf-8",
     )
     orch = _build_orchestrator(tmp_path)
-    with patch("besser.spec_driven_agent.orchestrator.shutil.which", return_value=None):
+    with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
         assert orch._collect_cargo_issues() == []
 
 
@@ -220,7 +220,7 @@ def test_collect_kotlinc_issues_soft_skips_when_binary_missing(tmp_path) -> None
     (tmp_path / "build.gradle.kts").write_text("// nothing\n", encoding="utf-8")
     (module / "Main.kt").write_text("fun main() {}\n", encoding="utf-8")
     orch = _build_orchestrator(tmp_path)
-    with patch("besser.spec_driven_agent.orchestrator.shutil.which", return_value=None):
+    with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
         assert orch._collect_kotlinc_issues() == []
 
 

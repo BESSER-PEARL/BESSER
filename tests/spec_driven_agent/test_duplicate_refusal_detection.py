@@ -14,7 +14,7 @@ against code that was already correct.
 """
 import pytest
 
-from besser.spec_driven_agent.constructibility import _is_duplicate_refusal
+from besser.spec_driven_agent.validation.constructibility import _is_duplicate_refusal
 
 
 @pytest.mark.parametrize("status, text", [

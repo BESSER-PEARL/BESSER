@@ -11,8 +11,8 @@ import copy
 
 import pytest
 
-from besser.spec_driven_agent import llm_client
-from besser.spec_driven_agent.llm_client import _with_message_cache
+from besser.spec_driven_agent.providers import llm_client
+from besser.spec_driven_agent.providers.llm_client import _with_message_cache
 
 
 @pytest.fixture

@@ -13,15 +13,15 @@ import json
 
 import pytest
 
-from besser.spec_driven_agent import orchestrator as orch_mod
-from besser.spec_driven_agent.compaction import COMPACT_TOKEN_THRESHOLD
-from besser.spec_driven_agent.history_eviction import (
+from besser.spec_driven_agent.pipeline import orchestrator as orch_mod
+from besser.spec_driven_agent.agent.compaction import COMPACT_TOKEN_THRESHOLD
+from besser.spec_driven_agent.agent.history_eviction import (
     evict_stale_file_bodies,
     DEFAULT_PRESERVE_RECENT,
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )

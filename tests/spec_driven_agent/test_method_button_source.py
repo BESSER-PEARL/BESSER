@@ -10,7 +10,7 @@ bill, produced ``/bill/2/...``. The generated ``TableBlock`` names its entity in
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import _classify_issue, _method_button_source_issues
+from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue, _method_button_source_issues
 
 # The offending lines from the live page, verbatim apart from the styles.
 _BOOKING_PAGE = '''

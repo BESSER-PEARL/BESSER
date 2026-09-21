@@ -51,7 +51,7 @@ import os
 import sys
 from typing import Any
 
-from besser.spec_driven_agent.tracing import TRACE_FILENAME
+from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 
 # orchestrator.py defines this alongside ``.besser_recipe.json`` but is a
 # heavy module (provider SDK imports); this report has to stay usable
@@ -118,7 +118,7 @@ def _load_checkpoint(run_dir: str):
     if not os.path.isfile(path):
         return None, "not found (expected on a clean run - deleted after a clean Phase 2 finish)"
     try:
-        from besser.spec_driven_agent.checkpoint import load_checkpoint
+        from besser.spec_driven_agent.state.checkpoint import load_checkpoint
         checkpoint = load_checkpoint(run_dir)
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"

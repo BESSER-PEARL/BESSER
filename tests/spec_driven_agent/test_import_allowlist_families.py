@@ -21,7 +21,7 @@ import textwrap
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _declared_dependency_roots,
     _unresolvable_local_imports,
 )

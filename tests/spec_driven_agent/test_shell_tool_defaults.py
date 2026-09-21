@@ -17,8 +17,8 @@ import inspect
 
 import pytest
 
-from besser.spec_driven_agent.llm_generator import LLMGenerator
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.generator import LLMGenerator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
 def _default(func, name):
@@ -61,7 +61,7 @@ def test_the_generator_actually_passes_the_flags_on():
 @pytest.mark.parametrize("flag", ["allow_shell_tools", "enable_toolchain_validation"])
 def test_an_explicit_opt_in_is_preserved(flag, tmp_path, monkeypatch):
     """Turning them on must still work -- this is a default change, not a removal."""
-    import besser.spec_driven_agent.llm_generator as mod
+    import besser.spec_driven_agent.generator as mod
     from besser.BUML.metamodel.structural import (
         Class, DomainModel, IntegerType, Property,
     )

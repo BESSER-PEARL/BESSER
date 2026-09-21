@@ -19,7 +19,7 @@ from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
 import besser.spec_driven_agent as engine_pkg
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 ENGINE = Path(engine_pkg.__file__).parent
 # ENGINE was besser/generators/llm (2 hops to besser/); it is now
@@ -94,7 +94,7 @@ class TestInvariant:
     def test_excerpts_state_their_reason(self):
         """``user_request(..., excerpt=N)`` is the one sanctioned way to
         shorten the request; every such call names its reason literally."""
-        from besser.spec_driven_agent.user_request import user_request
+        from besser.spec_driven_agent.planning.user_request import user_request
 
         assert user_request("whole text") == "whole text"
         assert user_request(None) == ""
@@ -130,7 +130,7 @@ class TestDecisionStagesSeeTheWholeRequest:
 
     def test_generator_selector_sees_the_stack_clause_at_the_end_of_a_long_spec(self, tmp_path):
         """The live case: ~4.6k chars, stack named in the last line."""
-        from besser.spec_driven_agent.llm_client import UsageTracker
+        from besser.spec_driven_agent.providers.llm_client import UsageTracker
         seen: dict = {}
 
         class SelectorClient:
@@ -150,7 +150,7 @@ class TestDecisionStagesSeeTheWholeRequest:
         assert "Frontend -> React" in seen["prompt"]
 
     def test_modify_class_inference_sees_past_the_first_thousand_chars(self, tmp_path):
-        from besser.spec_driven_agent.llm_client import UsageTracker
+        from besser.spec_driven_agent.providers.llm_client import UsageTracker
         seen: dict = {}
 
         class DeltaClient:
@@ -174,7 +174,7 @@ class TestGapAnalyserInventionList:
         asked" had the analyser inventing authentication work for requests
         that never mentioned it. The gate must come first; the enumeration
         and the do-not-return-empty push stay."""
-        from besser.spec_driven_agent.gap_analyzer import _SYSTEM_PROMPT
+        from besser.spec_driven_agent.planning.gap_analyzer import _SYSTEM_PROMPT
 
         start = _SYSTEM_PROMPT.index("what the deterministic generator does NOT produce")
         bullet = _SYSTEM_PROMPT[start:_SYSTEM_PROMPT.index("\n", start)].lower()

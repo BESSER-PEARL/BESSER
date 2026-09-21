@@ -33,13 +33,13 @@ from pathlib import Path
 
 import pytest
 
-from besser.spec_driven_agent.constructibility import (
+from besser.spec_driven_agent.validation.constructibility import (
     ACTION_PREFIX,
     ACTION_UNVERIFIED_PREFIX,
     UNVERIFIED_PREFIX,
     collect_constructibility_report,
 )
-from besser.spec_driven_agent.orchestrator import _classify_issue
+from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
@@ -341,7 +341,7 @@ def test_the_tree_score_ranks_on_the_probe_record_not_on_issue_strings(tmp_path)
     never reached both contributed nothing, and a finding rendered twice
     counted twice."""
     from besser.BUML.metamodel.structural import Class, DomainModel
-    from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
     class _Usage:
         estimated_cost = 0.0

@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
 
 def _call(executor: ToolExecutor, tool: str, arguments: dict) -> dict:

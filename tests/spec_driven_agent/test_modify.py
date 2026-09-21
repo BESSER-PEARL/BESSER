@@ -30,13 +30,13 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
     MODIFY_MAX_TOKENS,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.prompt_builder import build_system_prompt
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
 
 
 _MODIFY_DIRECTIVE = "You are MODIFYING an existing, working app."
@@ -208,7 +208,7 @@ def test_modify_preserves_untouched_customised_file(tmp_path, monkeypatch):
     # Gap analysis short-circuits to None with the stub client anyway, but
     # pin it so the test doesn't depend on that detail.
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: None,
     )
 

@@ -9,8 +9,8 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.llm_client import FROM_SCRATCH_MAX_TOKENS, UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.providers.llm_client import FROM_SCRATCH_MAX_TOKENS, UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
 @pytest.fixture
@@ -162,7 +162,7 @@ class TestCostCap:
             max_cost_usd=1.0,  # 80% = $0.80
         )
 
-        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.orchestrator"):
+        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.pipeline.orchestrator"):
             orchestrator.run("Build an app")
 
         # Check that 80% warning was logged
@@ -246,7 +246,7 @@ class TestRuntimeTimeout:
         with open(os.path.join(str(tmp_path), "bad.py"), "w") as f:
             f.write("def f(\n    x =")
 
-        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.orchestrator"):
+        with caplog.at_level(logging.WARNING, logger="besser.spec_driven_agent.pipeline.orchestrator"):
             orchestrator._run_phase3_validation()
 
         assert any("Skipping Phase 3" in record.message for record in caplog.records)
@@ -410,7 +410,7 @@ class TestRuffAndTscValidation:
         """
         import shutil as _shutil
 
-        from besser.spec_driven_agent.orchestrator import _classify_issue
+        from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
 
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
@@ -513,7 +513,7 @@ class TestRuffAndTscValidation:
         issues = orchestrator._collect_ruff_issues()
         assert len(issues) == 1
         assert "did not run" in issues[0] and "SKIPPED" in issues[0]
-        from besser.spec_driven_agent.orchestrator import _classify_issue
+        from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
         assert _classify_issue(issues[0]).severity == "warning"
 
     def test_tsc_returns_empty_when_binary_missing(
@@ -630,8 +630,8 @@ class TestPhase2SystemPrompt:
     def test_phase2_inspection_progress_is_novel_bounded_and_nudged_once(
         self, inspection, simple_model, tmp_path, monkeypatch,
     ):
-        from besser.spec_driven_agent.checkpoint import load_checkpoint
-        from besser.spec_driven_agent import orchestrator as module
+        from besser.spec_driven_agent.state.checkpoint import load_checkpoint
+        from besser.spec_driven_agent.pipeline import orchestrator as module
 
         for number in range(1, 31):
             (tmp_path / f"file{number}.py").write_text(f"value = {number}\n", encoding="utf-8")

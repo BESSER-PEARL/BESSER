@@ -11,7 +11,7 @@ or a compaction).
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.prompt_builder import build_system_prompt
+from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
 
 
 def _model() -> DomainModel:

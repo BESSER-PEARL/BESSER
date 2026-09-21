@@ -18,8 +18,8 @@ decides, and the discarded findings are still reported.
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
 
 @pytest.fixture

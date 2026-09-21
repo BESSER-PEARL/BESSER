@@ -24,8 +24,8 @@ from unittest.mock import patch
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import (
     _PHASE3_NO_PROGRESS_ROUNDS,
     _PHASE3_PLATEAU_ROUNDS,
     LLMOrchestrator,
@@ -230,10 +230,10 @@ def _probe_recorder(monkeypatch, orchestrator, findings=()):
         calls["n"] += 1
         return {"issues": list(findings), "backends": []}
 
-    import besser.spec_driven_agent.constructibility as constructibility
+    import besser.spec_driven_agent.validation.constructibility as constructibility
     monkeypatch.setattr(constructibility, "collect_constructibility_report", fake_probe)
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator._import_smoke_issues", lambda _d: [])
+        "besser.spec_driven_agent.pipeline.orchestrator._import_smoke_issues", lambda _d: [])
     monkeypatch.setattr(orchestrator, "_probeable_backends", lambda: ["web_app/backend"])
     return calls
 
@@ -263,7 +263,7 @@ def test_a_frontend_finding_no_longer_suppresses_the_boot_probe(orch, monkeypatc
 def test_a_module_that_cannot_be_imported_still_skips_the_probe(orch, monkeypatch):
     """Only a finding that PROVES the app cannot boot may skip it."""
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator._unresolvable_local_imports",
+        "besser.spec_driven_agent.pipeline.orchestrator._unresolvable_local_imports",
         lambda _d: ["missing module: routers/booking.py imports 'services' which does not exist"],
     )
     calls = _probe_recorder(monkeypatch, orch)
@@ -489,7 +489,7 @@ def test_compaction_carries_the_checklist_blockers_and_contract(orch, monkeypatc
         seen.update(kwargs)
         return kwargs["messages"], False
 
-    monkeypatch.setattr("besser.spec_driven_agent.orchestrator.maybe_compact", fake_maybe_compact)
+    monkeypatch.setattr("besser.spec_driven_agent.pipeline.orchestrator.maybe_compact", fake_maybe_compact)
     orch._maybe_compact([{"role": "user", "content": "hi"}])
 
     state = seen["work_state"]

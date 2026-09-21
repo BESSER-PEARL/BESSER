@@ -15,7 +15,7 @@ still apply per item, unchanged.
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import (
+from besser.spec_driven_agent.agent.tool_executor import (
     _MAX_TASK_VERIFY_ATTEMPTS,
     ToolExecutor,
 )
@@ -253,7 +253,7 @@ def test_single_action_shapes_are_unaffected_by_the_refactor(executor):
 
 
 def test_the_tool_schema_advertises_mixed(executor):
-    from besser.spec_driven_agent.tools import VALIDATION_TOOLS
+    from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
 
     assert "mixed" in spec["input_schema"]["properties"]["action"]["enum"]

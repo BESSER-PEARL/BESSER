@@ -17,9 +17,9 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent import requirements_ledger as ledger
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, _classify_issue
+from besser.spec_driven_agent.planning import requirements_ledger as ledger
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run_0c537a4e")
 
@@ -95,7 +95,7 @@ def test_requirements_are_numbered_in_order():
     assert SPEC in client.calls[0][1]
     assert "This is the authority" not in client.calls[0][1]
     # Long accepted specifications retain their last clause in extraction too.
-    from besser.spec_driven_agent.specification import MAX_SPECIFICATION_CHARS
+    from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
     client = _ToolClient([{"requirements": [{"text": "Never charge twice", "kind": "rule"}]}])
     long_spec = "x" * (MAX_SPECIFICATION_CHARS - len(SPEC)) + SPEC
     assert ledger.extract_requirements(long_spec, client)
@@ -614,7 +614,7 @@ def _run_phase3_with(orch, passes, monkeypatch):
 
 
 def _req(n):
-    from besser.spec_driven_agent.orchestrator import ValidationIssue
+    from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
     return ValidationIssue("blocker", f"requirement: R{n} — rule {n} is not implemented")
 
 
@@ -629,7 +629,7 @@ def test_a_flapping_requirement_verdict_never_rolls_back_a_fix(simple_model, tmp
 
 
 def test_a_new_hard_blocker_is_reported_without_count_based_rollback(simple_model, tmp_path, monkeypatch):
-    from besser.spec_driven_agent.orchestrator import ValidationIssue
+    from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
     syntax = ValidationIssue("blocker", "Syntax error in backend/main_api.py line 3: invalid syntax")
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
                            output_dir=str(tmp_path), auto_fix_issues=True)
@@ -666,7 +666,7 @@ def test_the_planner_is_handed_the_ledger_under_the_request(simple_model, tmp_pa
         return []
 
     monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client: list(_LEDGER))
-    monkeypatch.setattr("besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm", fake_planner)
+    monkeypatch.setattr("besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm", fake_planner)
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
                            output_dir=str(tmp_path))
     orch._generator_used = "generate_web_app"

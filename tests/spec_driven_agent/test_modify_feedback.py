@@ -21,10 +21,10 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.edit_apply import replace_most_similar_chunk
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.edit_apply import replace_most_similar_chunk
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 STUB = (
     "import x\n"
@@ -182,7 +182,7 @@ class TestChecklistDrop:
         assert ex.open_tasks()
 
     def test_the_tool_schema_offers_drop(self):
-        from besser.spec_driven_agent.tools import VALIDATION_TOOLS
+        from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
         tool = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
         assert "drop" in tool["input_schema"]["properties"]["action"]["enum"]
         assert "reason" in tool["input_schema"]["properties"]

@@ -9,9 +9,9 @@ its live tool list; (3) the hosted default is OFF.
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.tools import get_tools_for, _SHELL_TOOLS
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.tools import get_tools_for, _SHELL_TOOLS
 
 
 def _simple_model():
@@ -169,7 +169,7 @@ import tempfile
 
 import pytest
 
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 @pytest.fixture

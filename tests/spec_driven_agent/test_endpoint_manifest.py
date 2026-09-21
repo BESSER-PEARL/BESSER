@@ -7,7 +7,7 @@ trailing slash, no invented plurals. These pin the parser against the real
 generator shape (full path in the decorator, no prefix) plus the defensive
 prefix cases.
 """
-from besser.spec_driven_agent.prompt_builder import build_endpoint_manifest, build_mutation_manifest
+from besser.spec_driven_agent.agent.prompt_builder import build_endpoint_manifest, build_mutation_manifest
 
 
 def _mk(tmp_path, files: dict) -> str:

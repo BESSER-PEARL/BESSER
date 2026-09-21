@@ -17,7 +17,7 @@ import types
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, _classify_issue
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
 from besser.spec_driven_agent.validation.frontend_schema import (
     collect_frontend_schema_diagnostics,
     collect_frontend_schema_issues,

@@ -11,7 +11,7 @@ the wrong indent is worse than one that misses.
 
 import pytest
 
-from besser.spec_driven_agent.edit_apply import (
+from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
     describe_escape_mismatch,
     replace_most_similar_chunk,

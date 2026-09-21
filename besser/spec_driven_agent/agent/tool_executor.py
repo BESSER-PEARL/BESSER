@@ -33,7 +33,7 @@ from uuid import uuid4
 from besser.BUML.metamodel.structural import DomainModel
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
-from besser.spec_driven_agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
+from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
@@ -44,7 +44,7 @@ from besser.spec_driven_agent.execution.sandbox import (
     SandboxUnavailable,
     sandboxed_command,
 )
-from besser.spec_driven_agent.edit_apply import (
+from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
     describe_escape_mismatch,
     elided_lines,
@@ -392,7 +392,7 @@ def _breaks_module_import(path: str, before: str, after: str) -> str | None:
     # to the sqlalchemy line must not be refused here - the two guards would
     # otherwise cancel out, the import one winning because it runs first.
     try:
-        from besser.spec_driven_agent.import_repair import repair_missing_imports
+        from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
         repaired, _notes = repair_missing_imports(path, after)
     except Exception:
@@ -528,7 +528,7 @@ class ToolExecutor:
         # the SAME turn it wrote it — far cheaper than waiting for the
         # Phase 3 sweep to send it back with cold context.
         try:
-            from besser.spec_driven_agent.contract_checks import build_data_contract
+            from besser.spec_driven_agent.validation.contract_checks import build_data_contract
             self._data_contract = build_data_contract(domain_model)
         except Exception:  # never let contract extraction break the executor
             self._data_contract = None
@@ -766,7 +766,7 @@ class ToolExecutor:
                                 "existing=true with exact executable evidence (acceptance remains unverified)")
                 if os.path.relpath(path, self.workspace).replace("\\", "/") not in self._known_paths:
                     return [], f"read {rel} before citing an existing implementation"
-                from besser.spec_driven_agent.requirements_ledger import verify_evidence
+                from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
                 task = next((t for t in self._tasks if t["id"] == task_id), {})
                 evidence_kind = task.get("kind")
                 if not isinstance(evidence_kind, str) or evidence_kind not in (
@@ -1184,7 +1184,7 @@ class ToolExecutor:
         if self._data_contract is None:
             return switch
         try:
-            from besser.spec_driven_agent.contract_checks import format_findings, lint_file
+            from besser.spec_driven_agent.validation.contract_checks import format_findings, lint_file
             findings = lint_file(rel_path, content, self._data_contract)
         except Exception:
             return switch
@@ -1204,7 +1204,7 @@ class ToolExecutor:
         convenience, and Phase 3 remains the backstop.
         """
         try:
-            from besser.spec_driven_agent.import_repair import repair_missing_imports
+            from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
             repaired, notes = repair_missing_imports(rel_path, content)
             if not notes or repaired == content:
@@ -1239,7 +1239,7 @@ class ToolExecutor:
         if not self._per_write_diagnostics:
             return
         try:
-            from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+            from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
             diagnostics = diagnose_written_content(rel_path, content, workspace=self.workspace)
             if rel_path.endswith(".py"):

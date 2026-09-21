@@ -9,7 +9,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.prompt_builder import build_system_prompt
+from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
 
 
 def _make_minimal_domain() -> DomainModel:

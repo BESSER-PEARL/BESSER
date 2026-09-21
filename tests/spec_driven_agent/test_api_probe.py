@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from besser.spec_driven_agent import api_probe
+from besser.spec_driven_agent.validation import api_probe
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
@@ -138,8 +138,8 @@ def test_backend_selection_and_timeout_are_explicit_errors(tmp_path, monkeypatch
 
 def scenario_orchestrator(tmp_path, **kwargs):
     from besser.BUML.metamodel.structural import Class, DomainModel
-    from besser.spec_driven_agent.llm_client import UsageTracker
-    from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.providers.llm_client import UsageTracker
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
     client = SimpleNamespace(model="mock-model", usage=UsageTracker("mock-model"))
     return LLMOrchestrator(llm_client=client, domain_model=DomainModel(name="Probe", types={Class(name="Room")}),
@@ -148,7 +148,7 @@ def scenario_orchestrator(tmp_path, **kwargs):
 
 
 def test_orchestration_retains_workflows_reruns_changed_source_and_never_evicts_a_failure(tmp_path, monkeypatch):
-    from besser.spec_driven_agent.orchestrator import _classify_issue
+    from besser.spec_driven_agent.pipeline.orchestrator import _classify_issue
 
     source = tmp_path / "state.py"
     source.write_text("ready = False\n", encoding="utf-8")
@@ -200,7 +200,8 @@ def test_orchestration_retains_workflows_reruns_changed_source_and_never_evicts_
 
     # A valid persisted create/read can discharge only its exact guessed-probe
     # unknown, never an actual crash or a different backend/route.
-    from besser.spec_driven_agent import orchestrator as orchestrator_module, constructibility
+    from besser.spec_driven_agent.pipeline import orchestrator as orchestrator_module
+    from besser.spec_driven_agent.validation import constructibility
     unknown = "create unverified: web_app/backend: POST /room/ - guessed fixture was rejected"
     monkeypatch.setattr(orchestrator_module, "_import_smoke_issues", lambda _root: [])
     monkeypatch.setattr(constructibility, "collect_constructibility_report",
@@ -293,7 +294,7 @@ def test_orchestration_corrects_named_tests_explicitly_and_waits_for_batched_wri
     assert json.loads(results[1]["content"])["status"] == "passed"
 
     # Crash recovery keeps the accepted definitions, never a cached green report.
-    from besser.spec_driven_agent.checkpoint import compute_fingerprint, load_checkpoint, save_checkpoint, restore_api_scenarios
+    from besser.spec_driven_agent.state.checkpoint import compute_fingerprint, load_checkpoint, save_checkpoint, restore_api_scenarios
     instructions = "Verify the room workflow"
     orchestrator._project_fingerprint = compute_fingerprint(
         instructions, orchestrator.primary_kind, domain_model=orchestrator.domain_model)

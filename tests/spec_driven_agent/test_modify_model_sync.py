@@ -32,7 +32,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )
@@ -176,7 +176,7 @@ def test_run_does_not_invoke_model_deltas_but_modify_does(tmp_path, monkeypatch)
         lambda instr: calls.append("delta"),
     )
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.build_inventory",
+        "besser.spec_driven_agent.pipeline.orchestrator.build_inventory",
         lambda *a, **k: "",
     )
     monkeypatch.setattr(orch2, "_seed_generator_files_from_recipe", lambda: None)

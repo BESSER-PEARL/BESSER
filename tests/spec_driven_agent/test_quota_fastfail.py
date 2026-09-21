@@ -18,8 +18,8 @@ the provider retried 5x (0.5s -> 30s backoff) per call before falling back —
 
 import pytest
 
-from besser.spec_driven_agent import llm_client
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers import llm_client
+from besser.spec_driven_agent.providers.llm_client import (
     OpenAIProvider,
     UpstreamLLMError,
     UsageTracker,

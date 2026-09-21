@@ -18,8 +18,8 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import (
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator, _ROLLBACK_DISCARD_DIR, _SNAPSHOT_DIR,
 )
 
@@ -114,7 +114,7 @@ def test_restore_without_a_snapshot_reports_failure(orch):
 
 def test_the_parked_tree_is_never_packaged():
     """A leftover discard dir is recovery state, not deliverable output."""
-    from besser.spec_driven_agent.orchestrator import _RECIPE_EXCLUDED_DIRS
+    from besser.spec_driven_agent.pipeline.orchestrator import _RECIPE_EXCLUDED_DIRS
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
         _EXCLUDED_OUTPUT_DIRS,
     )

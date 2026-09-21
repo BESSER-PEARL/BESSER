@@ -12,13 +12,13 @@ import os
 
 import pytest
 
-from besser.spec_driven_agent.edit_apply import (
+from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
     find_similar_lines,
     locate_anchored_span,
     replace_most_similar_chunk,
 )
-from besser.spec_driven_agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 # -- the ladder -----------------------------------------------------------

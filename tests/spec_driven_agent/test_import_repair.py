@@ -18,7 +18,7 @@ missing one.
 
 import pytest
 
-from besser.spec_driven_agent.import_repair import repair_missing_imports
+from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
 
 TRILRAAK = (
@@ -119,7 +119,7 @@ def test_generic_names_are_never_auto_imported(name):
 
 def test_the_repair_reaches_the_file_through_a_real_edit(tmp_path):
     """End to end: the executor writes the fix back to disk."""
-    from besser.spec_driven_agent.tool_executor import ToolExecutor
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
     target = tmp_path / "sql_alchemy.py"
     # A real declarative base. With `Base = None` this edit is genuinely

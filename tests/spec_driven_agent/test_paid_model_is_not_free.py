@@ -18,7 +18,7 @@ The discriminator is the separator, not the family: Ollama writes
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import _get_pricing, _is_free_local_model
+from besser.spec_driven_agent.providers.llm_client import _get_pricing, _is_free_local_model
 
 
 PAID_MISTRAL_IDS = [

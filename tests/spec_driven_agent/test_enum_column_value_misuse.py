@@ -27,7 +27,7 @@ import textwrap
 
 import pytest
 
-from besser.spec_driven_agent.write_diagnostics import (
+from besser.spec_driven_agent.validation.write_diagnostics import (
     diagnose_written_content, python_structural_diagnostics,
 )
 

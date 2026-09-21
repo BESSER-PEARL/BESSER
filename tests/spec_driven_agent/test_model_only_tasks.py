@@ -12,7 +12,7 @@ turns on work it structurally could not do.
 
 import pytest
 
-from besser.spec_driven_agent.gap_analyzer import _note_model_only_tasks
+from besser.spec_driven_agent.planning.gap_analyzer import _note_model_only_tasks
 
 
 FILES = ["web_app/backend/pydantic_classes.py", "web_app/backend/sql_alchemy.py"]

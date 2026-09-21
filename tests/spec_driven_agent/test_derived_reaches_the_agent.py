@@ -31,7 +31,7 @@ def test_derived_attribute_still_reports_name_and_type():
 
 
 def test_data_contract_tells_the_agent_what_derived_means():
-    from besser.spec_driven_agent import prompt_builder
+    from besser.spec_driven_agent.agent import prompt_builder
     import inspect
     src = inspect.getsource(prompt_builder)
     assert "is_derived" in src, "the contract must name the flag the model emits"

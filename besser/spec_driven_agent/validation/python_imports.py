@@ -22,7 +22,7 @@ import os
 import re as _re
 import sys
 
-from besser.spec_driven_agent.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import _check_did_not_run
 from besser.spec_driven_agent.validation.python_source import _python_files
@@ -273,7 +273,7 @@ def _star_import_undefined_names(output_dir: str) -> list[str]:
         return [_check_did_not_run(
             "the star-import name check", "pyflakes is not installed",
         )]
-    from besser.spec_driven_agent.write_diagnostics import diagnose_written_content
+    from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
 
     issues: list[str] = []
     for path in _python_files(output_dir):

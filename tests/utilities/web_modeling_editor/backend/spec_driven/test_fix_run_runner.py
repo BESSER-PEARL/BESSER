@@ -23,8 +23,8 @@ import time
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import ValidationIssue
-from besser.spec_driven_agent.tracing import TRACE_FILENAME
+from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
+from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )

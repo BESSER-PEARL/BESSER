@@ -30,7 +30,7 @@ import json
 
 import pytest
 
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.frontend_resolution import (
     collect_frontend_resolution_issues,
 )
@@ -41,7 +41,7 @@ class _Client:
     max_tokens = 4096
 
     def __init__(self) -> None:
-        from besser.spec_driven_agent.llm_client import UsageTracker
+        from besser.spec_driven_agent.providers.llm_client import UsageTracker
         self.usage = UsageTracker("mock-model")
 
     def chat(self, **kwargs):  # pragma: no cover - no test here calls the LLM

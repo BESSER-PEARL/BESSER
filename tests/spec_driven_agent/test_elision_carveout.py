@@ -6,7 +6,7 @@ in the quoted region excused every ellipsis in the replacement. The real edit
 below quoted a stub body (bare ``...`` on its own line) and wrote back
 ``success = bill.register...``.
 """
-from besser.spec_driven_agent.edit_apply import elided_lines, find_elision
+from besser.spec_driven_agent.agent.edit_apply import elided_lines, find_elision
 
 # Verbatim from the run: old_text carries a stub body, new_text abbreviates.
 OLD_TEXT = '''    def registerPayment(self, amount: float) -> bool:

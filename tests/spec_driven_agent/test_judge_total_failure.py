@@ -14,7 +14,7 @@ a full list of placeholders is not ``None``.
 
 import pytest
 
-from besser.spec_driven_agent import requirements_ledger as ledger
+from besser.spec_driven_agent.planning import requirements_ledger as ledger
 
 
 REQUIREMENTS = [

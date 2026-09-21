@@ -60,16 +60,16 @@ import os
 
 import pytest
 
-from besser.spec_driven_agent import gap_analyzer
-from besser.spec_driven_agent.gap_analyzer import (
+from besser.spec_driven_agent.planning import gap_analyzer
+from besser.spec_driven_agent.planning.gap_analyzer import (
     _parse_task_array,
     _safe_serialize_model,
     analyze_gaps_via_llm,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.tools import GENERATOR_TOOLS
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tools import GENERATOR_TOOLS
 
 
 class _MockBlock:
@@ -228,7 +228,7 @@ def test_phase2_skipped_when_gap_tasks_empty_and_generator_ran(tmp_path, monkeyp
     orch = _make_orchestrator(tmp_path, client)
     orch._generator_used = "generate_fastapi_backend"
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: [],
     )
     progress: list[tuple] = []
@@ -247,7 +247,7 @@ def test_phase2_not_skipped_when_analysis_failed(tmp_path, monkeypatch):
     orch = _make_orchestrator(tmp_path, client)
     orch._generator_used = "generate_fastapi_backend"
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: None,
     )
 
@@ -263,7 +263,7 @@ def test_phase2_not_skipped_when_no_generator(tmp_path, monkeypatch):
     orch = _make_orchestrator(tmp_path, client)
     assert orch._generator_used is None
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: [],
     )
 
@@ -277,7 +277,7 @@ def test_phase2_not_skipped_when_scoped_issues_present(tmp_path, monkeypatch):
     orch = _make_orchestrator(tmp_path, client)
     orch._generator_used = "generate_fastapi_backend"
     monkeypatch.setattr(
-        "besser.spec_driven_agent.orchestrator.analyze_gaps_via_llm",
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
         lambda **kwargs: [],
     )
 
@@ -436,7 +436,7 @@ def test_gap_sanitizer_drops_scaffold_demolition_and_rival_framework():
     """Devstral A/B live finding: the planner proposed deleting the react
     scaffold and installing Flask. The sanitizer must drop those, keep
     honest tasks, and respect a USER-requested rival framework."""
-    from besser.spec_driven_agent.gap_analyzer import _sanitize_tasks
+    from besser.spec_driven_agent.planning.gap_analyzer import _sanitize_tasks
 
     tasks = [
         "delete react frontend scaffold as not requested by user",
@@ -517,13 +517,13 @@ class TestPresentEnumerationsAreNotGaps:
     def test_present_enumerations_are_dropped_and_declared_methods_kept(self):
         """Pins the live run: the two enumeration tasks go, all six method
         tasks stay, order preserved."""
-        from besser.spec_driven_agent.gap_analyzer import _drop_present_enumerations
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         kept = _drop_present_enumerations(ENUM_TASKS + METHOD_TASKS, _booking_model())
         assert kept == METHOD_TASKS
 
     def test_match_ignores_the_proposed_name_and_casing(self):
-        from besser.spec_driven_agent.gap_analyzer import _drop_present_enumerations
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         tasks = [
             "Create a new enum Status (awaiting_payment, confirmed, cancelled) for bookings",
@@ -532,14 +532,14 @@ class TestPresentEnumerationsAreNotGaps:
         assert _drop_present_enumerations(tasks, _booking_model()) == []
 
     def test_a_genuinely_new_enumeration_is_still_a_gap(self):
-        from besser.spec_driven_agent.gap_analyzer import _drop_present_enumerations
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         task = "Add 'refundStatus' enumeration with literals REQUESTED, APPROVED, PAID"
         assert _drop_present_enumerations([task], _booking_model()) == [task]
 
     def test_using_an_existing_enumeration_is_real_work(self):
         """Naming every literal is not the same as proposing the enumeration."""
-        from besser.spec_driven_agent.gap_analyzer import _drop_present_enumerations
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         task = (
             "Add a cancel endpoint that moves BookingCommercialStatus from "
@@ -548,14 +548,14 @@ class TestPresentEnumerationsAreNotGaps:
         assert _drop_present_enumerations([task], _booking_model()) == [task]
 
     def test_no_model_means_no_filtering(self):
-        from besser.spec_driven_agent.gap_analyzer import _drop_present_enumerations
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         assert _drop_present_enumerations(list(ENUM_TASKS), None) == ENUM_TASKS
 
     def test_filter_is_wired_into_the_analyser(self):
         """End to end through analyze_gaps_via_llm with a planner that
         returns the live task list verbatim."""
-        from besser.spec_driven_agent.gap_analyzer import analyze_gaps_via_llm
+        from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
 
         class Planner:
             _client = object()      # looks like a real provider
@@ -578,7 +578,7 @@ class TestMatchingInstruction:
     def test_prompt_says_match_on_meaning_and_member_sets(self):
         """Belt to the filter's braces: the prompt must stop equating
         'appears in the model' with 'has this exact name'."""
-        from besser.spec_driven_agent.gap_analyzer import _build_user_prompt
+        from besser.spec_driven_agent.planning.gap_analyzer import _build_user_prompt
 
         prompt = _build_user_prompt("req", "generate_fastapi_backend", "{}", "inv").lower()
         assert "member sets" in prompt
@@ -602,7 +602,7 @@ from besser.BUML.metamodel.structural import (
     Property,
     StringType,
 )
-from besser.spec_driven_agent.gap_analyzer import _SYSTEM_PROMPT, analyze_gaps_via_llm
+from besser.spec_driven_agent.planning.gap_analyzer import _SYSTEM_PROMPT, analyze_gaps_via_llm
 
 # An abridged form of the live request, keeping every construct the model
 # lost: five named actions, two status dimensions, prose rules, and a fact
@@ -740,7 +740,7 @@ def test_system_prompt_denies_the_model_authority_over_the_spec():
 
 def test_full_spec_and_appended_ledger_reach_the_planner():
     """User-input limits must not silently clip accepted text or derived context."""
-    from besser.spec_driven_agent.specification import MAX_SPECIFICATION_CHARS
+    from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
 
     tail = "\nThe final requirement is to release rooms when cancellation succeeds."
     original = "x" * (MAX_SPECIFICATION_CHARS - len(tail)) + tail
@@ -751,7 +751,7 @@ def test_full_spec_and_appended_ledger_reach_the_planner():
 
 
 def test_action_inventory_finds_real_handlers_not_comments_or_orm_names(tmp_path):
-    from besser.spec_driven_agent.action_inventory import (
+    from besser.spec_driven_agent.planning.action_inventory import (
         action_gap_tasks, action_implementation_issues, collect_action_endpoints,
         format_action_inventory,
     )
@@ -790,7 +790,7 @@ def execute_order_refund(order_id):
 
 
 def test_action_verifier_rejects_missing_routes_and_invalid_source(tmp_path):
-    from besser.spec_driven_agent.action_inventory import (
+    from besser.spec_driven_agent.planning.action_inventory import (
         action_gap_tasks, action_implementation_issues, collect_action_endpoints,
     )
 
@@ -842,7 +842,7 @@ def test_action_verifier_rejects_missing_routes_and_invalid_source(tmp_path):
 
 
 def test_gap_planner_receives_action_handler_inventory_and_corrects_wrong_layer(tmp_path):
-    from besser.spec_driven_agent.action_inventory import (
+    from besser.spec_driven_agent.planning.action_inventory import (
         action_gap_tasks, collect_action_endpoints, merge_action_tasks,
     )
 
@@ -910,7 +910,7 @@ def test_action_task_names_the_instrument_rather_than_only_saying_verify(tmp_pat
     all. The checklist gates completion and is re-listed verbatim by the
     end-turn nudge, so the item has to carry the call itself.
     """
-    from besser.spec_driven_agent.action_inventory import (
+    from besser.spec_driven_agent.planning.action_inventory import (
         action_gap_tasks, action_implementation_issues, collect_action_endpoints,
         format_action_inventory,
     )

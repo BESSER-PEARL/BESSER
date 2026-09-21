@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     LLMProvider,
     OpenAIProvider,
     UsageTracker,
@@ -444,16 +444,16 @@ class TestOpenAIPricing:
 
 class TestCreateLLMClient:
 
-    @patch("besser.spec_driven_agent.llm_client._resolve_api_key", return_value="sk-ant-test")
-    @patch("besser.spec_driven_agent.llm_client._resolve_base_url", return_value=None)
-    @patch("besser.spec_driven_agent.llm_client.ClaudeLLMClient")
+    @patch("besser.spec_driven_agent.providers.llm_client._resolve_api_key", return_value="sk-ant-test")
+    @patch("besser.spec_driven_agent.providers.llm_client._resolve_base_url", return_value=None)
+    @patch("besser.spec_driven_agent.providers.llm_client.ClaudeLLMClient")
     def test_anthropic_provider(self, MockClaude, mock_base, mock_key):
         MockClaude.return_value = MagicMock(spec=LLMProvider)
         client = create_llm_client(provider="anthropic", api_key="sk-ant-test")
         MockClaude.assert_called_once()
 
-    @patch("besser.spec_driven_agent.llm_client._resolve_openai_api_key", return_value="sk-test")
-    @patch("besser.spec_driven_agent.llm_client.OpenAIProvider")
+    @patch("besser.spec_driven_agent.providers.llm_client._resolve_openai_api_key", return_value="sk-test")
+    @patch("besser.spec_driven_agent.providers.llm_client.OpenAIProvider")
     def test_openai_provider(self, MockOpenAI, mock_key):
         MockOpenAI.return_value = MagicMock(spec=LLMProvider)
         client = create_llm_client(provider="openai", api_key="sk-test")
@@ -486,7 +486,7 @@ class TestCreateLLMClient:
             return MagicMock(spec=LLMProvider)
 
         monkeypatch.setattr(
-            "besser.spec_driven_agent.llm_client.OpenAIProvider", _fake_openai_provider,
+            "besser.spec_driven_agent.providers.llm_client.OpenAIProvider", _fake_openai_provider,
         )
         # Client passes junk model/base_url — all must be ignored for free.
         create_llm_client(
@@ -504,7 +504,7 @@ class TestCreateLLMClient:
         monkeypatch.setenv("BESSER_FREE_LLM_MODEL", "qwen3-coder:30b")
         captured = {}
         monkeypatch.setattr(
-            "besser.spec_driven_agent.llm_client.OpenAIProvider",
+            "besser.spec_driven_agent.providers.llm_client.OpenAIProvider",
             lambda **kw: captured.update(kw) or MagicMock(spec=LLMProvider),
         )
         create_llm_client(provider="free")
@@ -529,9 +529,9 @@ class TestFreeTierConfig:
         monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
         assert free_tier_available() is False
 
-    @patch("besser.spec_driven_agent.llm_client._resolve_api_key", return_value="sk-ant-test")
-    @patch("besser.spec_driven_agent.llm_client._resolve_base_url", return_value=None)
-    @patch("besser.spec_driven_agent.llm_client.ClaudeLLMClient")
+    @patch("besser.spec_driven_agent.providers.llm_client._resolve_api_key", return_value="sk-ant-test")
+    @patch("besser.spec_driven_agent.providers.llm_client._resolve_base_url", return_value=None)
+    @patch("besser.spec_driven_agent.providers.llm_client.ClaudeLLMClient")
     def test_default_is_anthropic(self, MockClaude, mock_base, mock_key):
         MockClaude.return_value = MagicMock(spec=LLMProvider)
         client = create_llm_client(api_key="sk-ant-test")
@@ -1029,7 +1029,7 @@ class TestLLMProviderABC:
 
     def test_claude_is_llm_provider(self):
         """ClaudeLLMClient implements LLMProvider."""
-        from besser.spec_driven_agent.llm_client import ClaudeLLMClient
+        from besser.spec_driven_agent.providers.llm_client import ClaudeLLMClient
         assert issubclass(ClaudeLLMClient, LLMProvider)
 
     def test_openai_is_llm_provider(self):

@@ -16,14 +16,14 @@ import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.checkpoint import (
+from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_FILENAME,
     compute_fingerprint,
     load_checkpoint,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator, ValidationIssue
-from besser.spec_driven_agent.tracing import TRACE_FILENAME
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 
 
 @pytest.fixture
@@ -318,7 +318,7 @@ def test_repair_resume_retains_corrected_state_but_rechecks_results(simple_model
     }}
     blocker = ValidationIssue("blocker", "api scenario: items has an incorrect expectation")
     monkeypatch.setattr(first, "_collect_validation_issues", lambda: [blocker])
-    monkeypatch.setattr("besser.spec_driven_agent.api_probe.probe_api_scenario",
+    monkeypatch.setattr("besser.spec_driven_agent.validation.api_probe.probe_api_scenario",
                         lambda *args, **kwargs: {"status": "passed", "boot": "passed"})
     first._run_phase3_validation()
     first._finish_checkpoint()

@@ -25,11 +25,11 @@ describes. The task stays; only its reason changed.
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, Enumeration, EnumerationLiteral, PrimitiveDataType, Property,
 )
-from besser.spec_driven_agent.gap_analyzer import (
+from besser.spec_driven_agent.planning.gap_analyzer import (
     _note_derived_enum_initial_state,
     analyze_gaps_via_llm,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
 
 HOTEL_SPEC = (
@@ -225,7 +225,7 @@ class TestPromptStatesTheSpecOutranksTheModel:
     instead of silently picking one. This pins the strengthened rule."""
 
     def test_precedence_and_disclosure_language_present(self):
-        from besser.spec_driven_agent.prompt_builder import build_system_prompt
+        from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
 
         cls = Class(name="Booking")
         cls.attributes = {Property(name="id", type=PrimitiveDataType("int"), is_id=True)}

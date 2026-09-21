@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from besser.spec_driven_agent.prompt_builder import build_endpoint_manifest
+from besser.spec_driven_agent.agent.prompt_builder import build_endpoint_manifest
 
 
 _FRONTEND_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx")

@@ -38,11 +38,11 @@ import logging
 import os
 
 from besser.generators import GeneratorInterface
-from besser.spec_driven_agent.llm_client import (
+from besser.spec_driven_agent.providers.llm_client import (
     LLMProvider,
     create_llm_client,
 )
-from besser.spec_driven_agent.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 logger = logging.getLogger(__name__)
 

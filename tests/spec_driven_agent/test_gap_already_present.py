@@ -53,13 +53,13 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
     Property,
 )
-from besser.spec_driven_agent.gap_analyzer import (
+from besser.spec_driven_agent.planning.gap_analyzer import (
     _drop_present_attributes,
     _note_present_regex_validations,
     _note_present_relationships,
     analyze_gaps_via_llm,
 )
-from besser.spec_driven_agent.llm_client import UsageTracker
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
 
 def _hotel_model() -> DomainModel:

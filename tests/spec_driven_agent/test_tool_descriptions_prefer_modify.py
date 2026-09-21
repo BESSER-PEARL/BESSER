@@ -6,7 +6,7 @@ system prompt said modify_file for every change and the executor refused
 exactly those write_file calls. Aider's rule is the one the executor wants:
 several small blocks, just the changing lines plus a few for uniqueness.
 """
-from besser.spec_driven_agent.tools import FILE_TOOLS
+from besser.spec_driven_agent.agent.tools import FILE_TOOLS
 
 
 def _desc(name):

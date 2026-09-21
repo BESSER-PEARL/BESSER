@@ -6,7 +6,7 @@ listed 0 of the 33 frontend/src files ("... and 35 more files"); on a
 delivered app 16 slots were .pyc/.db and three routers fell off the end. A
 symbol map for every code file costs about the same as that list did.
 """
-from besser.spec_driven_agent.prompt_builder import build_inventory
+from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 
 
 def _listed(inv):

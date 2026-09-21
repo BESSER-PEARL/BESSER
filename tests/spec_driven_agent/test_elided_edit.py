@@ -10,7 +10,7 @@ appended "Move on." to the result and was ignored 61 times.
 """
 import pytest
 
-from besser.spec_driven_agent.edit_apply import find_elision
+from besser.spec_driven_agent.agent.edit_apply import find_elision
 
 
 # -- detector: the live shapes it must catch ----------------------------
@@ -121,7 +121,7 @@ ELIDED_OLD = (
 
 @pytest.fixture
 def executor(tmp_path):
-    from besser.spec_driven_agent.tool_executor import ToolExecutor
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
     (tmp_path / "sql_alchemy.py").write_text(REAL_FILE, encoding="utf-8")
     return ToolExecutor(str(tmp_path))
 
@@ -213,7 +213,7 @@ def test_inline_ellipsis_is_still_legitimate(line):
 
 def test_run13_old_text_is_refused_by_the_executor(tmp_path):
     """End to end: the shape that corrupted booking_methods.py is rejected."""
-    from besser.spec_driven_agent.tool_executor import ToolExecutor
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
     (tmp_path / "m.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
     ex = ToolExecutor(str(tmp_path))
     res = ex._modify_file({"path": "m.py", "old_text": RUN13_OLD_TEXT,

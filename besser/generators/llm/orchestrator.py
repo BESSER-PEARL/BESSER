@@ -342,6 +342,11 @@ _MAX_PARALLEL_WORKERS = 4
 # stuck case.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 
+# Ceiling on the one-off Phase 1 dependency install. A cold npm install of a
+# generated Vite frontend measured 11s; this only stops a wedged registry call
+# from delaying the whole run before the model has done anything.
+_SCAFFOLD_INSTALL_TIMEOUT_SECONDS = 180
+
 # Turns per fix attempt. An attempt that reaches the cap, or ends in prose,
 # without one successful write gets exactly one more turn with modify_file
 # forced (run 7f918e11, 2026-09-18: two attempts, ten turns, no edit).
@@ -1933,6 +1938,7 @@ class LLMOrchestrator:
                     self.output_dir, self.domain_model, generator_name,
                 )
                 logger.info("Phase 1: Generated %d files", len(result.get("files", [])))
+                self._install_scaffold_frontend_dependencies()
             else:
                 error_text = str(result.get("error") or "unknown error")
                 self._phase1_failure_reason = f"{generator_name}: {error_text}"
@@ -5094,6 +5100,46 @@ class LLMOrchestrator:
 
     def _scaffold_family(self) -> str | None:
         return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
+
+    def _install_scaffold_frontend_dependencies(self) -> None:
+        """Install the deterministic frontend's declared packages, once.
+
+        The scaffold ships a package.json and no node_modules, so the first
+        thing the model tries against the frontend fails. On run
+        claude-sonnet-5-q0yzuo43 it reached for ``npx tsc`` at turn 27, spent
+        turns 28-40 discovering why, and installed at turn 41: 14 turns, 171s
+        and 32% of that run's spend to obtain a prerequisite nothing was
+        gating. The validator deliberately refuses to install (it must report
+        the workspace, not change it -- see ``test_validation_honesty``), so
+        this belongs here, at scaffold time, where writing files is the point.
+
+        Best-effort and silent on failure: the model keeps its own
+        ``install_dependencies`` tool, and ``collect_frontend_build_issues``
+        still reports an uninstalled frontend exactly as before.
+        """
+        import subprocess
+
+        if not self.allow_shell_tools:
+            return  # same authorization the model's install tool runs under
+        npm = shutil.which("npm") or shutil.which("npm.cmd")
+        if not npm:
+            return
+        for folder, dirs, files in os.walk(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git")]
+            if "package.json" not in files or os.path.isdir(
+                    os.path.join(folder, "node_modules")):
+                continue
+            try:
+                subprocess.run(
+                    [npm, "install", "--no-audit", "--no-fund"], cwd=folder,
+                    env=_safe_subprocess_env(), capture_output=True,
+                    text=True, timeout=_SCAFFOLD_INSTALL_TIMEOUT_SECONDS,
+                )
+                logger.info("Phase 1: installed frontend dependencies in %s",
+                            os.path.relpath(folder, self.output_dir))
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                logger.info("Phase 1: dependency install skipped for %s (%s)",
+                            folder, exc)
 
     def _collect_framework_switch_issues(self) -> list[str]:
         """BLOCKER when generated code imports a rival framework.

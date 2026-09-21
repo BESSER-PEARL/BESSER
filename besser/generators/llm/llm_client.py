@@ -958,13 +958,18 @@ def _with_tool_cache(tools: list[dict]) -> list[dict]:
 # message each turn, so the entire prior prefix is served from cache at ~0.1x.
 # Anthropic path only (the OpenAI/free path caches automatically by prefix).
 #
-# Gated OFF by default: it changes the request shape on the paid Anthropic path,
-# which can't be live-verified here (gen is rate-limited). Enable with
-# BESSER_LLM_ROLLING_CACHE=1 after a single paid run confirms cache_read climbs
-# turn-over-turn. cache_control is already used on system+tools in production,
-# so the mechanism itself is proven; this only adds a third breakpoint on the
-# message tail (well under the 4-breakpoint cap: system + last tool + tail = 3).
-_ROLLING_MESSAGE_CACHE = os.environ.get("BESSER_LLM_ROLLING_CACHE", "0") == "1"
+# ON by default since 2026-09-21, when the paid verification this comment used
+# to ask for was run: four growing turns on claude-sonnet-5 through the PIA
+# gateway, flag off then on, everything else identical.
+#
+#   OFF  input 890 -> 2,602 -> 5,136 -> 8,492   cache_read 0 -> 14,535   63.1% hit
+#   ON   input   2 ->     4 ->     6 ->     8   cache_read 4,845 -> 24,510  100% hit
+#
+# Off, re-sent history is billed as fresh input and the per-turn cost grows
+# with the transcript; on, it is flat. A real 54-turn run measured 4,097,784
+# uncached input tokens at a 25.2% hit rate -- about half its cost.
+# Set BESSER_LLM_ROLLING_CACHE=0 to opt out.
+_ROLLING_MESSAGE_CACHE = os.environ.get("BESSER_LLM_ROLLING_CACHE", "1") == "1"
 
 
 def _with_message_cache(messages: list[dict]) -> list[dict]:

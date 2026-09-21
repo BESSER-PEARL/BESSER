@@ -167,6 +167,12 @@ MAX_OUTPUT_SIZE = 15_000
 # the bound is only there so a runaway command cannot fill the disk.
 MAX_SPILL_SIZE = 2_000_000
 
+# Directories search_in_files never descends into: installed dependencies and
+# build output, none of which the model wrote or can usefully edit.
+_UNSEARCHED_DIRS = frozenset({
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+})
+
 # Maximum file content returned by read_file (chars)
 # Sized when context windows were small. A generated router runs to ~35k
 # chars, so the agent was editing a file it could see 59% of while
@@ -2806,6 +2812,13 @@ class ToolExecutor:
 
         matches = []
         for root, dirs, filenames in os.walk(self.workspace):
+            # Vendored and generated trees are not the model's code, and the
+            # 50-match cap below is global: once the frontend's dependencies
+            # are installed, a search that walks node_modules fills its whole
+            # budget with third-party source and reports "truncated" without
+            # ever reaching the app. Prune before the ordering below, which
+            # must still run so the spill logs stay last.
+            dirs[:] = [name for name in dirs if name not in _UNSEARCHED_DIRS]
             # Spilled command logs are searchable, but visited last: a build
             # log must not eat the 50-match budget before the source files.
             dirs.sort(key=lambda name: name == COMMAND_OUTPUT_DIR)

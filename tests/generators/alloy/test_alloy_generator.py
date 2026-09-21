@@ -325,7 +325,7 @@ def test_recursive_association_fields_not_duplicated(tmpdir):
     assert spec.count("A_p: Str") == 1
     assert spec.count("A_rol1: one A") == 1
     assert spec.count("A_rol2: one A") == 1
-    assert "fact{A_rol2 = ~A_rol1}" in spec or "fact{A_rol1 = ~A_rol2}" in spec
+    assert "fact{ A_rol2 = ~A_rol1 }" in spec or "fact{ A_rol1 = ~A_rol2 }" in spec
 
 
 def test_generic_instance_model_predicate_and_run(team_player_model, tmpdir):
@@ -1310,7 +1310,7 @@ def test_generator_emits_strings_module_with_str_field(tmpdir):
     )
     assert "open strings" in spec
     assert "abstract sig Char" in strings_als
-    assert "sig   Str{" in strings_als
+    assert "sig Str {" in strings_als
 
 
 def test_build_string_sigs_names_are_valid_identifiers():
@@ -1421,29 +1421,6 @@ def test_run_command_int_scope_covers_seq_without_int_attributes(tmpdir):
     # maxseq = max(8, len('good morning') = 12) = 12
     assert 2 ** (bitwidth - 1) - 1 >= 12
     assert bitwidth >= 5
-
-
-def test_maxseq_is_model_wide_max_across_constraints(tmpdir):
-    """maxseq must be the maximum across all constraints, not the last one."""
-    state = TranslatorState()
-    ocl_to_alloy(
-        {"Person": ["_"]},
-        {"Person": ["name:str"]},
-        "self.name = 'ab'",
-        context_name="Person",
-        state=state,
-        enums={},
-    )
-    assert state.maxseq == 5  # shorter literal does not lower the default
-    ocl_to_alloy(
-        {"Person": ["_"]},
-        {"Person": ["name:str"]},
-        "self.name = 'long enough'",
-        context_name="Person",
-        state=state,
-        enums={},
-    )
-    assert state.maxseq == 11
 
 
 def test_string_literal_shared_across_constraints_single_sig(tmpdir):

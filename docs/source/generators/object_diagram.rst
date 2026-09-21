@@ -24,7 +24,7 @@ This generator depends on the following software:
 Afterwards, you must set the following environment variables:
 
 - ``JAVA_HOME``: The path to the Java JDK installation.
-- ``BESSER_ALLOY_JAR``: The path to the downloaded Alloy Analyzer .jar file.
+- ``BESSER_ALLOY_JAR``: The path to the downloaded Alloy Analyzer file (must be named ``alloy.jar``).
 
 Now we are ready to automatically generate object diagrams from B-UML/OCL models.
 

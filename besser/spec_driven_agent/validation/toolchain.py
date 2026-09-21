@@ -183,6 +183,11 @@ def _collect_ruff_issues(
                 output_dir,
             ],
             capture_output=True, text=True, timeout=30,
+            # Pin the cwd: ruff prints paths relative to it whenever the target
+            # sits underneath, so the spelling of its output -- and therefore
+            # whether the edited-files ranking matches anything -- otherwise
+            # depends on where the server process happens to have been started.
+            cwd=output_dir,
             env=_safe_subprocess_env(),
         )
     except subprocess.TimeoutExpired:
@@ -226,7 +231,7 @@ def _collect_ruff_issues(
     for line in lines:
         match = _RUFF_LINE_RE.search(line)
         code = match.group(1) if match else None
-        was_edited = _ruff_line_path(line) in touched
+        was_edited = _ruff_line_path(line, output_dir) in touched
         if code in _RUFF_BLOCKER_CODES:
             blockers.append(line)
         elif code in _RUFF_STYLE_CODES:
@@ -258,16 +263,23 @@ def _llm_edited_paths(
     return edited
 
 
-def _ruff_line_path(line: str) -> str:
+def _ruff_line_path(line: str, output_dir: str = "") -> str:
     """The file part of a concise ruff line, or "" when unparseable.
 
     ``<path>:<line>:<col>: <CODE> <message>`` — a Windows drive letter
     puts an extra colon in the path, so split from the right.
+
+    Resolved against ``output_dir`` because ruff prints its paths relative to
+    the CWD whenever the target sits under it. The caller compares against the
+    absolute paths in _llm_edited_paths, so from a cwd above the workspace
+    every comparison failed and the edited-files tier silently ranked nothing.
+    os.path.join returns the second argument unchanged when it is absolute, so
+    this handles both spellings without branching.
     """
     head = line.rsplit(":", 3)
     if len(head) != 4:
         return ""
-    return os.path.normcase(os.path.normpath(head[0]))
+    return os.path.normcase(os.path.normpath(os.path.join(output_dir, head[0])))
 
 
 def _collect_tsc_issues(

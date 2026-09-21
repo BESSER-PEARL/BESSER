@@ -99,3 +99,52 @@ def test_the_reported_path_is_resolved_against_the_workspace(simple_library_book
 
     assert edited == {os.path.normcase(os.path.normpath(
         str(tmp_path / "backend" / "routers" / "booking.py")))}
+
+
+# ------------------------------------------------- both halves of the match
+
+@pytest.mark.parametrize("cwd_is", ["an_ancestor_of_the_workspace", "elsewhere"])
+def test_edited_files_outrank_scaffold_from_any_cwd(
+    simple_library_book_model, tmp_path, monkeypatch, cwd_is
+):
+    """The ranking compares ruff's paths against _llm_edited_paths' absolute ones.
+
+    Ruff prints its paths RELATIVE to the cwd whenever the target sits
+    underneath it, and absolute otherwise, so the spelling depended on where
+    the server process happened to be started. From a cwd above the workspace
+    every comparison failed and the edited tier ranked nothing -- silently, as a
+    correct-looking ordering. The hosted backend runs from /app with workspaces
+    under the system temp dir, which is why this never showed up there; a local
+    harness run from the parent directory hits it.
+
+    test_the_reported_path_is_resolved_against_the_workspace pins the absolute
+    half of the same comparison. This pins the half that varied.
+    """
+    workspace = tmp_path / "app"
+    workspace.mkdir()
+    for index in range(40):
+        _write(workspace, f"aaa_scaffold_{index:03d}.py", NOISE)
+    _write(workspace, "zzz_edited.py", NOISE)
+    if cwd_is == "an_ancestor_of_the_workspace":
+        monkeypatch.chdir(tmp_path)          # ruff prints "app/zzz_edited.py"
+    else:
+        # A sibling tree, so nothing shares a prefix: ruff prints absolutes.
+        unrelated = tmp_path.parent / (tmp_path.name + "_unrelated_cwd")
+        unrelated.mkdir(exist_ok=True)
+        monkeypatch.chdir(unrelated)
+
+    orchestrator = _orchestrator(
+        simple_library_book_model, workspace, edited=["zzz_edited.py"])
+    issues = orchestrator._collect_ruff_issues()
+
+    assert "zzz_edited.py" in issues[0], issues[:3]
+
+
+def test_a_ruff_line_it_cannot_parse_is_not_treated_as_edited(
+    simple_library_book_model, tmp_path
+):
+    """Unparseable must fall to the untouched tier, not silently match ''."""
+    from besser.spec_driven_agent.validation.toolchain import _ruff_line_path
+
+    assert _ruff_line_path("not a ruff line", str(tmp_path)) == ""
+    assert _ruff_line_path("", str(tmp_path)) == ""

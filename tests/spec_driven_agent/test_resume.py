@@ -408,3 +408,84 @@ def test_trace_file_is_populated_during_run(simple_model, tmp_path):
     tool_events = [e for e in events if e["event"] == "tool_call"]
     assert len(tool_events) == 1
     assert tool_events[0]["payload"]["tool"] == "list_files"
+
+
+class TestAFailedCheckpointWriteIsVisible:
+    """A checkpoint that could not be written must not look like a clean exit.
+
+    The contract is that the file's ABSENCE means the run finished cleanly and
+    is therefore not resumable -- delete_checkpoint runs only on the happy path.
+    A write that fails leaves no file either, so a crashed run whose checkpoint
+    write failed is byte-identical on disk to a successful one. save_checkpoint
+    logs at debug and returns None; the caller traced nothing, so the run
+    silently stopped being resumable with no record anywhere.
+
+    The trace is the documented surface for reading a finished run back, so the
+    loss is recorded there. This does NOT make the run resumable -- the state is
+    genuinely gone -- it makes the difference legible.
+    """
+
+    @staticmethod
+    def _trace_events(tmp_path):
+        path = tmp_path / TRACE_FILENAME
+        if not os.path.isfile(path):
+            return []
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def _run_with_failing_saves(self, simple_model, tmp_path, monkeypatch, failure):
+        from besser.spec_driven_agent.pipeline import orchestrator as orch_mod
+
+        monkeypatch.setattr(orch_mod, "save_checkpoint", failure)
+        client = _ScriptedClient([_tool_use("c1"), _tool_use("c2"), _end_turn()])
+        orch = LLMOrchestrator(
+            llm_client=client, domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=5, use_streaming=False,
+        )
+        orch.run("Build a blog")
+        return self._trace_events(tmp_path)
+
+    @pytest.mark.parametrize("failure, why", [
+        (lambda *a, **k: None, "save_checkpoint returned None"),
+        (lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")), "it raised"),
+    ])
+    def test_the_loss_is_recorded_in_the_trace(
+        self, simple_model, tmp_path, monkeypatch, failure, why
+    ):
+        """The regression: neither arm left any record at all."""
+        events = self._run_with_failing_saves(
+            simple_model, tmp_path, monkeypatch, failure)
+
+        losses = [e for e in events
+                  if "not resumable" in json.dumps(e.get("payload", {}))]
+        assert losses, f"{why}: the run stopped being resumable with no record"
+        assert all(e["event"] == "error" for e in losses), losses
+
+    def test_the_run_still_finishes(self, simple_model, tmp_path, monkeypatch):
+        """Instrumentation must not break a run: that is why it swallowed before."""
+        from besser.spec_driven_agent.pipeline import orchestrator as orch_mod
+
+        monkeypatch.setattr(
+            orch_mod, "save_checkpoint",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+        client = _ScriptedClient([_tool_use("c1"), _end_turn()])
+        orch = LLMOrchestrator(
+            llm_client=client, domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=5, use_streaming=False,
+        )
+
+        orch.run("Build a blog")   # must not raise
+
+    def test_a_healthy_run_records_no_loss(self, simple_model, tmp_path):
+        """The check must not fire on the path it is meant to distinguish from."""
+        client = _ScriptedClient([_tool_use("c1"), _end_turn()])
+        orch = LLMOrchestrator(
+            llm_client=client, domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=5, use_streaming=False,
+        )
+        orch.run("Build a blog")
+
+        events = self._trace_events(tmp_path)
+        assert any(e["event"] == "checkpoint" for e in events), "no checkpoint traced"
+        assert not [e for e in events
+                    if "not resumable" in json.dumps(e.get("payload", {}))]

@@ -147,6 +147,7 @@ from besser.spec_driven_agent.validation.python_source import (
 )
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
+    EVENT_ERROR,
     EVENT_COST_UPDATE,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
@@ -3469,8 +3470,28 @@ class LLMOrchestrator:
             path = save_checkpoint(self.output_dir, ckpt)
             if path:
                 self._trace.write(EVENT_CHECKPOINT, turn=turn, phase=phase, path=path)
+            else:
+                # A failed write leaves no file, and the contract is that the
+                # file's ABSENCE means the run finished cleanly. So a run that
+                # crashed with a broken checkpoint write looks exactly like one
+                # that succeeded, and silently stops being resumable. Say so in
+                # the trace, which is the documented place to read a run back.
+                self._record_checkpoint_loss(
+                    turn, phase, "the checkpoint file could not be written")
         except Exception as exc:
             logger.debug("Checkpoint write failed on turn %d: %s", turn, exc)
+            self._record_checkpoint_loss(turn, phase, f"{type(exc).__name__}: {exc}")
+
+    def _record_checkpoint_loss(self, turn: int, phase: str, reason: str) -> None:
+        """Record that this run is no longer resumable, and why."""
+        logger.warning(
+            "Checkpoint not written on turn %s (%s): %s - this run is not resumable",
+            turn, phase, reason,
+        )
+        self._trace.write(
+            EVENT_ERROR, turn=turn, phase=phase, reason=reason,
+            detail="checkpoint not written; run is not resumable",
+        )
 
     def _save_phase3_checkpoint(self) -> None:
         """Persist repair state without replaying a repair transcript on resume."""

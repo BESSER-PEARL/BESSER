@@ -132,9 +132,17 @@ def build_data_contract(domain_model) -> DataContract | None:
                 break
         # Method names may carry the signature ("renew()"); the route uses
         # the bare name, same as the backend template's clean_method_name.
+        # Count only parameters the CALLER must supply. A parameter with a
+        # default is callable on an empty body, which is the only thing the
+        # frontend's method button ever sends - so a method whose parameters
+        # all default belongs under the zero-argument rule below, and was
+        # being skipped by it. The serializer only began emitting a
+        # parameter's ``default`` recently, so this distinction could not be
+        # drawn before.
         arities = {
             str(method.name).split("(")[0].strip():
-                len(getattr(method, "parameters", None) or [])
+                sum(1 for p in (getattr(method, "parameters", None) or [])
+                    if getattr(p, "default_value", None) is None)
             for method in getattr(cls, "methods", None) or []
         }
         if arities:

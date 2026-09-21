@@ -435,7 +435,8 @@ class TestGenerateOutput:
         with zipfile.ZipFile(io.BytesIO(body)) as zf:
             names = zf.namelist()
             assert "model.als" in names
-            assert "str_ops.als" in names
+            assert "strings.als" in names
+            assert "utils.als" in names
 
     def test_generate_alloy_returns_zip(self, class_diagram_input):
         """Alloy generator returns a ZIP archive with model.als and str_ops.als."""

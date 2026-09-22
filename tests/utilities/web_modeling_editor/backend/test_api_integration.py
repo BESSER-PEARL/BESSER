@@ -9,12 +9,13 @@ with ASGITransport is used because the installed starlette/httpx versions
 do not support the legacy TestClient(app=...) pattern.
 """
 
+import copy
 import io
 import json
 import os
 import asyncio
-from functools import wraps
-from typing import Any, Dict, Optional
+import zipfile
+from typing import Any, Dict
 
 import pytest
 import httpx
@@ -106,6 +107,26 @@ def class_diagram_model():
                 },
             },
         },
+    }
+
+
+@pytest.fixture
+def spring_class_diagram_input(class_diagram_model):
+    """``class_diagram_input`` with identifiers, which JPA entities require."""
+    model = copy.deepcopy(class_diagram_model)
+    for class_key, attribute_key in (("class-1", "id-1"), ("class-2", "id-2")):
+        model["elements"][attribute_key] = {
+            "type": "Attribute",
+            "name": "id",
+            "visibility": "public",
+            "attributeType": "int",
+            "isId": True,
+        }
+        model["elements"][class_key]["attributes"].append(attribute_key)
+    return {
+        "title": "LibraryModel",
+        "model": model,
+        "generator": "spring",
     }
 
 
@@ -400,6 +421,66 @@ class TestGenerateOutput:
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
+
+    def test_generate_spring_applies_the_submitted_config(self, spring_class_diagram_input):
+        """The Spring dialog's fields must reach the generator, not be dropped."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {
+                "project_name": "mylibrary",
+                "app_name": "LibraryApplication",
+                "spring_boot_version": "3.4.4",
+                "java_version": "21",
+                "package_name": "com.acme.library",
+            },
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        assert "application/zip" in response.headers.get("content-type", "")
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "pom.xml" in names
+            assert "mvnw" in names
+            assert ".mvn/wrapper/maven-wrapper.properties" in names
+            # app_name and package_name are what the config asked for.
+            assert "src/main/java/com/acme/library/LibraryApplication.java" in names
+            assert "src/main/java/com/acme/library/entity/Book.java" in names
+            pom = archive.read("pom.xml").decode("utf-8")
+            assert "<version>3.4.4</version>" in pom
+            assert "<java.version>21</java.version>" in pom
+
+    def test_generate_spring_without_config_uses_defaults(self, spring_class_diagram_input):
+        """No config at all must still produce a project (the registry default path)."""
+        payload = {**spring_class_diagram_input, "generator": "spring"}
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "src/main/java/com/example/Application.java" in names
+
+    def test_generate_spring_rejects_a_traversing_project_name(self, spring_class_diagram_input):
+        """``project_name`` is a directory name; it must not escape the temp dir."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"project_name": "../../evil"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "pom.xml" in archive.namelist()
+
+    def test_generate_spring_rejects_an_invalid_package_name(self, spring_class_diagram_input):
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"package_name": "../../etc"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------

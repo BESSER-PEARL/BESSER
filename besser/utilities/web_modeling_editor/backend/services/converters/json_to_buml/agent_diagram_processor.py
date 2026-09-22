@@ -470,6 +470,15 @@ def process_agent_diagram(json_data):
             if rag_num_previous_messages < 0:
                 rag_num_previous_messages = 0
 
+            rag_use_hybrid = bool(element.get("use_hybrid_rag", False))
+            raw_bm25 = element.get("bm25_weight")
+            try:
+                rag_bm25_weight = float(raw_bm25) if raw_bm25 is not None else 0.6
+            except (TypeError, ValueError):
+                rag_bm25_weight = 0.6
+            if not (0 < rag_bm25_weight < 1):
+                rag_bm25_weight = 0.6
+
             rag_config = agent.new_rag(
                 name=rag_name,
                 vector_store=vector_store,
@@ -478,6 +487,8 @@ def process_agent_diagram(json_data):
                 llm_prompt=rag_llm_prompt,
                 k=rag_k,
                 num_previous_messages=rag_num_previous_messages,
+                use_hybrid_rag=rag_use_hybrid,
+                bm25_weight=rag_bm25_weight,
             )
             rag_dbs_by_id[element_id] = rag_config
             rag_dbs_by_name[rag_name] = rag_config

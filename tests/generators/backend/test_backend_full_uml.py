@@ -99,17 +99,21 @@ def test_backend_generator_full_uml(tmpdir):
     api_file = os.path.join(str(output_dir), "main_api.py")
     pydantic_file = os.path.join(str(output_dir), "pydantic_classes.py")
     sqlalchemy_file = os.path.join(str(output_dir), "sql_alchemy.py")
+    # Manager's create/update endpoints now live in their own router module
+    # rather than the old monolithic main_api.py.
+    manager_router_file = os.path.join(str(output_dir), "routers", "manager.py")
 
     assert os.path.isfile(api_file)
     assert os.path.isfile(pydantic_file)
     assert os.path.isfile(sqlalchemy_file)
+    assert os.path.isfile(manager_router_file)
 
-    with open(api_file, "r", encoding="utf-8") as f:
-        api_code = f.read()
     with open(pydantic_file, "r", encoding="utf-8") as f:
         pydantic_code = f.read()
     with open(sqlalchemy_file, "r", encoding="utf-8") as f:
         sqlalchemy_code = f.read()
+    with open(manager_router_file, "r", encoding="utf-8") as f:
+        manager_router_code = f.read()
 
     # Pydantic: enums and inheritance
     assert "class Role(Enum):" in pydantic_code
@@ -131,9 +135,9 @@ def test_backend_generator_full_uml(tmpdir):
     assert "managerproject = Table_(" in sqlalchemy_code
 
     # REST API: constructor uses inherited attributes
-    assert "name=manager_data.name" in api_code
-    assert "salary=manager_data.salary" in api_code
-    assert "level=manager_data.level" in api_code
+    assert "name=manager_data.name" in manager_router_code
+    assert "salary=manager_data.salary" in manager_router_code
+    assert "level=manager_data.level" in manager_router_code
 
 
 def test_backend_generator_full_uml_and_implem(tmpdir):
@@ -227,17 +231,21 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     api_file = os.path.join(str(output_dir), "main_api.py")
     pydantic_file = os.path.join(str(output_dir), "pydantic_classes.py")
     sqlalchemy_file = os.path.join(str(output_dir), "sql_alchemy.py")
+    # Manager's create/update/method endpoints now live in their own router
+    # module rather than the old monolithic main_api.py.
+    manager_router_file = os.path.join(str(output_dir), "routers", "manager.py")
 
     assert os.path.isfile(api_file)
     assert os.path.isfile(pydantic_file)
     assert os.path.isfile(sqlalchemy_file)
+    assert os.path.isfile(manager_router_file)
 
-    with open(api_file, "r", encoding="utf-8") as f:
-        api_code = f.read()
     with open(pydantic_file, "r", encoding="utf-8") as f:
         pydantic_code = f.read()
     with open(sqlalchemy_file, "r", encoding="utf-8") as f:
         sqlalchemy_code = f.read()
+    with open(manager_router_file, "r", encoding="utf-8") as f:
+        manager_router_code = f.read()
 
     # Pydantic: enums and inheritance
     assert "class Role(Enum):" in pydantic_code
@@ -259,14 +267,16 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     assert "managerproject = Table_(" in sqlalchemy_code
 
     # REST API: constructor uses inherited attributes
-    assert "name=manager_data.name" in api_code
-    assert "salary=manager_data.salary" in api_code
-    assert "level=manager_data.level" in api_code
+    assert "name=manager_data.name" in manager_router_code
+    assert "salary=manager_data.salary" in manager_router_code
+    assert "level=manager_data.level" in manager_router_code
 
-    # REST API: Methods implementation
-    assert "inst_to_update = _manager_object" in api_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
+    # REST API: Methods implementation. update_manager is defined in the same
+    # router module (Manager updating itself), so no cross-router import is
+    # needed and the call site text is unchanged from the old monolith.
+    assert "inst_to_update = _manager_object" in manager_router_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_router_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_router_code
 
 
 def test_backend_generator_one_to_one_optional_field(tmpdir):

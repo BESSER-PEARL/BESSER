@@ -33,3 +33,38 @@
 .table-scroll::-webkit-scrollbar-track {
   background-color: transparent;
 }
+
+/* ── Add/Edit modal ─────────────────────────────────────────────── */
+
+.bsr-modal input:focus,
+.bsr-modal select:focus,
+.bsr-modal textarea:focus {
+  outline: 2px solid #6366f1;
+  outline-offset: 1px;
+  border-color: #6366f1 !important;
+}
+
+.bsr-modal input[type="checkbox"]:focus {
+  outline-offset: 2px;
+}
+
+.bsr-modal button[type="submit"]:hover {
+  filter: brightness(1.1);
+}
+
+.bsr-modal button:hover[aria-label="Close"] {
+  background: #e2e8f0;
+}
+
+.bsr-modal ::-webkit-scrollbar {
+  width: 8px;
+}
+
+.bsr-modal ::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.5);
+  border-radius: 9999px;
+}
+
+.bsr-modal ::-webkit-scrollbar-track {
+  background-color: transparent;
+}

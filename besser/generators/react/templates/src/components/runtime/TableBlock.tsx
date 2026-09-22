@@ -34,8 +34,17 @@ export const TableBlock: React.FC<TableBlockProps> = ({
     const hasLookupColumns = (options?.columns || []).some(
       (col: any) => typeof col === "object" && col.column_type === "lookup"
     );
+    // The edit form prefills relationship selections (and association-class link
+    // attributes) from the detailed response only, so any lookup in the form -
+    // not just a displayed lookup column - needs the detailed fetch. Otherwise
+    // the form opens with empty selections and a save detaches the relationships.
+    const hasLookupFormColumns = ((options as any)?.formColumns ?? (options as any)?.form_columns ?? []).some(
+      (col: any) => typeof col === "object" && col && (
+        col.column_type === "lookup" || col.columnType === "lookup" || (col.association_class ?? col.associationClass)
+      )
+    );
     const hasNestedFields = isNestedField(dataBinding?.label_field) || isNestedField(dataBinding?.data_field);
-    const detailed = hasLookupColumns || hasNestedFields;
+    const detailed = hasLookupColumns || hasLookupFormColumns || hasNestedFields;
 
     const urlParams = detailed ? "?detailed=true" : "";
     const url = endpoint.startsWith("/") ? backendBase + endpoint + urlParams : endpoint + urlParams;

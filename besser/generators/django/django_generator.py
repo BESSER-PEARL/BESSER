@@ -9,6 +9,7 @@ from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSo
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators import GeneratorInterface
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
+from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
 
 ##############################
@@ -49,6 +50,7 @@ class DjangoGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        self.env.globals.update(normalize_code=normalize_method_code)
         # Register custom Jinja2 tests once for all methods
         self.env.tests['is_Button'] = self.is_button
         self.env.tests['is_List'] = self.is_list

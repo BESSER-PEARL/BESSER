@@ -2,6 +2,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
 
 class PythonGenerator(GeneratorInterface):
@@ -31,6 +32,7 @@ class PythonGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
+        env.globals.update(normalize_code=normalize_method_code)
         template = env.get_template('python_classes_template.py.j2')
         with open(file_path, mode="w", encoding='utf-8') as f:
             generated_code = template.render(domain=self.model, sort_by_timestamp=sort_by_timestamp)

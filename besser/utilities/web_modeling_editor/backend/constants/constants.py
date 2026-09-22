@@ -1,3 +1,10 @@
+from besser.generators.spring.spring_backend_generator import (
+    DEFAULT_JAVA_VERSION as _SPRING_DEFAULT_JAVA_VERSION,
+    DEFAULT_SPRING_APP_NAME as _SPRING_DEFAULT_APP_NAME,
+    DEFAULT_SPRING_BOOT_VERSION as _SPRING_DEFAULT_BOOT_VERSION,
+    DEFAULT_SPRING_PACKAGE_NAME as _SPRING_DEFAULT_PACKAGE_NAME,
+)
+
 # API Configuration
 API_VERSION = "1.0.0"
 
@@ -203,6 +210,14 @@ DEFAULT_QISKIT_SHOTS = 1024
 DEFAULT_DJANGO_PROJECT_NAME = "myproject"
 DEFAULT_DJANGO_APP_NAME = "myapp"
 DEFAULT_SUPABASE_USER_ROOT = "User"
+# Owned by the generator (generators must not depend on the web backend), and
+# re-exported here so the API layer has a single place to read them from.
+DEFAULT_SPRING_BOOT_VERSION = _SPRING_DEFAULT_BOOT_VERSION
+DEFAULT_JAVA_VERSION = _SPRING_DEFAULT_JAVA_VERSION
+DEFAULT_SPRING_APP_NAME = _SPRING_DEFAULT_APP_NAME
+DEFAULT_SPRING_PACKAGE_NAME = _SPRING_DEFAULT_PACKAGE_NAME
+# Only the web editor wraps the generated sources in a named project folder.
+DEFAULT_SPRING_PROJECT_NAME = "springproject"
 
 # CORS defaults
 DEFAULT_CORS_ORIGINS = [

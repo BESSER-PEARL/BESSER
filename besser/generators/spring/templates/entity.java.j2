@@ -1,0 +1,83 @@
+package {{ package_name }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+{% if is_abstract %}
+@MappedSuperclass
+{% else %}
+@Entity
+@Table(name = "{{ table_name }}")
+{% endif %}
+public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if parent %} extends {{ parent }}{% endif %} {
+
+{% for attribute in attributes %}
+{% if attribute.is_id %}
+    @Id
+{% endif %}
+{% if attribute.is_generated %}
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+{% endif %}
+{% if attribute.is_enum %}
+    @Enumerated(EnumType.STRING)
+{% else %}
+    @Column(name = "{{ attribute.column_name }}"{% if not attribute.is_optional %}, nullable = false{% endif %})
+{% endif %}
+{% if attribute.is_list %}
+    {{ attribute.visibility }}{{ attribute.type }} {{ attribute.name }} = new ArrayList<>({% if attribute.default_value %}Arrays.asList({{ attribute.default_value }}){% endif %});
+{% else %}
+    {{ attribute.visibility }}{{ attribute.type }} {{ attribute.name }}{% if attribute.default_value %} = {{ attribute.default_value }}{% endif %};
+{% endif %}
+
+{% endfor %}
+{% for rel in relations %}
+{% for annotation in rel.annotations %}
+    {{ annotation }}
+{% endfor %}
+    private {{ rel.type }} {{ rel.target_property }}{% if rel.is_list %} = new ArrayList<>(){% endif %};
+
+{% endfor %}
+{% if not is_abstract %}
+    public {{ class_name }}() { }
+
+{% if attributes %}
+    public {{ class_name }}({% for attribute in attributes %}{{ attribute.type }} {{ attribute.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+{% for attribute in attributes %}
+        this.{{ attribute.name }} = {{ attribute.name }};
+{% endfor %}
+    }
+
+{% endif %}
+{% endif %}
+{% for method in methods %}
+    {{ method.visibility }} {{ method.return_type }} {{ method.name }}({% for parameter in method.parameters %}{{ parameter.type }} {{ parameter.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+{% if method.code %}
+        {{ method.code }}
+{% elif method.return_type != "void" %}
+        return null;
+{% endif %}
+    }
+
+{% endfor %}
+{% for attribute in attributes %}
+    public {{ attribute.type }} get{{ attribute.accessor }}() {
+        return this.{{ attribute.name }};
+    }
+
+    public void set{{ attribute.accessor }}({{ attribute.type }} {{ attribute.name }}) {
+        this.{{ attribute.name }} = {{ attribute.name }};
+    }
+
+{% endfor %}
+{% for rel in relations %}
+    public {{ rel.type }} get{{ rel.accessor }}() {
+        return this.{{ rel.target_property }};
+    }
+
+    public void set{{ rel.accessor }}({{ rel.type }} {{ rel.target_property }}) {
+        this.{{ rel.target_property }} = {{ rel.target_property }};
+    }
+
+{% endfor %}
+}

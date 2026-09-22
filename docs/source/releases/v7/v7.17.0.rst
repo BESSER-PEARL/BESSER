@@ -1,0 +1,104 @@
+Version 7.17.0
+==============
+
+Minor release: **a substantially expanded neural network metamodel, and a new
+Spring Boot generator**. The neural network work was contributed by
+`DaoudiNadia <https://github.com/DaoudiNadia>`_ (BESSER #584); the Spring Boot
+generator by `miloss01 <https://github.com/miloss01>`_ (BESSER #607), which
+started life as his master's thesis. Both were reviewed and completed by the
+BESSER team.
+
+The new layer and tensor operation parameters described below are keyword-only.
+Nothing that worked in 7.16.1 stops working — see *Keyword-only parameters*.
+
+Highlights
+----------
+
+- **19 new tensor operations**: the six operations the metamodel understood
+  (``reshape``, ``concatenate``, ``multiply``, ``matmultiply``, ``permute``,
+  ``transpose``) are joined by ``squeeze``, ``unsqueeze``, ``mean``, ``max``,
+  ``normalize``, ``repeat``, ``interpolate``, ``pad``, ``dropout``,
+  ``subscript``, ``shape_dim``, ``zeros_like``, ``split``, ``identity`` and the
+  five element-wise ``binop_*`` operations. Between them these cover the tensor
+  plumbing that real architectures need between layers — reducing over an axis,
+  resizing a feature map, slicing a tensor, combining two branches — which
+  previously had to be hand-written into the generated file after the fact.
+
+- **Layers accept the parameters their framework equivalents have**: a
+  convolution takes ``dilation`` and ``groups``, an embedding takes
+  ``padding_idx``, batch and layer normalization take ``eps``, ``momentum``,
+  ``affine`` and ``track_running_stats``, dropout takes a ``dimension`` that
+  selects the spatial variant, and the convolutional, linear and recurrent
+  layers take ``bias``. A model that needed a depthwise convolution or a
+  dilated one previously could not express it.
+
+- **An NN names its own input and output variables**: ``NN.input_var`` and
+  ``NN.return_vars`` say what the generated forward method takes and returns,
+  and ``NN.resolve_var_chain()`` propagates them into the first and last
+  modules before generation. Together with the per-layer ``input_var`` and
+  ``output_var``, this is what makes non-sequential architectures — branches,
+  skip connections, an encoder feeding a decoder's initial hidden state —
+  expressible in the model rather than patched into the output.
+
+- **Validation understands tensor operations**: ``_validate_numerical_bounds()``
+  was one method checking everything; it is now split into
+  ``_validate_layer_values()``, ``_validate_config_values()`` and
+  ``_validate_data_values()``, alongside a new ``_validate_tensorop_values()``
+  that bounds-checks tensor operation parameters and a
+  ``_validate_tensorop_required_params()`` that reports the parameters a given
+  operation type cannot do without. A ``pad`` with no ``pad_amount`` is now an
+  error from ``validate()`` rather than a broken generated file.
+
+- **Both generators emit the new elements**: the PyTorch and TensorFlow
+  generators render every new layer parameter and tensor operation, and resolve
+  a module's input consistently — ``input_var`` first, then
+  ``layers_of_tensors``, then the previous module's output. The two backends
+  previously disagreed about where a module's input came from in branching
+  networks.
+
+- **A Spring Boot backend generator**: ``SpringBackendGenerator`` turns a domain
+  model into a Maven project — JPA entities with the relationship annotations
+  the associations imply, Spring Data repositories, a service layer, REST
+  controllers, and ``.http`` request files to exercise them.
+
+Keyword-only parameters
+-----------------------
+
+Every parameter a layer or tensor operation accepted in 7.16.1 is still
+accepted positionally, in the same order, so existing model code is unaffected.
+The parameters added in this release are keyword-only: they follow a bare ``*``
+in the constructor and have to be passed by name.
+
+.. code-block:: python
+
+    # unchanged
+    Conv2D("l1", [3, 3], 32)
+
+    # new parameters, by name
+    Conv2D("l1", [3, 3], 32, dilation=[2, 2], groups=4, bias=False)
+
+The one exception is the ``NN`` constructor itself, where ``input_var`` and
+``return_vars`` are appended after the existing parameters and may be passed
+either way.
+
+Round-trip fixes
+----------------
+
+Exporting a neural network no longer loses layer attributes. The BUML code
+builder and the BUML-to-JSON converter each emitted only part of what the
+metamodel carries, so a model drawn in the editor, exported and reopened came
+back missing attributes it had been given — the normalization parameters, an
+embedding's ``padding_idx``, a layer's ``bias``, the permutation flags on a
+tensor operation, and the recurrent layers' hidden and cell state variables.
+Both directions now emit the full set, and a round-trip test suite
+(``tests/utilities/web_modeling_editor/backend/services/converters/test_converter_roundtrip.py``)
+asserts that JSON to BUML and back is the identity.
+
+Frontend
+--------
+
+The web editor exposes the new model elements: the new layer parameters, the
+new tensor operation types and their attributes, and the NN-level ``input_var``
+and ``return_vars`` are all editable from the diagram popups, so a network that
+uses them can be drawn rather than hand-written. The Spring Boot generator is
+available from the **Generate** menu under the **Web** group.

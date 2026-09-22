@@ -7,8 +7,8 @@ import {{ import }};
 @Repository
 public interface I{{ cls }}Repository extends JpaRepository<{{ cls }}, {{ id_type }}> {
 
-    {% for method in methods %}
+{% for method in methods %}
     {{ method.return_value }} {{ method.name }}({{ method.parameter }});
-    {% endfor %}
-    
+{% endfor %}
+
 }

@@ -1,27 +1,27 @@
 ### GET ALL
-GET http://localhost:8080/api/{{ cls[0] | lower + cls[1:] }}
+GET http://localhost:8080/api/{{ route }}
 Accept: application/json
 
 ### GET BY ID
-GET http://localhost:8080/api/{{ cls[0] | lower + cls[1:] }}/<id>
+GET http://localhost:8080/api/{{ route }}/<id>
 Accept: application/json
 
 ### CREATE
-POST http://localhost:8080/api/{{ cls[0] | lower + cls[1:] }}
+POST http://localhost:8080/api/{{ route }}
 Content-Type: application/json
 
 {
-  
+
 }
 
 ### UPDATE
-PUT http://localhost:8080/api/{{ cls[0] | lower + cls[1:] }}/<id>
+PUT http://localhost:8080/api/{{ route }}/<id>
 Content-Type: application/json
 
 {
-  
+
 }
 
 ### DELETE
-DELETE http://localhost:8080/api/{{ cls[0] | lower + cls[1:] }}/<id>
+DELETE http://localhost:8080/api/{{ route }}/<id>
 Accept: application/json

@@ -8,14 +8,13 @@ import {{ import }};
 public class {{ cls }}Service implements I{{ cls }}Service {
 
     @Autowired
-    private I{{ cls }}Repository _{{ cls[0] | lower + cls[1:] }}Repository;
+    private I{{ cls }}Repository _{{ instance }}Repository;
 
-    {% for method in methods %}
-@Override
+{% for method in methods %}
+    @Override
     public {{ method.return_value }} {{ method.name }}({{ method.parameter }}) {
-        {% if method.return_value != "void" %}return {% endif %}_{{ cls[0] | lower + cls[1:] }}Repository.{{ method.name }}({{ method.parameter_names }});
+        {{ "return " if method.return_value != "void" else "" }}_{{ instance }}Repository.{{ method.name }}({{ method.parameter_names }});
     }
-    
-    {% endfor %}
 
+{% endfor %}
 }

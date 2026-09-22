@@ -1,36 +1,81 @@
+"""Generates a complete, buildable Spring Boot backend from a B-UML domain model."""
+
 import os
+import shutil
+import stat
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader
-
-from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.generator_interface import GeneratorInterface
+from besser.generators.spring._sub_generator import build_environment
+from besser.generators.spring.java_types import to_java_class_name, validate_java_package
 from besser.generators.spring.spring_controller_generator import SpringControllerGenerator
 from besser.generators.spring.spring_entity_generator import SpringEntityGenerator
 from besser.generators.spring.spring_http_generator import SpringHttpGenerator
 from besser.generators.spring.spring_repository_generator import SpringRepositoryGenerator
 from besser.generators.spring.spring_service_generator import SpringServiceGenerator
 
+#: Defaults for the generated project. They live here rather than in the web
+#: editor's constants module so that the generator never has to import the web
+#: backend; ``backend/constants/constants.py`` re-exports these instead.
+DEFAULT_SPRING_BOOT_VERSION: str = "3.4.4"
+DEFAULT_JAVA_VERSION: str = "21"
+DEFAULT_SPRING_APP_NAME: str = "Application"
+DEFAULT_SPRING_PACKAGE_NAME: str = "com.example"
+DEFAULT_SPRING_GROUP_ID: str = "com.example"
+
+#: Static (non-templated) files shipped with the generator.
+RESOURCES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")
+
+
 class SpringBackendGenerator(GeneratorInterface):
-    
-    def __init__(self, 
-                 model: DomainModel, 
-                 spring_boot_version: str,
-                 java_version: str,
-                 app_name: str,
-                 output_dir: str,
-                 package_name: str = "com.example",
-                 group_id: str = "com.example",
-                 description: str = ""
-                ):
+    """Generates a Spring Boot project (Maven, JPA entities, repositories,
+    services and REST controllers) from a B-UML domain model.
+
+    Args:
+        model (DomainModel): The domain model to generate the backend from.
+        output_dir (str): The directory the project is written to.
+        spring_boot_version (str): The ``spring-boot-starter-parent`` version.
+        java_version (str): The ``java.version`` property of the generated POM.
+        app_name (str): The name of the application (and of its main class).
+        package_name (str): The root Java package of the generated sources.
+        group_id (str): The Maven ``groupId`` of the generated project.
+        description (str): The Maven ``description`` of the generated project.
+    """
+
+    def __init__(self,
+                 model: DomainModel,
+                 output_dir: str = None,
+                 *,
+                 spring_boot_version: str = DEFAULT_SPRING_BOOT_VERSION,
+                 java_version: str = DEFAULT_JAVA_VERSION,
+                 app_name: str = DEFAULT_SPRING_APP_NAME,
+                 package_name: str = DEFAULT_SPRING_PACKAGE_NAME,
+                 group_id: str = DEFAULT_SPRING_GROUP_ID,
+                 description: str = ""):
         super().__init__(model, output_dir)
 
-        self.package_name = package_name
-        self.spring_boot_version = spring_boot_version
-        self.java_version = java_version
-        self.app_name = app_name
-        self.group_id = group_id
-        self.description = description
+        self.package_name: str = validate_java_package(package_name)
+        self.spring_boot_version: str = spring_boot_version
+        self.java_version: str = java_version
+        self.app_name: str = app_name
+        self.group_id: str = group_id
+        self.description: str = description
+
+    @property
+    def project_dir(self) -> Path:
+        """Path: The root of the generated project."""
+        return Path(self.build_generation_dir())
+
+    @property
+    def main_class_name(self) -> str:
+        """str: The sanitized name of the generated ``@SpringBootApplication``."""
+        return to_java_class_name(self.app_name)
+
+    @property
+    def package_dir(self) -> Path:
+        """Path: The relative path of the root package inside a source folder."""
+        return Path(*self.package_name.split("."))
 
     def generate(self):
         self._generate_pom_file()
@@ -43,142 +88,126 @@ class SpringBackendGenerator(GeneratorInterface):
         self._generate_controllers()
         self._generate_http()
 
+    # ------------------------------------------------------------------
+    # Project scaffolding
+    # ------------------------------------------------------------------
+
+    def _render(self, template_name: str, relative_path: Path | str, **context):
+        env = build_environment()
+        content = env.get_template(template_name).render(**context)
+        file_path = self.project_dir / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, mode="w", encoding="utf-8", newline="\n") as file:
+            file.write(content)
+
     def _generate_pom_file(self):
-        file_path = self.build_generation_path(file_name="pom.xml")
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        pom_template = env.get_template("pom.xml.j2")
-
-        context = {
-            "name": self.app_name,
-            "spring_boot_version": self.spring_boot_version,
-            "group_id": self.group_id,
-            "description": self.description,
-            "java_version": self.java_version
-        }
-
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = pom_template.render(**context)
-            f.write(generated_code)
+        self._render(
+            "pom.xml.j2", "pom.xml",
+            name=self.app_name,
+            spring_boot_version=self.spring_boot_version,
+            group_id=self.group_id,
+            description=self.description,
+            java_version=self.java_version,
+        )
 
     def _generate_mvn_files(self):
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        """Copy the Maven wrapper to the layout Maven expects.
 
-        file_path = self.build_generation_path(file_name=Path(self.output_dir, ".mvn", "wrapper", "maven-wrapper.properties"))
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        maven_wrapper_template = env.get_template("maven-wrapper.properties.j2")
+        ``mvnw`` and ``mvnw.cmd`` have to sit at the project root; only
+        ``maven-wrapper.properties`` belongs under ``.mvn/wrapper/``. The two
+        scripts carry no model-dependent content, so they are plain static
+        resources rather than templates.
+        """
+        project_dir = self.project_dir
+        project_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = maven_wrapper_template.render()
-            f.write(generated_code)
+        wrapper_dir = project_dir / ".mvn" / "wrapper"
+        wrapper_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(
+            os.path.join(RESOURCES_PATH, "maven-wrapper.properties"),
+            wrapper_dir / "maven-wrapper.properties",
+        )
 
-        file_path = self.build_generation_path(file_name=Path(self.output_dir, ".mvn", "mvnw"))
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        mvnw_template = env.get_template("mvnw.j2")
+        # The line endings are forced on copy: a CRLF ``mvnw`` is unusable on
+        # POSIX ("bad interpreter"), whatever the checkout settings were.
+        self._copy_script("mvnw", project_dir / "mvnw", newline=b"\n", executable=True)
+        self._copy_script("mvnw.cmd", project_dir / "mvnw.cmd", newline=b"\r\n")
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = mvnw_template.render()
-            f.write(generated_code)
-
-        file_path = self.build_generation_path(file_name=Path(self.output_dir, ".mvn", "mvnw.cmd"))
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        mvnw_cmd_template = env.get_template("mvnw.cmd.j2")
-
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = mvnw_cmd_template.render()
-            f.write(generated_code)
+    @staticmethod
+    def _copy_script(resource_name: str, destination: Path, newline: bytes, executable: bool = False):
+        content = Path(RESOURCES_PATH, resource_name).read_bytes().replace(b"\r\n", b"\n")
+        if newline != b"\n":
+            content = content.replace(b"\n", newline)
+        destination.write_bytes(content)
+        if executable:
+            mode = os.stat(destination).st_mode
+            os.chmod(destination, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     def _generate_main_and_test_files(self):
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-
-        file_path = self.build_generation_path(file_name=Path("src", "main", "java") / Path().joinpath(*self.package_name.split(".")) / f"{self.app_name[0].upper() + self.app_name[1:]}.java")
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        main_template = env.get_template("main.java.j2")
-
-        context = {
-            "name": self.app_name,
-            "package": self.package_name
-        }
-
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = main_template.render(**context)
-            f.write(generated_code)
-
-        file_path = self.build_generation_path(file_name=Path("src", "test", "java") / Path().joinpath(*self.package_name.split(".")) / f"{self.app_name[0].upper() + self.app_name[1:]}Tests.java")
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        test_template = env.get_template("test.java.j2")
-
-        context = {
-            "name": self.app_name,
-            "package": self.package_name
-        }
-
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = test_template.render(**context)
-            f.write(generated_code)
+        self._render(
+            "main.java.j2",
+            Path("src", "main", "java") / self.package_dir / f"{self.main_class_name}.java",
+            name=self.main_class_name,
+            package=self.package_name,
+        )
+        self._render(
+            "test.java.j2",
+            Path("src", "test", "java") / self.package_dir / f"{self.main_class_name}Tests.java",
+            name=self.main_class_name,
+            package=self.package_name,
+        )
 
     def _generate_properties_file(self):
-        file_path = self.build_generation_path(file_name=Path("src", "main", "resources", "application.properties"))
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        app_properties_template = env.get_template("application.properties.j2")
+        self._render(
+            "application.properties.j2",
+            Path("src", "main", "resources", "application.properties"),
+            name=self.app_name,
+        )
 
-        context = {
-            "name": self.app_name,
-        }
+    # ------------------------------------------------------------------
+    # Sources
+    # ------------------------------------------------------------------
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = app_properties_template.render(**context)
-            f.write(generated_code)
+    def _source_dir(self, sub_package: str) -> Path:
+        return self.project_dir / Path("src", "main", "java") / self.package_dir / sub_package
 
     def _generate_entities(self):
-        generator = SpringEntityGenerator(
+        SpringEntityGenerator(
             self.model,
-            output_dir=self.output_dir / Path("src", "main", "java") / Path().joinpath(*self.package_name.split(".")) / "entity",
-            package_name=f"{self.package_name}.entity"
-        )
-
-        generator.generate()
+            output_dir=self._source_dir("entity"),
+            package_name=f"{self.package_name}.entity",
+        ).generate()
 
     def _generate_repositories(self):
-        generator = SpringRepositoryGenerator(
+        SpringRepositoryGenerator(
             self.model,
             f"{self.package_name}.entity",
-            output_dir=self.output_dir / Path("src", "main", "java") / Path().joinpath(*self.package_name.split(".")) / "repository",
-            package_name=f"{self.package_name}.repository"
-        )
-
-        generator.generate()
+            output_dir=self._source_dir("repository"),
+            package_name=f"{self.package_name}.repository",
+        ).generate()
 
     def _generate_services(self):
-        generator = SpringServiceGenerator(
+        SpringServiceGenerator(
             self.model,
             f"{self.package_name}.entity",
             f"{self.package_name}.repository",
-            output_dir=self.output_dir / Path("src", "main", "java") / Path().joinpath(*self.package_name.split(".")) / "service",
-            package_name=f"{self.package_name}.service"
-        )
-
-        generator.generate()
+            output_dir=self._source_dir("service"),
+            package_name=f"{self.package_name}.service",
+        ).generate()
 
     def _generate_controllers(self):
-        generator = SpringControllerGenerator(
+        SpringControllerGenerator(
             self.model,
             f"{self.package_name}.entity",
             f"{self.package_name}.service",
-            output_dir=self.output_dir / Path("src", "main", "java") / Path().joinpath(*self.package_name.split(".")) / "controller",
-            package_name=f"{self.package_name}.controller"
-        )
-
-        generator.generate()
+            output_dir=self._source_dir("controller"),
+            package_name=f"{self.package_name}.controller",
+        ).generate()
 
     def _generate_http(self):
-        generator = SpringHttpGenerator(
+        # Scratch request files are test resources, not compilation units: they
+        # must stay out of ``src/main/java``.
+        SpringHttpGenerator(
             self.model,
-            output_dir=self.output_dir / Path("src", "main", "java") / Path().joinpath(*self.package_name.split(".")) / "http_test"
-        )
-
-        generator.generate()
+            output_dir=self.project_dir / Path("src", "test", "resources", "http"),
+        ).generate()

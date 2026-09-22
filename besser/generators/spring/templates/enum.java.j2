@@ -1,5 +1,5 @@
 package {{ package_name }};
 
 public enum {{ name }} {
-    {% for lit in literals %}{{ lit.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+    {{ literals | join(", ") }}
 }

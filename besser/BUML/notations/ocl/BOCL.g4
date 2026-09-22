@@ -63,7 +63,7 @@ iteratorVarDecl
     ;
 
 iteratorOp
-    : FORALL | EXISTS | SELECT | REJECT | COLLECT
+    : FORALL | EXISTS | SELECT | REJECT | COLLECT | CLOSURE
     ;
 
 compOp
@@ -87,6 +87,10 @@ expression
     | expression DOT ID LPAREN argList? RPAREN                                      #dotMethodCall
     | expression DOT ID                                                             #dotNavigation
     | expression DOT SIZE                                                           #dotSizeNavigation
+    // Fallback: `size` is also a valid attribute name when no parens follow.
+    // ANTLR's longest-match keeps `dotSize` (`.size()`) winning when parens are
+    // present, so `collection->size()` and `string.size()` still parse.
+    // See BESSER-PEARL/BESSER#198.
     | expression DOT ALLINSTANCES LPAREN RPAREN                                     #allInstancesExp
 
     // --- Postfix: arrow operations ---
@@ -98,6 +102,8 @@ expression
     | expression ARROW SUM LPAREN RPAREN                                            #arrowSum
     | expression ARROW INCLUDES LPAREN expression RPAREN                            #arrowIncludes
     | expression ARROW EXCLUDES LPAREN expression RPAREN                            #arrowExcludes
+    | expression ARROW INCLUDING LPAREN expression RPAREN                           #arrowIncluding
+    | expression ARROW EXCLUDING LPAREN expression RPAREN                           #arrowExcluding
     | expression ARROW UNION LPAREN expression RPAREN                               #arrowUnion
     | expression ARROW FIRST LPAREN RPAREN                                          #arrowFirst
     | expression ARROW LAST LPAREN RPAREN                                           #arrowLast
@@ -179,9 +185,8 @@ EXISTS     : 'exists' ;
 SELECT     : 'select' ;
 REJECT     : 'reject' ;
 COLLECT    : 'collect' ;
-INTERSECTION: 'intersection';
-ISUNIQUE    : 'isUnique';
-ASSET       : 'asSet';
+CLOSURE    : 'closure' ;
+ISUNIQUE   : 'isUnique';
 
 // Collection/type operations
 SIZE               : 'size' ;
@@ -189,7 +194,10 @@ ISEMPTY            : 'isEmpty' ;
 SUM                : 'sum' ;
 INCLUDES           : 'includes' ;
 EXCLUDES           : 'excludes' ;
+INCLUDING          : 'including' ;
+EXCLUDING          : 'excluding' ;
 UNION              : 'union' ;
+INTERSECTION       : 'intersection' ;
 FIRST              : 'first' ;
 LAST               : 'last' ;
 PREPEND            : 'prepend' ;
@@ -201,6 +209,8 @@ SYMMETRICDIFFERENCE: 'symmetricDifference' ;
 OCLISTYPEOF        : 'oclIsTypeOf' ;
 OCLASTYPE          : 'oclAsType' ;
 OCLISKINDOF        : 'oclIsKindOf' ;
+ASSET              : 'asSet' ;
+
 
 // Types
 BOOLEAN_TYPE : 'Boolean' ;

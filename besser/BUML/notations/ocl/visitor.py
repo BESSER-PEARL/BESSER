@@ -289,6 +289,20 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce.source = source
         return oce
 
+    def visitArrowIncluding(self, ctx: BOCLParser.ArrowIncludingContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="INCLUDING", operation="INCLUDING", arguments=[arg])
+        oce.source = source
+        return oce
+
+    def visitArrowExcluding(self, ctx: BOCLParser.ArrowExcludingContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="EXCLUDING", operation="EXCLUDING", arguments=[arg])
+        oce.source = source
+        return oce
+
     def visitArrowUnion(self, ctx: BOCLParser.ArrowUnionContext):
         source = self.visit(ctx.expression(0))
         arg = self.visit(ctx.expression(1))

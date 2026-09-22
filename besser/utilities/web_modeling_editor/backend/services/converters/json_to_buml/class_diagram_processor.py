@@ -692,6 +692,27 @@ def _process_association_classes(
         domain_model.types.discard(class_obj)
         domain_model.types.add(association_class)
 
+        # Re-point everything that still holds the DISCARDED class. Class
+        # compares by identity, so an end left bound to the old object makes
+        # validate() report "referencing type 'X' which is not in the domain
+        # model" for a class plainly on the canvas. Live case: OrderLine as the
+        # association class of Order-MenuItem broke its own 'lines' and
+        # 'orderLines_1' associations, and the editor's auto-fix could not
+        # clear it because there was nothing wrong with the diagram.
+        for assoc in domain_model.associations:
+            for end in assoc.ends:
+                if end.type is class_obj:
+                    end.type = association_class
+        for generalization in domain_model.generalizations:
+            if generalization.general is class_obj:
+                generalization.general = association_class
+            if generalization.specific is class_obj:
+                generalization.specific = association_class
+        for some_type in domain_model.types:
+            for prop in getattr(some_type, "attributes", None) or ():
+                if prop.type is class_obj:
+                    prop.type = association_class
+
 
 def _ocl_box_to_full_text(
     element: dict[str, Any],

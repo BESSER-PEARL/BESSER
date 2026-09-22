@@ -5,7 +5,7 @@ from besser.BUML.metamodel.structural import NamedElement, DomainModel, Model
 class Hypervisor(Enum):
     '''Enumeration to list various types of hypervisors.
 
-    Hypervisors are software, firmware, or hardware that creates and runs virtual machines (VMs). 
+    Hypervisors are software, firmware, or hardware that creates and runs virtual machines (VMs).
     This enumeration lists some of the most common hypervisors used in virtualization technology.
 
     Attributes:
@@ -35,7 +35,7 @@ class Processor(Enum):
     '''
 
     x64 = "x64"
-    x86 = "x84"
+    x86 = "x86"
     arm = "ARM"
 
 
@@ -105,7 +105,7 @@ class Protocol(Enum):
     http = "HTTP"
     https = "HTTPS"
     tcp = "TCP"
-    udp = "UPD"
+    udp = "UDP"
     all = "ALL"
 
 

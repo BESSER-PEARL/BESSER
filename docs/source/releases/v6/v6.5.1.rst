@@ -1,0 +1,42 @@
+Version 6.5.1
+=============
+
+Derived attribute support, major editor connection fix, and comprehensive frontend stability improvements.
+
+New Features
+------------
+
+**Derived Attributes**
+- Added ``isDerived`` property support for class attributes in the domain model.
+- Round-trip support in JSON-to-BUML and BUML-to-JSON converters for derived attributes.
+- Generated BUML code now emits the ``is_derived`` flag when set.
+
+**Frontend: Derived Attribute UI** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Added ``isDerived`` property and toggle handlers to UML classifier components.
+
+**Model Metrics** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Added model metrics calculation for analytics in the Deploy and Generate Code menus.
+
+Bug Fixes
+---------
+
+**Connection Preview Stealing Pointer Events** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- The connection preview polyline had ``pointer-events: 'none'`` with invalid CSS quotes, causing the browser to ignore the property. The polyline intercepted all pointer events during drag, preventing connections from reaching target elements and causing persistent port handle flicker.
+- Removed the quotes so the CSS property is valid (``pointer-events: none``).
+
+**Port Handle Hit Area** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Port handle SVGs had no ``width`` or ``height``, resulting in a 0×0 hit-test area. Clicks on the visible semi-circle could fall through to the parent class element.
+- Added proper SVG dimensions, ``viewBox``, and position offsets for reliable pointer event capture.
+
+**Comprehensive Editor Stability Fixes** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+
+Improvements
+------------
+
+**Frontend** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Fix memory leaks from unremoved keyboard, wheel, and droppable event listeners.
+- Fix Windows-incompatible colons in export filenames.
+- Set minimum element resize to 10×10px to prevent invisible elements.
+- Fix nested button accessibility issue in agent intent body.
+- Remove dead code and production console.warn statements.
+- Add development setup with TypeScript and Webpack configuration.

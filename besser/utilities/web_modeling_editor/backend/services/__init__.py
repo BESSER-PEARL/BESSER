@@ -52,13 +52,13 @@ __all__ = [
     "object_buml_to_json",
     "project_to_json",
     "json_to_buml_project",
-    
+
     # Validators
     "check_ocl_constraint",
-    
+
     # Deployment
     "run_docker_compose",
-    
+
     # Utils
     "calculate_center_point",
     "determine_connection_direction",

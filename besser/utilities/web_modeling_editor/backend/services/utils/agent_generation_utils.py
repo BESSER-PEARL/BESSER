@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import logging
 import os
 import re
 import sys
 import tempfile
 import zipfile
+
+logger = logging.getLogger(__name__)
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -18,8 +21,6 @@ from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
-from besser.utilities.web_modeling_editor.backend.services.utils.resource_manager import cleanup_temp_resources
-
 AgentZipGenerator = Callable[[Any, Optional[Dict[str, Any]]], Tuple[io.BytesIO, str]]
 
 
@@ -74,11 +75,12 @@ def build_configurations_package(
     agent_model: Any,
     configurations: List[Dict[str, Any]],
     generate_agent_zip_fn: AgentZipGenerator,
+    config_yaml: Optional[str] = None,
 ) -> io.BytesIO:
     """Create a zip containing the base agent plus variants for each configuration."""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as combined_zip:
-        base_buffer, _ = generate_agent_zip_fn(agent_model, None)
+        base_buffer, _ = generate_agent_zip_fn(agent_model, None, config_yaml=config_yaml)
         append_zip_contents(combined_zip, base_buffer)
 
         used_prefixes: Set[str] = set()
@@ -99,7 +101,7 @@ def build_configurations_package(
                 suffix += 1
             used_prefixes.add(unique_name)
 
-            config_buffer, _ = generate_agent_zip_fn(agent_model, sanitized_payload)
+            config_buffer, _ = generate_agent_zip_fn(agent_model, sanitized_payload, config_yaml=config_yaml)
             append_zip_contents(combined_zip, config_buffer, prefix=unique_name)
 
     zip_buffer.seek(0)
@@ -147,11 +149,12 @@ def normalize_personalization_mapping(
             try:
                 agent_model_buml = process_agent_diagram(mapping_payload)
             except Exception as conversion_error:
+                logger.exception("Failed to convert personalizationMapping agent_model at index %d", index)
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Failed to convert personalizationMapping "
-                        f"agent_model at index {index} to BUML: {conversion_error}"
+                        f"Failed to convert personalizationMapping agent_model at index {index}. "
+                        "Please check the agent model data."
                     ),
                 ) from conversion_error
 
@@ -203,8 +206,7 @@ async def handle_multi_language_generation(
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for agent_model, lang in agent_models:
-            temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{lang}_")
-            try:
+            with tempfile.TemporaryDirectory(prefix=f"besser_agent_{lang}_") as temp_dir:
                 agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
                 agent_model_to_code(agent_model, agent_file)
                 sys.path.insert(0, temp_dir)
@@ -216,17 +218,20 @@ async def handle_multi_language_generation(
                 generator_info = get_generator_info("agent")
                 generator_class = generator_info.generator_class
                 variant_openai_api_key = extract_openai_api_key(new_config)
+                config_yaml = json_data.get('configYaml')
                 if hasattr(agent_module, 'agent'):
                     generator = generator_class(
                         agent_module.agent,
                         config=new_config,
                         openai_api_key=variant_openai_api_key,
+                        config_yaml=config_yaml,
                     )
                 else:
                     generator = generator_class(
                         agent_model,
                         config=new_config,
                         openai_api_key=variant_openai_api_key,
+                        config_yaml=config_yaml,
                     )
                 generator.generate()
                 zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
@@ -235,8 +240,6 @@ async def handle_multi_language_generation(
                         file_path = os.path.join(output_dir, file_name)
                         if os.path.isfile(file_path):
                             zip_file.write(file_path, f"{lang}/{file_name}")
-            finally:
-                cleanup_temp_resources(temp_dir)
     zip_buffer.seek(0)
     return zip_buffer, "agents_multi_lang.zip"
 
@@ -247,6 +250,7 @@ def handle_variation_generation(
     base_model_snapshot: Dict[str, Any],
     variation_entries: list,
     generate_agent_files_fn: Callable,
+    config_yaml: Optional[str] = None,
 ) -> Tuple[io.BytesIO, str]:
     """Generate a ZIP containing the base model plus each variation.
 
@@ -265,6 +269,7 @@ def handle_variation_generation(
             base_agent_model,
             config,
             generation_mode=GenerationMode.CODE_ONLY,
+            config_yaml=config_yaml,
         )
         append_zip_contents(zip_file, base_buffer)
 
@@ -277,11 +282,12 @@ def handle_variation_generation(
             try:
                 variant_agent_model = to_agent_model(variant_snapshot)
             except Exception as conversion_error:
+                logger.exception("Invalid agent model for variation '%s'", entry.get('name', index))
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Invalid agent model provided for variation "
-                        f"'{entry.get('name', index)}': {conversion_error}"
+                        f"Invalid agent model provided for variation "
+                        f"'{entry.get('name', index)}'. Please check the agent model data."
                     ),
                 ) from conversion_error
 
@@ -290,6 +296,7 @@ def handle_variation_generation(
                 variant_agent_model,
                 entry.get('config'),
                 generation_mode=GenerationMode.CODE_ONLY,
+                config_yaml=config_yaml,
             )
             append_zip_contents(
                 zip_file,
@@ -305,6 +312,7 @@ def handle_configuration_variants(
     json_data: dict,
     configuration_variants: list,
     generate_agent_files_fn: Callable,
+    config_yaml: Optional[str] = None,
 ) -> Tuple[io.BytesIO, str]:
     """Generate a ZIP bundle for each configuration variant.
 
@@ -316,6 +324,7 @@ def handle_configuration_variants(
         agent_model,
         configuration_variants,
         generate_agent_files_fn,
+        config_yaml=config_yaml,
     )
     return bundle_buffer, "agent_output.zip"
 
@@ -324,6 +333,7 @@ def handle_personalized_agent(
     json_data: dict,
     config: dict,
     generate_agent_files_fn: Callable,
+    config_yaml: Optional[str] = None,
 ) -> Tuple[io.BytesIO, str]:
     """Generate agent files with personalization mapping applied.
 
@@ -335,5 +345,74 @@ def handle_personalized_agent(
         agent_model,
         config,
         generation_mode=GenerationMode.CODE_ONLY,
+        config_yaml=config_yaml,
     )
     return zip_buffer, file_name
+
+
+def collect_agents_from_diagrams(
+    agent_diagrams: List[Any],
+    default_config: Any = None,
+) -> Tuple[List[Any], Dict[str, Any], Dict[str, Optional[str]]]:
+    """Process every AgentDiagram in a project into BUML Agent models.
+
+    Used by both the ``/generate-output-from-project`` route and the
+    ``/github/deploy-webapp`` deploy pipeline so they stay in lock-step.
+
+    Args:
+        agent_diagrams: List of diagram entries. Each may be a dict (raw request
+            payload) or a Pydantic ``DiagramInput`` — anything exposing
+            ``.model_dump()`` or already behaving like a dict works.
+        default_config: Fallback config applied when a diagram has no per-diagram
+            ``config`` entry.
+
+    Returns:
+        ``(agent_models, agent_configs, agent_config_yamls)`` where both dicts are
+        keyed by ``agent.name``. ``agent_config_yamls`` maps each name to the
+        user-authored ``configYaml`` string for that agent, or ``None`` if absent.
+
+    Raises:
+        HTTPException(400): if two agents share the same ``.name`` — the
+        downstream generator would silently overwrite one with the other.
+    """
+    agent_models: List[Any] = []
+    agent_configs: Dict[str, Any] = {}
+    agent_config_yamls: Dict[str, Optional[str]] = {}
+    seen: Set[str] = set()
+    duplicates: Set[str] = set()
+
+    for entry in agent_diagrams or []:
+        entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+        if not isinstance(entry_dict, dict):
+            continue
+        model = entry_dict.get("model")
+        if not model:
+            continue
+        # The deploy endpoint additionally required a non-empty ``elements`` map;
+        # treat that as the unified contract so both paths reject blank diagrams.
+        if isinstance(model, dict) and not model.get("elements"):
+            continue
+        agent_model = process_agent_diagram(entry_dict)
+        if agent_model is None:
+            continue
+
+        name = agent_model.name
+        if name in seen:
+            duplicates.add(name)
+            continue
+        seen.add(name)
+        agent_models.append(agent_model)
+        agent_configs[name] = entry_dict.get("config") or default_config
+        raw_yaml = entry_dict.get("configYaml")
+        agent_config_yamls[name] = raw_yaml if isinstance(raw_yaml, str) else None
+
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Agent names must be unique within a project. "
+                f"Duplicates: {sorted(duplicates)}"
+            ),
+        )
+
+    return agent_models, agent_configs, agent_config_yamls

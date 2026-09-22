@@ -2,8 +2,8 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
 from besser.BUML.metamodel.quantum import (
-    QuantumCircuit, PrimitiveGate, ParametricGate, Measurement, 
-    ControlState, SwapGate, PauliXGate, PauliYGate, PauliZGate, 
+    QuantumCircuit, PrimitiveGate, ParametricGate, Measurement,
+    ControlState, SwapGate, PauliXGate, PauliYGate, PauliZGate,
     HadamardGate, RXGate, RYGate, RZGate, PhaseGate, SGate, TGate,
     QFTGate, SpacerGate, ArithmeticGate, ModularArithmeticGate,
     ComparisonGate, DisplayOperation, InputGate, CustomGate, FunctionGate,
@@ -16,7 +16,7 @@ class QiskitGenerator(GeneratorInterface):
     """
     Generates Qiskit code from a BESSER QuantumCircuit model.
     """
-    def __init__(self, model: QuantumCircuit, output_dir: str = None, 
+    def __init__(self, model: QuantumCircuit, output_dir: str = None,
                  backend_type: str = "aer_simulator", shots: int = 1024):
         super().__init__(model, output_dir)
         if backend_type not in VALID_BACKENDS:
@@ -32,24 +32,24 @@ class QiskitGenerator(GeneratorInterface):
         """
         file_path = self.build_generation_path(file_name="qiskit_circuit.py")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        
+
         env = Environment(loader=FileSystemLoader(templates_path))
         template = env.get_template('qiskit_circuit.py.j2')
-        
+
         # Check if circuit needs classical registers for measurements
         has_measurements = any(isinstance(op, Measurement) for op in self.model.operations)
         if has_measurements and not self.model.cregs:
             # Add a classical register with same size as qubits
             from besser.BUML.metamodel.quantum.quantum import ClassicalRegister
             self.model.add_creg(ClassicalRegister("c", self.model.num_qubits))
-        
+
         # Collect function gates to generate their definitions
         function_gates_code = self._generate_function_gates_code()
         operations_code = self._generate_operations_code()
-        
+
         # Determine which helper classes are needed
         helper_classes = self._get_required_helper_classes()
-        
+
         with open(file_path, "w", encoding="utf-8") as f:
             generated_code = template.render(
                 circuit=self.model,
@@ -60,7 +60,7 @@ class QiskitGenerator(GeneratorInterface):
                 helper_classes=helper_classes
             )
             f.write(generated_code)
-        
+
         print(f"Qiskit code generated at: {file_path}")
 
     def _get_required_helper_classes(self) -> set:
@@ -68,7 +68,7 @@ class QiskitGenerator(GeneratorInterface):
         Analyzes the circuit and returns a set of helper class names that are needed.
         """
         needed = set()
-        
+
         for op in self.model.operations:
             if isinstance(op, PhaseGradientGate):
                 needed.add('PhaseGradient')
@@ -90,14 +90,14 @@ class QiskitGenerator(GeneratorInterface):
                     needed.add('Increment')
                 elif op_type == 'Decrement':
                     needed.add('Decrement')
-        
+
         # Check if any gate uses a placeholder
         for op in self.model.operations:
             if self._uses_placeholder(op):
                 needed.add('create_placeholder')
-        
+
         return needed
-    
+
     def _uses_placeholder(self, op) -> bool:
         """Check if an operation will use the placeholder function."""
         if isinstance(op, ModularArithmeticGate):
@@ -128,7 +128,7 @@ class QiskitGenerator(GeneratorInterface):
         Returns a list of Python function definitions.
         """
         function_gates = {}
-        
+
         # Collect all unique function gates by their unique ID (not just name)
         # This handles cases where gates with same name have different implementations
         for op in self.model.operations:
@@ -137,38 +137,37 @@ class QiskitGenerator(GeneratorInterface):
                 gate_key = f"{op.name}_{id(op)}"
                 if gate_key not in function_gates:
                     function_gates[gate_key] = op
-        
+
         # Generate function definitions
         functions = []
         for gate_key, gate in function_gates.items():
             gate_name = gate.name.replace(' ', '_').replace('-', '_')
-            num_qubits = len(gate.target_qubits)
             func_lines = [
                 f"def _function_gate_{gate_name}_{id(gate)}(num_qubits):",
                 f"    \"\"\"Custom gate: {gate.name}\"\"\"",
                 f"    qc_func = QuantumCircuit(num_qubits, name='{gate.name}')"
             ]
-            
+
             # Get nested operations from definition.circuit or gates list
             nested_operations = []
             if gate.definition and gate.definition.circuit:
                 nested_operations = gate.definition.circuit.operations
             elif gate.gates:
                 nested_operations = gate.gates
-            
+
             # Add nested gates
             for nested_gate in nested_operations:
                 gate_code = self._get_nested_gate_code(nested_gate)
                 if gate_code:
                     func_lines.append(f"    {gate_code}")
-            
+
             func_lines.append("    return qc_func.to_instruction()")
             func_lines.append("")  # Empty line after function
-            
+
             functions.append("\n".join(func_lines))
-        
+
         return functions
-    
+
     def _get_nested_gate_code(self, gate) -> str:
         """Generate Qiskit code for gates inside a FunctionGate."""
         if isinstance(gate, HadamardGate):
@@ -244,7 +243,7 @@ class QiskitGenerator(GeneratorInterface):
             target = op.target_qubits[0]
             output = op.output_bit if op.output_bit is not None else target
             basis = getattr(op, 'basis', 'Z')
-            
+
             if basis == 'X':
                 # X-basis measurement: apply H before measuring
                 return f"qc.h(q[{target}]); qc.measure(q[{target}], c[{output}])"
@@ -266,7 +265,7 @@ class QiskitGenerator(GeneratorInterface):
             if not cmds:
                 return f"# Input {op.input_type} (No value set)"
             return "\n".join(cmds)
-        
+
         # Handle DisplayOperation (Direct call on qc)
         if isinstance(op, DisplayOperation):
             gate_code = self._get_base_gate_code(op)
@@ -279,26 +278,26 @@ class QiskitGenerator(GeneratorInterface):
 
         # Handle Gates
         gate_code = self._get_base_gate_code(op)
-        
+
         # Apply Controls
         if op.control_qubits:
             ctrl_state = self._get_control_state_string(op.control_states)
             # .control(num_ctrl_qubits, label=None, ctrl_state=None)
             gate_code = f"{gate_code}.control({len(op.control_qubits)}, ctrl_state='{ctrl_state}')"
-        
+
         # Append to circuit
         # qc.append(gate, [q[c1], q[c2], ..., q[t1], ...])
-        
+
         # Construct qubit list: controls + inputs + targets
         qubit_indices = op.control_qubits[:]
-        
+
         # Some gates have input_qubits (Arithmetic, Comparison, etc.)
         if hasattr(op, 'input_qubits') and op.input_qubits:
             qubit_indices.extend(op.input_qubits)
-            
+
         qubit_indices.extend(op.target_qubits)
         qubit_args = ", ".join([f"q[{i}]" for i in qubit_indices])
-        
+
         return f"qc.append({gate_code}, [{qubit_args}])"
 
     def _get_base_gate_code(self, gate) -> str:
@@ -328,17 +327,17 @@ class QiskitGenerator(GeneratorInterface):
             return f"RZGate({gate.theta})"
         elif isinstance(gate, PhaseGate):
             return f"PhaseGate({gate.parameter})"
-        
+
         # Handle FunctionGate by creating a custom gate from nested circuit
         elif isinstance(gate, FunctionGate):
             # For function gates, we need to generate a QuantumCircuit definition
             # and convert it to an instruction
             num_qubits = len(gate.target_qubits)
             gate_name = gate.name.replace(' ', '_').replace('-', '_')
-            
+
             # Use unique ID to match the generated function name
             return f"_function_gate_{gate_name}_{id(gate)}({num_qubits})"
-        
+
         elif isinstance(gate, PrimitiveGate):
             if gate.type_name == 'H':
                 return "HGate()"
@@ -390,7 +389,7 @@ class QiskitGenerator(GeneratorInterface):
             if gate.type_name in ('Y^_1_4', 'Y^-1/4', 'SQRT_SQRT_Y_DAG'):
                 return f"RYGate({param})"
             return f"# Unsupported Parametric: {gate.type_name}"
-            
+
         elif isinstance(gate, QFTGate):
             # QFT(num_qubits, approximation_degree=0, do_swaps=True, inverse=False, insert_barriers=False, name='qft')
             inverse_str = ", inverse=True" if gate.inverse else ""
@@ -431,7 +430,7 @@ class QiskitGenerator(GeneratorInterface):
             if op_type == 'Add':
                 return f"CDKMRippleCarryAdder({n_qubits}, kind='fixed').to_instruction()"
             return f"create_placeholder('{op_type}_mod_{mod}', {n_qubits})"
-            
+
         elif isinstance(gate, ComparisonGate):
             # Comparison gates - use IntegerComparator from Qiskit
             n_qubits = len(gate.target_qubits)
@@ -439,7 +438,7 @@ class QiskitGenerator(GeneratorInterface):
             # IntegerComparator(num_state_qubits, value, geq=False)
             # We don't have a specific value, so use placeholder with proper structure
             return f"create_placeholder('{op_type}', {n_qubits})"
-            
+
         elif isinstance(gate, CustomGate):
             if gate.definition:
                 # In a full implementation, we would generate the definition as a Gate/Instruction
@@ -469,7 +468,7 @@ class QiskitGenerator(GeneratorInterface):
                 elif 'Z' in type_name:
                     return f"RZGate(np.pi*{expr})"
             return f"create_placeholder('{type_name}({expr})', {len(gate.target_qubits)})"
-            
+
         elif isinstance(gate, DisplayOperation):
             # For AerSimulator, we can use save functions
             if "Bloch" in gate.display_type or "State" in gate.display_type:
@@ -479,7 +478,7 @@ class QiskitGenerator(GeneratorInterface):
             elif "Prob" in gate.display_type:
                 return "qc.save_probabilities()"
             return f"# Display: {gate.display_type}"
-            
+
         elif isinstance(gate, InputGate):
             # InputGate logic is handled in _map_operation because it might involve multiple gates (X)
             # Here we return a marker or pass
@@ -523,7 +522,7 @@ class QiskitGenerator(GeneratorInterface):
             # PostSelection is a measurement-based selection, not a standard gate
             # Create a comment with the expected state information
             return f"# PostSelection: measure qubit in basis {gate.basis}, expect value {gate.value}"
-            
+
         # Fallback for other types
         return f"# Unsupported Gate Type: {type(gate).__name__}"
 
@@ -534,18 +533,18 @@ class QiskitGenerator(GeneratorInterface):
         """
         # Map CONTROL -> '1', ANTI_CONTROL -> '0'
         # Qiskit's ctrl_state string corresponds to the control qubits.
-        # If we pass [c0, c1], string '10' means c0 is 1, c1 is 0? 
+        # If we pass [c0, c1], string '10' means c0 is 1, c1 is 0?
         # Actually Qiskit docs say: "The string is ordered such that the right-most character corresponds to the first control qubit."
         # So we might need to reverse it depending on how we order the list.
         # Let's assume standard order for now and refine if needed.
-        
+
         chars = []
         for state in control_states:
             if state == ControlState.CONTROL:
                 chars.append('1')
             else:
                 chars.append('0')
-        
+
         # If Qiskit expects right-most = first control, and our list is [c_first, ..., c_last]
         # Then we should reverse the string.
         # Example: controls=[q0, q1], states=[1, 0]. q0 is 1, q1 is 0.

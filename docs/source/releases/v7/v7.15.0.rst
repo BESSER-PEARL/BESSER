@@ -1,0 +1,37 @@
+Version 7.15.0
+==============
+
+Minor release: **hybrid retrieval (vector + BM25) for agent RAG, and a chatbot
+agent template in the editor**. Both were contributed by Natarajan Chidambaram
+(BESSER #582, editor #177 and #179) and reviewed and completed by the BESSER
+team. No breaking changes: the new RAG parameters default to the previous
+behavior, and existing diagrams load unchanged.
+
+Highlights
+----------
+
+- **Hybrid RAG**: ``agent.new_rag()`` accepts ``use_hybrid_rag`` (default
+  ``False``) and ``bm25_weight`` (default ``0.6``, strictly between 0 and 1).
+  With hybrid retrieval enabled, the generated agent instantiates BAF's
+  ``HybridRAG`` instead of ``RAG`` — the retrieved chunks combine vector
+  similarity with a BM25 keyword index, weighted by ``bm25_weight`` for BM25 and
+  the remainder for the vector store. This requires BESSER Agentic Framework
+  4.5.1 or later. The two settings travel through every layer: the RAG element
+  of the agent diagram gained a *Hybrid RAG (BM25)* toggle and a *BM25 weight*
+  field (localized like the rest of the popup), the JSON ↔ B-UML converters and
+  the B-UML code builder round-trip them, and the agent modeling guide documents
+  them.
+- **Chatbot agent template**: the editor's template gallery offers a new
+  *Chatbot Agent* pattern — the agent behind the BESSER website chatbot. It
+  greets, lets the user upload documents into a knowledge base, answers from
+  that knowledge base with hybrid retrieval enabled by default (BM25 weight
+  0.6), constrains the LLM to the uploaded content through its default prompt,
+  and falls back to a polite "I don't know" outside the knowledge base.
+- **Editor housekeeping** (from the reviews): the two frontend contributions
+  carried a regenerated ``package-lock.json`` that broke ``npm ci``; the lockfile
+  is back to the maintained one, and the new RAG labels go through the
+  translation layer.
+
+Deploy the backend and the frontend together: the agent generator, converters
+and metamodel changed on the backend, and the RAG element popup and template
+gallery changed on the frontend.

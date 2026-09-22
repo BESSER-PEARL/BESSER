@@ -3,7 +3,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import get_foreign_keys, normalize_method_code, get_pk_py_types
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -16,22 +16,72 @@ class SQLAlchemyGenerator(GeneratorInterface):
     """
 
     TYPES = {
-        "int": "Integer",
-        "str": "String(100)",
-        "float": "Float",
-        "bool": "Boolean",
-        "time": "Time",
-        "date": "Date",
-        "datetime": "DateTime",
+        "int": "Integer_",
+        "str": "String_(100)",
+        "float": "Float_",
+        "bool": "Boolean_",
+        "time": "Time_",
+        "date": "Date_",
+        "datetime": "DateTime_",
+        "timedelta": "Interval_",
+        "any": "PickleType_",
     }
 
     VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"}
+    
+    # Reserved names that conflict with template imports and definitions.
+    # These names cannot be used for classes, enumerations, attributes, or associations.
+    RESERVED_NAMES = {
+        # Core template definitions
+        "Base",              # Defined in template as DeclarativeBase subclass
+        "Enum",              # SQLAlchemy Enum class (required by SQL generator's isinstance check)
+        "enum",              # Python enum module imported at top of generated code
+        "os",                # Python os module imported at top of generated code
+
+        # SQLAlchemy import aliases (underscore suffix)
+        "Table_",           # sqlalchemy.Table
+        "Column_",          # sqlalchemy.Column
+        "ForeignKey_",      # sqlalchemy.ForeignKey
+        "Mapped_",          # sqlalchemy.orm.Mapped
+        
+        # SQLAlchemy type aliases (underscore suffix)
+        "Boolean_",         # sqlalchemy.Boolean
+        "String_",          # sqlalchemy.String
+        "Integer_",         # sqlalchemy.Integer
+        "Float_",           # sqlalchemy.Float
+        "Date_",            # sqlalchemy.Date
+        "Time_",            # sqlalchemy.Time
+        "DateTime_",        # sqlalchemy.DateTime
+        "Interval_",        # sqlalchemy.Interval
+        "PickleType_",      # sqlalchemy.PickleType
+        "Text_",            # sqlalchemy.Text
+
+        # Typing module aliases (underscore suffix)
+        "List_",            # typing.List
+        "Optional_",        # typing.Optional
+    }
 
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
+        # Work on an instance-level copy so per-model enum entries never leak
+        # into the class-level mapping (and never mask validation errors for
+        # other models generated in the same process).
+        self.TYPES = dict(type(self).TYPES)
         # Add enums to TYPES dictionary
         for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
+
+    def get_pk_py_types(self):
+        """Class name -> python type of its primary key (default 'int').
+
+        A ForeignKey column must use the SAME python type as the primary
+        key it references — a ``Mapped_[int]`` FK pointing at a
+        ``String`` PK breaks joins at runtime even though it imports.
+        Delegates to the shared ``structural_utils.get_pk_py_types`` so
+        this generator and the backend's path parameters can never
+        disagree about a primary key's type.
+        """
+        return get_pk_py_types(self.model)
 
     def get_ids(self):
         """
@@ -55,7 +105,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
     def separate_classes(self):
         """
         Separates regular classes from association classes in the model.
-        
+
         Returns:
             tuple: A tuple containing two lists (regular_classes, association_classes)
         """
@@ -85,23 +135,93 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 concrete_parents.append(class_.name)
         return concrete_parents
 
+    def validate_model(self):
+        """
+        Validates that the model doesn't use reserved names for classes, enumerations, or attributes.
+        
+        Raises:
+            ValueError: If any reserved names are found in the model.
+        """
+        conflicts = []
+        
+        # Check class names
+        for cls in self.model.get_classes():
+            if cls.name in self.RESERVED_NAMES:
+                conflicts.append(f"Class name '{cls.name}' is reserved and cannot be used.")
+            
+            # Check attribute names within classes
+            for attr in cls.attributes:
+                if attr.name in self.RESERVED_NAMES:
+                    conflicts.append(
+                        f"Attribute name '{attr.name}' in class '{cls.name}' is reserved and cannot be used."
+                    )
+        
+        # Check enumeration names
+        for enum in self.model.get_enumerations():
+            if enum.name in self.RESERVED_NAMES:
+                conflicts.append(f"Enumeration name '{enum.name}' is reserved and cannot be used.")
+        
+        # Check association names
+        for association in self.model.associations:
+            if association.name in self.RESERVED_NAMES:
+                conflicts.append(f"Association name '{association.name}' is reserved and cannot be used.")
+        
+        if conflicts:
+            error_message = "SQLAlchemy code generation failed due to reserved name conflicts:\n" + "\n".join(
+                f"  - {conflict}" for conflict in conflicts
+            )
+            error_message += (
+                f"\n\nReserved names that cannot be used: {', '.join(sorted(self.RESERVED_NAMES))}."
+            )
+            raise ValueError(error_message)
+
+    def validate_attribute_types(self):
+        """
+        Validates that every attribute type in the model maps to a known SQLAlchemy type.
+
+        Without this check, an unknown type would render as an empty string in the
+        template and produce a generated file that crashes on import.
+
+        Raises:
+            ValueError: If any attribute uses a type not present in TYPES.
+        """
+        unsupported = []
+        for cls in self.model.get_classes():
+            for attr in cls.attributes:
+                if attr.type.name not in self.TYPES:
+                    unsupported.append(
+                        f"  - Attribute '{cls.name}.{attr.name}' has unsupported type '{attr.type.name}'."
+                    )
+        if unsupported:
+            raise ValueError(
+                "SQLAlchemy code generation failed: unsupported attribute types found:\n"
+                + "\n".join(sorted(unsupported))
+                + f"\n\nSupported types: {', '.join(sorted(self.TYPES))}."
+            )
+
     def generate(self, dbms: str = "sqlite"):
         """
-        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified 
+        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
         output directory.
-        If the output directory was not specified, the code generated will be stored in the 
+        If the output directory was not specified, the code generated will be stored in the
         <current directory>/output
         folder.
 
         Args:
-            dbms (str, optional): The database management system to be used. Values allowed: 
+            dbms (str, optional): The database management system to be used. Values allowed:
             "sqlite", "postgresql", "mysql", "mssql", "mariadb", or "oracle". Defaults to "sqlite".
 
         Returns:
-            None, but stores the generated code as a file named sql_alchemy.py 
+            None, but stores the generated code as a file named sql_alchemy.py
         """
         if dbms not in self.VALID_DBMS:
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")
+        
+        # Validate the model for reserved name conflicts
+        self.validate_model()
+
+        # Validate that every attribute type can be mapped to a SQLAlchemy type
+        self.validate_attribute_types()
 
         classes, asso_classes = self.separate_classes()
         concrete_parents = self.get_concrete_table_inheritance()
@@ -110,6 +230,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
+        env.globals.update(normalize_code=normalize_method_code)
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
@@ -121,6 +242,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 model_name=self.model.name,
                 dbms=dbms,
                 ids=self.get_ids(),
+                pk_types=self.get_pk_py_types(),
                 fkeys=get_foreign_keys(self.model),
                 sort=sort_by_timestamp,
                 concrete_parents=concrete_parents

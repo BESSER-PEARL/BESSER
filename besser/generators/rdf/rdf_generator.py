@@ -6,7 +6,7 @@ from besser.generators import GeneratorInterface
 
 class RDFGenerator(GeneratorInterface):
     """
-    RDFGenerator is a class that implements the GeneratorInterface and produces the vocabulary spec in RDF Turtle format 
+    RDFGenerator is a class that implements the GeneratorInterface and produces the vocabulary spec in RDF Turtle format
     for a structural model defined with B-UML.
 
     Args:

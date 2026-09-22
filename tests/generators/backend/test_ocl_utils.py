@@ -7,12 +7,10 @@ functionality in besser/generators/pydantic_classes/ocl_utils.py
 
 import pytest
 from besser.BUML.metamodel.structural import (
-    DomainModel, Class, Property, Constraint,
-    IntegerType, StringType, FloatType, BooleanType,
-    BinaryAssociation, Multiplicity
+    DomainModel, Constraint,
 )
 from besser.generators.pydantic_classes.ocl_utils import (
-    parse_ocl_constraint, build_constraints_map, 
+    parse_ocl_constraint, build_constraints_map,
     _fallback_parse, _parse_value, get_constraints_for_class
 )
 
@@ -21,34 +19,13 @@ from besser.generators.pydantic_classes.ocl_utils import (
 # Test Fixtures
 # ============================================================================
 
-@pytest.fixture
-def player_class():
-    """Create a Player class for testing."""
-    return Class(name="Player", attributes={
-        Property(name="age", type=IntegerType),
-        Property(name="name", type=StringType),
-        Property(name="salary", type=FloatType),
-        Property(name="active", type=BooleanType),
-        Property(name="jerseyNumber", type=IntegerType),
-    })
+# player_class and team_class are provided by tests/conftest.py
 
 
 @pytest.fixture
-def team_class():
-    """Create a Team class for testing."""
-    return Class(name="Team", attributes={
-        Property(name="name", type=StringType),
-        Property(name="city", type=StringType),
-    })
-
-
-@pytest.fixture
-def domain_model(player_class, team_class):
-    """Create a domain model with Player and Team classes."""
-    return DomainModel(
-        name="TestModel",
-        types={player_class, team_class}
-    )
+def domain_model(player_team_domain_model):
+    """Alias the shared Player/Team domain model fixture."""
+    return player_team_domain_model
 
 
 # ============================================================================
@@ -57,55 +34,21 @@ def domain_model(player_class, team_class):
 
 class TestParseValue:
     """Tests for the _parse_value helper function."""
-    
-    def test_parse_integer(self):
-        """Test parsing integer values."""
-        result = _parse_value("42")
-        assert result['value'] == 42
-        assert result['repr'] == "42"
-        assert result['type'] == 'int'
-    
-    def test_parse_negative_integer(self):
-        """Test parsing negative integer values."""
-        result = _parse_value("-10")
-        assert result['value'] == -10
-        assert result['repr'] == "-10"
-        assert result['type'] == 'int'
-    
-    def test_parse_float(self):
-        """Test parsing float values."""
-        result = _parse_value("3.14")
-        assert result['value'] == 3.14
-        assert result['repr'] == "3.14"
-        assert result['type'] == 'float'
-    
-    def test_parse_string_with_quotes(self):
-        """Test parsing string values with single quotes."""
-        result = _parse_value("'hello'")
-        assert result['value'] == "hello"
-        assert result['repr'] == "'hello'"
-        assert result['type'] == 'str'
-    
-    def test_parse_boolean_true(self):
-        """Test parsing boolean True."""
-        result = _parse_value("True")
-        assert result['value'] == True
-        assert result['repr'] == "True"
-        assert result['type'] == 'bool'
-    
-    def test_parse_boolean_false(self):
-        """Test parsing boolean False."""
-        result = _parse_value("false")  # lowercase
-        assert result['value'] == False
-        assert result['repr'] == "False"
-        assert result['type'] == 'bool'
-    
-    def test_parse_unknown(self):
-        """Test parsing unknown value type."""
-        result = _parse_value("someVariable")
-        assert result['value'] == "someVariable"
-        assert result['repr'] == "someVariable"
-        assert result['type'] == 'unknown'
+
+    @pytest.mark.parametrize("raw, expected_value, expected_repr, expected_type", [
+        ("42",           42,             "42",             "int"),
+        ("-10",          -10,            "-10",            "int"),
+        ("3.14",         3.14,           "3.14",           "float"),
+        ("'hello'",      "hello",        "'hello'",        "str"),
+        ("True",         True,           "True",           "bool"),
+        ("false",        False,          "False",          "bool"),
+        ("someVariable", "someVariable", "someVariable",   "unknown"),
+    ], ids=["integer", "negative-int", "float", "string", "bool-true", "bool-false", "unknown"])
+    def test_parse_value(self, raw, expected_value, expected_repr, expected_type):
+        result = _parse_value(raw)
+        assert result['value'] == expected_value
+        assert result['repr'] == expected_repr
+        assert result['type'] == expected_type
 
 
 # ============================================================================
@@ -114,94 +57,53 @@ class TestParseValue:
 
 class TestFallbackParse:
     """Tests for the regex-based fallback parser."""
-    
-    def test_parse_greater_than(self):
-        """Test parsing greater than constraint."""
-        result = _fallback_parse("context Player inv inv1: self.age > 10")
+
+    # --- Operator parsing (parametrized) --------------------------------------
+
+    @pytest.mark.parametrize(
+        "expression, expected_property, expected_ocl_op, expected_py_op, expected_val",
+        [
+            ("context Player inv inv1: self.age > 10",                 "age",          ">",  ">",  10),
+            ("context Player inv: self.age < 100",                     "age",          "<",  "<",  100),
+            ("context Player inv min_age: self.age >= 18",             "age",          ">=", ">=", 18),
+            ("context Player inv max_jersey: self.jerseyNumber <= 99", "jerseyNumber", "<=", "<=", 99),
+            ("context Player inv: self.jerseyNumber = 10",             "jerseyNumber", "=",  "==", 10),
+            ("context Player inv: self.jerseyNumber <> 0",             "jerseyNumber", "<>", "!=", 0),
+        ],
+        ids=[">", "<", ">=", "<=", "=", "<>"],
+    )
+    def test_parse_comparison_operators(
+        self, expression, expected_property, expected_ocl_op, expected_py_op, expected_val
+    ):
+        result = _fallback_parse(expression)
         assert result is not None
-        assert result['property'] == 'age'
-        assert result['operator'] == '>'
-        assert result['python_operator'] == '>'
-        assert result['value'] == 10
-        assert result['value_type'] == 'int'
-    
-    def test_parse_less_than(self):
-        """Test parsing less than constraint."""
-        result = _fallback_parse("context Player inv: self.age < 100")
+        assert result['property'] == expected_property
+        assert result['operator'] == expected_ocl_op
+        assert result['python_operator'] == expected_py_op
+        assert result['value'] == expected_val
+
+    # --- Value type detection (parametrized) ----------------------------------
+
+    @pytest.mark.parametrize("expression, expected_prop, expected_val, expected_type", [
+        ("context Player inv: self.salary > 50000.50", "salary", 50000.50, "float"),
+        ("context Player inv: self.name <> ''",        "name",   "",       "str"),
+        ("context Player inv: self.active = True",     "active", True,     "bool"),
+    ], ids=["float-value", "string-value", "bool-value"])
+    def test_parse_value_types(self, expression, expected_prop, expected_val, expected_type):
+        result = _fallback_parse(expression)
         assert result is not None
-        assert result['property'] == 'age'
-        assert result['operator'] == '<'
-        assert result['python_operator'] == '<'
-        assert result['value'] == 100
-    
-    def test_parse_greater_or_equal(self):
-        """Test parsing greater than or equal constraint."""
-        result = _fallback_parse("context Player inv min_age: self.age >= 18")
-        assert result is not None
-        assert result['property'] == 'age'
-        assert result['operator'] == '>='
-        assert result['python_operator'] == '>='
-        assert result['value'] == 18
-    
-    def test_parse_less_or_equal(self):
-        """Test parsing less than or equal constraint."""
-        result = _fallback_parse("context Player inv max_jersey: self.jerseyNumber <= 99")
-        assert result is not None
-        assert result['property'] == 'jerseyNumber'
-        assert result['operator'] == '<='
-        assert result['python_operator'] == '<='
-        assert result['value'] == 99
-    
-    def test_parse_equality(self):
-        """Test parsing equality constraint (OCL = maps to Python ==)."""
-        result = _fallback_parse("context Player inv: self.jerseyNumber = 10")
-        assert result is not None
-        assert result['property'] == 'jerseyNumber'
-        assert result['operator'] == '='
-        assert result['python_operator'] == '=='
-        assert result['value'] == 10
-    
-    def test_parse_not_equal(self):
-        """Test parsing not equal constraint (OCL <> maps to Python !=)."""
-        result = _fallback_parse("context Player inv: self.jerseyNumber <> 0")
-        assert result is not None
-        assert result['property'] == 'jerseyNumber'
-        assert result['operator'] == '<>'
-        assert result['python_operator'] == '!='
-        assert result['value'] == 0
-    
-    def test_parse_float_value(self):
-        """Test parsing constraint with float value."""
-        result = _fallback_parse("context Player inv: self.salary > 50000.50")
-        assert result is not None
-        assert result['property'] == 'salary'
-        assert result['value'] == 50000.50
-        assert result['value_type'] == 'float'
-    
-    def test_parse_string_value(self):
-        """Test parsing constraint with string value."""
-        result = _fallback_parse("context Player inv: self.name <> ''")
-        assert result is not None
-        assert result['property'] == 'name'
-        assert result['value'] == ''
-        assert result['value_type'] == 'str'
-    
-    def test_parse_boolean_value(self):
-        """Test parsing constraint with boolean value."""
-        result = _fallback_parse("context Player inv: self.active = True")
-        assert result is not None
-        assert result['property'] == 'active'
-        assert result['value'] == True
-        assert result['value_type'] == 'bool'
-    
-    def test_invalid_expression_returns_none(self):
-        """Test that invalid expressions return None."""
-        result = _fallback_parse("this is not a valid OCL expression")
-        assert result is None
-    
-    def test_no_self_prefix_returns_none(self):
-        """Test that expressions without 'self.' prefix return None."""
-        result = _fallback_parse("context Player inv: age > 10")
+        assert result['property'] == expected_prop
+        assert result['value'] == expected_val
+        assert result['value_type'] == expected_type
+
+    # --- Invalid expressions return None (parametrized) -----------------------
+
+    @pytest.mark.parametrize("expression", [
+        "this is not a valid OCL expression",
+        "context Player inv: age > 10",
+    ], ids=["garbage", "no-self-prefix"])
+    def test_invalid_expression_returns_none(self, expression):
+        result = _fallback_parse(expression)
         assert result is None
 
     def test_parse_compound_and_same_property(self):
@@ -485,32 +387,19 @@ class TestFullPipeline:
 
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
-    
-    def test_zero_value(self):
-        """Test constraint with zero value."""
-        result = _fallback_parse("context Player inv: self.age > 0")
+
+    @pytest.mark.parametrize("expression, expected_property, expected_value", [
+        ("context Player inv: self.age > 0",              "age",           0),
+        ("context Player inv: self.salary < 1000000",     "salary",        1000000),
+        ("context Player inv:   self.age   >   10",       "age",           10),
+        ("context Player inv: self.jersey_number >= 1",   "jersey_number", 1),
+    ], ids=["zero-value", "large-integer", "extra-whitespace", "underscore-property"])
+    def test_edge_case_values(self, expression, expected_property, expected_value):
+        result = _fallback_parse(expression)
         assert result is not None
-        assert result['value'] == 0
-    
-    def test_large_integer(self):
-        """Test constraint with large integer value."""
-        result = _fallback_parse("context Player inv: self.salary < 1000000")
-        assert result is not None
-        assert result['value'] == 1000000
-    
-    def test_whitespace_handling(self):
-        """Test constraint with extra whitespace."""
-        result = _fallback_parse("context Player inv:   self.age   >   10")
-        assert result is not None
-        assert result['property'] == 'age'
-        assert result['value'] == 10
-    
-    def test_underscore_in_property(self):
-        """Test constraint with underscore in property name."""
-        result = _fallback_parse("context Player inv: self.jersey_number >= 1")
-        assert result is not None
-        assert result['property'] == 'jersey_number'
-    
+        assert result['property'] == expected_property
+        assert result['value'] == expected_value
+
     def test_empty_string_constraint(self):
         """Test constraint checking for empty string."""
         result = _fallback_parse("context Team inv: self.name <> ''")

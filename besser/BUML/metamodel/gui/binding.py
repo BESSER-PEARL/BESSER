@@ -18,7 +18,7 @@ class DataAggregation(Enum):
 class DataBinding(Element):
     """
     DataBinding references a domain concept (Class) to bind data to a GUI element.
-    
+
     Args:
         name (str, optional): Name of the data binding.
         domain_concept (Class): The domain concept to bind data from.

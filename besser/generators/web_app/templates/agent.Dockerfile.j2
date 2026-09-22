@@ -11,8 +11,15 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt* ./
 RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
 
+{% if needs_torch %}
+# Classical intent recognition needs PyTorch (CPU) + scikit-learn, pinned to match
+# the versions used by BESSER's Render deploy pipeline
+RUN pip install --no-cache-dir torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms] \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+{% else %}
 # Install BESSER Agent Framework with LLM support (add [extras] if RAG is needed)
 RUN pip install --no-cache-dir besser-agentic-framework[llms]
+{% endif %}
 
 # Download NLTK data at build time so it's cached in the image layer
 RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"

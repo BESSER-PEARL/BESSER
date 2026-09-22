@@ -1,5 +1,6 @@
-import pickle, os
-from besser.BUML.metamodel.structural import DomainModel, NamedElement
+import pickle
+import os
+from besser.BUML.metamodel.structural import DomainModel
 
 def sort_by_timestamp(obj_set: set) -> list:
     """
@@ -46,17 +47,17 @@ class ModelSerializer():
             None, but store the model as a file.
         """
         file_path = output_file_name
-        if output_file_name == None:
+        if output_file_name is None:
             file_path = "model.pkl"
-            if type(model) == DomainModel:
+            if isinstance(model, DomainModel):
                 file_path = model.name + ".buml"
-        if output_dir != None:
+        if output_dir is not None:
             file_path = os.path.join(output_dir, file_path)
         with open(file_path, "wb") as f:
             pickle.dump(model, f)
             f.close()
 
-    def load(self, model_path= str):
+    def load(self, model_path: str):
         """Deserialize and load a model from a serialized file using pickle.
 
         Args:

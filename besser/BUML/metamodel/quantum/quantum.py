@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import List, Optional, Any, Union
+from typing import List
 from enum import Enum
 from besser.BUML.metamodel.structural import NamedElement, Model
 
@@ -107,7 +107,7 @@ class ClassicalBit:
 class QuantumCircuit(Model):
     """
     Represents a quantum circuit containing registers and a sequence of operations.
-    
+
     Args:
         name (str): The name of the circuit.
         qubits (int): The number of qubits in the circuit (default register).
@@ -117,7 +117,7 @@ class QuantumCircuit(Model):
         self.qregs: List[QuantumRegister] = []
         self.cregs: List[ClassicalRegister] = []
         self.operations: List['QuantumOperation'] = []
-        
+
         # Create a default quantum register if qubits > 0
         if qubits > 0:
             self.add_qreg(QuantumRegister("q", qubits))
@@ -218,7 +218,7 @@ class GateDefinition(NamedElement):
 class CustomGate(Gate):
     """
     Represents a user-defined or custom gate.
-    
+
     Args:
         name: The name/label of the custom gate
         target_qubits: List of target qubit indices

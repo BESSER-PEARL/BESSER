@@ -20,16 +20,16 @@ relationship        : association | inheritance ;
 
 association         : ID c_left=cardinality?
                       (bidirectional | unidirectional | aggregation | composition)
-                      c_right=cardinality? ID (':' ID)?
+                      c_right=cardinality? ID (':' ID ('<' | '>')?)?
                       ;
 
-bidirectional       : '--' ;
+bidirectional       : ('--' | '-') ;
 
-unidirectional      : nav_l='<'? '--' nav_r='>'? ;
+unidirectional      : nav_l='<'? ('--' | '-') nav_r='>'? ;
 
-aggregation         : (aggr_l='o'? | '<'?) '--' ('>'? | aggr_r='o'?) ;
+aggregation         : (aggr_l='o'? | '<'?) ('--' | '-') ('>'? | aggr_r='o'?) ;
 
-composition         : (comp_l='*'? | '<'?) '--' ('>'? | comp_r='*'?) ;
+composition         : (comp_l='*'? | '<'?) ('--' | '-') ('>'? | comp_r='*'?) ;
 
 inheritance         : ID (inh_left='<|--' | '--|>') ID ;
 
@@ -59,7 +59,7 @@ enumLiteral         : ID NL ;
 
 visibility          : '#' | '-' | '~' | '+' ;
 
-primitiveData       : 'int' | 'float' | 'str' | 'string' | 'bool' | 'time' | 'date' | 'datetime' | 'timedelta' ;
+primitiveData       : 'int' | 'integer' | 'float' | 'str' | 'string' | 'bool' | 'boolean' | 'time' | 'date' | 'datetime' | 'timedelta' ;
 
 modifier            : '{static}' | '{abstract}' ;
 

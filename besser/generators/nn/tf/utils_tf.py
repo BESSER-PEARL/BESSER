@@ -1,8 +1,8 @@
 """
-This module provides the `SetupLayerSyntax` class and the 
+This module provides the `SetupLayerSyntax` class and the
 `get_tensorop_syntax` function.
-The `SetupLayerSyntax` class is used to define the syntax 
-of layers in TensorFlow, while `get_tensorop_syntax` defines the 
+The `SetupLayerSyntax` class is used to define the syntax
+of layers in TensorFlow, while `get_tensorop_syntax` defines the
 tensorOps.
 """
 
@@ -17,17 +17,17 @@ class SetupLayerSyntax:
 
     Attributes:
         layer (Layer): the BUML layer object.
-        modules_details (dict): A dict storing the NN modules syntax and 
+        modules_details (dict): A dict storing the NN modules syntax and
             attributes.
-        permute_out (bool | None): Whether to add a permute tensorop after 
+        permute_out (bool | None): Whether to add a permute tensorop after
             the layer. It is only relevant for PyTorch and used here just to
             facilitate shared processing logic.
-        permute_in (bool | None): Whether to add a permute tensorop before 
+        permute_in (bool | None): Whether to add a permute tensorop before
             the layer. It is only relevant for PyTorch and used here just to
             facilitate shared processing logic.
 
-    Returns: 
-        None, but stores the layers and their attributes in the 
+    Returns:
+        None, but stores the layers and their attributes in the
         modules_details dictionary.
     """
     def __init__(self, layer: Layer, modules_details: dict):
@@ -115,11 +115,11 @@ class SetupLayerSyntax:
     def setup_conv(self, lyr_name: str, cls_name: str):
         """
         It defines the syntax of convolutional layers.
-        
+
         Args:
             lyr_name (str): The name of the layer.
             cls_name (str): The name of its class.
-        
+
         Returns:
             lyr (str): The syntax of the layer in TensorFlow.
         """
@@ -202,11 +202,11 @@ def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
 
     Parameters:
         tensorop (TensorOp): The TensorOp BUML object.
-        modules_details (dict): A dict storing the NN modules syntax and 
+        modules_details (dict): A dict storing the NN modules syntax and
             attributes.
         in_var (str | None): the input variable notation of the tensorop
             (e.g., 'x', 'x_1', ...).
-    
+
     Returns:
         ts_op_synt (str): the syntax of the tensorop in PyTorch.
 

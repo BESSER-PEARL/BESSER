@@ -1,0 +1,39 @@
+Version 6.4.5
+=============
+
+Navigability enforcement across code generators and the web editor, agent configuration UX improvements, and a quality gate for GUI auto-generation.
+
+Bug Fixes
+---------
+
+**Navigability Checks in Pydantic and FastAPI Generators** (`#450 <https://github.com/BESSER-PEARL/BESSER/issues/450>`_)
+- The Pydantic generator now checks ``is_navigable`` on the second end before producing nested creations, preventing code generation for non-navigable association ends.
+- The FastAPI generator now wraps all association-detail logic (for both local and inherited associations) inside navigability guards, covering every multiplicity combination.
+
+**Agent Configuration Truthiness**
+- Changed the agent transform endpoint to reject config only when it is ``None``, not when it is an empty dict. This allows transformations with default/empty configurations to proceed.
+
+**Import Path Fix** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Fixed ``UMLElementType`` import in ``connectable-repository.ts`` from a barrel re-export to its explicit module path, resolving potential module resolution failures.
+
+**Library Template Restoration** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Restored the ``cheapest_book_by`` BAL method implementation that was previously removed from the Library template.
+- Corrected its ``implementationType`` from ``quantum_circuit`` to ``bal``.
+
+Improvements
+------------
+
+**GUI Generation Quality Gate** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- The auto-generate GUI feature now validates the class diagram against the backend before creating pages.
+- If validation errors are found, a styled error modal lists all issues and generation is blocked until they are resolved.
+- The ``validateDiagram`` function supports a silent mode (``_suppressToasts``) so programmatic callers can inspect results without showing toast notifications.
+
+**Navigability-Aware Association Filtering** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- ``getEndsByClassId()`` now differentiates between bidirectional and unidirectional associations. Only navigable ends are returned, preventing invalid relationship bindings in the GUI editor.
+
+**Agent Configuration UX** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Simplified modality controls: text is always enabled, speech is a single on/off toggle with descriptive helper text.
+- Replaced browser ``alert()`` dialogs with ``toast`` notifications for save and apply confirmations.
+- Only non-default configuration values are sent to the backend (sparse payload via ``buildSparseGenerationConfig``).
+- Fixed the language dropdown value from ``"none"`` to ``"original"`` so the default selection is consistent across load and save cycles.
+- Added modality controls to the simplified (non-full) configuration view.

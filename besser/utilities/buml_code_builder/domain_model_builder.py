@@ -7,14 +7,33 @@ This module generates Python code for BUML domain models and object models.
 import os
 from typing import Optional
 from besser.BUML.metamodel.structural.structural import (
+    Class,
     DomainModel,
     AssociationClass,
-    Metadata,
     MethodImplementationType,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
-from besser.utilities.buml_code_builder.common import PRIMITIVE_TYPE_MAPPING, safe_class_name
+from besser.utilities.buml_code_builder.common import (
+    PRIMITIVE_TYPE_MAPPING,
+    _escape_python_string,
+    safe_class_name,
+    safe_var_name,
+)
+
+
+def _method_var_name(method) -> str:
+    """Sanitize a method's name for use as a Python identifier.
+
+    Method variables are emitted as ``<class_var>_m_<method_var>`` and
+    later referenced bare in the generated source (e.g. for
+    ``method.add_pre(...)`` calls). ``method.name`` is user-controlled,
+    so it MUST go through ``safe_var_name`` — using the raw name (or a
+    half-sanitized ``.replace('-', '_')``) is a code-injection vector
+    via the intentional ``exec()`` of builder output.
+    """
+    base = method.name.split('(')[0] if '(' in method.name else method.name
+    return safe_var_name(base, lowercase=False)
 
 
 _IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
@@ -47,7 +66,7 @@ def _get_impl_type_name(impl_type) -> str | None:
 
 def _format_method_code_literal(code: str) -> str:
     """Return a multiline-safe Python string literal for method code."""
-    escaped_code = code.replace('"""', '\\"\\"\\"')
+    escaped_code = code.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
     return f'"""{escaped_code}"""'
 
 
@@ -95,7 +114,7 @@ def domain_model_to_code(
     Generates Python code for a B-UML model and writes it to a specified file.
 
     Parameters:
-        model (DomainModel): The B-UML model object containing classes, enumerations, 
+        model (DomainModel): The B-UML model object containing classes, enumerations,
             associations, and generalizations.
         file_path (str): The path where the generated code will be saved.
         objectmodel (ObjectModel, optional): The B-UML object model to include in the same file.
@@ -146,8 +165,8 @@ def domain_model_to_code(
             for enum in enumerations:
                 enum_var_name = safe_class_name(enum.name)
                 f.write(f"{enum_var_name}: Enumeration = Enumeration(\n")
-                f.write(f"    name=\"{enum.name}\",\n")
-                literals_str = ",\n\t\t\t".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in sort(enum.literals)])
+                f.write(f"    name=\"{_escape_python_string(enum.name)}\",\n")
+                literals_str = ",\n\t\t\t".join([f"EnumerationLiteral(name=\"{_escape_python_string(lit.name)}\")" for lit in sort(enum.literals)])
                 f.write(
                     f"    literals={{\n"
                     f"            {literals_str}"
@@ -169,7 +188,7 @@ def domain_model_to_code(
             cls_var_name = safe_class_name(cls.name)
 
             # Build class creation parameters
-            class_params = [f'name="{cls.name}"']
+            class_params = [f'name="{_escape_python_string(cls.name)}"']
 
             if cls.is_abstract:
                 class_params.append('is_abstract=True')
@@ -178,13 +197,11 @@ def domain_model_to_code(
             if hasattr(cls, 'metadata') and cls.metadata:
                 metadata_params = []
                 if cls.metadata.description:
-                    # Escape backslashes first, then quotes, then newlines
-                    desc = cls.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                    metadata_params.append(f'description="{desc}"')
+                    metadata_params.append(f'description="{_escape_python_string(cls.metadata.description)}"')
                 if cls.metadata.uri:
-                    metadata_params.append(f'uri="{cls.metadata.uri}"')
+                    metadata_params.append(f'uri="{_escape_python_string(cls.metadata.uri)}"')
                 if cls.metadata.icon:
-                    metadata_params.append(f'icon="{cls.metadata.icon}"')
+                    metadata_params.append(f'icon="{_escape_python_string(cls.metadata.icon)}"')
 
                 if metadata_params:
                     metadata_str = f"Metadata({', '.join(metadata_params)})"
@@ -203,24 +220,27 @@ def domain_model_to_code(
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                 visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                 is_optional_str = ", is_optional=True" if attr.is_optional else ""
+                is_id_str = ", is_id=True" if attr.is_id else ""
+                is_external_id_str = ", is_external_id=True" if attr.is_external_id else ""
+                is_derived_str = ", is_derived=True" if attr.is_derived else ""
                 if attr.default_value is not None:
                     if isinstance(attr.default_value, str):
-                        default_value_str = f', default_value="{attr.default_value}"'
+                        default_value_str = f', default_value="{_escape_python_string(attr.default_value)}"'
                     else:
                         default_value_str = f', default_value={attr.default_value}'
                 else:
                     default_value_str = ""
-                f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                       f"type={attr_type}{visibility_str}{is_optional_str}{default_value_str})\n")
+                f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
+                       f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}{default_value_str})\n")
 
             # Write methods
             for method in sort(cls.methods):
-                # Extract just the method name (before any parenthesis) for the variable name
-                method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
-                
+                # Sanitize the method name for safe use as a Python identifier.
+                method_var_name = _method_var_name(method)
+
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
-                
+
                 method_code = method.code if hasattr(method, "code") and method.code else ""
 
                 impl_str = ""
@@ -234,16 +254,16 @@ def domain_model_to_code(
                 if sort(method.parameters):
                     for param in method.parameters:
                         param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, safe_class_name(param.type.name))
-                        default_str = f", default_value='{param.default_value}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
-                        params[param.name] = f"Parameter(name='{param.name}', type={param_type}{default_str})"
+                        default_str = f", default_value='{_escape_python_string(str(param.default_value))}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
+                        params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str})"
 
                 params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                 if method_type:
-                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
+                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                            f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str})\n")
                 else:
-                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
+                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                            f"{visibility_str}, parameters={params_str}{impl_str})\n")
                 if method_code:
                     code_literal = _format_method_code_literal(method_code)
@@ -261,11 +281,13 @@ def domain_model_to_code(
 
             # Write assignments
             if sort(cls.attributes):
-                attrs_str = ", ".join([f"{cls_var_name}_{attr.name}" for attr in cls.attributes])
+                attrs_str = ", ".join(sorted([f"{cls_var_name}_{attr.name}" for attr in cls.attributes]))
                 f.write(f"{cls_var_name}.attributes={{{attrs_str}}}\n")
             if sort(cls.methods):
-                # Extract just method names for variable references
-                methods_str = ", ".join([f"{cls_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in cls.methods])
+                methods_str = ", ".join(sorted(
+                    f"{cls_var_name}_m_{_method_var_name(method)}"
+                    for method in cls.methods
+                ))
                 f.write(f"{cls_var_name}.methods={{{methods_str}}}\n")
             f.write("\n")
 
@@ -284,7 +306,7 @@ def domain_model_to_code(
                     # Use safe class name for the type reference
                     type_var_name = safe_class_name(end.type.name)
                     # Build each property string with all attributes on the same line
-                    end_str = (f"Property(name=\"{end.name}\", type={type_var_name}, "
+                    end_str = (f"Property(name=\"{_escape_python_string(end.name)}\", type={type_var_name}, "
                              f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value})"
                              f"{', is_navigable=' + str(end.is_navigable) if end.is_navigable is not True else ''}"
                              f"{', is_composite=True' if end.is_composite is True else ''})")
@@ -293,8 +315,8 @@ def domain_model_to_code(
                 # Write the BinaryAssociation with each property on a new line
                 f.write(
                     f"{assoc.name}: BinaryAssociation = BinaryAssociation(\n"
-                    f"    name=\"{assoc.name}\",\n"
-                    "    ends={\n        " + 
+                    f"    name=\"{_escape_python_string(assoc.name)}\",\n"
+                    "    ends={\n        " +
                     ",\n        ".join(ends_str) +
                     "\n    }\n"
                     ")\n"
@@ -307,7 +329,7 @@ def domain_model_to_code(
             for ac in association_classes:
                 assoc = ac.association
                 ac_var_name = safe_class_name(ac.name)
-                
+
                 # First write the BinaryAssociation
                 ends_str = []
                 for end in sort(assoc.ends):
@@ -316,7 +338,7 @@ def domain_model_to_code(
                     # Use safe class name for the type reference
                     type_var_name = safe_class_name(end.type.name)
                     # Build each property string with all attributes on the same line
-                    end_str = (f"Property(name=\"{end.name}\", type={type_var_name}, "
+                    end_str = (f"Property(name=\"{_escape_python_string(end.name)}\", type={type_var_name}, "
                              f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value})"
                              f"{', is_navigable=' + str(end.is_navigable) if end.is_navigable is not True else ''}"
                              f"{', is_composite=True' if end.is_composite is True else ''})")
@@ -325,8 +347,8 @@ def domain_model_to_code(
                 # Write the BinaryAssociation with each property on a new line
                 f.write(
                     f"{assoc.name}: BinaryAssociation = BinaryAssociation(\n"
-                    f"    name=\"{assoc.name}\",\n"
-                    "    ends={\n        " + 
+                    f"    name=\"{_escape_python_string(assoc.name)}\",\n"
+                    "    ends={\n        " +
                     ",\n        ".join(ends_str) +
                     "\n    }\n"
                     ")\n"
@@ -338,24 +360,27 @@ def domain_model_to_code(
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                     visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                     is_optional_str = ", is_optional=True" if attr.is_optional else ""
+                    is_id_str = ", is_id=True" if attr.is_id else ""
+                    is_external_id_str = ", is_external_id=True" if attr.is_external_id else ""
+                    is_derived_str = ", is_derived=True" if attr.is_derived else ""
                     if attr.default_value is not None:
                         if isinstance(attr.default_value, str):
-                            default_value_str = f', default_value="{attr.default_value}"'
+                            default_value_str = f', default_value="{_escape_python_string(attr.default_value)}"'
                         else:
                             default_value_str = f', default_value={attr.default_value}'
                     else:
                         default_value_str = ""
-                    f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                           f"type={attr_type}{visibility_str}{is_optional_str}{default_value_str})\n")
+                    f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
+                           f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}{default_value_str})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):
-                    # Extract just the method name (before any parenthesis) for the variable name
-                    method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
-                    
+                    # Sanitize the method name for safe use as a Python identifier.
+                    method_var_name = _method_var_name(method)
+
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
-                    
+
                     method_code = method.code if hasattr(method, "code") and method.code else ""
 
                     impl_str = ""
@@ -369,16 +394,16 @@ def domain_model_to_code(
                     if sort(method.parameters):
                         for param in method.parameters:
                             param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, safe_class_name(param.type.name))
-                            default_str = f", default_value='{param.default_value}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
-                            params[param.name] = f"Parameter(name='{param.name}', type={param_type}{default_str})"
-                    
+                            default_str = f", default_value='{_escape_python_string(str(param.default_value))}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
+                            params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str})"
+
                     params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                     if method_type:
-                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
+                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                                f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str})\n")
                     else:
-                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
+                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                                f"{visibility_str}, parameters={params_str}{impl_str})\n")
                     if method_code:
                         code_literal = _format_method_code_literal(method_code)
@@ -397,19 +422,21 @@ def domain_model_to_code(
                 # Create attributes set string if attributes exist
                 attributes_str = ""
                 if sort(ac.attributes):
-                    attrs_str = ", ".join([f"{ac_var_name}_{attr.name}" for attr in ac.attributes])
+                    attrs_str = ", ".join(sorted([f"{ac_var_name}_{attr.name}" for attr in ac.attributes]))
                     attributes_str = f"attributes={{{attrs_str}}}, "
 
                 # Create methods set string if methods exist
                 methods_str = ""
                 if sort(ac.methods):
-                    # Extract just method names for variable references
-                    methods_list = ", ".join([f"{ac_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in ac.methods])
+                    methods_list = ", ".join(sorted(
+                        f"{ac_var_name}_m_{_method_var_name(method)}"
+                        for method in ac.methods
+                    ))
                     methods_str = f", methods={{{methods_list}}}"
 
                 # Now create the association class
                 f.write(f"{ac_var_name} = AssociationClass(\n")
-                f.write(f"    name=\"{ac.name}\",\n")
+                f.write(f"    name=\"{_escape_python_string(ac.name)}\",\n")
                 f.write(f"    {attributes_str}association={assoc.name}{methods_str}\n")
                 f.write(")\n\n")
             f.write("\n")
@@ -424,40 +451,83 @@ def domain_model_to_code(
                         f"(general={general_var_name}, specific={specific_var_name})\n")
             f.write("\n")
 
-        # Write OCL constraints if they exist
-        if hasattr(model, 'constraints') and model.constraints:
+        # Helper: emit a single ``Constraint(...)`` declaration. Reused for
+        # invariants (top-level) and for method ``pre`` / ``post`` contracts
+        # (which are then attached via ``Method.add_pre`` / ``add_post``).
+        def _emit_constraint_decl(constraint, var_name: str) -> None:
+            context_var_name = safe_class_name(constraint.context.name)
+            f.write(f"{var_name}: Constraint = Constraint(\n")
+            f.write(f"    name=\"{_escape_python_string(constraint.name)}\",\n")
+            f.write(f"    context={context_var_name},\n")
+            f.write(f"    expression=\"{_escape_python_string(constraint.expression)}\",\n")
+            f.write(f"    language=\"{_escape_python_string(constraint.language)}\"")
+            description = getattr(constraint, 'description', None)
+            if description:
+                f.write(",\n")
+                f.write(f"    description=\"{_escape_python_string(description)}\"\n")
+            else:
+                f.write("\n")
+            f.write(")\n")
+
+        # Collect every method's pre / post contracts. Emit them alongside
+        # invariants so the generated file round-trips back to the editor
+        # with the same routing — without this loop, BUML export would
+        # silently drop method contracts (a regression we hit in
+        # https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/124).
+        # Tuple shape: (constraint, method, kind, cls).
+        method_contracts: list[tuple] = []
+        for cls in sorted(
+            (t for t in model.types if isinstance(t, Class)),
+            key=lambda t: t.name,
+        ):
+            for method in cls.methods:
+                for c in method.pre:
+                    method_contracts.append((c, method, 'pre', cls))
+                for c in method.post:
+                    method_contracts.append((c, method, 'post', cls))
+        # Emit deterministically: same model → same byte-stable output.
+        method_contracts.sort(
+            key=lambda t: (t[3].name, t[1].name, t[2], t[0].name)
+        )
+
+        invariants = list(model.constraints) if hasattr(model, 'constraints') else []
+        if invariants or method_contracts:
             f.write("\n# OCL Constraints\n")
-            for constraint in sort(model.constraints):
-                constraint_name = constraint.name.replace("-", "_")
-                context_var_name = safe_class_name(constraint.context.name)
-                f.write(f"{constraint_name}: Constraint = Constraint(\n")
-                f.write(f"    name=\"{constraint.name}\",\n")
-                f.write(f"    context={context_var_name},\n")
-                f.write(f"    expression=\"{constraint.expression}\",\n")
-                f.write(f"    language=\"{constraint.language}\"\n")
-                f.write(")\n")
+            for constraint in sort(invariants):
+                # ``constraint.name`` is user-typed and lands as the Python
+                # identifier on the LHS — must go through ``safe_var_name``
+                # to neutralize any character that would let the value
+                # escape into executable code at ``exec()`` time.
+                _emit_constraint_decl(
+                    constraint,
+                    safe_var_name(constraint.name, lowercase=False),
+                )
+            for constraint, method, kind, cls in method_contracts:
+                cls_var = safe_class_name(cls.name)
+                method_var = f"{cls_var}_m_{_method_var_name(method)}"
+                contract_var = safe_var_name(constraint.name, lowercase=False)
+                _emit_constraint_decl(constraint, contract_var)
+                f.write(f"{method_var}.add_{kind}({contract_var})\n")
             f.write("\n")
 
         # Write domain model
         f.write("# Domain Model\n")
-        
+
         # Write domain model metadata if it exists
         domain_metadata_var = None
         if hasattr(model, 'metadata') and model.metadata:
             domain_metadata_var = metadata_var_name
             f.write(f"{domain_metadata_var} = Metadata(\n")
             if model.metadata.description:
-                # Escape quotes and newlines in description
-                desc = model.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                f.write(f'    description="{desc}",\n')
+                f.write(f'    description="{_escape_python_string(model.metadata.description)}",\n')
             if model.metadata.uri:
-                f.write(f'    uri="{model.metadata.uri}",\n')
+                f.write(f'    uri="{_escape_python_string(model.metadata.uri)}",\n')
             if model.metadata.icon:
-                f.write(f'    icon="{model.metadata.icon}"\n')
+                f.write(f'    icon="{_escape_python_string(model.metadata.icon)}"\n')
             f.write(")\n\n")
-        
+
         f.write(f"{model_var_name} = DomainModel(\n")
-        f.write(f"    name=\"{model.name}\",\n")
+        f.write(f"    name=\"{_escape_python_string(model.name)}\",\n")
 
         # Include all classes (regular and association) and enumerations in types
         class_names = ', '.join(safe_class_name(cls.name) for cls in sort(model.get_classes()))
@@ -467,7 +537,7 @@ def domain_model_to_code(
         f.write(f"    types={{{types_str}}},\n")
 
         # Include both regular associations and those used in association classes
-        all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] + 
+        all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] +
                                     [ac.association.name for ac in association_classes])
         if all_assoc_names:
             f.write(f"    associations={{{all_assoc_names}}},\n")
@@ -481,7 +551,7 @@ def domain_model_to_code(
             f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}},\n")
         else:
             f.write("    generalizations={},\n")
-        
+
         # Add metadata if it exists
         if domain_metadata_var:
             f.write(f"    metadata={domain_metadata_var}\n")
@@ -491,93 +561,167 @@ def domain_model_to_code(
 
         # Generate object model code if provided
         if objectmodel:
-            f.write("\n################\n")
-            f.write("# OBJECT MODEL #\n")
-            f.write("################\n")
-
-            # Write object instances using fluent API
-            for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
-                obj_var_name = f"{obj.name_.lower()}_obj"
-                classifier_var_name = safe_class_name(obj.classifier.name)
-
-                # Start the fluent API call using the proper syntax: Class("name")
-                f.write(f"{obj_var_name} = {classifier_var_name}(\"{obj.name_}\")")
-
-                # Add attributes if the object has slots
-                if obj.slots:
-                    attributes_dict = {}
-                    for slot in obj.slots:
-                        attr_name = slot.attribute.name
-
-                        # Format the value based on type
-                        if isinstance(slot.value.value, str):
-                            value_str = f'"{slot.value.value}"'
-                        elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
-                            value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
-                        elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
-                            # This is an enumeration literal - generate the proper reference
-                            enum_name = slot.value.value.owner.name
-                            literal_name = slot.value.value.name
-                            value_str = f"{enum_name}.{literal_name}"
-                        else:
-                            value_str = str(slot.value.value)
-
-                        attributes_dict[attr_name] = value_str
-
-                    # Add attributes to the fluent API call
-                    if attributes_dict:
-                        attr_pairs = [f"{k}={v}" for k, v in attributes_dict.items()]
-                        f.write(f".attributes({', '.join(attr_pairs)})")
-
-                # Complete the fluent API call
-                f.write(".build()\n")
-
-            f.write("\n")
-
-            # Add links after objects are created (avoiding forward reference issues)
-            if hasattr(objectmodel, 'links') and objectmodel.links:
-
-                # Group links by (source_obj_var, end_name)
-                grouped_links = {}
-                for link in objectmodel.links:
-                    if len(link.connections) == 2:
-                        end1, end2 = link.connections
-                        obj1_var = f"{end1.object.name_.lower()}_obj"
-                        obj2_var = f"{end2.object.name_.lower()}_obj"
-                        end2_name = end2.association_end.name
-
-                        key = (obj1_var, end2_name)
-                        grouped_links.setdefault(key, set()).add(obj2_var)
-
-                # Write assignments for each group
-                for (obj_var, end_name), targets in grouped_links.items():
-                    if len(targets) == 1:
-                        [single_target] = targets
-                        f.write(f"{obj_var}.{end_name} = {single_target}\n")
-                    else:
-                        target_str = ", ".join(sorted(targets))  # sorted for consistency
-                        f.write(f"{obj_var}.{end_name} = {{{target_str}}}\n")
-
-                f.write("\n")
-
-            # Create the object model instance
-            f.write("# Object Model instance\n")
-            objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
-            f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
-            f.write(f"    name=\"{objectmodel.name}\",\n")
-            f.write(f"    objects={{{objects_str}}}")
-            
-            # Add metadata if it exists
-            if hasattr(objectmodel, 'metadata') and objectmodel.metadata:
-                if objectmodel.metadata.description:
-                    # Escape quotes and newlines in description
-                    desc = objectmodel.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                    f.write(",\n")
-                    f.write(f'    metadata=Metadata(description="{desc}")\n')
-                else:
-                    f.write("\n")
-            else:
-                f.write("\n")
-            f.write(")\n")
+            _write_object_model_section(f, objectmodel, object_model_var_name)
 
     print(f"BUML model saved to {file_path}")
+
+
+def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_name: str = "object_model",
+                                header_label: str = None):
+    """Write the object-model portion of the builder output to an open file handle.
+
+    Emits the ``# OBJECT MODEL #`` banner, the object instances (via the fluent
+    API), the links between objects, and the final ``ObjectModel(...)`` binding.
+    This section assumes the referenced domain classes and enumerations are
+    already defined earlier in the same (concatenated) file.
+
+    Parameters:
+        f: An already-open, writable file handle.
+        objectmodel (ObjectModel): The B-UML object model to serialize.
+        object_model_var_name (str): Name of the ObjectModel variable to bind.
+        header_label (str, optional): Custom text for the banner's middle line
+            (e.g. ``OBJECT MODEL 2: "Orders"``) — the single section marker the
+            project importer keys on. Defaults to the plain ``OBJECT MODEL`` banner.
+    """
+    object_model_var_name = object_model_var_name or "object_model"
+
+    # This banner's middle line is the single section marker the project importer
+    # keys on. When a custom label is given (numbered + titled, for multi-object
+    # projects) we size the box border to it; otherwise keep the plain, historic
+    # "# OBJECT MODEL #" banner. Callers must NOT emit a second header alongside
+    # this one, or the importer splits each model into an extra empty section.
+    if header_label:
+        border = "#" * (len(header_label) + 4)
+        f.write(f"\n{border}\n# {header_label} #\n{border}\n")
+    else:
+        f.write("\n################\n")
+        f.write("# OBJECT MODEL #\n")
+        f.write("################\n")
+
+    # Write object instances using fluent API
+    for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
+        obj_var_name = f"{obj.name_.lower()}_obj"
+        classifier_var_name = safe_class_name(obj.classifier.name)
+
+        # Start the fluent API call using the proper syntax: Class("name")
+        f.write(f"{obj_var_name} = {classifier_var_name}(\"{_escape_python_string(obj.name_)}\")")
+
+        # Add attributes if the object has slots
+        if obj.slots:
+            attributes_dict = {}
+            for slot in obj.slots:
+                attr_name = slot.attribute.name
+
+                # Format the value based on type
+                if isinstance(slot.value.value, str):
+                    value_str = f'"{_escape_python_string(slot.value.value)}"'
+                elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
+                    value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
+                elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
+                    # This is an enumeration literal - generate the proper reference
+                    enum_name = slot.value.value.owner.name
+                    literal_name = slot.value.value.name
+                    value_str = f"{enum_name}.{literal_name}"
+                else:
+                    value_str = str(slot.value.value)
+
+                attributes_dict[attr_name] = value_str
+
+            # Add attributes to the fluent API call
+            if attributes_dict:
+                attr_pairs = [f"{k}={v}" for k, v in attributes_dict.items()]
+                f.write(f".attributes({', '.join(attr_pairs)})")
+
+        # Complete the fluent API call
+        f.write(".build()\n")
+
+    f.write("\n")
+
+    # Add links after objects are created (avoiding forward reference issues)
+    if hasattr(objectmodel, 'links') and objectmodel.links:
+
+        # Group links by (source_obj_var, end_name)
+        grouped_links = {}
+        for link in objectmodel.links:
+            if len(link.connections) == 2:
+                end1, end2 = link.connections
+                obj1_var = f"{end1.object.name_.lower()}_obj"
+                obj2_var = f"{end2.object.name_.lower()}_obj"
+                end2_name = end2.association_end.name
+
+                key = (obj1_var, end2_name)
+                grouped_links.setdefault(key, set()).add(obj2_var)
+
+        # Write assignments for each group
+        for (obj_var, end_name), targets in grouped_links.items():
+            if len(targets) == 1:
+                [single_target] = targets
+                f.write(f"{obj_var}.{end_name} = {single_target}\n")
+            else:
+                target_str = ", ".join(sorted(targets))  # sorted for consistency
+                f.write(f"{obj_var}.{end_name} = {{{target_str}}}\n")
+
+        f.write("\n")
+
+    # Create the object model instance
+    f.write("# Object Model instance\n")
+    objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
+    f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
+    f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
+    f.write(f"    objects={{{objects_str}}}")
+
+    # Add metadata if it exists
+    if hasattr(objectmodel, 'metadata') and objectmodel.metadata:
+        if objectmodel.metadata.description:
+            f.write(",\n")
+            f.write(f'    metadata=Metadata(description="{_escape_python_string(objectmodel.metadata.description)}")\n')
+        else:
+            f.write("\n")
+    else:
+        f.write("\n")
+    f.write(")\n")
+
+
+def object_model_to_code(
+    objectmodel: ObjectModel,
+    file_path: str,
+    object_model_var_name: str = "object_model",
+    header_label: str = None,
+):
+    """Generate Python code for a standalone B-UML object model.
+
+    The generated file is self-contained apart from the domain classes and
+    enumerations it references: it only imports ``ObjectModel`` and ``datetime``
+    and then emits the object-model section. It is meant to be concatenated
+    *after* the corresponding domain model (whose classes/enums it references)
+    so the combined file executes cleanly.
+
+    Parameters:
+        objectmodel (ObjectModel): The B-UML object model to serialize.
+        file_path (str): The path where the generated code will be saved.
+        object_model_var_name (str): Name of the ObjectModel variable in the
+            generated code. Defaults to "object_model".
+        header_label (str, optional): Custom banner text for the section header
+            (numbered + titled, e.g. ``OBJECT MODEL 2: "Orders"``). Defaults to
+            the plain ``OBJECT MODEL`` banner.
+
+    Outputs:
+        - A Python file containing the object-model instances and their links.
+    """
+    output_dir = os.path.dirname(file_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    if not file_path.endswith('.py'):
+        file_path += '.py'
+
+    object_model_var_name = object_model_var_name or "object_model"
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        # Object-model imports. The domain classes/enums are assumed to be
+        # defined earlier in the concatenated output.
+        f.write("from besser.BUML.metamodel.object import ObjectModel\n")
+        f.write("import datetime\n")
+
+        _write_object_model_section(f, objectmodel, object_model_var_name, header_label)
+
+    print(f"BUML object model saved to {file_path}")

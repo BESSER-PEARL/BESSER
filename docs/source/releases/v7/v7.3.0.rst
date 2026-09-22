@@ -1,0 +1,51 @@
+Version 7.3.0
+=============
+ 
+This release introduces a new ``UserDiagram`` for describing the different end-user profiles of apps, the **Agent Personalization workflow** to create variations of the same agent for each user profile, and a **standalone chatbot deploy target** on the existing GitHub deploy flow. It also tightens the deploy export so ``diagrams.json`` written into deployed repos is re-importable through the editor, and gates the new recommendation endpoints behind GitHub OAuth so the BESSER server's OpenAI quota cannot be drained anonymously.
+ 
+New Features and Improvements
+-----------------------------
+ 
+**User Diagram**
+ 
+* Added **UserDiagram** as a first-class diagram type for describing the different user profiles of created apps, capturing personal information, language profile, competences, accessibility constraints, abilities, and cultural dimensions in the same metamodel space as the rest of B-UML.
+* Shipped an OCL constraint set (``pi_age_range``, ``skill_name_not_empty``, ``education_required_fields``, ``disability_description_not_empty``) declared in ``constants/user_buml_model.py`` and evaluated by the existing ``check_ocl_constraint`` pipeline.
+* Extended the validation router so the same ``/validate-diagram`` endpoint covers UserDiagram payloads alongside the existing diagram types.
+* Added a dedicated palette in the Web Modeling Editor (``UserModelName``, ``UserModelAttribute``, ``UserModelIcon``).
+* The attribute-edit panel now supports enumeration values with case-insensitive enum lookup.
+* Documentation: ``docs/source/buml_language/model_types/user_diagram.rst``.
+ 
+**Agent Personalization Pipeline**
+ 
+ 
+* Based on a given agent model, user model, and agent profile (defining user specific customizations), a personalized model can be generated, reflecting the customizations
+* The BAF_generator can now ingest multiple agent models with a user-profile-to-agent-model mapping and generate an agent that provides a personalized experience based on the available profiles.
+* Documentation: ``docs/source/generators/agent_personalization.rst``.
+ 
+**Standalone Chatbot Deploy**
+ 
+* Extended ``POST /github/deploy-webapp`` to accept a ``deploy_config.target`` of ``"webapp"`` or ``"chatbot"`` (the frontend translates its ``"agent"`` → ``"chatbot"`` at the wire boundary).
+ 
+**Web Modeling Editor**
+ 
+* Added the agent-personalization workflow with ``AgentConfigurationPanel`` (absorbing the previous two personalization panels) and an agent-variant management UI on the agent diagram.
+* Added the Deploy → "Publish to Render" agent target so users can deploy a personalized chatbot directly from the editor.
+* Added v2 ``LocalStorageRepository`` migrations for ``besser_systemConfig`` and the legacy ``agentConfig`` key.
+* Migrated ``useGitHubRepo.createRepo`` to ``apiClient.post`` with ``X-GitHub-Session`` forwarded; ``DeployWebappResponse`` is hoisted at module scope and the ``deployment_urls``/``is_first_deploy`` fallback lives in a single ``toGitHubRepoResult`` mapper.
+* Added a real UI-driven Playwright spec at ``tests/e2e/github-deploy.spec.ts`` that drives the production Deploy menu and asserts the captured request body carries ``projectExport.version === "2.0.0"`` and a non-empty ``project.diagrams`` map.
+* Object diagram now prefers the ``className`` label for user-model elements.
+ 
+**B-UML Metamodel**
+ 
+* Fixed ``Object._validate_object_completeness`` so a child class that only inherits attributes is still flagged when no slot values are provided. The check now calls ``classifier.attributes`` and ``classifier.inherited_attributes()`` directly (instead of guarding with ``hasattr``/``getattr`` defaults that masked real type bugs).
+ 
+ 
+Testing
+-------
+ 
+* Backend full ``pytest`` suite: 771 passed, 5 skipped, 3 xfailed.
+* New unit tests cover ``user_profile_utils`` (``safe_path`` traversal/prefix-sibling, ``generate_user_profile_document`` smoke), ``agent_config_recommendation_utils`` (markdown-fence JSON extraction, clamp + whitelist normalization, ``lru_cache`` identity), and ``agent_config_manual_mapping_utils`` (representative profiles for older-adults, language-code-switching, and low-literacy abbreviation rules; determinism + deepcopy safety).
+* New behavioral integration tests in ``test_api_integration.py`` cover ``/recommend-agent-config-mapping`` end-to-end (real helpers, no LLM mock), ``/recommend-agent-config-llm`` with out-of-range LLM responses to verify clamping, and ``/deploy-webapp`` with ``deploy_target="agent"`` driving the chatbot path via a mocked PyGithub client.
+* Frontend ``vitest``: 23/23 on ``shared/utils/__tests__/projectExportUtils.test.ts`` (existing 20 + 3 new envelope-contract cases — version pin, ISO ``exportedAt`` round-trip, ``diagramTypes`` argument forwarding).
+* Tightened ``test_relationship_fk_placement`` slicing to stop at the ``#---`` relationship-block separator so a non-deterministic class-ordering run no longer leaks ``Sensor.dt_id`` into ``PhysicalAsset``'s slice.
+* Added ``.github/codeql/codeql-config.yml`` excluding ``py/clear-text-storage-sensitive-data``: the rule fires on the ``f.write(render_config)`` calls in the deploy paths because ``render.yaml`` references env-var KEY names (``OPENAI_API_KEY``, ``STREAMLIT_DB_PASSWORD``) so Render can wire secrets at deploy time — no password VALUES are written.

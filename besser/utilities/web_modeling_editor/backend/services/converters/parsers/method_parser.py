@@ -2,14 +2,25 @@
 Method parsing utilities for converting JSON to BUML format.
 """
 
-import re
+import logging
+
 from besser.BUML.metamodel.structural import Enumeration, Class
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 
+logger = logging.getLogger(__name__)
 
-def parse_method(method_str, domain_model=None):
+
+def parse_method(method_str, domain_model=None, type_lookup=None):
     """
     Parse a method string to extract visibility, name, parameters, and return type.
+
+    Args:
+        method_str: The raw method signature string.
+        domain_model: Optional DomainModel for resolving user-defined types.
+        type_lookup: Optional pre-built ``{name: type_obj}`` dict for O(1)
+            type resolution.  When provided, *domain_model* is still accepted
+            but the lookup dict is preferred.
+
     Examples:
     "+ notify(sms: str = 'message')" -> ("public", "notify", [{"name": "sms", "type": "str", "default": "message"}], None)
     "- findBook(title: str): Book" -> ("private", "findBook", [{"name": "title", "type": "str"}], "Book")
@@ -29,17 +40,18 @@ def parse_method(method_str, domain_model=None):
     method_str = method_str.strip()
     if method_str.startswith(tuple(VISIBILITY_MAP.keys())):
         visibility = VISIBILITY_MAP.get(method_str[0], "public")
-        method_str = method_str[2:].strip()
+        method_str = method_str[1:].lstrip()
 
-    # Parse method using regex
-    pattern = r"([^(]+)\((.*?)\)(?:\s*:\s*(.+))?"
-    match = re.match(pattern, method_str)
-
-    if not match:
-        return visibility, method_str.replace("()", ""), parameters, return_type
-
-    method_name, params_str, return_type = match.groups()
-    method_name = method_name.strip()
+    # Parse method by finding the first '(' and the last ')' to handle
+    # parenthesized default values like method(x: str = "a(b)")
+    first_paren = method_str.index('(')
+    last_paren = method_str.rindex(')')
+    method_name = method_str[:first_paren].strip()
+    params_str = method_str[first_paren + 1:last_paren].strip()
+    rest = method_str[last_paren + 1:].strip()
+    return_type = None
+    if rest.startswith(':'):
+        return_type = rest[1:].strip() or None
 
     # Parse parameters if present
     if params_str:
@@ -66,6 +78,8 @@ def parse_method(method_str, domain_model=None):
                 continue
 
             param_dict = {'name': param, 'type': 'any'}
+            if ':' not in param and '=' not in param:
+                logger.warning("Parameter '%s' in method '%s' has no type annotation, defaulting to 'any'.", param.strip(), method_name)
 
             # Handle parameter with default value
             if '=' in param:
@@ -90,8 +104,14 @@ def parse_method(method_str, domain_model=None):
             elif ':' in param:
                 param_name, param_type = [p.strip() for p in param.split(':')]
 
-                # Handle the type
-                if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == param_type for t in domain_model.types):
+                # Handle the type — use O(1) lookup when available
+                is_user_type = False
+                if type_lookup is not None:
+                    is_user_type = param_type in type_lookup
+                elif domain_model:
+                    is_user_type = any(isinstance(t, (Enumeration, Class)) and t.name == param_type for t in domain_model.types)
+
+                if is_user_type:
                     type_param = param_type
                 else:
                     type_param = VALID_PRIMITIVE_TYPES.get(param_type.lower(), None)
@@ -108,14 +128,21 @@ def parse_method(method_str, domain_model=None):
             parameters.append(param_dict)
 
     # Clean up return type if present
+    type_return = None
     if return_type:
         return_type = return_type.strip()
-        # Keep the original return type if it's not a primitive type
-        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == return_type for t in domain_model.types):
+        # Keep the original return type if it's not a primitive type — use O(1) lookup when available
+        is_user_return = False
+        if type_lookup is not None:
+            is_user_return = return_type in type_lookup
+        elif domain_model:
+            is_user_return = any(isinstance(t, (Enumeration, Class)) and t.name == return_type for t in domain_model.types)
+
+        if is_user_return:
             type_return = return_type
         else:
             type_return = VALID_PRIMITIVE_TYPES.get(return_type.lower(), None)
             if type_return is None:
                 raise ValueError(f"Invalid return type '{return_type}' for the method '{method_name}'")
 
-    return visibility, method_name, parameters, return_type
+    return visibility, method_name, parameters, type_return

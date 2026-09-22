@@ -1,0 +1,60 @@
+Version 7.11.0
+===============
+
+Minor release: a new **test-case generator** and a richer **GUI input/form
+metamodel**. Adds a ``pytest`` + Hypothesis test-suite generator and extends the
+GUI language with alerts, structured input fields, and forms — wired end-to-end
+through the metamodel, the React generator, the bidirectional web-editor
+converters, and the Web Modeling Editor. Existing generators' output for
+existing models is unchanged.
+
+Test Case Generator
+-------------------
+
+* New :doc:`../../generators/test_case` (``besser.generators.testgen.TestCaseGenerator``)
+  emits a ``pytest`` + `Hypothesis <https://hypothesis.readthedocs.io/>`_ test
+  suite from a ``DomainModel``. It produces three layers: **structural tests**
+  (each class is concrete, the constructor signature carries every attribute,
+  one ``property`` per attribute, enumeration literals are present), **Hypothesis
+  property-based tests** (a ``st.builds`` strategy per class, instantiation
+  invariants, attribute setter round-trips, and association-multiplicity
+  contracts), and **OCL post-condition tests** translated from each method's
+  post-conditions.
+* Output is **deterministic**: model elements are emitted in stable ``timestamp``
+  order, so regenerating the suite for an unchanged model produces a byte-identical
+  ``test_hypothesis.py``.
+* Registered in the web-editor generator registry under ``test_case`` (category
+  ``object_oriented``, output ``test_hypothesis.py``) and exposed in the Web
+  Modeling Editor generation menu as **Python Test Cases**.
+
+GUI metamodel — input and form semantics
+-----------------------------------------
+
+* Extended ``besser.BUML.metamodel.gui``: a new ``Alert`` component
+  (``severity`` via ``AlertSeverity``, ``title``, ``content``, ``dismissible``);
+  ``InputField`` gains ``label``, ``placeholder``, ``required``,
+  ``default_value``, ``options`` (a list of ``SelectOption``), ``min_value``,
+  ``max_value``, ``step`` and ``multiple``, alongside additional
+  ``InputFieldType`` values; and ``Form`` gains ``title``, ``submit_label``,
+  ``show_cancel``, ``cancel_label`` and ``columns``.
+* The :doc:`React generator <../../generators/react>` renders the new input
+  components, so a No-Code GUI diagram that uses them produces working React
+  input controls.
+* The web-editor converters handle the new constructs in **both** directions —
+  ``json_to_buml`` parses them from the editor and ``buml_to_json`` serializes
+  them back — so a model exported to B-UML and re-imported keeps its alerts,
+  input-field attributes and forms (the reverse path previously dropped them).
+
+Web Modeling Editor
+-------------------
+
+* **GUI input blocks**: the No-Code GUI editor palette gains the new
+  input/alert/form blocks (frontend ``#155``).
+* **Test-case generation**: the generation menu offers *Python Test Cases*,
+  wired to the ``test_case`` backend generator (frontend ``#138``).
+
+Internal updates
+----------------
+
+* CI prunes dangling Docker images after the Web Modeling Editor deploy step
+  (``#566``) so the runner disk does not fill up across successive deploys.

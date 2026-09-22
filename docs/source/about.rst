@@ -7,7 +7,7 @@ and with the participation of `SnT/UL <https://wwwfr.uni.lu/snt>`_, it has the a
 of BESSER will have a strong scientific, technical and economic impact by expanding the number of potential smart software creators, 
 **increasing the quality and reducing the time-to-market** for this type of software. This project can **democratize the creation of smart software**, 
 a key benefit in the current developers shortage. Moreover, by simplifying the specification and testing of ethical concerns, BESSER can also play a role
-in the fair use of AI in software, a major societal challenge. Overall, I strongly believe BESSER will significantly improve the **competitiveness** of 
+in the fair use of AI in software, a major societal challenge. Overall, We strongly believe BESSER will significantly improve the **competitiveness** of 
 Luxembourgian and, in general, European companies in the global market.
 
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -37,7 +37,6 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
             variable_end_string="]]",
         )
         self._style_map: Dict[Tuple[str, ...], Dict[str, Any]] = {}
-        self._raw_style_entries: List[Dict[str, Any]] = list(getattr(self.gui_model, "_style_entries", []))
 
     def generate(self):
         """
@@ -87,6 +86,11 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
 
     def _should_generate_file(self, rel_path: str, used_component_types: set) -> bool:
         """Determine if a file should be generated based on component usage."""
+        # MapBlock (and its leaflet deps in package.json.j2) only ship when the
+        # GUI model actually contains a Map component.
+        if os.path.basename(rel_path) == "MapBlock.tsx":
+            return "Map" in used_component_types
+
         if "charts" + os.sep not in rel_path and "table" + os.sep not in rel_path:
             return True
 

@@ -1,0 +1,18 @@
+Version 6.4.6
+=============
+
+UML Assistant fix for adding attributes and methods, plus a new CRM template.
+
+Bug Fixes
+---------
+
+**UML Assistant Cannot Add Attributes or Methods** (`BESSER-WEB-MODELING-EDITOR#52 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/52>`_)
+- The ``ClassDiagramModifier`` only handled ``modify_attribute`` and ``modify_method`` actions but the agent backend sends ``add_attribute`` and ``add_method`` when the user asks to add new members to an existing class.
+- Added ``add_attribute`` and ``add_method`` to the modifier's supported action list, the ``ModelModification`` action type union, and implemented the corresponding handlers that create new ``ClassAttribute`` / ``ClassMethod`` elements, position them correctly, and grow the parent class bounds.
+
+Improvements
+------------
+
+**NexaCRM Template** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Added a CRM class diagram template with 11 classes (Contact, Company, Opportunity, Task, Interaction, Tag, ScoreHistory, EnrichmentLog, GeneratedEmail, EmailTemplate, User) and 7 enumerations.
+- Available in the editor under *Load Template → Class Diagram → NexaCRM*.

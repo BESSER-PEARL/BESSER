@@ -1,0 +1,247 @@
+[
+  {
+    "id": "older_adults_readability",
+    "label": "Older adults readability support",
+    "summary": "Increase readability and reduce linguistic complexity for older adults.",
+    "priority": 100,
+    "evidence": [
+      "Design Guidelines of Mobile Apps for Older Adults: Systematic Review and Thematic Analysis (2023)",
+      "A study to guide developers in building accessible conversational systems to the older people",
+      "Designing Conversational AI for Aging: A Systematic Review of Older Adults' Perceptions and Needs"
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {"type": "age_gte", "value": 60},
+      {
+        "type": "profile_text_contains_any",
+        "values": ["older adult", "older adults", "elderly", "senior", "aging"]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "agentStyle": "formal",
+        "languageComplexity": "simple",
+        "sentenceLength": "concise",
+        "interfaceStyle": {
+          "size": 20,
+          "font": "sans",
+          "lineSpacing": 1.8,
+          "alignment": "left",
+          "contrast": "high"
+        },
+        "useAbbreviations": false
+      },
+      "behavior": {
+        "responseTiming": "instant"
+      }
+    }
+  },
+  {
+    "id": "adolescents_relatable_style",
+    "label": "Adolescents conversational style",
+    "summary": "Use a relatable, concise style for teenagers and adolescents.",
+    "priority": 200,
+    "evidence": [
+      "Developing A Conversational Interface for an ACT-based Online Program: Understanding Adolescents' Expectations of Conversational Style",
+      "On Being Cool - Exploring Interaction Design for Teenagers",
+      "UX Design for Teenagers (Ages 13-17)"
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {"type": "age_between", "min": 13, "max": 17},
+      {
+        "type": "profile_text_contains_any",
+        "values": ["adolescent", "adolescents", "teen", "teenager", "teenagers", "youth"]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "agentStyle": "informal",
+        "languageComplexity": "medium",
+        "sentenceLength": "concise"
+      },
+      "behavior": {
+        "responseTiming": "instant"
+      }
+    }
+  },
+  {
+    "id": "children_short_attention",
+    "label": "Children language simplification",
+    "summary": "Prefer short and simple language for children.",
+    "priority": 210,
+    "evidence": [
+      "The Last Decade of HCI Research on Children and Voice-based Conversational Agents",
+      "Younger children tend to have shorter attention spans and more limited language skills."
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {"type": "age_lte", "value": 12},
+      {
+        "type": "profile_text_contains_any",
+        "values": ["child", "children", "kid", "kids", "toddler"]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "languageComplexity": "simple",
+        "sentenceLength": "concise",
+        "useAbbreviations": false,
+        "interfaceStyle": {
+          "size": 18,
+          "font": "sans",
+          "lineSpacing": 1.7
+        }
+      },
+      "behavior": {
+        "responseTiming": "instant"
+      }
+    }
+  },
+  {
+    "id": "low_literacy_accessibility",
+    "label": "Low literacy accessibility",
+    "summary": "Increase readability and multimodal support for low-literate users.",
+    "priority": 220,
+    "evidence": [
+      "Designing User Interfaces for Illiterate and Semi-Literate Users: A Systematic Review and Future Research Agenda",
+      "Actionable UI Design Guidelines for Smartphone Applications Inclusive of Low-Literate Users"
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {
+        "type": "profile_text_contains_any",
+        "values": [
+          "illiterate",
+          "semi-literate",
+          "semiliterate",
+          "low-literate",
+          "low literate",
+          "low literacy",
+          "basic literacy"
+        ]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "languageComplexity": "simple",
+        "sentenceLength": "concise",
+        "useAbbreviations": false,
+        "interfaceStyle": {
+          "size": 22,
+          "font": "sans",
+          "lineSpacing": 2.0,
+          "alignment": "left",
+          "contrast": "high"
+        }
+      },
+      "modality": {
+        "inputModalities": ["text", "speech"],
+        "outputModalities": ["text", "speech"]
+      }
+    }
+  },
+  {
+    "id": "neurodivergent_support",
+    "label": "Neurodivergent user support",
+    "summary": "Favor clear and less overwhelming communication patterns.",
+    "priority": 230,
+    "evidence": [
+      "Designing Emerging Technologies for and with Neurodiverse Users",
+      "A scoping review of inclusive and adaptive human-AI interaction design for neurodivergent users",
+      "Chatbot Accessibility Guidance: A review and way forward"
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {
+        "type": "profile_text_contains_any",
+        "values": ["neurodivergent", "neurodiverse", "autism", "adhd", "dyslexia", "cognitive disability"]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "languageComplexity": "simple",
+        "sentenceLength": "concise",
+        "interfaceStyle": {
+          "font": "sans",
+          "lineSpacing": 1.8,
+          "alignment": "left",
+          "contrast": "high"
+        }
+      },
+      "behavior": {
+        "responseTiming": "delayed"
+      }
+    }
+  },
+  {
+    "id": "multilingual_code_switching",
+    "label": "Multilingual code-switching support",
+    "summary": "For multilingual users, preserve language flexibility and strengthen language understanding.",
+    "priority": 240,
+    "evidence": [
+      "Multilingual adult users tend to strongly prefer chatbots that can code-mix or code-switch.",
+      "User Interface (UI) Design Issues for Multilingual Users: A Case Study"
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {"type": "language_count_at_least", "value": 2},
+      {
+        "type": "profile_text_contains_any",
+        "values": ["multilingual", "bilingual", "code-switch", "code switch", "code-mix", "code mix"]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "agentLanguage": "original",
+        "languageComplexity": "medium"
+      }
+    }
+  },
+  {
+    "id": "single_language_localization",
+    "label": "Single language localization",
+    "summary": "When one supported language is clearly detected, localize the agent language.",
+    "priority": 250,
+    "evidence": [
+      "Cross-Cultural Web Design Guidelines",
+      "Culturally responsive AI chatbots: From framework to field evidence"
+    ],
+    "matchMode": "all",
+    "conditions": [
+      {"type": "language_count_equals", "value": 1},
+      {
+        "type": "detected_language_in",
+        "values": ["english", "french", "german", "spanish", "luxembourgish", "portuguese"]
+      }
+    ],
+    "recommendation": {
+      "presentation": {
+        "agentLanguage": "__PRIMARY_LANGUAGE__"
+      }
+    }
+  },
+  {
+    "id": "rtl_layout_fallback",
+    "label": "Right-to-left language layout fallback",
+    "summary": "Bias alignment for right-to-left language contexts using available alignment options.",
+    "priority": 260,
+    "evidence": [
+      "Towards the Right Direction in BiDirectional User Interfaces",
+      "Left-right vs right-left reading in language contexts."
+    ],
+    "matchMode": "any",
+    "conditions": [
+      {"type": "detected_language_in", "values": ["arabic", "persian", "hebrew", "urdu"]},
+      {"type": "profile_text_contains_any", "values": ["right-to-left", "rtl"]}
+    ],
+    "recommendation": {
+      "presentation": {
+        "sentenceLength": "concise",
+        "interfaceStyle": {
+          "alignment": "justify"
+        }
+      }
+    }
+  }
+]

@@ -34,8 +34,9 @@ Web Modeling Editor Backend Helpers
 
 Backend utilities for the web modeling editor (JSON converters, validators, and
 generator adapters) live under ``besser/utilities/web_modeling_editor/backend``.
-Refer to :doc:`web_editor` and the contributor workflows in :doc:`contributing/index`
-and :doc:`contributing/diagram_dsl_workflow` when extending the editor.
+Refer to :doc:`web_editor_backend` for the full API reference, environment
+variables, and architecture overview. See :doc:`contributing/index` and
+:doc:`contributing/diagram_dsl_workflow` when extending the editor.
 
 Debug Helpers
 -------------

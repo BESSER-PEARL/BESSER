@@ -3,7 +3,7 @@ Installation
 
 Basic Installation
 --------------------------------
-BESSER is tested on Python **3.10** and **3.12**. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_, 
+BESSER is tested on Python **3.10**, **3.11**, and **3.12**. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_, 
 `conda <https://docs.conda.io/en/latest/>`_).
 
 .. warning::
@@ -44,6 +44,7 @@ This ensures compatibility with IDEs (like VSCode) that may not automatically se
 
     $ python -m venv venv
     $ venv\Scripts\activate
+    $ source venv/bin/activate  # Linux / macOS
     $ pip install -r requirements.txt
 
 .. note::
@@ -58,3 +59,5 @@ To verify the setup, you can run a basic example.
 
     $ cd tests/BUML/metamodel/structural/library
     $ python library.py
+
+For common installation issues, see :doc:`troubleshooting`.

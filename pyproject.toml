@@ -2,5 +2,10 @@
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.pytest.ini_options]
+# Use importlib mode to avoid namespace collisions between test and source packages
+# that share the same directory hierarchy (e.g., tests/utilities/... vs besser/utilities/...)
+addopts = "--import-mode=importlib"
+
 [tool.pylint.'FORMAT']
 max-line-length = 120

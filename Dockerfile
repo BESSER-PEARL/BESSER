@@ -1,5 +1,7 @@
-# Use slim variant to reduce image size (200MB smaller)
-FROM python:3.10-slim
+# Use slim variant to reduce image size (200MB smaller).
+# Python 3.12 matches the CI matrix; 3.10 was dropped in v7.5.1 because
+# ``typing.Self`` (used in the NN metamodel, PEP 673) requires 3.11+.
+FROM python:3.12-slim
 
 WORKDIR /app
 

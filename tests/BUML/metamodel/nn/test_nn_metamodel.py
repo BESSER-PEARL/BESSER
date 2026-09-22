@@ -348,3 +348,268 @@ def test_nn():
 
 if __name__ == "__main__":
     run_tests()
+
+
+# ---------------------------------------------------------------------------
+# NN.validate() numerical bounds
+# ---------------------------------------------------------------------------
+
+def _build_minimal_nn(layer):
+    """Build a minimal NN containing a single layer (used by bounds tests)."""
+    nn = NN(name="TestNet")
+    nn.add_layer(layer)
+    return nn
+
+
+def _validate_errors(nn):
+    """Run validate() without raising and return the errors list."""
+    return nn.validate(raise_exception=False)["errors"]
+
+
+def test_validate_numerical_bounds_configuration_batch_size():
+    """Configuration batch_size <= 0 is rejected."""
+    nn = _build_minimal_nn(LinearLayer(name="l1", out_features=4))
+    nn.add_configuration(Configuration(batch_size=0, epochs=1, learning_rate=0.001,
+                                       optimizer="adam", loss_function="mse",
+                                       metrics=["accuracy"]))
+    errors = _validate_errors(nn)
+    assert any("batch_size must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_configuration_epochs():
+    """Configuration epochs <= 0 is rejected."""
+    nn = _build_minimal_nn(LinearLayer(name="l1", out_features=4))
+    nn.add_configuration(Configuration(batch_size=1, epochs=0, learning_rate=0.001,
+                                       optimizer="adam", loss_function="mse",
+                                       metrics=["accuracy"]))
+    errors = _validate_errors(nn)
+    assert any("epochs must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_configuration_learning_rate():
+    """Configuration learning_rate <= 0 is rejected."""
+    nn = _build_minimal_nn(LinearLayer(name="l1", out_features=4))
+    nn.add_configuration(Configuration(batch_size=1, epochs=1, learning_rate=0,
+                                       optimizer="adam", loss_function="mse",
+                                       metrics=["accuracy"]))
+    errors = _validate_errors(nn)
+    assert any("learning_rate must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_configuration_weight_decay_negative():
+    """Configuration weight_decay < 0 is rejected (zero allowed)."""
+    nn = _build_minimal_nn(LinearLayer(name="l1", out_features=4))
+    nn.add_configuration(Configuration(batch_size=1, epochs=1, learning_rate=0.001,
+                                       optimizer="adam", loss_function="mse",
+                                       metrics=["accuracy"], weight_decay=-0.1))
+    errors = _validate_errors(nn)
+    assert any("weight_decay must be >= 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_dropout_rate_out_of_range():
+    """DropoutLayer rate must be in [0, 1)."""
+    nn = _build_minimal_nn(DropoutLayer(name="d1", rate=1.0))
+    errors = _validate_errors(nn)
+    assert any("rate must be in [0, 1)" in e for e in errors)
+
+
+def test_validate_numerical_bounds_rnn_hidden_size():
+    """RNN hidden_size must be > 0."""
+    nn = _build_minimal_nn(SimpleRNNLayer(name="r1", hidden_size=0))
+    errors = _validate_errors(nn)
+    assert any("hidden_size must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_linear_out_features():
+    """LinearLayer out_features must be > 0."""
+    nn = _build_minimal_nn(LinearLayer(name="l1", out_features=0))
+    errors = _validate_errors(nn)
+    assert any("out_features must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_conv_out_channels():
+    """Conv2D out_channels must be > 0."""
+    nn = _build_minimal_nn(Conv2D(name="c1", kernel_dim=[3, 3], out_channels=0))
+    errors = _validate_errors(nn)
+    assert any("out_channels must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_conv_kernel_dim_zero():
+    """Conv2D kernel_dim entries must all be > 0."""
+    nn = _build_minimal_nn(Conv2D(name="c1", kernel_dim=[0, 3], out_channels=8))
+    errors = _validate_errors(nn)
+    assert any("kernel_dim entries must all be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_pooling_kernel_dim_zero():
+    """PoolingLayer kernel_dim entries must all be > 0 when set."""
+    nn = _build_minimal_nn(PoolingLayer(name="p1", pooling_type="max",
+                                        dimension="2D", kernel_dim=[0, 2]))
+    errors = _validate_errors(nn)
+    assert any("kernel_dim entries must all be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_batchnorm_num_features():
+    """BatchNormLayer num_features must be > 0."""
+    nn = _build_minimal_nn(BatchNormLayer(name="b1", num_features=0, dimension="2D"))
+    errors = _validate_errors(nn)
+    assert any("num_features must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_layernorm_normalized_shape():
+    """LayerNormLayer normalized_shape entries must all be > 0."""
+    nn = _build_minimal_nn(LayerNormLayer(name="ln1", normalized_shape=[0]))
+    errors = _validate_errors(nn)
+    assert any("normalized_shape entries must all be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_embedding_num_embeddings():
+    """EmbeddingLayer num_embeddings must be > 0."""
+    nn = _build_minimal_nn(EmbeddingLayer(name="e1", num_embeddings=0, embedding_dim=4))
+    errors = _validate_errors(nn)
+    assert any("num_embeddings must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_embedding_dim():
+    """EmbeddingLayer embedding_dim must be > 0."""
+    nn = _build_minimal_nn(EmbeddingLayer(name="e1", num_embeddings=10, embedding_dim=0))
+    errors = _validate_errors(nn)
+    assert any("embedding_dim must be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_dataset_image_shape_zero():
+    """Dataset Image shape entries must all be > 0."""
+    nn = _build_minimal_nn(LinearLayer(name="l1", out_features=4))
+    nn.add_train_data(Dataset(name="train", path_data="/d", input_format="images",
+                              image=Image(shape=[0, 32, 3], normalize=False)))
+    errors = _validate_errors(nn)
+    assert any("image shape entries must all be > 0" in e for e in errors)
+
+
+def test_validate_numerical_bounds_valid_model_passes():
+    """A model with all positive numerical fields produces no bounds errors."""
+    nn = NN(name="OkNet")
+    nn.add_layer(Conv2D(name="c1", kernel_dim=[3, 3], out_channels=8, in_channels=3))
+    nn.add_layer(LinearLayer(name="l1", out_features=10, in_features=8))
+    nn.add_configuration(Configuration(batch_size=32, epochs=10, learning_rate=0.001,
+                                       optimizer="adam", loss_function="crossentropy",
+                                       metrics=["accuracy"]))
+    errors = _validate_errors(nn)
+    bounds_keywords = ("must be > 0", "must be >= 0", "must be in [0, 1)",
+                       "entries must all be > 0", "image shape entries")
+    bounds_errors = [e for e in errors if any(k in e for k in bounds_keywords)]
+    assert bounds_errors == []
+
+
+# ---------------------------------------------------------------------------
+# NN.validate() module name identifier checks
+# ---------------------------------------------------------------------------
+
+def test_validate_module_names_leading_digit_rejected():
+    """A module name that starts with a digit is not a valid Python identifier."""
+    nn = NN(name="OkNet")
+    nn.add_layer(LinearLayer(name="123layer", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'123layer' is not a valid Python identifier" in e for e in errors)
+
+
+def test_validate_module_names_special_char_rejected():
+    """A module name containing a dot is not a valid Python identifier."""
+    nn = NN(name="OkNet")
+    nn.add_layer(LinearLayer(name="my.dotted", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'my.dotted' is not a valid Python identifier" in e for e in errors)
+
+
+def test_validate_module_names_python_keyword_warned():
+    """A module name that is a Python reserved keyword surfaces as a warning,
+    matching ``NamedElement.name``'s warn-not-error stance for keywords."""
+    nn = NN(name="OkNet")
+    nn.add_layer(LinearLayer(name="class", out_features=4))
+    result = nn.validate(raise_exception=False)
+    assert any("'class' is a Python reserved keyword" in w for w in result["warnings"])
+    assert not any("'class' is a Python reserved keyword" in e for e in result["errors"])
+
+
+def test_validate_module_names_nn_name_leading_digit_rejected():
+    """The NN's own name must also be a valid Python identifier."""
+    nn = NN(name="123Net")
+    nn.add_layer(LinearLayer(name="l1", out_features=4))
+    errors = nn.validate(raise_exception=False)["errors"]
+    assert any("'123Net' is not a valid Python identifier" in e for e in errors)
+
+
+def test_validate_module_names_valid_identifiers_accepted():
+    """A model with only valid identifier names produces no module-name errors or warnings."""
+    nn = NN(name="GoodNet")
+    nn.add_layer(LinearLayer(name="layer_1", out_features=4))
+    nn.add_layer(LinearLayer(name="_layer", out_features=4))
+    result = nn.validate(raise_exception=False)
+    name_errors = [e for e in result["errors"]
+                   if "is not a valid Python identifier" in e]
+    name_warnings = [w for w in result["warnings"]
+                     if "is a Python reserved keyword" in w]
+    assert name_errors == []
+    assert name_warnings == []
+
+
+# ---------------------------------------------------------------------------
+# NN.validate() dataset consistency warnings
+# ---------------------------------------------------------------------------
+
+def _build_nn_with_datasets(train, test):
+    """Build a minimal NN with the given train/test datasets attached."""
+    nn = NN(name="Net")
+    nn.add_layer(LinearLayer(name="l1", out_features=10))
+    if train is not None:
+        nn.add_train_data(train)
+    if test is not None:
+        nn.add_test_data(test)
+    return nn
+
+
+def test_warning_test_without_train():
+    """A test dataset without a training dataset emits a warning."""
+    nn = _build_nn_with_datasets(
+        train=None,
+        test=Dataset(name="test", path_data="/d"),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    assert any("test dataset but no training dataset" in w for w in warnings)
+
+
+def test_warning_input_format_mismatch():
+    """train and test with different input_format emits a warning."""
+    nn = _build_nn_with_datasets(
+        train=Dataset(name="train", path_data="/d", input_format="images",
+                      image=Image(shape=[32, 32, 3])),
+        test=Dataset(name="test", path_data="/d", input_format="csv"),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    assert any("input_format 'images' differs from test input_format 'csv'" in w for w in warnings)
+
+
+def test_warning_image_shape_mismatch():
+    """train and test with different image shapes emits a warning."""
+    nn = _build_nn_with_datasets(
+        train=Dataset(name="train", path_data="/d", input_format="images",
+                      image=Image(shape=[32, 32, 3])),
+        test=Dataset(name="test", path_data="/d", input_format="images",
+                     image=Image(shape=[64, 64, 3])),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    assert any("image shape [32, 32, 3] differs from test image shape [64, 64, 3]" in w for w in warnings)
+
+
+def test_no_dataset_warning_when_consistent():
+    """Matched train/test datasets produce no consistency warnings."""
+    nn = _build_nn_with_datasets(
+        train=Dataset(name="train", path_data="/d", input_format="images",
+                      image=Image(shape=[32, 32, 3])),
+        test=Dataset(name="test", path_data="/d", input_format="images",
+                     image=Image(shape=[32, 32, 3])),
+    )
+    warnings = nn.validate(raise_exception=False)["warnings"]
+    consistency_keywords = ("input_format", "image shape", "test dataset but no training")
+    consistency_warnings = [w for w in warnings if any(k in w for k in consistency_keywords)]
+    assert consistency_warnings == []

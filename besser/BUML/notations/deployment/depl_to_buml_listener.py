@@ -87,7 +87,7 @@ class Deployment_BUML_Listener(deploymentListener):
             ", config_file=" + config_file
         self.output.write(text)
         self.__cluster_list.append(name)
-    
+
     def enterService_list(self, ctx: deploymentParser.Service_listContext):
         service = ctx.ID(0).getText()
         text = ", services={" + service
@@ -104,7 +104,7 @@ class Deployment_BUML_Listener(deploymentListener):
             for i in range(1, len(ctx.ID())):
                 text += ", " + ctx.ID(i).getText()
         text += "}"
-        self.output.write(text)        
+        self.output.write(text)
 
     def enterRegion_list(self, ctx: deploymentParser.Region_listContext):
         region = ctx.ID_REG(0).getText().replace("-", "_")

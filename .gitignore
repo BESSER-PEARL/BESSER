@@ -46,3 +46,6 @@ generated/*
 .claude/
 skills-lock.json
 scripts/
+New folder/*
+reviews/
+.vscode/

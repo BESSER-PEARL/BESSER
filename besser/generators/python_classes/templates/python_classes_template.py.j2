@@ -18,9 +18,13 @@ from enum import Enum
 
 {% for enum in domain.get_enumerations() -%}
 class {{ enum.name }}(Enum):
+{%- if enum.literals %}
 {%- for literal in sort_by_timestamp(enum.literals) %}
     {{ literal.name }} = "{{ literal.name }}"
 {%- endfor %}
+{%- else %}
+    pass
+{%- endif %}
 {% endfor -%}
 {% endif %}
 
@@ -112,7 +116,7 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
     {%- for method in class.methods %}
     {%- if method.code %}
     {#- If method has code, use it directly (it contains the full function definition) #}
-{{ method.code | indent(4, first=true) }}
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- else %}
     {#- Otherwise generate method signature from metadata #}
     {%- if method.is_abstract %}

@@ -1,5 +1,5 @@
 from enum import Enum
-from besser.BUML.metamodel.structural import Class, Property, Constraint, Element
+from besser.BUML.metamodel.structural import Class, Constraint, Element
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent, Screen
 from besser.BUML.metamodel.gui.style import Styling
 
@@ -19,7 +19,7 @@ class EventType(Enum):
 # Parameter
 class Parameter(Element):
     """Represents a parameter for an action.
-    
+
     Parameters are essential for passing data between screens and actions,
     such as entity IDs, filter values, or form data.
 
@@ -80,7 +80,7 @@ class Parameter(Element):
 # Action
 class Action(Element):
     """Represents an action that can be triggered in the GUI.
-    
+
     Actions represent behavior/logic in the application. They are NOT visual components,
     but rather operations that can be performed (CRUD operations, navigation, etc.).
 
@@ -153,7 +153,7 @@ class Action(Element):
 # Create
 class Create(Action):
     """Represents a CREATE action (CRUD operation).
-    
+
     Creates a new instance of a domain class, typically used with forms
     to add new entities to the system.
 
@@ -195,7 +195,7 @@ class Create(Action):
 # Read
 class Read(Action):
     """Represents a READ action (CRUD operation).
-    
+
     Reads/queries data from a domain class, typically used to display
     lists, tables, or detailed views of entities.
 
@@ -251,7 +251,7 @@ class Read(Action):
 # Update
 class Update(Action):
     """Represents an UPDATE action (CRUD operation).
-    
+
     Updates an existing instance of a domain class, typically used with
     edit forms to modify existing entities.
 
@@ -293,7 +293,7 @@ class Update(Action):
 # Delete
 class Delete(Action):
     """Represents a DELETE action (CRUD operation).
-    
+
     Deletes an existing instance of a domain class, typically triggered
     by delete buttons or confirmation dialogs.
 
@@ -335,7 +335,7 @@ class Delete(Action):
 # Transition
 class Transition(Action):
     """Represents a TRANSITION action for navigation between screens.
-    
+
     Handles navigation logic, including passing parameters between screens
     for data flow (e.g., passing an entity ID to a detail screen).
 
@@ -377,7 +377,7 @@ class Transition(Action):
 # Event
 class Event(ViewComponent):
     """Represents an event that can trigger one or more actions.
-    
+
     Events are the bridge between user interactions and application behavior.
     When an event fires (e.g., onClick, onSubmit), it triggers its associated actions.
 
@@ -435,7 +435,7 @@ class Event(ViewComponent):
 
     def add_action(self, action: Action):
         """Add an action to this event.
-        
+
         Args:
             action (Action): The action to add.
         """
@@ -445,7 +445,7 @@ class Event(ViewComponent):
 
     def remove_action(self, action_name: str):
         """Remove an action from this event by name.
-        
+
         Args:
             action_name (str): The name of the action to remove.
         """

@@ -1,0 +1,17 @@
+Version 7.1.3
+=============
+
+Patch release: **standalone agent generation now ships the real BAF project, and the modeling agent correctly links new Object Diagram instances to their reference class**. All fixes are in the web modeling editor backend and frontend — no metamodel, generator, or public API contract changes.
+
+Highlights
+----------
+
+- **Standalone agent ZIP now contains the generated BAF project**: ``_handle_agent_generation`` used to create ``BAFGenerator`` without an ``output_dir``, which made the base ``GeneratorInterface`` fall back to ``<backend-CWD>/output``. The downstream zip harvester walked ``<temp_dir>/output`` instead, silently skipped because that directory never existed, and streamed an ``agent_output.zip`` that only carried the raw ``agent_model.py`` BUML source — the ``<agent_name>.py``, ``config.yaml``, ``readme.txt``, and RAG subdirectories were missing. The WebApp-embedded agent flow was unaffected because ``web_app_generator.py`` already passes ``output_dir=agent_dir`` explicitly. Both constructor branches in the single-agent path now pin ``output_dir`` to the request's temp directory, so the harvester finds every file and concurrent requests no longer pollute a shared CWD folder.
+- **Object Diagram instances created by the modeling agent are now linked to their reference class**: the ``add_object`` modification path dropped the library ``classId`` entirely — the frontend modifier only concatenated the class name into the display string and never set ``classId`` / ``attributeId`` as real fields, so the ``uml-object-name-update`` panel's *"class:"* dropdown appeared empty even though the instance name showed ``": Author"``. ``ObjectDiagramModifier`` now reads ``changes.classId`` and each ``attr.attributeId`` from the agent payload and stores them on the created elements, matching the ``ObjectDiagramConverter`` path used by ``inject_element`` / ``inject_complete_system``.
+- **No more ``author2: Author : Author`` double rendering**: after wiring ``classId`` through, ``uml-object-name-component.tsx`` started appending ``" : ClassName"`` on top of a display name that already contained it. Both the modifier and the converter now store only the bare instance name in ``.name`` when ``classId`` is set, and fall back to the explicit ``"instance: Class"`` suffix only when no ``classId`` is available — matching the behavior of the update panel when a user picks a class manually.
+- **Assorted editor fixes bundled in via the frontend submodule bump**: drag performance improvement using fractional-delta accumulation; deployment descriptions refreshed in ``DeployResultDialog``; unified external URL handling across ``DeployResultDialog`` and ``WorkspaceShell``; agent diagram title-uniqueness enforcement in ``ProjectStorageRepository``; more robust object removal in ``ObjectDiagramModifier``.
+
+Note on the modeling agent
+--------------------------
+
+The server-side half of the Object Diagram ``classId`` fix lives in the separate ``modeling-agent`` repository (new ``classId`` field on ``ObjectModificationChanges``, and a server-side ``_resolve_class_references`` post-processor that deterministically fills ``classId`` / ``attributeId`` / ``attributeType`` from the reference class catalog regardless of whether the LLM remembered to emit them). Deploy the latest ``modeling-agent`` alongside this release to see the Object Diagram fixes end-to-end.

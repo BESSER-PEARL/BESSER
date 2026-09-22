@@ -1,0 +1,21 @@
+Version 7.2.0
+=============
+
+Minor release: **ER notation support for class diagrams + one-to-many REST endpoints**. Adds a display-only ER (Chen) rendering flavor for class diagrams in the Web Modeling Editor and closes a longstanding gap in the backend REST API generator where one-to-many relationships had no traversal endpoints. No metamodel or public API changes — ER is a client-side rendering flavor, and the REST endpoint work is additive.
+
+Highlights
+----------
+
+- **ER (Chen) notation for class diagrams (WME #508)**: the Web Modeling Editor now supports an ER rendering flavor alongside the default UML notation, selectable from the Project Settings panel under *Display*. The setting is persisted in ``localStorage`` under ``besser-standalone-settings.classNotation`` and is rendering-only — the underlying model and its serialized multiplicities stay in UML form, so toggling back to UML is lossless. In ER mode, plain binary associations (bidirectional, unidirectional, aggregation, composition) are drawn with a named diamond at the midpoint of the line; inheritance, realization, OCL link, and dependency keep their UML rendering (explicit allow-list rather than an exclusion list, so new relationship types don't silently inherit the diamond). Multiplicities display in the Chen ``(min,max)`` form (``(1,1)``, ``(0,N)``, ``(1,N)``) while remaining stored as UML ranges; the association-update popover accepts either syntax as input and normalizes ``(0,N)`` / ``(1,1)`` to ``0..*`` / ``1..1`` on save. Class and abstract-class classifiers drop the methods compartment (ER has no operations concept); enumerations and interfaces are explicitly excluded. Attributes marked with ``is_id`` render underlined. The toggle repaints the canvas live via the existing ``settingsService.onSettingsChange`` subscription in ``scenes/application.tsx``. Shipped with 15 unit tests in ``multiplicity.test.ts`` covering the ``parseMultiplicity`` / ``toERCardinality`` / ``erCardinalityToUML`` helpers (including the round-trip invariant for canonical inputs) and a Playwright suite in ``tests/e2e/er-notation.spec.ts`` covering the radio-group toggle, localStorage persistence, and reload survival (`WME #508 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/508>`_, `WME PR #108 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/pull/108>`_).
+
+- **One-to-many relationship GET endpoints in the REST API generator (PR #509)**: the FastAPI backend generator was only emitting relationship-traversal endpoints for many-to-many associations, which meant generated BAL methods that walked one-to-many navigations could not actually resolve the target objects at runtime. ``backend_fast_api_template.py.j2`` now emits a matching ``GET /<class>/{id}/<relationship>/`` endpoint for every one-to-many association, mirroring the shape of the existing many-to-many block — 404 on missing parent, SQLAlchemy-filtered child query on the foreign-key column, response payload shaped as ``{<class>_id, <rel>_count, <rel>}``. The endpoint is tagged ``"<Class> Relationships"`` so it groups correctly in the generated OpenAPI docs (`PR #509 <https://github.com/BESSER-PEARL/BESSER/pull/509>`_).
+
+Frontend submodule bump
+-----------------------
+
+The frontend submodule moves from ``279c8f8`` to ``b8b522e`` — all 12 commits are part of the ER-notation feature branch (``feature/er-notation-508``). No unrelated commits piggy-back on this pointer move.
+
+Testing
+-------
+
+Backend: full suite passes against v7.1.7 baseline — the REST API generator change is covered by template-rendering tests (no new regressions). Frontend: 15 unit tests in ``multiplicity.test.ts`` plus the ``er-notation.spec.ts`` Playwright suite are additive; existing UML rendering tests continue to pass unchanged.

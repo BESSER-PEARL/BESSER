@@ -1,0 +1,42 @@
+Version 7.12.0
+==============
+
+Minor release: **Ollama support for agents**. Agents built in BESSER and the Web
+Modeling Editor can now use locally hosted `Ollama <https://ollama.com>`_ models —
+both as the LLM provider and as the RAG embedding provider — end to end, from the
+editor's agent-configuration UI through the BAF generator and the agent
+converters. Additive only: no metamodel or API contract changes beyond the new
+provider.
+
+Highlights
+----------
+
+- **Ollama as an agent LLM provider**: a new ``LLMOllama`` wrapper joins the
+  supported LLM suite (alongside OpenAI, Hugging Face and Replicate). In the Web
+  Modeling Editor you can now pick *Ollama (local)* for an agent LLM and set its
+  ``base_url`` (default ``http://localhost:11434``) and ``model``. The BAF
+  generator imports ``LLMOllama`` and emits an ``nlp.ollama.base_url`` entry in the
+  generated agent config, and the agent template instantiates it automatically.
+- **Ollama as a RAG embedding provider**: RAG elements can now choose OpenAI or
+  Ollama for embeddings, with dedicated base-URL and model fields in the editor.
+  The generated agent wires up ``OllamaEmbeddings`` for Ollama-backed vector
+  stores (importing only the embedding classes it actually uses). The choice
+  round-trips through the agent converters (``json_to_buml`` ↔ ``buml_to_json``),
+  covered by a new round-trip test.
+- **Docs**: the agent-personalization reference now documents the ``ollama``
+  provider, its ``ollamaModels`` recommendations, and the local ``base_url`` /
+  ``model`` configuration.
+
+Also in this release
+--------------------
+
+- **B-UML export round-trip** (backend): the multi-object exporter now writes a
+  single numbered object-model banner, so re-importing a project that contains
+  several object models yields exactly those models instead of extra empty ones
+  (`web editor issue #161
+  <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/issues/161>`_
+  follow-up).
+- **BPMN pools and lanes** (frontend, via the submodule bump): elements inside a
+  BPMN lane/pool now move with their parent, and pools/lanes are preserved when
+  the assistant injects a BPMN diagram (`WME #159
+  <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/159>`_).

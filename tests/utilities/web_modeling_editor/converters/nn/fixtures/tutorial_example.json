@@ -1,0 +1,1624 @@
+{
+  "version": "3.0.0",
+  "type": "NNDiagram",
+  "size": {
+    "width": 1460,
+    "height": 880
+  },
+  "interactive": {
+    "elements": {},
+    "relationships": {}
+  },
+  "elements": {
+    "6feb868b-45bf-4c44-88ab-6af624191fa9": {
+      "id": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "name": "Neural_Network",
+      "type": "NNContainer",
+      "owner": null,
+      "bounds": {
+        "x": -710,
+        "y": -420,
+        "width": 1150,
+        "height": 250
+      }
+    },
+    "dc98557d-a1e1-403d-afcb-01b318a221dd": {
+      "id": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+      "name": "Conv2DLayer",
+      "type": "Conv2DLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": -680,
+        "y": -320,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "bfae619a-284a-4f14-9e4e-a44b8f722b4f",
+        "b2718503-5aa2-474a-8570-b79ed1e91292",
+        "5643fecb-2424-45dd-a3a6-62796f49a1eb",
+        "02c27f2c-d012-4e73-a7cb-99f0277c436e",
+        "c1d9d722-8276-4ea8-93c2-719542051758"
+      ],
+      "methods": []
+    },
+    "bfae619a-284a-4f14-9e4e-a44b8f722b4f": {
+      "id": "bfae619a-284a-4f14-9e4e-a44b8f722b4f",
+      "name": "name = l1",
+      "type": "NameAttributeConv2D",
+      "owner": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+      "bounds": {
+        "x": -680,
+        "y": -320,
+        "width": 210,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l1",
+      "isMandatory": true
+    },
+    "b2718503-5aa2-474a-8570-b79ed1e91292": {
+      "id": "b2718503-5aa2-474a-8570-b79ed1e91292",
+      "name": "kernel_dim = [3, 3]",
+      "type": "KernelDimAttributeConv2D",
+      "owner": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+      "bounds": {
+        "x": -680,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "kernel_dim",
+      "value": "[3, 3]",
+      "isMandatory": true
+    },
+    "5643fecb-2424-45dd-a3a6-62796f49a1eb": {
+      "id": "5643fecb-2424-45dd-a3a6-62796f49a1eb",
+      "name": "out_channels = 32",
+      "type": "OutChannelsAttributeConv2D",
+      "owner": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+      "bounds": {
+        "x": -680,
+        "y": -320,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "out_channels",
+      "value": "32",
+      "isMandatory": true
+    },
+    "02c27f2c-d012-4e73-a7cb-99f0277c436e": {
+      "id": "02c27f2c-d012-4e73-a7cb-99f0277c436e",
+      "name": "actv_func = relu",
+      "type": "ActvFuncAttributeConv2D",
+      "owner": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+      "bounds": {
+        "x": -680,
+        "y": -320,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "actv_func",
+      "value": "relu",
+      "isMandatory": false
+    },
+    "c1d9d722-8276-4ea8-93c2-719542051758": {
+      "id": "c1d9d722-8276-4ea8-93c2-719542051758",
+      "name": "in_channels = 3",
+      "type": "InChannelsAttributeConv2D",
+      "owner": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+      "bounds": {
+        "x": -680,
+        "y": -320,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "in_channels",
+      "value": "3",
+      "isMandatory": false
+    },
+    "a0594c44-830e-4693-a34a-fd97f81f6b85": {
+      "id": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+      "name": "PoolingLayer",
+      "type": "PoolingLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": -540,
+        "y": -320,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "4e47255c-80bd-4743-b205-0320b2fcaf12",
+        "b89dc1bc-4d9e-4fc8-835b-8aa7bdc43e62",
+        "6062815a-e7df-457a-be9e-f09e53d0ea55",
+        "4fffff4c-6527-4a5e-9b74-8c6d4d60e3a6"
+      ],
+      "methods": []
+    },
+    "4e47255c-80bd-4743-b205-0320b2fcaf12": {
+      "id": "4e47255c-80bd-4743-b205-0320b2fcaf12",
+      "name": "name = l2",
+      "type": "NameAttributePooling",
+      "owner": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+      "bounds": {
+        "x": -540,
+        "y": -320,
+        "width": 220,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l2",
+      "isMandatory": true
+    },
+    "b89dc1bc-4d9e-4fc8-835b-8aa7bdc43e62": {
+      "id": "b89dc1bc-4d9e-4fc8-835b-8aa7bdc43e62",
+      "name": "pooling_type = max",
+      "type": "PoolingTypeAttributePooling",
+      "owner": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+      "bounds": {
+        "x": -540,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "pooling_type",
+      "value": "max",
+      "isMandatory": true
+    },
+    "6062815a-e7df-457a-be9e-f09e53d0ea55": {
+      "id": "6062815a-e7df-457a-be9e-f09e53d0ea55",
+      "name": "dimension = 2D",
+      "type": "DimensionAttributePooling",
+      "owner": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+      "bounds": {
+        "x": -540,
+        "y": -320,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "dimension",
+      "value": "2D",
+      "isMandatory": true
+    },
+    "4fffff4c-6527-4a5e-9b74-8c6d4d60e3a6": {
+      "id": "4fffff4c-6527-4a5e-9b74-8c6d4d60e3a6",
+      "name": "kernel_dim = [2, 2]",
+      "type": "KernelDimAttributePooling",
+      "owner": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+      "bounds": {
+        "x": -540,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "kernel_dim",
+      "value": "[2, 2]",
+      "isMandatory": false
+    },
+    "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39": {
+      "id": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+      "name": "Conv2DLayer",
+      "type": "Conv2DLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": -400,
+        "y": -320,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "a8022ee0-fe59-48aa-a4c3-ca0c9d95e2f4",
+        "e032d54e-4e31-40fe-8905-88e98a3d6a75",
+        "20d2d231-1722-4347-8dfe-20eed1dc1139",
+        "9c88de03-7d12-4376-a565-6c72c356fda1",
+        "d4b2f43d-1161-483c-9736-61469a8a0df0"
+      ],
+      "methods": []
+    },
+    "a8022ee0-fe59-48aa-a4c3-ca0c9d95e2f4": {
+      "id": "a8022ee0-fe59-48aa-a4c3-ca0c9d95e2f4",
+      "name": "name = l3",
+      "type": "NameAttributeConv2D",
+      "owner": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+      "bounds": {
+        "x": -400,
+        "y": -320,
+        "width": 210,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l3",
+      "isMandatory": true
+    },
+    "e032d54e-4e31-40fe-8905-88e98a3d6a75": {
+      "id": "e032d54e-4e31-40fe-8905-88e98a3d6a75",
+      "name": "kernel_dim = [3, 3]",
+      "type": "KernelDimAttributeConv2D",
+      "owner": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+      "bounds": {
+        "x": -400,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "kernel_dim",
+      "value": "[3, 3]",
+      "isMandatory": true
+    },
+    "20d2d231-1722-4347-8dfe-20eed1dc1139": {
+      "id": "20d2d231-1722-4347-8dfe-20eed1dc1139",
+      "name": "out_channels = 64",
+      "type": "OutChannelsAttributeConv2D",
+      "owner": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+      "bounds": {
+        "x": -400,
+        "y": -320,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "out_channels",
+      "value": "64",
+      "isMandatory": true
+    },
+    "9c88de03-7d12-4376-a565-6c72c356fda1": {
+      "id": "9c88de03-7d12-4376-a565-6c72c356fda1",
+      "name": "actv_func = relu",
+      "type": "ActvFuncAttributeConv2D",
+      "owner": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+      "bounds": {
+        "x": -400,
+        "y": -320,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "actv_func",
+      "value": "relu",
+      "isMandatory": false
+    },
+    "d4b2f43d-1161-483c-9736-61469a8a0df0": {
+      "id": "d4b2f43d-1161-483c-9736-61469a8a0df0",
+      "name": "in_channels = 32",
+      "type": "InChannelsAttributeConv2D",
+      "owner": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+      "bounds": {
+        "x": -400,
+        "y": -320,
+        "width": 180,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "in_channels",
+      "value": "32",
+      "isMandatory": false
+    },
+    "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5": {
+      "id": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+      "name": "PoolingLayer",
+      "type": "PoolingLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": -260,
+        "y": -320,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "e32bea52-bd09-4eba-b9cb-1b143a008443",
+        "4fd73771-b971-44c5-a893-c827ba809ec6",
+        "ad125315-4a4f-4a7c-8f7f-469204499219",
+        "83990485-6499-4984-b8fe-4808e58e7bd8"
+      ],
+      "methods": []
+    },
+    "e32bea52-bd09-4eba-b9cb-1b143a008443": {
+      "id": "e32bea52-bd09-4eba-b9cb-1b143a008443",
+      "name": "name = l4",
+      "type": "NameAttributePooling",
+      "owner": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+      "bounds": {
+        "x": -260,
+        "y": -320,
+        "width": 220,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l4",
+      "isMandatory": true
+    },
+    "4fd73771-b971-44c5-a893-c827ba809ec6": {
+      "id": "4fd73771-b971-44c5-a893-c827ba809ec6",
+      "name": "pooling_type = max",
+      "type": "PoolingTypeAttributePooling",
+      "owner": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+      "bounds": {
+        "x": -260,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "pooling_type",
+      "value": "max",
+      "isMandatory": true
+    },
+    "ad125315-4a4f-4a7c-8f7f-469204499219": {
+      "id": "ad125315-4a4f-4a7c-8f7f-469204499219",
+      "name": "dimension = 2D",
+      "type": "DimensionAttributePooling",
+      "owner": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+      "bounds": {
+        "x": -260,
+        "y": -320,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "dimension",
+      "value": "2D",
+      "isMandatory": true
+    },
+    "83990485-6499-4984-b8fe-4808e58e7bd8": {
+      "id": "83990485-6499-4984-b8fe-4808e58e7bd8",
+      "name": "kernel_dim = [2, 2]",
+      "type": "KernelDimAttributePooling",
+      "owner": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+      "bounds": {
+        "x": -260,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "kernel_dim",
+      "value": "[2, 2]",
+      "isMandatory": false
+    },
+    "b4f15221-2f2b-4876-8b79-ab7655ea7fa3": {
+      "id": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+      "name": "Conv2DLayer",
+      "type": "Conv2DLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": -120,
+        "y": -320,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "e1e26deb-820f-4d06-8fdb-e0104dae41ec",
+        "49c136db-a712-4c5e-ae0c-0c7a31d09cb0",
+        "8632faf5-1855-46a1-aa55-915432734fe4",
+        "384057f0-1660-4182-b949-ec86530932c7",
+        "337d5cab-647f-4a0f-865e-789e925a7e0c"
+      ],
+      "methods": []
+    },
+    "e1e26deb-820f-4d06-8fdb-e0104dae41ec": {
+      "id": "e1e26deb-820f-4d06-8fdb-e0104dae41ec",
+      "name": "name = l5",
+      "type": "NameAttributeConv2D",
+      "owner": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+      "bounds": {
+        "x": -120,
+        "y": -320,
+        "width": 210,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l5",
+      "isMandatory": true
+    },
+    "49c136db-a712-4c5e-ae0c-0c7a31d09cb0": {
+      "id": "49c136db-a712-4c5e-ae0c-0c7a31d09cb0",
+      "name": "kernel_dim = [3, 3]",
+      "type": "KernelDimAttributeConv2D",
+      "owner": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+      "bounds": {
+        "x": -120,
+        "y": -320,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "kernel_dim",
+      "value": "[3, 3]",
+      "isMandatory": true
+    },
+    "8632faf5-1855-46a1-aa55-915432734fe4": {
+      "id": "8632faf5-1855-46a1-aa55-915432734fe4",
+      "name": "out_channels = 64",
+      "type": "OutChannelsAttributeConv2D",
+      "owner": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+      "bounds": {
+        "x": -120,
+        "y": -320,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "out_channels",
+      "value": "64",
+      "isMandatory": true
+    },
+    "384057f0-1660-4182-b949-ec86530932c7": {
+      "id": "384057f0-1660-4182-b949-ec86530932c7",
+      "name": "actv_func = relu",
+      "type": "ActvFuncAttributeConv2D",
+      "owner": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+      "bounds": {
+        "x": -120,
+        "y": -320,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "actv_func",
+      "value": "relu",
+      "isMandatory": false
+    },
+    "337d5cab-647f-4a0f-865e-789e925a7e0c": {
+      "id": "337d5cab-647f-4a0f-865e-789e925a7e0c",
+      "name": "in_channels = 64",
+      "type": "InChannelsAttributeConv2D",
+      "owner": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+      "bounds": {
+        "x": -120,
+        "y": -320,
+        "width": 180,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "in_channels",
+      "value": "64",
+      "isMandatory": false
+    },
+    "c97bc5bd-dfff-4d74-8d6d-b9bee945913c": {
+      "id": "c97bc5bd-dfff-4d74-8d6d-b9bee945913c",
+      "name": "FlattenLayer",
+      "type": "FlattenLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": 20,
+        "y": -320,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "6c62667a-893f-48bd-9cdb-9c4a21bf5fed"
+      ],
+      "methods": []
+    },
+    "6c62667a-893f-48bd-9cdb-9c4a21bf5fed": {
+      "id": "6c62667a-893f-48bd-9cdb-9c4a21bf5fed",
+      "name": "name = l6",
+      "type": "NameAttributeFlatten",
+      "owner": "c97bc5bd-dfff-4d74-8d6d-b9bee945913c",
+      "bounds": {
+        "x": 20,
+        "y": -320,
+        "width": 210,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l6",
+      "isMandatory": true
+    },
+    "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4": {
+      "id": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+      "name": "LinearLayer",
+      "type": "LinearLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": 160,
+        "y": -330,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "9126a77d-afd8-40d1-b18b-b50e747624a0",
+        "bc911bfa-baa2-4c39-aeae-17d57747e317",
+        "797b5fcb-4688-4d0a-8536-2b32bfeb7c51",
+        "2bb380fd-1d08-41f4-87c4-741d167d8404"
+      ],
+      "methods": []
+    },
+    "9126a77d-afd8-40d1-b18b-b50e747624a0": {
+      "id": "9126a77d-afd8-40d1-b18b-b50e747624a0",
+      "name": "name = l7",
+      "type": "NameAttributeLinear",
+      "owner": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+      "bounds": {
+        "x": 160,
+        "y": -330,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l7",
+      "isMandatory": true
+    },
+    "bc911bfa-baa2-4c39-aeae-17d57747e317": {
+      "id": "bc911bfa-baa2-4c39-aeae-17d57747e317",
+      "name": "out_features = 64",
+      "type": "OutFeaturesAttributeLinear",
+      "owner": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+      "bounds": {
+        "x": 160,
+        "y": -330,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "out_features",
+      "value": "64",
+      "isMandatory": true
+    },
+    "797b5fcb-4688-4d0a-8536-2b32bfeb7c51": {
+      "id": "797b5fcb-4688-4d0a-8536-2b32bfeb7c51",
+      "name": "actv_func = relu",
+      "type": "ActvFuncAttributeLinear",
+      "owner": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+      "bounds": {
+        "x": 160,
+        "y": -330,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "actv_func",
+      "value": "relu",
+      "isMandatory": false
+    },
+    "2bb380fd-1d08-41f4-87c4-741d167d8404": {
+      "id": "2bb380fd-1d08-41f4-87c4-741d167d8404",
+      "name": "in_features = 1024",
+      "type": "InFeaturesAttributeLinear",
+      "owner": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+      "bounds": {
+        "x": 160,
+        "y": -330,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "in_features",
+      "value": "1024",
+      "isMandatory": false
+    },
+    "448f4122-75ed-4acb-b54a-c00a052a04b5": {
+      "id": "448f4122-75ed-4acb-b54a-c00a052a04b5",
+      "name": "LinearLayer",
+      "type": "LinearLayer",
+      "owner": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+      "bounds": {
+        "x": 300,
+        "y": -330,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "030354fc-6f46-48e7-9f8e-f919af96a016",
+        "b6e82026-c047-442e-ae8c-4c96b66f1dfa",
+        "3ba40354-cfc2-4710-ba55-ca8e1879b78e"
+      ],
+      "methods": []
+    },
+    "030354fc-6f46-48e7-9f8e-f919af96a016": {
+      "id": "030354fc-6f46-48e7-9f8e-f919af96a016",
+      "name": "name = l8",
+      "type": "NameAttributeLinear",
+      "owner": "448f4122-75ed-4acb-b54a-c00a052a04b5",
+      "bounds": {
+        "x": 300,
+        "y": -330,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "l8",
+      "isMandatory": true
+    },
+    "b6e82026-c047-442e-ae8c-4c96b66f1dfa": {
+      "id": "b6e82026-c047-442e-ae8c-4c96b66f1dfa",
+      "name": "out_features = 10",
+      "type": "OutFeaturesAttributeLinear",
+      "owner": "448f4122-75ed-4acb-b54a-c00a052a04b5",
+      "bounds": {
+        "x": 300,
+        "y": -330,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "out_features",
+      "value": "10",
+      "isMandatory": true
+    },
+    "3ba40354-cfc2-4710-ba55-ca8e1879b78e": {
+      "id": "3ba40354-cfc2-4710-ba55-ca8e1879b78e",
+      "name": "in_features = 64",
+      "type": "InFeaturesAttributeLinear",
+      "owner": "448f4122-75ed-4acb-b54a-c00a052a04b5",
+      "bounds": {
+        "x": 300,
+        "y": -330,
+        "width": 180,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "in_features",
+      "value": "64",
+      "isMandatory": false
+    },
+    "399f908e-b3ec-4c17-ad60-f5327f1b6aa0": {
+      "id": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "name": "Configuration",
+      "type": "Configuration",
+      "owner": null,
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "5cdfcd61-4afe-48f2-831e-433e8573bb6f",
+        "11db3162-21fb-47b5-9e13-07992157917f",
+        "a8ae0754-736e-46fd-8f8a-d3cefb0af682",
+        "f022489b-c72c-4c39-af28-4553c4caf858",
+        "fc2d0e02-dbce-47ee-a0f5-8a4cb6be264b",
+        "ee723efc-e7a9-4f34-b235-133792d1468f"
+      ],
+      "methods": []
+    },
+    "5cdfcd61-4afe-48f2-831e-433e8573bb6f": {
+      "id": "5cdfcd61-4afe-48f2-831e-433e8573bb6f",
+      "name": "batch_size = 32",
+      "type": "BatchSizeAttributeConfiguration",
+      "owner": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 170,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "batch_size",
+      "value": "32",
+      "isMandatory": true
+    },
+    "11db3162-21fb-47b5-9e13-07992157917f": {
+      "id": "11db3162-21fb-47b5-9e13-07992157917f",
+      "name": "epochs = 10",
+      "type": "EpochsAttributeConfiguration",
+      "owner": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 160,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "int",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "epochs",
+      "value": "10",
+      "isMandatory": true
+    },
+    "a8ae0754-736e-46fd-8f8a-d3cefb0af682": {
+      "id": "a8ae0754-736e-46fd-8f8a-d3cefb0af682",
+      "name": "learning_rate = 0.001",
+      "type": "LearningRateAttributeConfiguration",
+      "owner": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 230,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "float",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "learning_rate",
+      "value": "0.001",
+      "isMandatory": true
+    },
+    "f022489b-c72c-4c39-af28-4553c4caf858": {
+      "id": "f022489b-c72c-4c39-af28-4553c4caf858",
+      "name": "optimizer = adam",
+      "type": "OptimizerAttributeConfiguration",
+      "owner": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 180,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "optimizer",
+      "value": "adam",
+      "isMandatory": true
+    },
+    "fc2d0e02-dbce-47ee-a0f5-8a4cb6be264b": {
+      "id": "fc2d0e02-dbce-47ee-a0f5-8a4cb6be264b",
+      "name": "loss_function = crossentropy",
+      "type": "LossFunctionAttributeConfiguration",
+      "owner": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 260,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "loss_function",
+      "value": "crossentropy",
+      "isMandatory": true
+    },
+    "ee723efc-e7a9-4f34-b235-133792d1468f": {
+      "id": "ee723efc-e7a9-4f34-b235-133792d1468f",
+      "name": "metrics = [f1-score]",
+      "type": "MetricsAttributeConfiguration",
+      "owner": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+      "bounds": {
+        "x": -650,
+        "y": -70,
+        "width": 280,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "metrics",
+      "value": "[f1-score]",
+      "isMandatory": true
+    },
+    "19601d31-0821-4dde-a24b-c9059321657f": {
+      "id": "19601d31-0821-4dde-a24b-c9059321657f",
+      "name": "TrainingDataset",
+      "type": "TrainingDataset",
+      "owner": null,
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "349b6bdd-c067-4865-a9a5-170f859a0311",
+        "a9e4a4af-c700-4b67-b51d-f1e5fca2e68a",
+        "e8a36a43-bde0-4a1b-b579-1f63ae18d4ed",
+        "5568a334-08bf-4dd5-9575-3ac26892670d",
+        "b9e824a0-3cd8-4c6a-9d84-ae7e311297c1",
+        "e813c402-0c8d-4f32-8cbb-af5eb0da0d48"
+      ],
+      "methods": []
+    },
+    "349b6bdd-c067-4865-a9a5-170f859a0311": {
+      "id": "349b6bdd-c067-4865-a9a5-170f859a0311",
+      "name": "name = train_data",
+      "type": "NameAttributeDataset",
+      "owner": "19601d31-0821-4dde-a24b-c9059321657f",
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "train_data",
+      "isMandatory": true
+    },
+    "a9e4a4af-c700-4b67-b51d-f1e5fca2e68a": {
+      "id": "a9e4a4af-c700-4b67-b51d-f1e5fca2e68a",
+      "name": "path_data = dataset/cifar10/train",
+      "type": "PathDataAttributeDataset",
+      "owner": "19601d31-0821-4dde-a24b-c9059321657f",
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 290,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "path_data",
+      "value": "dataset/cifar10/train",
+      "isMandatory": true
+    },
+    "e8a36a43-bde0-4a1b-b579-1f63ae18d4ed": {
+      "id": "e8a36a43-bde0-4a1b-b579-1f63ae18d4ed",
+      "name": "task_type = multi_class",
+      "type": "TaskTypeAttributeDataset",
+      "owner": "19601d31-0821-4dde-a24b-c9059321657f",
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 230,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "task_type",
+      "value": "multi_class",
+      "isMandatory": false
+    },
+    "5568a334-08bf-4dd5-9575-3ac26892670d": {
+      "id": "5568a334-08bf-4dd5-9575-3ac26892670d",
+      "name": "input_format = images",
+      "type": "InputFormatAttributeDataset",
+      "owner": "19601d31-0821-4dde-a24b-c9059321657f",
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 220,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "input_format",
+      "value": "images",
+      "isMandatory": false
+    },
+    "b9e824a0-3cd8-4c6a-9d84-ae7e311297c1": {
+      "id": "b9e824a0-3cd8-4c6a-9d84-ae7e311297c1",
+      "name": "shape = [32, 32, 3]",
+      "type": "ShapeAttributeDataset",
+      "owner": "19601d31-0821-4dde-a24b-c9059321657f",
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 200,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "List",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "shape",
+      "value": "[32, 32, 3]",
+      "isMandatory": false
+    },
+    "e813c402-0c8d-4f32-8cbb-af5eb0da0d48": {
+      "id": "e813c402-0c8d-4f32-8cbb-af5eb0da0d48",
+      "name": "normalize = false",
+      "type": "NormalizeAttributeDataset",
+      "owner": "19601d31-0821-4dde-a24b-c9059321657f",
+      "bounds": {
+        "x": -340,
+        "y": -50,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "bool",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "normalize",
+      "value": "false",
+      "isMandatory": false
+    },
+    "ae8a9f8f-5ab5-4193-b12c-e74dd1b23302": {
+      "id": "ae8a9f8f-5ab5-4193-b12c-e74dd1b23302",
+      "name": "TestDataset",
+      "type": "TestDataset",
+      "owner": null,
+      "bounds": {
+        "x": -80,
+        "y": -60,
+        "width": 110,
+        "height": 110
+      },
+      "attributes": [
+        "f192f9df-844a-4e5f-a3be-117cabad01e6",
+        "146be0fe-0f87-42d1-b2d0-ea5fb774b0a9"
+      ],
+      "methods": []
+    },
+    "f192f9df-844a-4e5f-a3be-117cabad01e6": {
+      "id": "f192f9df-844a-4e5f-a3be-117cabad01e6",
+      "name": "name = test_data",
+      "type": "NameAttributeDataset",
+      "owner": "ae8a9f8f-5ab5-4193-b12c-e74dd1b23302",
+      "bounds": {
+        "x": -80,
+        "y": -60,
+        "width": 190,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "name",
+      "value": "test_data",
+      "isMandatory": true
+    },
+    "146be0fe-0f87-42d1-b2d0-ea5fb774b0a9": {
+      "id": "146be0fe-0f87-42d1-b2d0-ea5fb774b0a9",
+      "name": "path_data = dataset/cifar10/test",
+      "type": "PathDataAttributeDataset",
+      "owner": "ae8a9f8f-5ab5-4193-b12c-e74dd1b23302",
+      "bounds": {
+        "x": -80,
+        "y": -60,
+        "width": 290,
+        "height": 20
+      },
+      "code": "",
+      "visibility": "public",
+      "attributeType": "str",
+      "implementationType": "none",
+      "stateMachineId": "",
+      "quantumCircuitId": "",
+      "isOptional": false,
+      "isDerived": false,
+      "attributeName": "path_data",
+      "value": "dataset/cifar10/test",
+      "isMandatory": true
+    }
+  },
+  "relationships": {
+    "13169dfb-19ec-41f6-9814-5c350a2845b9": {
+      "id": "13169dfb-19ec-41f6-9814-5c350a2845b9",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": -570,
+        "y": -275,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "dc98557d-a1e1-403d-afcb-01b318a221dd",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "bdafcfe1-e093-481a-a868-9741cea085fc": {
+      "id": "bdafcfe1-e093-481a-a868-9741cea085fc",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": -430,
+        "y": -275,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "a0594c44-830e-4693-a34a-fd97f81f6b85",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "1fd2f4f5-b2a5-46b4-a3c4-968484c7eeaa": {
+      "id": "1fd2f4f5-b2a5-46b4-a3c4-968484c7eeaa",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": -290,
+        "y": -275,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "28142ef8-9d9a-4b5b-b0bb-bf8338f7da39",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "3d84e689-b33d-477b-8a88-0a6b2564f4dd": {
+      "id": "3d84e689-b33d-477b-8a88-0a6b2564f4dd",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": -150,
+        "y": -275,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "b2215ce8-2b0c-4cc4-97ba-0957480c2ce5",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "60b782ab-f63e-44fc-b1cc-ff016dcdb47d": {
+      "id": "60b782ab-f63e-44fc-b1cc-ff016dcdb47d",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": -10,
+        "y": -275,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "b4f15221-2f2b-4876-8b79-ab7655ea7fa3",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c97bc5bd-dfff-4d74-8d6d-b9bee945913c",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "02882625-8756-4a2d-a288-77f88020cdff": {
+      "id": "02882625-8756-4a2d-a288-77f88020cdff",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": 130,
+        "y": -280,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c97bc5bd-dfff-4d74-8d6d-b9bee945913c",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "7443ee55-2a5e-44c5-a981-b401a53d2dd6": {
+      "id": "7443ee55-2a5e-44c5-a981-b401a53d2dd6",
+      "name": "next",
+      "type": "NNNext",
+      "owner": null,
+      "bounds": {
+        "x": 270,
+        "y": -285,
+        "width": 30,
+        "height": 31
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 30,
+          "y": 10
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "726c2fc0-6ca9-49e5-8a83-2bd6c818ddf4",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Left",
+        "element": "448f4122-75ed-4acb-b54a-c00a052a04b5",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "1c81e414-f791-4bb2-bfe5-ada765894730": {
+      "id": "1c81e414-f791-4bb2-bfe5-ada765894730",
+      "name": "",
+      "type": "NNComposition",
+      "owner": null,
+      "bounds": {
+        "x": -600,
+        "y": -170,
+        "width": 10,
+        "height": 100
+      },
+      "path": [
+        {
+          "x": 5,
+          "y": 100
+        },
+        {
+          "x": 5,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Up",
+        "element": "399f908e-b3ec-4c17-ad60-f5327f1b6aa0",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Bottomleft",
+        "element": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "4d85f21f-a198-4249-a510-aed3fcf10ba6": {
+      "id": "4d85f21f-a198-4249-a510-aed3fcf10ba6",
+      "name": "",
+      "type": "NNAssociation",
+      "owner": null,
+      "bounds": {
+        "x": -290,
+        "y": -170,
+        "width": 10,
+        "height": 120
+      },
+      "path": [
+        {
+          "x": 5,
+          "y": 120
+        },
+        {
+          "x": 5,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Up",
+        "element": "19601d31-0821-4dde-a24b-c9059321657f",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Down",
+        "element": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    },
+    "f6329bdf-b5e3-4f39-b9bf-ecd1e6c132e8": {
+      "id": "f6329bdf-b5e3-4f39-b9bf-ecd1e6c132e8",
+      "name": "",
+      "type": "NNAssociation",
+      "owner": null,
+      "bounds": {
+        "x": -30,
+        "y": -170,
+        "width": 10,
+        "height": 110
+      },
+      "path": [
+        {
+          "x": 5,
+          "y": 110
+        },
+        {
+          "x": 5,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Up",
+        "element": "ae8a9f8f-5ab5-4193-b12c-e74dd1b23302",
+        "multiplicity": "",
+        "role": ""
+      },
+      "target": {
+        "direction": "Down",
+        "element": "6feb868b-45bf-4c44-88ab-6af624191fa9",
+        "multiplicity": "",
+        "role": ""
+      },
+      "isManuallyLayouted": false
+    }
+  },
+  "assessments": {}
+}

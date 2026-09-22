@@ -2,17 +2,21 @@
 Chart component parsers for GUI diagrams.
 """
 
+import logging
 import json
+
+logger = logging.getLogger(__name__)
 from typing import Dict, Any, List
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
     PieChart, RadarChart, RadialBarChart, Table,
-    Color, Position, Size, Styling, MetricCard, DataAggregation
+    Color, Position, Size, Styling, MetricCard
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn,
+    Map, MapLayer, MapLayerType,
 )
-from besser.BUML.metamodel.gui.dashboard import AgentComponent, Series
+from besser.BUML.metamodel.gui.dashboard import Series
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
@@ -20,16 +24,16 @@ from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize
 # def _parse_aggregation(aggregation_str: str) -> DataAggregation:
 #     """
 #     Parse aggregation string from JSON attributes to DataAggregation enum.
-    
+
 #     Args:
 #         aggregation_str: String value like "sum", "average", "count", etc.
-        
+
 #     Returns:
 #         DataAggregation enum value or None if invalid
 #     """
 #     if not aggregation_str or not isinstance(aggregation_str, str):
 #         return None
-    
+
 #     aggregation_map = {
 #         'sum': DataAggregation.SUM,
 #         'avg': DataAggregation.AVG,
@@ -43,17 +47,17 @@ from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize
 #         'first': DataAggregation.FIRST,
 #         'last': DataAggregation.LAST,
 #     }
-    
+
 #     return aggregation_map.get(aggregation_str.lower())
 
 
 def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
     """
     Parse common chart data binding attributes.
-    
-    Supports both simple UUIDs (e.g., "abc123") and dot notation for related class attributes 
+
+    Supports both simple UUIDs (e.g., "abc123") and dot notation for related class attributes
     (e.g., "measure.xyz789" where "measure" is the relationship role and "xyz789" is the attribute UUID).
-    
+
     Returns:
         Tuple of (domain_class, label_field, data_field, label_field_path, data_field_path)
         - label_field/data_field: Property objects for direct attributes, None for nested
@@ -65,18 +69,18 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
         Parse a field value which may be:
         - A simple UUID pointing to an attribute
         - Dot notation like "relationship.attributeId" for related class attributes
-        
+
         Returns: (field_object_or_None, path_string_or_None)
         """
         if not field_value:
             return None, None
-        
+
         # Check for dot notation (relationship.attributeId)
         if '.' in field_value:
             parts = field_value.split('.', 1)
             relationship_role = parts[0]
             attr_id = parts[1]
-            
+
             # Look up the attribute by ID in the class model
             attr_el = get_element_by_id(class_model, attr_id)
             if attr_el:
@@ -101,16 +105,16 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
                     # Return None for object if not found, but we can use the name as path
                     return None, field_name
             return None, None
-    
+
     # Resolve data source
     data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
     data_source_name = data_source_el.get('name') if data_source_el else None
     domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-    
+
     # Parse label and data fields
     label_field_raw = attrs.get('label-field')
     data_field_raw = attrs.get('data-field')
-    
+
     label_field, label_field_path = parse_field_value(label_field_raw, domain_class)
     data_field, data_field_path = parse_field_value(data_field_raw, domain_class)
 
@@ -137,12 +141,12 @@ def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
 def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> LineChart:
     """
     Parses a line chart component, resolving data binding from class_model and domain_model.
-    
+
     Args:
         view_comp: Component dict from GrapesJS
         class_model: Class model for object resolution
         domain_model: Domain metamodel for object resolution
-        
+
     Returns:
         LineChart instance
     """
@@ -168,6 +172,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -175,14 +180,14 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
             domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-            
+
             # Extract filter from series attributes
             series_filter = s_attrs.get('filter')
             if series_filter and isinstance(series_filter, str) and series_filter.strip():
                 data_filter = series_filter.strip()
             else:
                 data_filter = None
-            
+
             data_binding = None
             if domain_class:
                 data_binding = DataBinding(
@@ -193,7 +198,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
                     data_field_path=data_field_path,
                     filter_expression=data_filter
                 )
-            
+
             # Extract color from series attributes and create styling
             styling = None
             series_color = s_attrs.get('color')
@@ -204,7 +209,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
             elif 'styling' in s_attrs:
                 from .styling import styling_from_css
                 styling = styling_from_css(s_attrs['styling'])
-            
+
             series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
     line_chart = LineChart(
@@ -229,12 +234,12 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
 def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> BarChart:
     """
     Parses a bar chart component, resolving data binding from class_model and domain_model.
-    
+
     Args:
         view_comp: Component dict from GrapesJS
         class_model: Class model for object resolution
         domain_model: Domain metamodel for object resolution
-        
+
     Returns:
         BarChart instance
     """
@@ -260,6 +265,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -267,14 +273,14 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
             domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-            
+
             # Extract filter from series attributes
             series_filter = s_attrs.get('filter')
             if series_filter and isinstance(series_filter, str) and series_filter.strip():
                 data_filter = series_filter.strip()
             else:
                 data_filter = None
-            
+
             data_binding = None
             if domain_class:
                 data_binding = DataBinding(
@@ -285,7 +291,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
                     data_field_path=data_field_path,
                     filter_expression=data_filter
                 )
-            
+
             # Extract color from series attributes and create styling
             styling = None
             series_color = s_attrs.get('color')
@@ -296,7 +302,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
             elif 'styling' in s_attrs:
                 from .styling import styling_from_css
                 styling = styling_from_css(s_attrs['styling'])
-            
+
             series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
     bar_chart = BarChart(
@@ -322,12 +328,12 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
 def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> PieChart:
     """
     Parses a pie chart component, resolving data binding from class_model and domain_model.
-    
+
     Args:
         view_comp: Component dict from GrapesJS
         class_model: Class model for object resolution
         domain_model: Domain metamodel for object resolution
-        
+
     Returns:
         PieChart instance
     """
@@ -353,6 +359,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -360,14 +367,14 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
             domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-            
+
             # Extract filter from series attributes
             series_filter = s_attrs.get('filter')
             if series_filter and isinstance(series_filter, str) and series_filter.strip():
                 data_filter = series_filter.strip()
             else:
                 data_filter = None
-            
+
             data_binding = None
             if domain_class:
                 data_binding = DataBinding(
@@ -426,12 +433,12 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
 def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> RadarChart:
     """
     Parses a radar chart component, resolving data binding from class_model and domain_model.
-    
+
     Args:
         view_comp: Component dict from GrapesJS
         class_model: Class model for object resolution
         domain_model: Domain metamodel for object resolution
-        
+
     Returns:
         RadarChart instance
     """
@@ -457,6 +464,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -464,14 +472,14 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
             domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-            
+
             # Extract filter from series attributes
             series_filter = s_attrs.get('filter')
             if series_filter and isinstance(series_filter, str) and series_filter.strip():
                 data_filter = series_filter.strip()
             else:
                 data_filter = None
-            
+
             data_binding = None
             if domain_class:
                 data_binding = DataBinding(
@@ -509,12 +517,12 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
 def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> RadialBarChart:
     """
     Parses a radial bar chart component, mapping features/values to label/data fields.
-    
+
     Args:
         view_comp: Component dict from GrapesJS
         class_model: Class model for object resolution
         domain_model: Domain metamodel for object resolution
-        
+
     Returns:
         RadialBarChart instance
     """
@@ -540,6 +548,7 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -564,14 +573,14 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
                     label_field = next((a for a in domain_class.attributes if a.name == features_name), None)
                 if values_name:
                     data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
-            
+
             # Extract filter from series attributes
             series_filter = s_attrs.get('filter')
             if series_filter and isinstance(series_filter, str) and series_filter.strip():
                 data_filter = series_filter.strip()
             else:
                 data_filter = None
-            
+
             data_binding = None
             if domain_class:
                 data_binding = DataBinding(
@@ -607,18 +616,18 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
     """
     Parse the columns data from table traits into Column objects.
     Handles both array (new format) and JSON string (legacy format).
-    
+
     Args:
         columns_json: Array or JSON string containing column definitions
         domain_class: Domain class for resolving field references
         class_model: Class model for object resolution
-        
+
     Returns:
         List of Column objects (FieldColumn, LookupColumn, or ExpressionColumn)
     """
     if not columns_json:
         return []
-    
+
     # Handle both array (new format) and string (legacy format)
     if isinstance(columns_json, list):
         columns_data = columns_json
@@ -629,25 +638,25 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
             return []
     else:
         return []
-    
+
     if not isinstance(columns_data, list):
         return []
-    
+
     columns_list = []
-    
+
     for col_data in columns_data:
         if not isinstance(col_data, dict):
             continue
-        
+
         column_type = col_data.get('columnType', 'field').lower()
         label = col_data.get('label', '')
-        
+
         if column_type == 'field':
             # Parse FieldColumn
             field_name = col_data.get('field', '')
             # Remove leading '+ ' if present
             field_name = field_name.lstrip('+ ').strip()
-            
+
             if domain_class and field_name:
                 # Find the attribute in the domain class (including inherited attributes)
                 field_attr = None
@@ -655,17 +664,17 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                     if attr.name == field_name:
                         field_attr = attr
                         break
-                
+
                 if field_attr:
                     column = FieldColumn(label=label, field=field_attr)
                     columns_list.append(column)
-        
+
         elif column_type == 'lookup':
             # Parse LookupColumn
             # GrapesJS stores the relationship path in 'field' for lookup columns
             lookup_path = col_data.get('path') or col_data.get('field', '')
             lookup_field_name = col_data.get('lookupField', '')
-            
+
             if domain_class and lookup_path:
                 # Find the relationship end (path) - including inherited associations
                 path_end = None
@@ -673,7 +682,7 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                     if end.name == lookup_path:
                         path_end = end
                         break
-                
+
                 if path_end and path_end.type:
                     target_class = path_end.type
                     # Find the lookup field in the target class (including inherited attributes)
@@ -683,11 +692,11 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                             if attr.name == lookup_field_name:
                                 lookup_field_attr = attr
                                 break
-                    
+
                     # If no lookup field specified, use first attribute
                     if not lookup_field_attr and target_class.all_attributes():
                         lookup_field_attr = list(target_class.all_attributes())[0]
-                    
+
                     if lookup_field_attr:
                         column = LookupColumn(
                             label=label,
@@ -695,14 +704,14 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                             field=lookup_field_attr
                         )
                         columns_list.append(column)
-        
+
         elif column_type == 'expression':
             # Parse ExpressionColumn
             expression = col_data.get('expression', '')
             if expression:
                 column = ExpressionColumn(label=label, expression=expression)
                 columns_list.append(column)
-    
+
     return columns_list
 
 
@@ -772,7 +781,7 @@ def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
 def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
     """
     Apply chart-specific color styling based on chart type.
-    
+
     Args:
         element: Chart ViewComponent instance
         attributes: Component attributes dict
@@ -799,23 +808,23 @@ def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
     elif isinstance(element, RadialBarChart):
         element.styling.color.bar_color = color_value
     elif isinstance(element, Table):
-        element.styling.color.background_color = color_value
+        element.styling.color.primary_color = color_value
 
 
 def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> MetricCard:
     """
     Parse a metric card component from JSON to BUML MetricCard.
-    
+
     Args:
         view_comp: Component dictionary from GrapesJS JSON
         class_model: Class diagram model
         domain_model: Domain model containing classes
-        
+
     Returns:
         MetricCard instance with data binding
     """
     attrs = view_comp.get("attributes", {})
-    
+
     # Parse basic metric card properties
     metric_title = attrs.get('metric-title', 'Metric Title')
     format_value = attrs.get('format', 'number')
@@ -824,10 +833,10 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     show_trend = parse_bool(attrs.get('show-trend'), True)
     positive_color = attrs.get('positive-color', '#27ae60')
     negative_color = attrs.get('negative-color', '#e74c3c')
-    
+
     # Parse data binding
     domain_class, _, data_field, _, data_field_path = _parse_chart_data_binding(attrs, class_model, domain_model)
-    
+
     # Create data binding if we have a domain class
     data_binding = None
     if domain_class:
@@ -840,7 +849,7 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
             data_field=data_field,
             data_field_path=data_field_path
         )
-    
+
     # Create metric card
     metric_card = MetricCard(
         name=sanitize_name(metric_title),
@@ -854,32 +863,160 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
         title=None,
         primary_color=value_color
     )
-    
+
     metric_card.data_binding = data_binding
     _attach_chart_metadata(metric_card, view_comp)
-    
+
     return metric_card
+
+
+def _parse_map_layer(layer_entry: Dict[str, Any], class_model, domain_model) -> MapLayer:
+    """Parse a single layer dict (from the editor's layer-manager trait) into a MapLayer.
+
+    Args:
+        layer_entry: Dict with keys ``name``, ``type``, ``dataSource``,
+            ``latitudeField``, ``longitudeField``, ``labelField``,
+            ``weightField``, ``geojsonField``, ``valueField``.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer` instance.
+    """
+    layer_name = sanitize_name(layer_entry.get("name", "layer")) or "layer"
+
+    # --- layer type ---
+    _type_map = {t.value: t for t in MapLayerType}
+    raw_type = layer_entry.get("type", "")
+    layer_type = _type_map.get(raw_type)  # None → auto-detect via effective_layer_type()
+
+    # --- resolve domain class from dataSource (UUID from editor, or name from BUML→JSON) ---
+    data_source_el = get_element_by_id(class_model, layer_entry.get("dataSource", ""))
+    if data_source_el:
+        data_source_name = data_source_el.get("name")
+    else:
+        # Fallback: value may already be a class name (written by _apply_map_attributes)
+        data_source_name = layer_entry.get("dataSource") or None
+    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+
+    data_binding = None
+    if domain_class:
+        binding_name = sanitize_name(f"{layer_name}_binding")
+        data_binding = DataBinding(name=binding_name, domain_concept=domain_class)
+
+    # --- helper: resolve a field (UUID from editor, or name from BUML→JSON) → Property ---
+    def _resolve_field(key: str):
+        raw = layer_entry.get(key, "")
+        if not raw or domain_class is None:
+            return None
+        el = get_element_by_id(class_model, raw)
+        if el:
+            attr_name = clean_attribute_name(el.get("name", raw))
+        else:
+            # Fallback: treat the value as a field name directly
+            attr_name = clean_attribute_name(raw)
+        return next(
+            (a for a in domain_class.attributes if clean_attribute_name(a.name) == attr_name),
+            None,
+        )
+
+    return MapLayer(
+        name=layer_name,
+        layer_type=layer_type,
+        latitude_field=_resolve_field("latitudeField"),
+        longitude_field=_resolve_field("longitudeField"),
+        label_field=_resolve_field("labelField"),
+        weight_field=_resolve_field("weightField"),
+        geojson_field=_resolve_field("geojsonField"),
+        value_field=_resolve_field("valueField"),
+        data_binding=data_binding,
+    )
+
+
+def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
+    """Parse a map component from GrapesJS JSON into a BUML Map instance.
+
+    Reads static positioning attributes (``map-title``, ``map-latitude``,
+    ``map-longitude``, ``map-zoom``) from the component's ``attributes`` dict.
+    Parses the ``map-layers`` JSON string (emitted by the editor's layer-manager
+    trait) into a list of :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer`
+    objects — one per element in the array. Each layer resolves its own domain
+    class, :class:`~besser.BUML.metamodel.gui.binding.DataBinding`, and field
+    :class:`~besser.BUML.metamodel.structural.Property` references.
+
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.Map` instance.
+    """
+    attrs = view_comp.get("attributes", {})
+
+    # --- static map properties ---
+    title = attrs.get("map-title", "Location Map")
+    try:
+        center_latitude = float(attrs.get("map-latitude", 0.0))
+    except (TypeError, ValueError):
+        center_latitude = 0.0
+    try:
+        center_longitude = float(attrs.get("map-longitude", 0.0))
+    except (TypeError, ValueError):
+        center_longitude = 0.0
+    try:
+        zoom = int(attrs.get("map-zoom", 10))
+    except (TypeError, ValueError):
+        zoom = 10
+
+    # --- layers (emitted as a JSON string by the layer-manager trait) ---
+    layers: List[MapLayer] = []
+    raw_layers = attrs.get("map-layers")
+    if raw_layers:
+        try:
+            layer_entries = json.loads(raw_layers) if isinstance(raw_layers, str) else raw_layers
+            if isinstance(layer_entries, list):
+                for entry in layer_entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    layers.append(_parse_map_layer(entry, class_model, domain_model))
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Could not parse map-layers JSON: %s", exc)
+
+    # --- build the Map ---
+    map_name = sanitize_name(title) or "Map"
+    map_component = Map(
+        name=map_name,
+        title=title,
+        center_latitude=center_latitude,
+        center_longitude=center_longitude,
+        zoom=zoom,
+        layers=layers,
+    )
+
+    _attach_chart_metadata(map_component, view_comp)
+    return map_component
 
 
 def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:
     """
     Parse an agent component from JSON to BUML AgentComponent.
-    
+
     Args:
         view_comp: Component dictionary from GrapesJS JSON
         class_model: Class diagram model (not used for agent, but kept for consistency)
         domain_model: Domain model (not used for agent, but kept for consistency)
-        
+
     Returns:
         AgentComponent instance
     """
     attrs = view_comp.get("attributes", {})
-    
+
     # Parse agent component properties
     agent_name = attrs.get('agent-name', '')
     agent_title = attrs.get('agent-title', 'BESSER Agent')
 
-    
+
     # Create agent component
     agent_component = AgentComponent(
         name=sanitize_name(agent_title or 'AgentComponent'),
@@ -887,7 +1024,7 @@ def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) 
         agent_title=agent_title,
         description=f"Agent component for {agent_name or 'agent'}",
     )
-    
+
     _attach_chart_metadata(agent_component, view_comp)
-    
+
     return agent_component

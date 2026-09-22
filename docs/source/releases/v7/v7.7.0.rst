@@ -1,0 +1,24 @@
+Version 7.7.0
+=============
+
+Minor release headlined by the new **Supabase generator**, alongside two
+fixes that landed on ``development`` since v7.6.0. No metamodel or API
+contract changes.
+
+Supabase Generator (new)
+------------------------
+
+* Added ``besser.generators.supabase.SupabaseGenerator``, registered in the Web Modeling Editor under **File → Generate Code → Database → Supabase**. The generator emits a single migration-style ``<YYYYMMDDHHMMSS>_<model>.sql`` file you can paste into the Supabase SQL Editor or drop into ``supabase/migrations/`` for the CLI.
+* Follows Supabase's documented patterns: UUID primary keys via ``gen_random_uuid()``; the user-root class mirrors ``auth.users(id) ON DELETE CASCADE`` through a ``handle_new_user`` trigger using ``SECURITY DEFINER`` + ``SET search_path = ''`` + ``ON CONFLICT (id) DO NOTHING``; every class reachable from the user-root via associations gets a denormalized ``user_id`` column plus an index; FKs pointing AT the user-root are suppressed.
+* Row Level Security ships the full four-policy set (SELECT / INSERT / UPDATE / DELETE), each ``AS PERMISSIVE``, ``TO authenticated``, keyed on ``(SELECT auth.uid()) = ...`` per Supabase's RLS performance guidance, with ``WITH CHECK`` on UPDATE to prevent row-transfer attacks. Re-runs are idempotent (``DROP POLICY IF EXISTS`` before every ``CREATE POLICY``).
+* Many-to-many associations become junction tables with composite primary keys, ``ON DELETE CASCADE`` on both FKs, and per-user RLS when reachable. A combined ``GRANT SELECT, INSERT, UPDATE, DELETE ON <all tables> TO authenticated`` is emitted explicitly so the script also works on non-Supabase Postgres.
+* **Identifier-injection hardening**: every class / attribute / association-end / enum / FK / user-root name passes through generator-side ``_safe_ident()`` (doubles ``"``) or ``_safe_string()`` (doubles ``'`` for enum literals) before reaching the template; ``NUL`` / ``CR`` / ``LF`` raise ``ValueError``. The ``user_root`` value coming over HTTP is also validated against ``^[A-Za-z_][A-Za-z0-9_]{0,62}$`` at the router boundary.
+* Tests: ``tests/generators/supabase/`` ships 8 cases (structural + content + the two injection escape paths + filename format).
+* Docs: ``docs/source/generators/supabase.rst`` is the full reference, with cloud and local workflows, sample output, and a candid Known Limitations section (reachable-means-per-user mis-tags shared catalog data; auth-owned attributes aren't filtered; association classes silently dropped; inheritance flattened). Closes ``BESSER-PEARL/BESSER#533``.
+
+Fixes
+-----
+
+* **Python classes generator**: handle enumerations with no literals. Previously an empty enum produced ``class Foo(Enum):`` followed by no body — invalid Python that crashes on import. The template now emits ``pass`` when the enum is empty.
+* **Web Modeling Editor — Project Import**: single-diagram ``.py`` files (the legacy export shape, still in circulation) now import cleanly. The project converter falls back to the single-diagram payload shape when the input doesn't carry the multi-diagram envelope, matching the behavior of the pre-v7.5 import path.
+* **Web Modeling Editor — Personalized Gym Agent template**: importing the bundled template no longer leaves the agent-config Personalization tab with an empty *Saved Configurations* list. The V2 export envelope now carries saved configurations, user profiles, profile↔config mappings, and base agent models; the template ships with the un-personalized base model plus its two reference profiles and configurations so import lands on a complete state. GitHub deploy explicitly opts out of bundling personalization so saved configs aren't pushed to public repos.

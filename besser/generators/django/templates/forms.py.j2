@@ -36,10 +36,16 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                 {%- for association in class_obj.associations %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                        {%- set ns = namespace(end1=None, end2=None) %}
+                            {%- set ends_list = association.ends | list %}
+                            {%- if ends_list[0].type.name == ends_list[1].type.name %}
+                                {%- set ns.end1 = ends_list[1] %}
+                                {%- set ns.end2 = ends_list[0] %}
+                            {%- else %}
                             {%- for end in association.ends %}
                                {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
                                {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
                             {%- endfor %}
+                            {%- endif %}
                             {%- set class1_name = ns.end1.type.name %}
                             {%- set class2_name = ns.end2.type.name %}
 
@@ -165,10 +171,16 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                 {%- for association in class_obj.associations %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                       {%- set ns = namespace(end1=None, end2=None) %}
+                        {%- set ends_list = association.ends | list %}
+                        {%- if ends_list[0].type.name == ends_list[1].type.name %}
+                            {%- set ns.end1 = ends_list[1] %}
+                            {%- set ns.end2 = ends_list[0] %}
+                        {%- else %}
                         {%- for end in association.ends %}
                            {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
                            {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
                         {%- endfor %}
+                        {%- endif %}
                           {%- set class1_name = ns.end1.type.name %}
                           {%- set class2_name = ns.end2.type.name %}
                             {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}{%- if class_obj.name == many_to_many.get(ns.end1.owner.name) %}'{{ ns.end2.name.replace(' ', '_') }}',{%- else%}{%- endif %}

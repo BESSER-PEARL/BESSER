@@ -13,7 +13,6 @@ from besser.BUML.metamodel.quantum.quantum import (
     RXXGate, RZZGate, RZXGate, RYYGate, BellGate, iSwapGate, SqrtSwapGate, PhaseGate
 )
 import math
-import re
 
 
 def sanitize_name(name: str) -> str:
@@ -23,28 +22,28 @@ def sanitize_name(name: str) -> str:
     - Spaces are not allowed (replaced with underscores)
     - Hyphens are not allowed (replaced with underscores)
     - Other characters like ^, (, ), etc. are allowed
-    
+
     Args:
         name (str): The original name
-        
+
     Returns:
         str: Sanitized name safe for NamedElement
     """
     if not name:
         return "unnamed"
-    
+
     # Replace spaces with underscores
     sanitized = name.replace(' ', '_')
-    
+
     # Replace hyphens with underscores (but preserve minus signs in context like Z^-t)
     # Only replace standalone hyphens, not those that are part of mathematical notation
     # For safety, we'll just replace all hyphens with underscores
     sanitized = sanitized.replace('-', '_')
-    
+
     # Ensure it's not empty after sanitization
     if not sanitized:
         return "unnamed"
-    
+
     return sanitized
 
 
@@ -56,7 +55,7 @@ def process_quantum_diagram(json_data):
     gate_metadata = model_data.get('gateMetadata', {})
 
     cols = model_data.get('cols', [])
-    
+
     # Get classical bit count from the model data
     classical_bit_count = model_data.get('classicalBitCount', 0)
 
@@ -72,7 +71,7 @@ def process_quantum_diagram(json_data):
             num_qubits = len(col)
 
     qc = QuantumCircuit(name=title, qubits=num_qubits)
-    
+
     # Add classical register if there are classical bits
     if classical_bit_count > 0:
         from besser.BUML.metamodel.quantum.quantum import ClassicalRegister
@@ -177,47 +176,47 @@ def process_quantum_diagram(json_data):
 
         # Track qubits already processed (for multi-qubit custom gates)
         processed_qubits = set()
-        
+
         for q_idx, symbol in col_gates.items():
             if q_idx in processed_qubits:
                 continue  # Skip already processed qubits
-                
+
             # Check for metadata
             metadata_key = f"{col_idx}_{q_idx}"
             metadata = gate_metadata.get(metadata_key)
-            
+
             gate = None
-            
+
             # Check if this is a function gate:
             # - Old format: symbol starts with __FUNC__
             # - New format: metadata indicates isFunctionGate=true
             is_func_gate = (isinstance(symbol, str) and symbol.startswith('__FUNC__')) or \
                           (metadata and metadata.get('isFunctionGate'))
-            
+
             if metadata and metadata.get('nestedCircuit'):
                 # This is a custom function gate with a nested circuit
                 nested_circuit_data = metadata['nestedCircuit']
-                
+
                 # Determine target qubits based on metadata height
                 # Function gates span from q_idx to q_idx + height - 1
                 height = metadata.get('height', 1)
                 target_qubits = list(range(q_idx, q_idx + height))
-                
+
                 # Mark other qubits as processed to avoid duplicate processing
                 for other_q_idx in target_qubits:
                     if other_q_idx != q_idx:
                         processed_qubits.add(other_q_idx)
-                
+
                 # Check if nested circuit uses new format (columns with gates) or old format (cols)
                 if 'columns' in nested_circuit_data:
                     # New format: parse gates from columns array
                     gate_name = sanitize_name(metadata.get('label', symbol))
                     nested_gates = _parse_nested_columns(nested_circuit_data)
                     gate = FunctionGate(
-                        name=gate_name, 
-                        target_qubits=target_qubits, 
+                        name=gate_name,
+                        target_qubits=target_qubits,
                         gates=nested_gates,
-                        control_qubits=[c[0] for c in controls], 
+                        control_qubits=[c[0] for c in controls],
                         control_states=[c[1] for c in controls]
                     )
                 else:
@@ -226,40 +225,40 @@ def process_quantum_diagram(json_data):
                     nested_qc = process_quantum_diagram(nested_circuit_data)
                     gate_def = GateDefinition(name=gate_name, circuit=nested_qc)
                     gate = FunctionGate(
-                        name=gate_name, 
-                        target_qubits=target_qubits, 
-                        definition=gate_def, 
-                        control_qubits=[c[0] for c in controls], 
+                        name=gate_name,
+                        target_qubits=target_qubits,
+                        definition=gate_def,
+                        control_qubits=[c[0] for c in controls],
                         control_states=[c[1] for c in controls]
                     )
-            
+
             elif metadata and metadata.get('isFunctionGate'):
                  # Function gate without explicit nested circuit (maybe just a label/type)
                  # Determine target qubits based on metadata height
                  height = metadata.get('height', 1)
                  target_qubits = list(range(q_idx, q_idx + height))
-                 
+
                  # Mark other qubits as processed
                  for other_q_idx in target_qubits:
                      if other_q_idx != q_idx:
                          processed_qubits.add(other_q_idx)
-                 
+
                  gate = CustomGate(name=sanitize_name(metadata.get('label', symbol)), target_qubits=target_qubits, control_qubits=[c[0] for c in controls], control_states=[c[1] for c in controls])
-            
+
             elif is_func_gate:
                 # Symbol starts with __FUNC__ but no metadata found yet
                 # Search for metadata with this column and any row that matches this function
                 # Extract function name from symbol (e.g., __FUNC__FUNCTION -> FUNCTION)
                 func_name = symbol[8:] if len(symbol) > 8 else symbol
-                
+
                 # Try to find metadata for this gate
                 found_metadata = gate_metadata.get(metadata_key)
-                
+
                 # Determine target qubits based on metadata height if available
                 if found_metadata and 'height' in found_metadata:
                     height = found_metadata.get('height', 1)
                     target_qubits = list(range(q_idx, q_idx + height))
-                    
+
                     # Mark other qubits as processed
                     for other_q_idx in target_qubits:
                         if other_q_idx != q_idx:
@@ -272,20 +271,20 @@ def process_quantum_diagram(json_data):
                             target_qubits.append(other_q_idx)
                             processed_qubits.add(other_q_idx)
                     target_qubits.sort()
-                
+
                 if found_metadata and found_metadata.get('nestedCircuit'):
                     nested_circuit_data = found_metadata['nestedCircuit']
                     gate_name = sanitize_name(found_metadata.get('label', func_name))
-                    
+
                     # Check format: 'columns' (old internal format) or 'cols' (Quirk format)
                     if 'columns' in nested_circuit_data:
                         # Old internal format with full gate objects
                         nested_gates = _parse_nested_columns(nested_circuit_data)
                         gate = FunctionGate(
-                            name=gate_name, 
-                            target_qubits=target_qubits, 
+                            name=gate_name,
+                            target_qubits=target_qubits,
                             gates=nested_gates,
-                            control_qubits=[c[0] for c in controls], 
+                            control_qubits=[c[0] for c in controls],
                             control_states=[c[1] for c in controls]
                         )
                     else:
@@ -294,19 +293,19 @@ def process_quantum_diagram(json_data):
                         # Extract gates from nested circuit and create FunctionGate
                         nested_gates = nested_qc.operations
                         gate = FunctionGate(
-                            name=gate_name, 
-                            target_qubits=target_qubits, 
+                            name=gate_name,
+                            target_qubits=target_qubits,
                             gates=nested_gates,
-                            control_qubits=[c[0] for c in controls], 
+                            control_qubits=[c[0] for c in controls],
                             control_states=[c[1] for c in controls]
                         )
                 else:
                     # No nested circuit found, create basic CustomGate
                     gate_name = sanitize_name(found_metadata.get('label', func_name) if found_metadata else func_name)
                     gate = CustomGate(
-                        name=gate_name, 
-                        target_qubits=target_qubits, 
-                        control_qubits=[c[0] for c in controls], 
+                        name=gate_name,
+                        target_qubits=target_qubits,
+                        control_qubits=[c[0] for c in controls],
                         control_states=[c[1] for c in controls]
                     )
 
@@ -322,7 +321,7 @@ def process_quantum_diagram(json_data):
 def _parse_nested_columns(nested_data):
     """
     Parse nested circuit data in the new columns/gates format.
-    
+
     The format is:
     {
         "columns": [
@@ -332,15 +331,15 @@ def _parse_nested_columns(nested_data):
         "qubitCount": 2,
         "initialStates": [...]
     }
-    
+
     Returns a list of Gate objects.
     """
     gates_list = []
     columns = nested_data.get('columns', [])
-    
+
     for col in columns:
         col_gates = col.get('gates', [])
-        
+
         # First pass: collect control qubits in this column
         controls = []
         for qubit_idx, gate_data in enumerate(col_gates):
@@ -351,23 +350,23 @@ def _parse_nested_columns(nested_data):
                 controls.append((qubit_idx, ControlState.CONTROL))
             elif gate_type == 'ANTI_CONTROL':
                 controls.append((qubit_idx, ControlState.ANTI_CONTROL))
-        
+
         # Second pass: create gates with control information
         for qubit_idx, gate_data in enumerate(col_gates):
             if gate_data is None:
                 continue
-            
+
             gate_type = gate_data.get('type', '')
-            
+
             # Skip control gates as they've been processed
             if gate_type in ('CONTROL', 'ANTI_CONTROL'):
                 continue
-            
+
             # Create the appropriate gate based on type
             gate = _create_gate_from_type(gate_type, qubit_idx, controls)
             if gate:
                 gates_list.append(gate)
-    
+
     return gates_list
 
 
@@ -375,7 +374,7 @@ def _create_gate_from_type(gate_type, target_qubit, controls=None):
     """Create a gate from a type string (used for nested circuit parsing)."""
     control_qubits = [c[0] for c in controls] if controls else []
     control_states = [c[1] for c in controls] if controls else []
-    
+
     # Map simple gate types to gate classes
     if gate_type == 'H':
         return HadamardGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
@@ -540,8 +539,8 @@ def _create_gate(symbol, target_qubit, controls):
 
     if symbol in ('SqrtSwap', 'SQRT_SWAP'):
         # Needs 2 qubits.
-        pass 
-    
+        pass
+
     if symbol in ('iSwap', 'ISWAP'):
         # Needs 2 qubits.
         pass

@@ -1,8 +1,12 @@
+import logging
 import os
 from besser.BUML.metamodel.gui import *
+from besser.BUML.metamodel.gui.dashboard import Map
 from besser.BUML.metamodel.structural import *
-from jinja2 import Template, Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -55,7 +59,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
 
         for cls in copy_model.get_classes():
             for atr in cls.attributes:
-              print(cls.name + " ::  "+ atr.name)
+              logger.debug(cls.name + " ::  "+ atr.name)
 
 
         file_path = self.build_generation_path(file_name="sql_helper.dart")
@@ -66,7 +70,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
         with open(file_path, mode="w") as f:
             generated_code = template.render(BUMLClasses= copy_model.get_classes(), model=copy_model, types=self.TYPES)
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.debug("Code generated in the location: " + file_path)
 
 
 
@@ -140,6 +144,11 @@ class FlutterMainDartGenerator(GeneratorInterface):
         """Check if the given value is an instance of DataSourceElement class."""
         return isinstance(value, DataSourceElement)
 
+    @staticmethod
+    def is_Map(value):
+        """Check if the given value is an instance of Map (or subclass) class."""
+        return isinstance(value, Map)
+
     def generate(self):
 
         """
@@ -159,6 +168,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
         env.tests['is_Button'] = self.is_Button
         env.tests['is_List'] = self.is_List
         env.tests['is_ModelElement'] = self.is_ModelElement
+        env.tests['is_Map'] = self.is_Map
         if self.module is None:
           # User did not specify a module, so select the first module from the set of modules
           self.module = next(iter(self.gui_model.modules))
@@ -166,7 +176,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
         screens = self.module.screens
         screens.remove(self.main_page)
         for scr in screens:
-              print(scr.name + " ::  ")
+              logger.debug(scr.name + " ::  ")
 
         with open(file_path, mode="w") as f:
             generated_code = template.render(
@@ -178,7 +188,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
                 associations=self.model.associations
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.debug("Code generated in the location: " + file_path)
 
 
 ##############################
@@ -233,7 +243,7 @@ class FlutterPubspecGenerator(GeneratorInterface):
                 app=self.gui_model
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.debug("Code generated in the location: " + file_path)
 
 
 

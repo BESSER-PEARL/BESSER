@@ -307,8 +307,8 @@ def test_traversal_in_a_class_name_stays_inside_the_output_dir(spring_library_mo
 
     written = list(tmp_path.rglob("*"))
     assert all(output_dir in path.parents or path == output_dir for path in written)
-    assert not (tmp_path / "evil.java").exists()
-    assert (output_dir / PACKAGE_DIR / "entity" / "evil.java").is_file()
+    assert not (tmp_path / "Evil.java").exists()
+    assert (output_dir / PACKAGE_DIR / "entity" / "Evil.java").is_file()
 
 
 def test_java_keywords_and_odd_names_become_legal_identifiers():

@@ -104,6 +104,11 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DJANGO_PROJECT_NAME,
     DEFAULT_DJANGO_APP_NAME,
     DEFAULT_SUPABASE_USER_ROOT,
+    DEFAULT_SPRING_BOOT_VERSION,
+    DEFAULT_JAVA_VERSION,
+    DEFAULT_SPRING_APP_NAME,
+    DEFAULT_SPRING_PACKAGE_NAME,
+    DEFAULT_SPRING_PROJECT_NAME,
 )
 
 # Centralized error handling
@@ -770,6 +775,8 @@ async def _handle_class_diagram_generation(
     # Generate based on generator type
     if generator_type == "django":
         return await _generate_django(buml_model, generator_class, config, temp_dir)
+    if generator_type == "spring":
+        return await _generate_spring(buml_model, generator_class, config, temp_dir)
     if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
     if generator_type == "supabase":
@@ -929,6 +936,59 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
     zip_buffer.seek(0)
     file_name = get_filename_for_generator("django")
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate a Spring Boot project and return it as a ZIP."""
+    config = config or {}
+    project_name = config.get("project_name") or DEFAULT_SPRING_PROJECT_NAME
+    app_name = config.get("app_name") or DEFAULT_SPRING_APP_NAME
+    spring_boot_version = config.get("spring_boot_version") or DEFAULT_SPRING_BOOT_VERSION
+    java_version = config.get("java_version") or DEFAULT_JAVA_VERSION
+    package_name = config.get("package_name") or DEFAULT_SPRING_PACKAGE_NAME
+
+    # Sanitize project_name to prevent path traversal
+    project_name = os.path.basename(project_name)
+    if not project_name:
+        project_name = DEFAULT_SPRING_PROJECT_NAME
+
+    project_dir = _safe_path(temp_dir, project_name)
+    os.makedirs(project_dir, exist_ok=True)
+
+    # An invalid package name is a user input error, not a server fault.
+    try:
+        generator_instance = generator_class(
+            buml_model,
+            output_dir=project_dir,
+            app_name=app_name,
+            spring_boot_version=spring_boot_version,
+            java_version=java_version,
+            package_name=package_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await asyncio.to_thread(generator_instance.generate)
+
+    if not os.listdir(project_dir):
+        raise ValueError("Spring Boot project generation failed: Output directory is empty")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(project_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, project_dir)
+                zip_file.write(file_path, arc_name)
+
+    zip_buffer.seek(0)
+    file_name = get_filename_for_generator("spring")
 
     return StreamingResponse(
         zip_buffer,

@@ -7,6 +7,7 @@ from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.spring.spring_backend_generator import SpringBackendGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.supabase import SupabaseGenerator
@@ -85,6 +86,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
         generator_class=DjangoGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="web_framework",
+        requires_class_diagram=True
+    ),
+    "spring": GeneratorInfo(
+        generator_class=SpringBackendGenerator,
         output_type="zip",
         file_extension=".zip",
         category="web_framework",

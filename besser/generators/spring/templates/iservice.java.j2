@@ -1,0 +1,13 @@
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+public interface I{{ cls }}Service {
+
+{% for method in methods %}
+    {{ method.return_value }} {{ method.name }}({{ method.parameter }});
+{% endfor %}
+
+}

@@ -1697,6 +1697,132 @@ class TestNNModelBuilder:
         names = {type(m).__name__ for m in out.modules}
         assert {"LayerNormLayer", "BatchNormLayer"} <= names
 
+    # ------------------------------------------------------------------ #
+    # Regression: attributes set in plain Python must survive the builder  #
+    # ------------------------------------------------------------------ #
+    # The "was this explicitly set?" sidecar is only ever populated by the
+    # web editor's JSON importer. Everything else -- hand-written BUML, the
+    # BUML AST parser behind /get-json-model -- leaves it empty, so the
+    # builder has to fall back to comparing each value against the default
+    # declared by the metamodel constructor.
+
+    def test_conv2d_explicit_attributes_survive_without_sidecar(self, tmp_path):
+        """All nine non-default Conv2D kwargs must reach the generated call.
+
+        Before the default-comparison fallback this emitted only
+        ``Conv2D(name='c1', kernel_dim=[3, 3], out_channels=8,
+        stride_dim=[1, 1])`` -- seven of nine kwargs silently dropped.
+        """
+        nn = NN(name="ConvRepro")
+        nn.add_layer(Conv2D(
+            name="c1", kernel_dim=[3, 3], out_channels=8, bias=False,
+            permute_in=True, permute_out=True, is_layer_call=True,
+            dilation=[2, 2], groups=4, input_reused=True,
+        ))
+        path = str(tmp_path / "conv_repro.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        for fragment in (
+            "name='c1'", "kernel_dim=[3, 3]", "out_channels=8", "bias=False",
+            "permute_in=True", "permute_out=True", "is_layer_call=True",
+            "dilation=[2, 2]", "groups=4", "input_reused=True",
+        ):
+            assert fragment in code, f"{fragment} missing from generated code"
+
+        out = self._exec_and_get_nn(tmp_path, nn)
+        conv = out.modules[0]
+        assert conv.bias is False
+        assert conv.permute_in is True
+        assert conv.permute_out is True
+        assert conv.is_layer_call is True
+        assert conv.dilation == [2, 2]
+        assert conv.groups == 4
+        assert conv.input_reused is True
+
+    def test_conv2d_defaults_are_not_emitted(self, tmp_path):
+        """The fallback must stay quiet for values left at their default,
+        otherwise every generated call turns into noise."""
+        nn = NN(name="ConvDefaults")
+        nn.add_layer(Conv2D(name="c1", kernel_dim=[3, 3], out_channels=8))
+        path = str(tmp_path / "conv_defaults.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        for fragment in ("bias=", "permute_in=", "permute_out=",
+                         "is_layer_call=", "groups=", "input_reused="):
+            assert fragment not in code, f"default {fragment} should not be emitted"
+
+    def test_embedding_and_dropout_permute_flags_emitted(self, tmp_path):
+        """_write_embedding / _write_dropout never emitted permute_in and
+        permute_out, although both are real constructor parameters."""
+        nn = NN(name="PermuteFlags")
+        nn.add_layer(EmbeddingLayer(
+            name="emb", num_embeddings=10, embedding_dim=4,
+            permute_in=True, permute_out=True,
+        ))
+        nn.add_layer(DropoutLayer(
+            name="drop", rate=0.25, dimension="1D",
+            permute_in=True, permute_out=True,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        emb, drop = out.modules[0], out.modules[1]
+        assert (emb.permute_in, emb.permute_out) == (True, True)
+        assert (drop.permute_in, drop.permute_out) == (True, True)
+        assert drop.dimension == "1D"
+
+    def test_batch_norm_permute_flags_emitted(self, tmp_path):
+        """BatchNormLayer gained permute_in/permute_out in the metamodel."""
+        nn = NN(name="BNPermute")
+        nn.add_layer(BatchNormLayer(
+            name="bn", num_features=8, dimension="2D",
+            permute_in=True, permute_out=True, affine=False, eps=0.001,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        bn = out.modules[0]
+        assert (bn.permute_in, bn.permute_out) == (True, True)
+        assert bn.affine is False
+        assert bn.eps == 0.001
+
+    def test_rnn_non_default_attributes_survive(self, tmp_path):
+        """LSTM flags that only differ from their defaults (no sidecar entry)."""
+        nn = NN(name="LSTMFlags")
+        nn.add_layer(LSTMLayer(
+            name="lstm", hidden_size=8, bidirectional=True, dropout=0.3,
+            batch_first=False, bias=False, cell_unused=True,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        lstm = out.modules[0]
+        assert lstm.bidirectional is True
+        assert lstm.dropout == 0.3
+        assert lstm.batch_first is False
+        assert lstm.bias is False
+        assert lstm.cell_unused is True
+
+    def test_tensor_op_shape_dim_emitted(self, tmp_path):
+        """shape_dim was never written by _write_tensor_op."""
+        nn = NN(name="ShapeDimOp")
+        nn.add_tensor_op(TensorOp(
+            name="op", tns_type="shape_dim", reduce_dim=0, shape_dim=2,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        op = out.modules[0]
+        assert op.tns_type == "shape_dim"
+        assert op.reduce_dim == 0
+        assert op.shape_dim == 2
+
+    def test_tensor_op_subscript_indices_survive(self, tmp_path):
+        """subscript_indices is a list[dict]; make sure the emitted literal
+        both compiles and reproduces the structure."""
+        indices = [{"type": "index", "value": 0},
+                   {"type": "slice", "start": 1, "stop": 3, "step": None}]
+        nn = NN(name="SubscriptOp")
+        nn.add_tensor_op(TensorOp(
+            name="op", tns_type="subscript", subscript_indices=indices,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert out.modules[0].subscript_indices == indices
+
     def test_tensor_op_exec_roundtrip_for_every_tns_type(self, tmp_path):
         """Build one NN per tns_type and assert exec() produces a TensorOp
         with the right type. Regression guard against the per-branch emit
@@ -1705,8 +1831,8 @@ class TestNNModelBuilder:
             ("concatenate", {"concatenate_dim": 1, "layers_of_tensors": ["a", "b"]}),
             ("multiply",    {"layers_of_tensors": ["a", "b"]}),
             ("matmultiply", {"layers_of_tensors": ["a", "b"]}),
-            ("reshape",     {"reshape_dim": [1, -1]}),
-            ("transpose",   {"transpose_dim": [0, 2, 1]}),
+            ("reshape",     {"layers_of_tensors": ["a"], "reshape_dim": [1, -1]}),
+            ("transpose",   {"layers_of_tensors": ["a"], "transpose_dim": [0, 2]}),
             ("permute",     {"permute_dim": [0, 3, 1, 2]}),
         ]
         for tns_type, kwargs in cases:
@@ -1718,3 +1844,39 @@ class TestNNModelBuilder:
             assert ops[0].tns_type == tns_type, (
                 f"tns_type mismatch: expected {tns_type}, got {ops[0].tns_type}"
             )
+
+    def test_explicit_but_none_attrs_do_not_emit_empty_strings(self, tmp_path):
+        """A field marked explicit while still holding None must be omitted
+        by the builder, never emitted as input_var='' / output_var='' /
+        dimension='' — the metamodel rejects '' as an identifier, so the
+        generated file would fail to exec()."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import (
+            mark_explicit,
+        )
+
+        nn = NN(name="ExplicitNone")
+        layer = EmbeddingLayer(name="e1", num_embeddings=10, embedding_dim=4)
+        for attr in ("input_var", "output_var"):
+            mark_explicit(layer, attr)
+        nn.add_layer(layer)
+        drop = DropoutLayer(name="d1", rate=0.5)
+        for attr in ("dimension", "input_var", "output_var"):
+            mark_explicit(drop, attr)
+        nn.add_layer(drop)
+        op = TensorOp(name="r1", tns_type="repeat", repeat_dim=[2],
+                      layers_of_tensors=["e1"])
+        for attr in ("input_var", "output_var"):
+            mark_explicit(op, attr)
+        nn.add_tensor_op(op)
+
+        path = str(tmp_path / f"nn_{nn.name}.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "input_var=''" not in code
+        assert "output_var=''" not in code
+        assert "dimension=''" not in code
+
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert {type(m).__name__ for m in out.modules} == {
+            "EmbeddingLayer", "DropoutLayer", "TensorOp"}

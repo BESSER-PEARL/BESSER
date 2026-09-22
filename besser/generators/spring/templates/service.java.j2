@@ -1,0 +1,20 @@
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+@Service
+public class {{ cls }}Service implements I{{ cls }}Service {
+
+    @Autowired
+    private I{{ cls }}Repository _{{ instance }}Repository;
+
+{% for method in methods %}
+    @Override
+    public {{ method.return_value }} {{ method.name }}({{ method.parameter }}) {
+        {{ "return " if method.return_value != "void" else "" }}_{{ instance }}Repository.{{ method.name }}({{ method.parameter_names }});
+    }
+
+{% endfor %}
+}

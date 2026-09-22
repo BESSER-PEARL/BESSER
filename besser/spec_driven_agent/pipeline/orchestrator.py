@@ -90,6 +90,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     build_endpoint_manifest,
 )
 from besser.spec_driven_agent.planning.stack_metadata import (
+    effective_rivals,
     detect_stack,
     pre_generate_metadata,
     stack_label,
@@ -874,7 +875,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
         else:
             self._drop_redundant_generator_tools()
-            self.executor.set_scaffold_family(self._scaffold_family())
+            self.executor.set_scaffold_family(
+                self._scaffold_family(), self._instructions)
 
         self._create_snapshot()
         self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
@@ -984,7 +986,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 result = {"status": "failed", "error": "Generator returned invalid response"}
             if result.get("status") == "ok":
                 self._generator_used = generator_name
-                self.executor.set_scaffold_family(self._scaffold_family())
+                self.executor.set_scaffold_family(
+                    self._scaffold_family(), self._instructions)
                 self.tool_calls_log.append({
                     "turn": 0, "tool": generator_name,
                     "input": {}, "success": True,
@@ -3174,8 +3177,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Phase 3 enforces it.
         """
         family = self._scaffold_family()
-        rivals = {"fastapi": ("flask", "django"),
-                  "django": ("flask", "fastapi")}.get(family or "")
+        # A rival the USER asked for is the request, not a switch.
+        rivals = effective_rivals(family, self._instructions)
         if not rivals:
             return []
         offenders: list[str] = []

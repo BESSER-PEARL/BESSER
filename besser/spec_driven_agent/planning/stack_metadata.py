@@ -540,3 +540,37 @@ def idiom_guidance_section(instructions: str) -> str:
         "An experienced developer on this stack would expect:\n\n"
         f"{bullets}\n\n"
     )
+
+
+# Python web frameworks that cannot coexist in one app, keyed by the family the
+# Phase 1 scaffold committed to.
+_PYTHON_WEB_RIVALS: dict[str, tuple[str, ...]] = {
+    "fastapi": ("flask", "django"),
+    "django": ("flask", "fastapi"),
+}
+
+
+def effective_rivals(family: str | None, instructions: str) -> tuple[str, ...]:
+    r"""Rival frameworks that would be a SWITCH, excluding any the user asked for.
+
+    The framework-switch guard exists for a real incident (2026-09-02: a free
+    model rewrote a FastAPI scaffold into an unbootable Flask hybrid). But it
+    compared generated imports against the scaffold alone, so it could not tell
+    that rewrite from a user who wrote "build a Flask REST API" -- got a FastAPI
+    scaffold anyway, because the generator selector maps "backend"/"API"/"REST"
+    to FastAPI -- and was then blocked for obeying them.
+
+    The gap sanitizer already draws this line (``r not in low_instr``); the two
+    enforcing sites, Phase 3 validation and the per-write lint, did not. This is
+    that rule, in one place, so they cannot drift apart again.
+
+    Naming the rival is enough: "do not use Flask" also suppresses the blocker,
+    which is the safe direction. Nothing here fixes the selector picking FastAPI
+    for a Flask request -- it stops the user being told their own request is a
+    hard-constraint violation.
+    """
+    rivals = _PYTHON_WEB_RIVALS.get(family or "")
+    if not rivals:
+        return ()
+    asked = (instructions or "").lower()
+    return tuple(r for r in rivals if r not in asked)

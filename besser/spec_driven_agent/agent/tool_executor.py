@@ -548,7 +548,7 @@ class ToolExecutor:
         """Turn on the edit-first guardrail (modify runs only)."""
         self._modify_guard = True
 
-    def set_scaffold_family(self, family: str | None) -> None:
+    def set_scaffold_family(self, family: str | None, instructions: str = "") -> None:
         """Record which framework the Phase-1 scaffold committed to.
 
         Used by the per-write lint: content that imports a RIVAL framework
@@ -557,15 +557,15 @@ class ToolExecutor:
         instead of after the run burned its budget.
         """
         self._scaffold_family = family
-
-    _RIVALS = {
-        "fastapi": ("flask", "django"),
-        "django": ("flask", "fastapi"),
-    }
+        self._scaffold_instructions = instructions
 
     def _framework_switch_warning(self, rel_path: str, content: str) -> str | None:
+        from besser.spec_driven_agent.planning.stack_metadata import effective_rivals
+
         family = getattr(self, "_scaffold_family", None)
-        rivals = self._RIVALS.get(family or "")
+        # Shares one rule with Phase 3 so a user who asked for Flask is not
+        # warned at write time and then blocked at validation for the same file.
+        rivals = effective_rivals(family, getattr(self, "_scaffold_instructions", ""))
         if not rivals or not rel_path.endswith(".py"):
             return None
         for rival in rivals:

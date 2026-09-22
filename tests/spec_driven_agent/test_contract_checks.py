@@ -17,6 +17,8 @@ as the true positives.
 import json
 import types
 
+import pytest
+
 from besser.BUML.metamodel.structural import (
     Class,
     DomainModel,
@@ -349,6 +351,7 @@ def test_framework_switch_is_blocked_phase3(tmp_path):
     shim = types.SimpleNamespace(
         output_dir=str(tmp_path), _generator_used="generate_fastapi_backend",
         _scaffold_family=lambda: "fastapi",
+        _instructions="Build a hotel booking API",   # never named Flask
     )
     issues = LLMOrchestrator._collect_framework_switch_issues(shim)
     assert len(issues) == 1
@@ -362,6 +365,7 @@ def test_no_framework_switch_for_from_scratch_runs(tmp_path):
     shim = types.SimpleNamespace(
         output_dir=str(tmp_path), _generator_used=None,
         _scaffold_family=lambda: None,
+        _instructions="Build something in Flask",
     )
     assert LLMOrchestrator._collect_framework_switch_issues(shim) == []
 
@@ -379,3 +383,92 @@ def test_write_time_framework_switch_warning(tmp_path):
         "content": "from fastapi import APIRouter\n",
     }))
     assert "contract_warnings" not in clean
+
+
+class TestAFrameworkTheUserAskedForIsNotASwitch:
+    """"Build a Flask REST API" must not be a hard-constraint violation.
+
+    The generator selector maps "backend" / "API" / "REST" to FastAPI, and
+    _names_unsupported_stack does not recognise Flask, so a Flask request got a
+    FastAPI scaffold. Both enforcement sites then compared generated imports
+    against the scaffold ALONE: the write-time lint warned the model it was
+    violating a hard constraint, and Phase 3 raised a blocker telling it to
+    "Remove the rewrite and extend the existing fastapi app" -- for doing
+    exactly what the user asked.
+
+    The gap sanitizer already drew this line (``r not in low_instr``). The rule
+    now lives in one place, stack_metadata.effective_rivals, so the two
+    enforcing sites cannot drift from it again.
+
+    This does NOT fix the selector choosing FastAPI for a Flask request; it
+    stops the user being told their own request is a violation.
+    """
+
+    FLASK = "from flask import Flask\napp = Flask(__name__)\n"
+
+    def _shim(self, tmp_path, instructions):
+        return types.SimpleNamespace(
+            output_dir=str(tmp_path), _generator_used="generate_fastapi_backend",
+            _scaffold_family=lambda: "fastapi", _instructions=instructions,
+        )
+
+    @pytest.mark.parametrize("instructions", [
+        "Build me a Flask REST API for a small inventory",
+        "build a flask api",                       # case
+        "Use Flask, not FastAPI, for the backend",
+        "Do not use Flask anywhere",                # suppressing is the safe direction
+    ])
+    def test_phase3_does_not_block_a_requested_framework(self, tmp_path, instructions):
+        """The regression."""
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "app.py").write_text(self.FLASK, encoding="utf-8")
+
+        shim = self._shim(tmp_path, instructions)
+
+        assert LLMOrchestrator._collect_framework_switch_issues(shim) == []
+
+    def test_the_original_incident_is_still_blocked(self, tmp_path):
+        """2026-09-02: a free model rewrote a FastAPI scaffold into an
+        unbootable Flask hybrid. Nothing in that request said Flask."""
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "app.py").write_text(self.FLASK, encoding="utf-8")
+
+        shim = self._shim(tmp_path, "Build a hotel booking system with rooms and bookings")
+        issues = LLMOrchestrator._collect_framework_switch_issues(shim)
+
+        assert len(issues) == 1
+        assert "framework switch" in issues[0]
+        assert _classify_issue(issues[0]).severity == "blocker"
+
+    def test_only_the_named_rival_is_excused(self, tmp_path):
+        """Asking for Flask does not licence a Django rewrite as well."""
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "d.py").write_text(
+            "from django.db import models\n", encoding="utf-8")
+
+        shim = self._shim(tmp_path, "Build me a Flask REST API")
+        issues = LLMOrchestrator._collect_framework_switch_issues(shim)
+
+        assert len(issues) == 1 and "django" in issues[0]
+
+    def test_the_write_time_lint_agrees_with_phase3(self, tmp_path):
+        """The two must not disagree: warned at write, blocked at validation,
+        for the same file, is the worst of both."""
+        executor = ToolExecutor(workspace=str(tmp_path))
+        executor.set_scaffold_family("fastapi", "Build me a Flask REST API")
+
+        result = json.loads(executor.execute("write_file", {
+            "path": "backend/app.py", "content": self.FLASK,
+        }))
+
+        assert "FRAMEWORK SWITCH" not in (result.get("contract_warnings") or "")
+
+    def test_the_write_time_lint_still_catches_an_unrequested_switch(self, tmp_path):
+        executor = ToolExecutor(workspace=str(tmp_path))
+        executor.set_scaffold_family("fastapi", "Build a hotel booking API")
+
+        result = json.loads(executor.execute("write_file", {
+            "path": "backend/app.py", "content": self.FLASK,
+        }))
+
+        assert "FRAMEWORK SWITCH" in result["contract_warnings"]

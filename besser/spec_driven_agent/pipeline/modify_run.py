@@ -91,7 +91,8 @@ class ModifyRunMixin:
         # base + prior LLM edits descend from it) so gap analysis, the
         # scaffold-snapshot inlining, and the saved recipe all line up.
         self._generator_used = self._seed_generator_used
-        self.executor.set_scaffold_family(self._scaffold_family())
+        self.executor.set_scaffold_family(
+            self._scaffold_family(), self._instructions)
 
         # -- Model-sync: derive + apply class-diagram deltas implied by the
         # instruction BEFORE building the inventory, so a genuinely new

@@ -2,13 +2,18 @@
 BUML code for cnn_rnn model.
 https://github.com/ultimate010/crnn/blob/master/mr_cnn_rnn.py
 """
-from besser.BUML.metamodel.nn import NN, Conv1D, PoolingLayer, \
-    GRULayer, LinearLayer, EmbeddingLayer, TensorOp, DropoutLayer
-from besser.generators.nn.pytorch.pytorch_code_generator import (
-    PytorchGenerator
+from besser.BUML.metamodel.nn import (
+    NN,
+    Conv1D,
+    DropoutLayer,
+    EmbeddingLayer,
+    GRULayer,
+    LinearLayer,
+    PoolingLayer,
+    TensorOp,
 )
+from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 from besser.generators.nn.tf.tf_code_generator import TFGenerator
-
 
 nn_model: NN = NN(name="my_model")
 nn_model.add_layer(EmbeddingLayer(name="l1", actv_func=None,

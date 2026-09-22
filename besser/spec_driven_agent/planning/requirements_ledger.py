@@ -122,7 +122,30 @@ _DIGEST_SKIP_DIRS = frozenset({
     "__tests__", "fixtures", "coverage", "verification",
 })
 _ARTIFACT_ROOT_DIRS = frozenset({"reports", "logs"})
-_SOURCE_SUFFIXES = frozenset({".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql"})
+# Every language the agent is expected to produce, because this one set feeds
+# BOTH the digest the judge reads and the citation checker. Limiting it to
+# Python/JS handed the judge an empty digest on any other stack -- "Files
+# shown: 0" -- while still instructing it to "decide from the CODE ONLY", so
+# every requirement came back missing or unverified, and both classify as
+# BLOCKERS. A Rust or .NET run failed every requirement and spent its whole fix
+# budget chasing citations against files this could not open.
+#
+# Derived from the stacks stack_metadata.py targets (_IDIOM_KEYWORDS and
+# _GENERIC_IDIOM_KEYWORDS), so the two lists move together.
+# Widening cannot inflate cost: _DIGEST_MAX_TOTAL_CHARS caps the digest and
+# _digest_priority orders what fills it.
+_SOURCE_SUFFIXES = frozenset({
+    # Python / JS / TS / SQL
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".sql",
+    # JVM (Spring Boot, Java or Kotlin)
+    ".java", ".kt", ".kts",
+    # the from-scratch backends
+    ".rs", ".go", ".cs", ".fs", ".rb", ".php", ".ex", ".exs", ".dart", ".swift",
+    # single-file component frontends
+    ".vue", ".svelte", ".astro",
+    # server-rendered templates that carry behaviour
+    ".razor", ".cshtml", ".erb", ".blade.php",
+})
 _BEHAVIOURAL_KINDS = frozenset({"computed", "transition", "action"})
 _TEST_SOURCE_NAME = re.compile(r"(?:\.(?:test|spec)\.[^.]+$|^test_.+\.py$|_test\.py$)", re.I)
 

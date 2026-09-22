@@ -702,3 +702,76 @@ def test_the_verdicts_are_written_to_the_recipe(simple_model, tmp_path):
     import json
     recipe = json.load(open(tmp_path / ".besser_recipe.json", encoding="utf-8"))
     assert recipe["requirements"][0]["status"] == "missing"
+
+
+class TestTheDigestIsNotPythonOnly:
+    """The judge must be handed code on every stack the agent targets.
+
+    _SOURCE_SUFFIXES feeds BOTH the digest the judge reads and the citation
+    checker. It listed only Python/JS/TS/SQL, so a Rust, Kotlin, Go or .NET run
+    got "Files shown: 0" while the judge prompt still said to decide from the
+    CODE ONLY. Every requirement came back missing or unverified, and
+    validation/issues.py classifies both as BLOCKERS -- so those runs failed
+    every requirement and spent the whole fix budget chasing citations against
+    files the checker could not open.
+
+    These are not hypothetical stacks: stack_metadata.py ships idiom blocks for
+    Spring Boot and Rust and a generic block for .NET, Go, PHP and Ruby.
+    """
+
+    STACKS = {
+        "rust":   ("src/main.rs", "async fn create_room() -> Json<Room> { todo!() }\n"),
+        "kotlin": ("src/main/kotlin/App.kt", '@PostMapping("/room") fun create(): Room = TODO()\n'),
+        "java":   ("src/main/java/App.java", "@PostMapping void create() {}\n"),
+        "go":     ("main.go", "func createRoom(w http.ResponseWriter) {}\n"),
+        "csharp": ("Controllers/RoomController.cs", "[HttpPost] public Room Create() => null;\n"),
+        "php":    ("src/RoomController.php", "<?php function createRoom() {} \n"),
+        "ruby":   ("app/controllers/rooms_controller.rb", "def create; end\n"),
+        "vue":    ("src/RoomForm.vue", "<script setup>const save = () => {}</script>\n"),
+    }
+
+    @pytest.mark.parametrize("stack", sorted(STACKS))
+    def test_the_judge_is_given_source_on_every_targeted_stack(self, tmp_path, stack):
+        """The regression: each of these produced 'Files shown: 0'."""
+        rel, body = self.STACKS[stack]
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body * 15, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert "Files shown: 0;" not in digest, f"{stack}: the judge got no code"
+        assert rel.rsplit("/", 1)[-1] in digest
+
+    def test_python_is_unchanged(self, tmp_path):
+        """Widening must not disturb the stack that already worked."""
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "main_api.py").write_text(
+            "from fastapi import FastAPI\napp = FastAPI()\n" * 15, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert "main_api.py" in digest
+        assert "Files shown: 0;" not in digest
+
+    def test_non_source_is_still_excluded(self, tmp_path):
+        """The set is source the judge reasons about, not every file present.
+
+        Lockfiles, data and build output would crowd the budget out."""
+        for rel in ("package-lock.json", "data.csv", "notes.md", "logo.png",
+                    "requirements.txt", "Cargo.lock"):
+            (tmp_path / rel).write_text("x" * 500, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert "Files shown: 0;" in digest, digest
+
+    def test_the_budget_still_bounds_a_wide_tree(self, tmp_path):
+        """Cost guard: more eligible extensions must not mean a bigger digest."""
+        for i in range(60):
+            (tmp_path / f"m{i}.rs").write_text("fn f() {}\n" * 4000, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert len(digest) <= ledger._DIGEST_MAX_TOTAL_CHARS, len(digest)
+        assert "truncated" in digest or "omitted" in digest

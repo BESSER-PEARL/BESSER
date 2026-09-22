@@ -53,7 +53,11 @@ from besser.spec_driven_agent.providers.llm_client import (
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
-from besser.spec_driven_agent.validation.issues import is_completion_issue, required_check_unverified
+from besser.spec_driven_agent.validation.issues import (
+    is_completion_issue,
+    required_check_unverified,
+    unresolved_defects,
+)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
@@ -1042,7 +1046,7 @@ class SmartGenerationRunner:
         """The model this run asks for, honouring a pilot session's default.
 
         A pilot arrives through ``?pilot=<label>`` and should start on
-        ``BESSER_FREE_LLM_PILOT_MODEL``. The client cannot be relied on to send
+        ``BESSER_PILOT_LLM_MODEL``. The client cannot be relied on to send
         it: the free tier is the no-popup default, so a pilot who never opens
         the model dialog stores nothing and the request carries no
         ``llm_model``. Measured 2026-09-17: 17 of 17 pilot runs went out on the
@@ -1983,8 +1987,19 @@ class SmartGenerationRunner:
             # was cut short (a provider rate-limit, the turn cap, a late
             # cancellation). Without this the run would be reported as an
             # unqualified success even though requested changes never ran.
-            exited_cleanly = bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
             stop_reason = getattr(orchestrator, "_phase2_stop_reason", "completed")
+            # ``validation_required`` is the NORMAL handoff into Phase 3, not a
+            # failure: Phase 2 stops because validation is due, Phase 3 runs,
+            # and the pipeline itself treats it as a clean exit in all three
+            # places it branches on this (orchestrator 723 and 884,
+            # modify_run 191). Only this runner read ``_phase2_exited_cleanly``
+            # alone, so the healthy path reported "Generated — incomplete" and
+            # "The customization loop did not finish cleanly" over a run whose
+            # validation had found nothing missing.
+            exited_cleanly = (
+                bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
+                or stop_reason == "validation_required"
+            )
 
             # Blockers include unresolved implementation and verification
             # issues, not only compile/startup failures. An app may run while
@@ -2006,9 +2021,21 @@ class SmartGenerationRunner:
             # True) — we surface its honest, target-specific message instead
             # of the generic incomplete wording. None on every other run.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
+            # "Incomplete" means the delivered output does not work -- not that
+            # we could not check something. The unverified family classifies as
+            # blocker severity, so a run reporting "Nothing we checked was found
+            # missing", 3 verified and 4 could-not-verify was still headlined
+            # "Generated - incomplete" with nothing wrong with it. The unknowns
+            # keep their place in the ledger and in blockerCount, which the card
+            # already renders as its own bucket; they no longer set the verdict.
+            # Assembly failures are built with required_check_unverified(), so
+            # they wear the "validation unverified:" prefix -- but a diagram that
+            # failed to convert is a KNOWN loss, not an unknown: part of the
+            # user's project never reached the generator. Add them back.
+            _real_defects = unresolved_defects(_unfixed_blockers) + assembly_warnings
             incomplete = (
                 (not exited_cleanly)
-                or bool(_unfixed_blockers)
+                or bool(_real_defects)
                 or bool(_late_err)
                 or bool(_cap_breach)
             )
@@ -2051,6 +2078,18 @@ class SmartGenerationRunner:
                     ),
                     "max_turns": (
                         "The customization loop reached its step limit before "
+                        "finishing every requested change."
+                    ),
+                    # Neither of these had text, so both fell through to the
+                    # generic "did not finish cleanly" -- which tells the user
+                    # nothing and reads as if something broke.
+                    "stuck_edit_loop": (
+                        "The customization loop stopped because repeated edits "
+                        "to the same file were not landing, so it could not "
+                        "finish every requested change."
+                    ),
+                    "validation_required": (
+                        "The customization loop handed off to validation before "
                         "finishing every requested change."
                     ),
                     "cancelled": (

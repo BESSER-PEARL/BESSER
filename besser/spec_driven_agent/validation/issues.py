@@ -49,6 +49,38 @@ def _hard_blockers(issues: list) -> list:
     ))]
 
 
+# Findings that mean "we could not check", never "the app is broken". Each is
+# an UNKNOWN: the run did not establish the behaviour either way. They belong in
+# the ledger's could-not-verify bucket, which the UI already renders separately.
+_UNKNOWN_PREFIXES = (
+    "requirement unverified:", "requirement partial:", "task unverified:",
+    "runtime unverified:", "create unverified:", "action unverified:",
+    "validation unverified:", "verification setup:", "api scenario:",
+    "requirement:",
+)
+
+
+def unresolved_defects(issues: list) -> list:
+    """Completion issues that describe a DEFECT, not an unknown.
+
+    ``incomplete`` on the run card used to be any completion issue, and the
+    whole unverified family classifies as ``blocker`` severity -- so a run
+    reporting "Nothing we checked was found missing from the delivered code",
+    3 verified and 4 could-not-verify was still headlined
+    "Generated - incomplete". Nothing was wrong with it; we had simply not
+    been able to check four things.
+
+    "Incomplete" is reserved for output that does not work: a tree that will
+    not parse, an app that cannot boot or create a record, a requirement the
+    code demonstrably does not implement. An unknown keeps its place in the
+    ledger and in ``blockerCount``; it no longer sets the headline.
+    """
+    return [
+        i for i in issues
+        if not str(getattr(i, "message", i)).startswith(_UNKNOWN_PREFIXES)
+    ]
+
+
 def _check_did_not_run(tool: str, reason: str) -> str:
     """A validation note saying a check was SKIPPED, not that it passed.
 

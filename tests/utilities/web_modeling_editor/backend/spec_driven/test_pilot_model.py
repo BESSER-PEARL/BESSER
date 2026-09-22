@@ -1,7 +1,7 @@
 """A facilitated pilot session may default to a stronger keyless model.
 
 Pilots arrive through `?pilot=<label>` and are a small, known population we
-deliberately spend more on. `BESSER_FREE_LLM_PILOT_MODEL` lets the server point
+deliberately spend more on. `BESSER_PILOT_LLM_MODEL` lets the server point
 them at a better model without changing what anonymous visitors get.
 
 Server-side on purpose: which model is "the good one" changed three times in a
@@ -23,7 +23,7 @@ def _free_tier(monkeypatch):
 
 
 def test_unset_means_pilots_get_the_ordinary_default(monkeypatch):
-    monkeypatch.delenv("BESSER_FREE_LLM_PILOT_MODEL", raising=False)
+    monkeypatch.delenv("BESSER_PILOT_LLM_MODEL", raising=False)
     assert free_pilot_model() == ""
 
 
@@ -33,7 +33,7 @@ def test_unset_means_pilots_get_the_ordinary_default(monkeypatch):
     "qwen3-coder:30b",              # the fallback
 ])
 def test_any_offered_model_may_be_the_pilot_default(model, monkeypatch):
-    monkeypatch.setenv("BESSER_FREE_LLM_PILOT_MODEL", model)
+    monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", model)
     assert free_pilot_model() == model
 
 
@@ -44,17 +44,17 @@ def test_a_model_the_server_does_not_offer_is_refused(monkeypatch):
     pinned back to the default server-side, so the pilot would silently get the
     public model while the UI showed something else.
     """
-    monkeypatch.setenv("BESSER_FREE_LLM_PILOT_MODEL", "claude-sonnet-4-6")
+    monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", "claude-sonnet-4-6")
     assert free_pilot_model() == ""
 
 
 def test_whitespace_is_not_a_model(monkeypatch):
-    monkeypatch.setenv("BESSER_FREE_LLM_PILOT_MODEL", "   ")
+    monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", "   ")
     assert free_pilot_model() == ""
 
 
 def test_the_config_endpoint_advertises_it(monkeypatch):
-    monkeypatch.setenv("BESSER_FREE_LLM_PILOT_MODEL", "gpt-5.6-luna")
+    monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", "gpt-5.6-luna")
     from tests.utilities.web_modeling_editor.backend.spec_driven.test_concurrency_and_config import (
         _get_config,
     )
@@ -66,7 +66,7 @@ def test_the_config_endpoint_advertises_it(monkeypatch):
 
 
 def test_the_config_reports_null_when_unset(monkeypatch):
-    monkeypatch.delenv("BESSER_FREE_LLM_PILOT_MODEL", raising=False)
+    monkeypatch.delenv("BESSER_PILOT_LLM_MODEL", raising=False)
     from tests.utilities.web_modeling_editor.backend.spec_driven.test_concurrency_and_config import (
         _get_config,
     )

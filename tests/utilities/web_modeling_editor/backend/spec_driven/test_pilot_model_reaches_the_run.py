@@ -1,6 +1,6 @@
 """A pilot session's model must reach the RUN, not just the dropdown.
 
-`BESSER_FREE_LLM_PILOT_MODEL` was configured for the whole pilot and never once
+`BESSER_PILOT_LLM_MODEL` was configured for the whole pilot and never once
 took effect: measured 2026-09-17 on the live telemetry, **17 of 17 pilot runs
 across 9 participants** went out on the public default
 (`meituan/LongCat-2.0:free`) rather than the configured `gpt-5.6-luna`.
@@ -40,7 +40,7 @@ def _free_tier(monkeypatch):
     monkeypatch.setenv("BESSER_FREE_LLM_ALT_MODELS", f"poolside/laguna-s-2.1-free,{PILOT_MODEL}")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_BASE_URL", "https://ollama.example/v1")
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3-coder:30b")
-    monkeypatch.setenv("BESSER_FREE_LLM_PILOT_MODEL", PILOT_MODEL)
+    monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", PILOT_MODEL)
 
 
 def _requested(**overrides) -> str | None:
@@ -87,14 +87,14 @@ def test_an_explicit_choice_beats_the_pilot_default(chosen):
 # ======================================================================
 
 def test_an_unconfigured_pilot_model_changes_nothing(monkeypatch):
-    monkeypatch.delenv("BESSER_FREE_LLM_PILOT_MODEL", raising=False)
+    monkeypatch.delenv("BESSER_PILOT_LLM_MODEL", raising=False)
     assert _requested(telemetry_participant="P11") is None
 
 
 def test_a_pilot_model_the_server_does_not_offer_is_ignored(monkeypatch):
     """`free_pilot_model()` refuses an id outside the allowlist, and the run
     must fall back to the default rather than pin to something unserved."""
-    monkeypatch.setenv("BESSER_FREE_LLM_PILOT_MODEL", "claude-sonnet-4-6")
+    monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", "claude-sonnet-4-6")
     assert _requested(telemetry_participant="P11") is None
 
 

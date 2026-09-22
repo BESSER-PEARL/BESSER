@@ -2,8 +2,15 @@
 
 Before this, `incomplete` keyed ONLY on Phase 2 emitting `end_turn`, so an app
 that parsed but had an unfixed blocker-class issue shipped as a green success.
-Now unresolved implementation or verification issues mark the run incomplete,
-without assuming every blocker means the application cannot start.
+Now unresolved implementation issues mark the run incomplete, without assuming
+every blocker means the application cannot start.
+
+Narrowed 2026-09-22 (owner decision): a finding that says "we could not CHECK"
+no longer sets the verdict. The unverified family carries blocker severity, so a
+run reporting "Nothing we checked was found missing from the delivered code",
+3 verified and 4 could-not-verify was still headlined "Generated - incomplete".
+"Incomplete" is now reserved for output that does not work. Unknowns keep their
+place in `blockerCount` and in the ledger's could-not-verify bucket.
 """
 from __future__ import annotations
 
@@ -85,10 +92,15 @@ def test_no_blockers_stays_complete(monkeypatch, required_check):
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
         done = _done_event(SmartGenerationRunner(_build_request()))
-        assert done["incomplete"] is required_check
+        # A check that could not RUN is an unknown, not a defect, and no
+        # longer sets the verdict. Owner decision 2026-09-22: a run reporting
+        # "Nothing we checked was found missing", 3 verified and 4
+        # could-not-verify was headlined "Generated - incomplete" with nothing
+        # wrong with it. The unknown still counts in blockerCount and still
+        # shows in the ledger's could-not-verify bucket -- it just does not
+        # claim the app is broken.
+        assert done["incomplete"] is False
         assert done["blockerCount"] == int(required_check)
-        if required_check:
-            assert "not verified complete" in done["incompleteReason"]
     finally:
         _cleanup()
 

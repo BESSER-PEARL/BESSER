@@ -2046,7 +2046,7 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
 def free_pilot_model() -> str:
     """The keyless model a PILOT session should default to, or ``""``.
 
-    Read from ``BESSER_FREE_LLM_PILOT_MODEL``. Pilot participants arrive through
+    Read from ``BESSER_PILOT_LLM_MODEL``. Pilot participants arrive through
     ``?pilot=<label>`` and are a small, known population, so they can start on a
     stronger model without changing what everyone else gets. Server-side on
     purpose: which model is "the good one" has changed several times, and
@@ -2056,7 +2056,7 @@ def free_pilot_model() -> str:
     the configured id is not one the server actually offers -- advertising a
     default we would refuse to honour is worse than having none.
     """
-    model = os.environ.get("BESSER_FREE_LLM_PILOT_MODEL", "").strip()
+    model = os.environ.get("BESSER_PILOT_LLM_MODEL", "").strip()
     if not model:
         return ""
     offered = {free_tier_model(), free_fallback_model(), *free_alt_models()}

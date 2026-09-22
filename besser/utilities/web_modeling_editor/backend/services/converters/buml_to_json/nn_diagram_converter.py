@@ -6,13 +6,14 @@ by the web editor for NNDiagrams.
 """
 
 import ast
+import json
 import threading
 import uuid
 from typing import Any
 
 import besser.BUML.metamodel.nn as nn_module
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
-from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+from besser.utilities.buml_code_builder.nn_model_builder import is_attr_explicitly_set
 
 # Stable namespace for uuid5-based element IDs. Using a fixed UUID here means
 # the same BUML NN model, converted twice, produces byte-identical JSON — which
@@ -64,12 +65,15 @@ _MODULE_TYPE_MAP = {
 
 
 def _is_attr_set(obj, attr_name: str) -> bool:
-    """True when an attribute was explicitly toggled in the editor.
+    """True when an attribute has to be emitted for the model to round-trip.
 
-    Delegates to the sidecar bookkeeping so the metamodel objects don't carry
-    editor-specific state.
+    Shares the code builder's rule so BUML->JSON and BUML->Python agree:
+    the editor's explicit-set sidecar OR a value that diverges from the
+    metamodel's declared default. The second half is what keeps hand-written
+    BUML models (and models rebuilt by :func:`_parse_nn_buml_ast`, which never
+    populate the sidecar) from silently losing their attributes.
     """
-    return is_explicit(obj, attr_name)
+    return is_attr_explicitly_set(obj, attr_name)
 
 
 def _attr_type_for(field: str, suffix: str) -> str:
@@ -86,11 +90,21 @@ def _fmt_value(value: Any) -> str:
     and downstream consumers expect the bare form. The one exception is items
     containing ``,`` or ``]``, which would round-trip incorrectly — those are
     rejected so we fail fast instead of silently truncating.
+
+    Dicts (and lists containing them — ``TensorOp.subscript_indices`` is a
+    ``list[dict]``) are emitted as real JSON via :func:`json.dumps`. ``str()``
+    would produce a Python repr with single quotes, which the frontend's
+    ``JSON.parse`` rejects outright.
     """
     if value is None:
         return ''
     if isinstance(value, bool):
         return 'true' if value else 'false'
+    if isinstance(value, dict) or (
+        isinstance(value, (list, tuple))
+        and any(isinstance(item, dict) for item in value)
+    ):
+        return json.dumps(value)
     if isinstance(value, (list, tuple)):
         # Tuples reach here when the metamodel setter accepted a tuple for
         # a list-typed field (e.g. a hand-authored kernel_dim=(3, 3)). Treat
@@ -365,6 +379,12 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
             fields.append(('affine', module.affine, 'bool', False))
         if _is_attr_set(module, 'track_running_stats'):
             fields.append(('track_running_stats', module.track_running_stats, 'bool', False))
+        # BatchNorm inherits permute_in / permute_out as real constructor
+        # parameters (unlike LayerNorm, which hard-codes them to False).
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
         _append_base_layer_fields(fields, module)
 
     elif cls == 'TensorOp':
@@ -418,6 +438,8 @@ def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
         elif tns_type in ('shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize'):
             if module.reduce_dim is not None:
                 fields.append(('reduce_dim', module.reduce_dim, 'int', False))
+            if module.shape_dim is not None:
+                fields.append(('shape_dim', module.shape_dim, 'int', False))
             if tns_type == 'max' and module.reduce_keepdims is not None:
                 fields.append(('reduce_keepdims', module.reduce_keepdims, 'bool', False))
             if module.layers_of_tensors is not None:
@@ -832,7 +854,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
         if isinstance(node, (ast.List, ast.Tuple)):
             for e in node.elts:
                 if isinstance(e, ast.Starred):
-                    raise TypeError(
+                    raise ValueError(
                         "Iterable unpacking (*expr) is not supported "
                         "in NN BUML literals."
                     )
@@ -850,7 +872,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
         if isinstance(node, ast.Set):
             for e in node.elts:
                 if isinstance(e, ast.Starred):
-                    raise TypeError(
+                    raise ValueError(
                         "Iterable unpacking (*expr) is not supported "
                         "in NN BUML literals."
                     )
@@ -860,7 +882,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
             # class — reject every attribute-based call (``foo.bar(…)``)
             # except in the statement-level ``obj.add_*`` dispatcher below.
             if not isinstance(node.func, ast.Name):
-                raise TypeError(
+                raise ValueError(
                     "Only calls to whitelisted NN metamodel classes are "
                     "allowed in expressions; got "
                     f"{ast.dump(node.func, annotate_fields=False)!r}"
@@ -876,7 +898,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
             # ``Conv2D(**malicious_dict)`` produced a cryptic metamodel error.
             for a in node.args:
                 if isinstance(a, ast.Starred):
-                    raise TypeError(
+                    raise ValueError(
                         "Positional *args unpacking is not supported in NN BUML; "
                         "pass arguments explicitly."
                     )
@@ -903,7 +925,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
             # effects).
             for target in stmt.targets:
                 if not isinstance(target, ast.Name):
-                    raise TypeError(
+                    raise ValueError(
                         "Only simple-name assignment targets are allowed "
                         "in NN BUML."
                     )
@@ -928,7 +950,7 @@ def _parse_nn_buml_ast(content: str, nn_module):
                     )
                 for a in stmt.value.args:
                     if isinstance(a, ast.Starred):
-                        raise TypeError(
+                        raise ValueError(
                             "Positional *args unpacking is not supported in "
                             "NN BUML add_* builder calls."
                         )

@@ -7,9 +7,11 @@ to BESSER's B-UML NN metamodel (NN, Layer, TensorOp, Configuration).
 
 import ast
 import bisect
+import json
 
 from besser.BUML.metamodel.nn import (
     NN,
+    ALLOWED_TENSOR_OP_TYPES,
     BatchNormLayer,
     Configuration,
     Conv1D,
@@ -47,14 +49,8 @@ _ALLOWED_INPUT_FORMATS = ('csv', 'images')
 _ALLOWED_OPTIMIZERS = ('sgd', 'adam', 'adamW', 'adagrad')
 _ALLOWED_LOSS_FUNCTIONS = ('crossentropy', 'binary_crossentropy', 'mse')
 _ALLOWED_METRICS = ('accuracy', 'precision', 'recall', 'f1-score', 'mae')
-_ALLOWED_TNS_TYPES = (
-    'reshape', 'concatenate', 'multiply', 'matmultiply', 'permute',
-    'transpose', 'mean', 'max', 'squeeze', 'unsqueeze', 'binop_add',
-    'binop_subtract', 'binop_multiply', 'binop_divide',
-    'binop_floor_divide', 'subscript', 'shape_dim', 'normalize',
-    'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like',
-    'split', 'identity',
-)
+# ``tns_type`` reuses the metamodel's own whitelist (imported above) rather
+# than a local copy, so the two can never drift apart.
 _ALLOWED_PADDING_TYPES = ('same', 'valid')
 _CONV_EXPECTED_DIMS = {'Conv1D': 1, 'Conv2D': 2, 'Conv3D': 3}
 
@@ -180,6 +176,11 @@ _ATTR_KEY_TO_NAME = {
     'RateAttribute': 'rate',
     'NormalizedShapeAttribute': 'normalized_shape',
     'NumFeaturesAttribute': 'num_features',
+    'DilationAttribute': 'dilation',
+    'GroupsAttribute': 'groups',
+    'EpsAttribute': 'eps',
+    'AffineAttribute': 'affine',
+    'TrackRunningStatsAttribute': 'track_running_stats',
     'TnsTypeAttribute': 'tns_type',
     'ConcatenateDimAttribute': 'concatenate_dim',
     'LayersOfTensorsAttribute': 'layers_of_tensors',
@@ -261,6 +262,82 @@ def get_element_attribute(element: dict, attr_key: str, elements: dict, default=
                 return attr_element.get('value', default)
 
     return default
+
+
+def _coerce_list_item(item, prefer_int: bool = False):
+    """Coerce one item of a list attribute that legitimately mixes types.
+
+    Numeric-looking items become numbers (``int`` when ``prefer_int``, else
+    ``float``); everything else is kept as a bare string with any surrounding
+    quotes stripped. Booleans pass through untouched.
+    """
+    if isinstance(item, bool):
+        return item
+    if isinstance(item, (int, float)):
+        return int(item) if prefer_int else item
+    text = str(item).strip().strip("'\"")
+    if not text:
+        return text
+    try:
+        return int(text) if prefer_int else float(text)
+    except ValueError:
+        return text
+
+
+def parse_mixed_list(value, prefer_int: bool = False, default=None):
+    """Parse a list attribute whose items may be numbers *or* names.
+
+    Used for the metamodel fields typed ``list[str | float | int]``
+    (``layers_of_tensors``) and ``list[int | str]`` (``repeat_dim``), where
+    :func:`parse_list_of_ints` throws the whole value away as soon as it hits
+    a non-integer item — the frontend legitimately emits ``[1, 'op_3', 1]``
+    for ``repeat_dim``.
+
+    Accepts a real list/tuple, a scalar number, or the editor's string forms
+    ``"[a, b]"`` / ``"a, b"``. Anything else yields ``default``.
+    """
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, (list, tuple)):
+        return [_coerce_list_item(item, prefer_int) for item in value]
+    if isinstance(value, (int, float)):
+        return [_coerce_list_item(value, prefer_int)]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        if text.startswith('[') and text.endswith(']'):
+            text = text[1:-1]
+        return [_coerce_list_item(item, prefer_int)
+                for item in text.split(',') if item.strip()]
+    return default
+
+
+def parse_structured_literal(value, owner: str, field: str, expected: str):
+    """Parse a nested (dict / list-of-list) attribute value.
+
+    JSON first — that is what the BUML->JSON converter emits — then
+    ``ast.literal_eval`` for legacy payloads carrying a Python repr.
+
+    Raises a user-facing ``ValueError`` naming the element and the field when
+    neither parses, matching how the surrounding function already reports a
+    malformed ``reshape_dim`` / ``permute_dim`` / ``transpose_dim``. Swallowing
+    the error here used to turn a typo into a silently dropped attribute.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, TypeError, SyntaxError) as exc:
+        raise ValueError(
+            f"TensorOp '{owner}' has a malformed '{field}' attribute "
+            f"{value!r}: expected {expected}."
+        ) from exc
 
 
 def parse_tuple_or_int(value, default=None):
@@ -1656,6 +1733,18 @@ def create_batch_norm_layer(element, elements):
         layer.track_running_stats = parse_bool(track_running_stats)
         mark_explicit(layer, 'track_running_stats')
 
+    # BatchNorm takes permute_in / permute_out as real constructor parameters
+    # (LayerNorm hard-codes them to False), so both directions must carry them.
+    permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
+    if permute_in is not None and str(permute_in).strip() != '':
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
+
+    permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
+    if permute_out is not None and str(permute_out).strip() != '':
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
+
     is_layer_call = get_element_attribute(element, 'IsLayerCallAttribute', elements)
     if is_layer_call is not None:
         layer.is_layer_call = parse_bool(is_layer_call)
@@ -1683,10 +1772,10 @@ def create_tensor_op(element, elements):
     tns_type = get_element_attribute(element, 'TnsTypeAttribute', elements)
     if not tns_type:
         raise ValueError(f"TensorOp '{name}' missing mandatory 'tns_type' attribute")
-    if tns_type not in _ALLOWED_TNS_TYPES:
+    if tns_type not in ALLOWED_TENSOR_OP_TYPES:
         raise ValueError(
             f"TensorOp '{name}' has invalid tns_type '{tns_type}'. "
-            f"Allowed values: {', '.join(_ALLOWED_TNS_TYPES)}."
+            f"Allowed values: {', '.join(ALLOWED_TENSOR_OP_TYPES)}."
         )
 
     # Parse all attributes first before creating TensorOp
@@ -1698,27 +1787,10 @@ def create_tensor_op(element, elements):
     layers_of_tensors_raw = get_element_attribute(element, 'LayersOfTensorsAttribute', elements)
     layers_of_tensors = None
     if layers_of_tensors_raw:
-        # The metamodel declares this as List[Union[str, float]]. Preserve
+        # The metamodel declares this as list[str | float | int]. Preserve
         # numeric items as floats so round-trip doesn't quietly rewrite
         # e.g. [0.5, 'x'] to ['0.5', 'x'].
-        def _coerce(item):
-            if isinstance(item, (int, float)) and not isinstance(item, bool):
-                return item
-            s = str(item).strip().strip("'\"")
-            if not s:
-                return s
-            try:
-                return float(s)
-            except ValueError:
-                return s
-        if isinstance(layers_of_tensors_raw, str):
-            # Handle "['layer1', 'layer2']" or "[layer1, layer2]" or "layer1, layer2" format
-            val = layers_of_tensors_raw.strip()
-            if val.startswith('[') and val.endswith(']'):
-                val = val[1:-1]
-            layers_of_tensors = [_coerce(layer) for layer in val.split(',') if layer.strip()]
-        elif isinstance(layers_of_tensors_raw, list):
-            layers_of_tensors = [_coerce(layer) for layer in layers_of_tensors_raw]
+        layers_of_tensors = parse_mixed_list(layers_of_tensors_raw)
 
     reshape_dim = get_element_attribute(element, 'ReshapeDimAttribute', elements)
     if reshape_dim is not None:
@@ -1758,18 +1830,19 @@ def create_tensor_op(element, elements):
     subscript_indices_raw = get_element_attribute(element, 'SubscriptIndicesAttribute', elements)
     subscript_indices = None
     if subscript_indices_raw:
-        try:
-            import ast
-            if isinstance(subscript_indices_raw, str):
-                subscript_indices = ast.literal_eval(subscript_indices_raw)
-            else:
-                subscript_indices = subscript_indices_raw
-        except (ValueError, TypeError):
-            subscript_indices = None
+        subscript_indices = parse_structured_literal(
+            subscript_indices_raw, name, 'subscript_indices',
+            'a list of index descriptors like '
+            '[{"type": "index", "value": 0}]',
+        )
 
     repeat_dim = get_element_attribute(element, 'RepeatDimAttribute', elements)
     if repeat_dim is not None:
-        repeat_dim = parse_list_of_ints(repeat_dim)
+        # Declared list[int | str]: the frontend legitimately emits
+        # [1, 'op_3', 1] to repeat along a dimension taken from another op.
+        # parse_list_of_ints() returns None on the first non-int item, which
+        # dropped the user's whole value.
+        repeat_dim = parse_mixed_list(repeat_dim, prefer_int=True)
 
     interpolate_size_raw = get_element_attribute(element, 'InterpolateSizeAttribute', elements)
     interpolate_size = None
@@ -1787,14 +1860,10 @@ def create_tensor_op(element, elements):
     pad_amount_raw = get_element_attribute(element, 'PadAmountAttribute', elements)
     pad_amount = None
     if pad_amount_raw:
-        try:
-            import ast
-            if isinstance(pad_amount_raw, str):
-                pad_amount = ast.literal_eval(pad_amount_raw)
-            else:
-                pad_amount = pad_amount_raw
-        except (ValueError, TypeError):
-            pad_amount = None
+        pad_amount = parse_structured_literal(
+            pad_amount_raw, name, 'pad_amount',
+            'a list of [before, after] pairs like [[1, 1], [2, 2]]',
+        )
 
     pad_mode = get_element_attribute(element, 'PadModeAttribute', elements)
 
@@ -1917,6 +1986,8 @@ def create_tensor_op(element, elements):
     elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
         if reduce_dim is not None:
             tensor_op_params['reduce_dim'] = reduce_dim
+        if shape_dim is not None:
+            tensor_op_params['shape_dim'] = shape_dim
         if tns_type == 'max' and reduce_keepdims is not None:
             tensor_op_params['reduce_keepdims'] = reduce_keepdims
         if layers_of_tensors is not None:

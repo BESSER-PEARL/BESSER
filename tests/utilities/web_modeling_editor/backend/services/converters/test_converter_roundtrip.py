@@ -11,6 +11,8 @@ Layout positions (bounds, path) are intentionally NOT compared because the
 BUML-to-JSON converter re-computes layout from scratch.
 """
 
+import json
+
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
@@ -1554,7 +1556,6 @@ class TestNNDiagramRoundtrip:
         Regression guard: if anyone reintroduces uuid.uuid4() for IDs, the two
         serializations will diverge and this test fails.
         """
-        import json
         nn = process_nn_diagram(self._minimal_nn_json())
         first = json.dumps(nn_model_to_json(nn), sort_keys=True)
         second = json.dumps(nn_model_to_json(nn), sort_keys=True)
@@ -2282,22 +2283,149 @@ class TestNNDiagramRoundtrip:
     def test_tensorop_subscript_roundtrip(self):
         # subscript_indices format: list of dicts with type='index' or 'slice'
         # Represents [0, :, 1:3]
-        subscript_val = str([
+        indices = [
             {"type": "index", "value": 0},
             {"type": "slice", "start": None, "stop": None, "step": None},
-            {"type": "slice", "start": 1, "stop": 3, "step": None}
-        ])
+            {"type": "slice", "start": 1, "stop": 3, "step": None},
+        ]
         out = self._roundtrip(self._tensor_op_json('subscript', [
-            ('TensorOp', 'subscript_indices', subscript_val),
+            ('TensorOp', 'subscript_indices', str(indices)),
             ('TensorOp', 'input_var', 'x'),
         ]))
         elements = _resolve_elements(out)
         ops = _extract_elements_by_type(out, 'TensorOp')
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
         assert attrs.get('tns_type') == 'subscript'
-        # The round-trip preserves the dict structure
-        assert attrs.get('subscript_indices') == subscript_val
+        # The round-trip preserves the dict structure *and* emits it as real
+        # JSON: a Python repr (single quotes / None) makes the frontend's
+        # JSON.parse throw.
+        emitted = attrs.get('subscript_indices')
+        assert json.loads(emitted) == indices
+        assert "'" not in emitted and 'None' not in emitted
         assert attrs.get('input_var') == 'x'
+
+    def test_tensorop_subscript_accepts_json_payload(self):
+        """A JSON-shaped subscript_indices value (what the converter now emits,
+        and therefore what a re-imported diagram carries) must parse."""
+        indices = [{"type": "index", "value": 2}]
+        out = self._roundtrip(self._tensor_op_json('subscript', [
+            ('TensorOp', 'subscript_indices', json.dumps(indices)),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert json.loads(attrs['subscript_indices']) == indices
+
+    def test_tensorop_subscript_malformed_raises(self):
+        """Malformed subscript_indices must surface a ValueError naming the
+        field instead of silently dropping the user's value."""
+        with pytest.raises(ValueError, match=r"subscript_indices"):
+            self._roundtrip(self._tensor_op_json('subscript', [
+                ('TensorOp', 'subscript_indices', '[{type: index,'),
+            ]))
+
+    def test_tensorop_pad_amount_malformed_raises(self):
+        """Same contract for pad_amount (was also swallowed to None)."""
+        with pytest.raises(ValueError, match=r"pad_amount"):
+            self._roundtrip(self._tensor_op_json('pad', [
+                ('TensorOp', 'pad_amount', '[[1, 1'),
+            ]))
+
+    def test_tensorop_shape_dim_attribute_roundtrip(self):
+        """The shape_dim *attribute* (distinct from the shape_dim tns_type,
+        covered below) was parsed then dropped: it never reached the TensorOp
+        constructor and neither exporter emitted it."""
+        out = self._roundtrip(self._tensor_op_json('shape_dim', [
+            ('TensorOp', 'reduce_dim', '0'),
+            ('TensorOp', 'shape_dim', '2'),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'shape_dim'
+        assert attrs.get('reduce_dim') == '0'
+        assert attrs.get('shape_dim') == '2'
+
+    def test_tensorop_repeat_dim_keeps_mixed_list(self):
+        """repeat_dim is declared list[int | str]; parse_list_of_ints used to
+        return None on the first non-int item, losing the whole value."""
+        out = self._roundtrip(self._tensor_op_json('repeat', [
+            ('TensorOp', 'repeat_dim', "[1, 'op_3', 1]"),
+            ('TensorOp', 'input_var', 'x'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('repeat_dim') == "[1, 'op_3', 1]"
+
+    def test_batch_norm_permute_flags_roundtrip(self):
+        """BatchNormLayer gained permute_in/permute_out in the metamodel;
+        neither converter direction used to carry them."""
+        out = self._roundtrip(self._single_layer_json('BatchNormalizationLayer', [
+            ('BatchNorm', 'name', 'bn1'),
+            ('BatchNorm', 'num_features', '32'),
+            ('BatchNorm', 'dimension', '2D'),
+            ('BatchNorm', 'permute_in', 'true'),
+            ('BatchNorm', 'permute_out', 'true'),
+        ]))
+        elements = _resolve_elements(out)
+        layers = _extract_elements_by_type(out, 'BatchNormalizationLayer')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in layers[0]['attributes']}
+        assert attrs.get('permute_in') == 'true'
+        assert attrs.get('permute_out') == 'true'
+
+    def test_hand_written_buml_model_keeps_explicit_attributes(self):
+        """A model built directly in Python never populates the explicit-attr
+        sidecar. BUML -> JSON must still emit every non-default attribute."""
+        from besser.BUML.metamodel.nn import NN as _NN, Conv2D as _Conv2D
+        nn = _NN(name='HandWritten')
+        nn.add_layer(_Conv2D(
+            name='c1', kernel_dim=[3, 3], out_channels=8, bias=False,
+            permute_in=True, permute_out=True, is_layer_call=True,
+            dilation=[2, 2], groups=4, input_reused=True,
+        ))
+        out = nn_model_to_json(nn)
+        elements = _resolve_elements(out)
+        convs = _extract_elements_by_type(out, 'Conv2DLayer')
+        assert convs, 'Conv2D missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in convs[0]['attributes']}
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('permute_in') == 'true'
+        assert attrs.get('permute_out') == 'true'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_reused') == 'true'
+        assert attrs.get('dilation') == '[2, 2]'
+        assert attrs.get('groups') == '4'
+
+    def test_buml_ast_import_keeps_explicit_attributes(self):
+        """Same guarantee for /get-json-model: the AST parser rebuilds the
+        model without touching the explicit-attr sidecar, so BUML -> JSON has
+        to fall back to default comparison there too."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
+            nn_buml_to_json,
+        )
+        buml = "\n".join([
+            "from besser.BUML.metamodel.nn import NN, Conv2D",
+            "main_nn = NN(name='AstNet')",
+            "layer_0 = Conv2D(name='c1', kernel_dim=[3, 3], out_channels=8, "
+            "bias=False, permute_in=True, permute_out=True, is_layer_call=True, "
+            "dilation=[2, 2], groups=4, input_reused=True)",
+            "main_nn.add_layer(layer_0)",
+        ])
+        out = nn_buml_to_json(buml)
+        elements = _resolve_elements(out)
+        convs = _extract_elements_by_type(out, 'Conv2DLayer')
+        assert convs, 'Conv2D missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in convs[0]['attributes']}
+        assert attrs.get('bias') == 'false'
+        assert attrs.get('permute_in') == 'true'
+        assert attrs.get('permute_out') == 'true'
+        assert attrs.get('is_layer_call') == 'true'
+        assert attrs.get('input_reused') == 'true'
+        assert attrs.get('dilation') == '[2, 2]'
+        assert attrs.get('groups') == '4'
 
     def test_tensorop_interpolate_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('interpolate', [

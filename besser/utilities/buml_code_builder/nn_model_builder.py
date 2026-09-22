@@ -2,6 +2,9 @@
 Neural Network Model Builder: Generates Python code for BESSER NN models.
 """
 
+import inspect
+from functools import lru_cache
+
 from besser.BUML.metamodel.nn import (
     NN, Configuration, TensorOp,
     Conv1D, Conv2D, Conv3D, PoolingLayer,
@@ -13,10 +16,82 @@ from besser.BUML.metamodel.nn import (
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
+# Attributes the metamodel normalizes on assignment, so the value actually
+# stored differs from the ``__init__`` signature default. Keyed by attribute
+# name; only consulted when the declared default is ``None``.
+# (``ConvolutionalLayer.__init__`` stores ``dilation if dilation is not None
+# else [1]``.)
+_NORMALIZED_DEFAULTS = {
+    'dilation': [1],
+}
+
+
+@lru_cache(maxsize=None)
+def _declared_defaults(cls: type) -> dict:
+    """Map ``{parameter name: default}`` for every optional ``cls.__init__`` arg.
+
+    Cached per class: the signature of a metamodel class never changes at
+    runtime, and this is called once per attribute per emitted module.
+    """
+    try:
+        signature = inspect.signature(cls.__init__)
+    except (TypeError, ValueError):  # pragma: no cover - builtins/C types
+        return {}
+    return {
+        param_name: param.default
+        for param_name, param in signature.parameters.items()
+        if param.default is not inspect.Parameter.empty
+    }
+
+
+def _differs_from_default(current, default) -> bool:
+    """Compare a stored value with its declared default.
+
+    ``True``/``1`` and ``False``/``0`` compare equal in Python, which would
+    make a ``bias=1`` look like the ``bias=True`` default (and vice versa),
+    so a bool/non-bool mismatch always counts as a difference.
+    """
+    if isinstance(current, bool) != isinstance(default, bool):
+        return True
+    try:
+        return bool(current != default)
+    except Exception:  # pragma: no cover - exotic __eq__ on a user value
+        return True
+
+
+def is_attr_explicitly_set(obj, attr_name: str) -> bool:
+    """True when ``attr_name`` must be emitted for ``obj`` to round-trip.
+
+    Two independent signals, either of which is sufficient:
+
+    1. The importer marked the attribute explicit in the
+       :mod:`~besser.utilities.buml_code_builder.nn_explicit_attrs` sidecar.
+       This is the only way to know that a user deliberately re-entered a
+       value that happens to equal the default (e.g. ticking ``bias=True``).
+    2. The current value differs from the default declared by the owning
+       metamodel class's ``__init__``. This covers every model that never
+       went through the editor — hand-written BUML, models rebuilt by the
+       BUML AST parser — for which the sidecar is necessarily empty.
+
+    Attributes that are not constructor parameters of ``type(obj)`` return
+    ``False``: they cannot be expressed in the emitted call anyway (e.g.
+    ``permute_in`` on ``LinearLayer``, which the metamodel hard-codes).
+    """
+    if is_explicit(obj, attr_name):
+        return True
+    defaults = _declared_defaults(type(obj))
+    if attr_name not in defaults:
+        return False
+    default = defaults[attr_name]
+    if default is None and attr_name in _NORMALIZED_DEFAULTS:
+        default = _NORMALIZED_DEFAULTS[attr_name]
+    return _differs_from_default(getattr(obj, attr_name, None), default)
+
 
 def _is_attr_set(layer, attr_name: str) -> bool:
-    """Check if an attribute was explicitly set (ticked/entered) in the editor."""
-    return is_explicit(layer, attr_name)
+    """Check whether an attribute has to be emitted (see
+    :func:`is_attr_explicitly_set`)."""
+    return is_attr_explicitly_set(layer, attr_name)
 
 
 def _esc(value) -> str:
@@ -390,6 +465,12 @@ def _write_conv(f, layer, var_name: str):
         params.append(f"permute_in={layer.permute_in}")
     if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
+    # Conv-specific optional fields: the processor reads both and the
+    # BUML->JSON converter emits both, so the builder has to as well.
+    if _is_attr_set(layer, 'dilation'):
+        params.append(f"dilation={layer.dilation}")
+    if _is_attr_set(layer, 'groups'):
+        params.append(f"groups={layer.groups}")
     if _is_attr_set(layer, 'bias'):
         params.append(f"bias={layer.bias}")
     if _is_attr_set(layer, 'is_layer_call'):
@@ -560,6 +641,10 @@ def _write_embedding(f, layer: EmbeddingLayer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'permute_in'):
+        params.append(f"permute_in={layer.permute_in}")
+    if _is_attr_set(layer, 'permute_out'):
+        params.append(f"permute_out={layer.permute_out}")
     if _is_attr_set(layer, 'is_layer_call'):
         params.append(f"is_layer_call={layer.is_layer_call}")
     if _is_attr_set(layer, 'input_var') and layer.input_var:
@@ -582,6 +667,10 @@ def _write_dropout(f, layer: DropoutLayer, var_name: str):
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
+    if _is_attr_set(layer, 'permute_in'):
+        params.append(f"permute_in={layer.permute_in}")
+    if _is_attr_set(layer, 'permute_out'):
+        params.append(f"permute_out={layer.permute_out}")
     if _is_attr_set(layer, 'is_layer_call'):
         params.append(f"is_layer_call={layer.is_layer_call}")
     if _is_attr_set(layer, 'input_var') and layer.input_var:
@@ -635,6 +724,10 @@ def _write_batch_norm(f, layer: BatchNormLayer, var_name: str):
         params.append(f"affine={layer.affine}")
     if _is_attr_set(layer, 'track_running_stats'):
         params.append(f"track_running_stats={layer.track_running_stats}")
+    if _is_attr_set(layer, 'permute_in'):
+        params.append(f"permute_in={layer.permute_in}")
+    if _is_attr_set(layer, 'permute_out'):
+        params.append(f"permute_out={layer.permute_out}")
     if layer.name_module_input:
         params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
@@ -686,6 +779,8 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
     elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
         if tensor_op.reduce_dim is not None:
             params.append(f"reduce_dim={tensor_op.reduce_dim}")
+        if tensor_op.shape_dim is not None:
+            params.append(f"shape_dim={tensor_op.shape_dim}")
         if tns_type == 'max' and tensor_op.reduce_keepdims is not None:
             params.append(f"reduce_keepdims={tensor_op.reduce_keepdims}")
         if tensor_op.layers_of_tensors is not None:

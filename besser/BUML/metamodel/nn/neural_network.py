@@ -10,6 +10,16 @@ from typing import Self
 
 from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
 
+#: The tensor operation types accepted by :attr:`TensorOp.tns_type`.
+ALLOWED_TENSOR_OP_TYPES: tuple[str, ...] = (
+    'reshape', 'concatenate', 'multiply', 'matmultiply', 'permute',
+    'transpose', 'mean', 'max', 'squeeze', 'unsqueeze', 'binop_add',
+    'binop_subtract', 'binop_multiply', 'binop_divide',
+    'binop_floor_divide', 'subscript', 'shape_dim', 'normalize',
+    'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like',
+    'split', 'identity'
+)
+
 
 class TensorOp(NamedElement):
     """
@@ -57,10 +67,12 @@ class TensorOp(NamedElement):
             position. A ``"slice"`` element accepts ``"start"``,
             ``"stop"``, and ``"step"`` keys, each either an int or
             ``None``. For example, the subscript ``[:, -1, :]``
-            would be represented as
-            ``[{"type": "slice", "start": None, "stop": None, "step": None},
-               {"type": "index", "value": -1},
-               {"type": "slice", "start": None, "stop": None, "step": None}]``
+            would be represented as::
+
+                [{"type": "slice", "start": None, "stop": None, "step": None},
+                 {"type": "index", "value": -1},
+                 {"type": "slice", "start": None, "stop": None, "step": None}]
+
         repeat_dim (list[int | str]): Repetition counts for
             repeat operation. Each element specifies how many times to
             repeat along that dimension. Elements can be integers for
@@ -83,9 +95,9 @@ class TensorOp(NamedElement):
             'replicate'.
         pad_value (float): Value for constant padding (default 0).
         dropout_rate (float): Dropout probability, range [0.0, 1.0].
-            Default: 0.5.
+            Default: None.
         dropout_training_aware (bool): Whether dropout behavior changes
-            between training and inference modes. Default: False.
+            between training and inference modes. Default: True.
         split_dim (int): Dimension along which to split (supports
             negative indexing). Default: 0.
         split_sizes (int | list[int]): Number of equal chunks
@@ -159,16 +171,16 @@ class TensorOp(NamedElement):
             self,
             name: str,
             tns_type: str,
-            *,
             concatenate_dim: int | None = None,
             layers_of_tensors: list[str | float | int] | None = None,
             reshape_dim: list[int] | None = None,
             transpose_dim: list[int] | None = None,
             permute_dim: list[int] | None = None,
+            input_reused: bool = False,
+            *,
             reduce_dim: int | None = None,
             reduce_keepdims: bool = False,
             shape_dim: int | None = None,
-            input_reused: bool = False,
             actual_vars: list[str] | None = None,
             subscript_indices: list[dict] | None = None,
             repeat_dim: list[int | str] | None = None,
@@ -238,15 +250,7 @@ class TensorOp(NamedElement):
             'interpolate', 'pad', 'dropout', 'zeros_like', 'split', 
             'identity'
         """
-        valid_types = [
-            'reshape', 'concatenate', 'multiply', 'matmultiply', 'permute', 
-            'transpose', 'mean', 'max', 'squeeze', 'unsqueeze', 'binop_add', 
-            'binop_subtract', 'binop_multiply', 'binop_divide', 
-            'binop_floor_divide', 'subscript', 'shape_dim', 'normalize', 
-            'repeat', 'interpolate', 'pad', 'dropout', 'zeros_like', 
-            'split', 'identity'
-        ]
-        if tns_type not in valid_types:
+        if tns_type not in ALLOWED_TENSOR_OP_TYPES:
             raise ValueError("Invalid value of tensorOp type")
         self.__tns_type = tns_type
 
@@ -444,8 +448,8 @@ class TensorOp(NamedElement):
 
     @interpolate_size.setter
     def interpolate_size(self, interpolate_size: tuple):
-        """Set target size for interpolation. Must be a tuple of
-        integers."""
+        """Set target size for interpolation. Expected to be a tuple of
+        integers; violations are reported by :meth:`NN.validate`."""
         self.__interpolate_size = interpolate_size
 
     @property
@@ -455,8 +459,10 @@ class TensorOp(NamedElement):
 
     @interpolate_scale.setter
     def interpolate_scale(self, interpolate_scale: float):
-        """float: Set scale factor for interpolation. Must be > 0."""
+        """float: Set scale factor for interpolation. Expected to be
+        > 0; violations are reported by :meth:`NN.validate`."""
         self.__interpolate_scale = interpolate_scale
+
     @property
     def interpolate_mode(self) -> str:
         """str: Get interpolation mode."""
@@ -491,7 +497,8 @@ class TensorOp(NamedElement):
     @pad_amount.setter
     def pad_amount(self, pad_amount):
         """Set padding amounts. Expected format: [[before, after], ...]
-        for each dimension. All values must be >= 0."""
+        for each dimension, with all values >= 0; violations are
+        reported by :meth:`NN.validate`."""
         self.__pad_amount = pad_amount
 
     @property
@@ -532,7 +539,8 @@ class TensorOp(NamedElement):
 
     @dropout_rate.setter
     def dropout_rate(self, dropout_rate: float):
-        """Set dropout probability. Must be in range [0.0, 1.0]."""
+        """Set dropout probability. Expected to be in range
+        [0.0, 1.0]; violations are reported by :meth:`NN.validate`."""
         self.__dropout_rate = dropout_rate
 
     @property
@@ -542,7 +550,8 @@ class TensorOp(NamedElement):
 
     @dropout_training_aware.setter
     def dropout_training_aware(self, dropout_training_aware: bool):
-        """Set whether dropout is training aware. Must be bool."""
+        """Set whether dropout is training aware. Expected to be a
+        bool; violations are reported by :meth:`NN.validate`."""
         self.__dropout_training_aware = dropout_training_aware
 
     @property
@@ -695,10 +704,10 @@ class Layer(NamedElement):
     def __init__(
             self,
             name: str,
-            *,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
+            *,
             is_layer_call: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
@@ -882,7 +891,6 @@ class CNN(Layer):
     def __init__(
             self,
             name: str,
-            *,
             kernel_dim: list[int],
             stride_dim: list[int],
             padding_amount: int = 0,
@@ -892,6 +900,7 @@ class CNN(Layer):
             input_reused: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
+            *,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -962,28 +971,6 @@ class CNN(Layer):
         if padding_type not in ['same', 'valid']:
             raise ValueError ("Invalid padding type")
         self.__padding_type = padding_type
-
-
-    @property
-    def permute_in(self) -> bool:
-        """bool: Get whether to permute the dim of the input."""
-        return self.__permute_in
-
-    @permute_in.setter
-    def permute_in(self, permute_in: bool):
-        """bool: Set whether to permute the dim of the input."""
-        self.__permute_in = permute_in
-
-    @property
-    def permute_out(self) -> bool:
-        """bool: Get whether to permute the dim of the output."""
-        return self.__permute_out
-
-    @permute_out.setter
-    def permute_out(self, permute_out: bool):
-        """bool: Set whether to permute the dim of the output."""
-        self.__permute_out = permute_out
-
 
     def __repr__(self):
         return (
@@ -1079,18 +1066,18 @@ class ConvolutionalLayer(CNN):
             kernel_dim: list[int],
             out_channels: int,
             stride_dim: list[int],
-            *,
             in_channels: int | None = None,
             padding_amount: int = 0,
             padding_type: str = "valid",
-            dilation: list[int] | None = None,
-            groups: int = 1,
-            bias: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
+            *,
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -1271,18 +1258,18 @@ class Conv1D(ConvolutionalLayer):
             kernel_dim: list[int],
             out_channels: int,
             stride_dim: list[int] | None = None,
-            *,
             in_channels: int | None = None,
             padding_amount: int = 0,
             padding_type: str = "valid",
-            dilation: list[int] | None = None,
-            groups: int = 1,
-            bias: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
+            *,
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -1443,18 +1430,18 @@ class Conv2D(ConvolutionalLayer):
             kernel_dim: list[int],
             out_channels: int,
             stride_dim: list[int] | None = None,
-            *,
             in_channels: int | None = None,
             padding_amount: int = 0,
             padding_type: str = "valid",
-            dilation: list[int] | None = None,
-            groups: int = 1,
-            bias: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
+            *,
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -1614,18 +1601,18 @@ class Conv3D(ConvolutionalLayer):
             kernel_dim: list[int],
             out_channels: int,
             stride_dim: list[int] | None = None,
-            *,
             in_channels: int | None = None,
             padding_amount: int = 0,
             padding_type: str = "valid",
-            dilation: list[int] | None = None,
-            groups: int = 1,
-            bias: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
+            *,
+            dilation: list[int] | None = None,
+            groups: int = 1,
+            bias: bool = True,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -1775,7 +1762,6 @@ class PoolingLayer(CNN):
             name: str,
             pooling_type: str,
             dimension: str,
-            *,
             kernel_dim: list[int] | None = None,
             stride_dim: list[int] | None = None,
             padding_amount: int = 0,
@@ -1786,6 +1772,7 @@ class PoolingLayer(CNN):
             input_reused: bool = False,
             permute_in: bool = False,
             permute_out: bool = False,
+            *,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -2153,6 +2140,9 @@ class BatchNormLayer(NormalizationLayer):
             self, name: str,
             num_features: int,
             dimension: str,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
             *,
             eps: float = 1e-5,
             momentum: float = 0.1,
@@ -2160,9 +2150,6 @@ class BatchNormLayer(NormalizationLayer):
             track_running_stats: bool = True,
             permute_in: bool = False,
             permute_out: bool = False,
-            actv_func: str | None = None,
-            name_module_input: str | None = None,
-            input_reused: bool = False,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -2298,12 +2285,12 @@ class LayerNormLayer(NormalizationLayer):
             self,
             name: str,
             normalized_shape: list[int],
-            *,
-            eps: float = 1e-5,
-            affine: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
+            *,
+            eps: float = 1e-5,
+            affine: bool = True,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -2393,12 +2380,12 @@ class DropoutLayer(LayerModifier):
             self,
             name: str,
             rate: float,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
             *,
             dimension: str | None = None,
             permute_in: bool = False,
             permute_out: bool = False,
-            name_module_input: str | None = None,
-            input_reused: bool = False,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -2539,16 +2526,16 @@ class RNN(Layer):
             self,
             name: str,
             hidden_size: int,
-            *,
             return_type: str = "full",
             input_size: int | None = None,
             bidirectional: bool = False,
             dropout: float = 0.0,
             batch_first: bool = True,
-            bias: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
+            *,
+            bias: bool = True,
             hx_source: str | None = None,
             is_layer_call: bool = False,
             hidden_state_var: str | None = None,
@@ -3154,12 +3141,12 @@ class LinearLayer(GeneralLayer):
             self,
             name: str,
             out_features: int,
-            *,
             in_features: int | None = None,
-            bias: bool = True,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
+            *,
+            bias: bool = True,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -3257,12 +3244,12 @@ class FlattenLayer(GeneralLayer):
     def __init__(
             self,
             name: str,
-            *,
             start_dim: int = 1,
             end_dim: int = -1,
             actv_func: str | None = None,
             name_module_input: str | None = None,
             input_reused: bool = False,
+            *,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -3363,13 +3350,13 @@ class EmbeddingLayer(GeneralLayer):
             name: str,
             num_embeddings: int,
             embedding_dim: int,
+            actv_func: str | None = None,
+            name_module_input: str | None = None,
+            input_reused: bool = False,
             *,
             padding_idx: int | None = None,
             permute_in: bool = False,
             permute_out: bool = False,
-            actv_func: str | None = None,
-            name_module_input: str | None = None,
-            input_reused: bool = False,
             is_layer_call: bool = False,
             input_var: str | None = None,
             output_var: str | None = None
@@ -4198,8 +4185,8 @@ class NN(BehaviorImplementation):
                 to stop infinite recursion on cyclic sub-NN graphs.
 
         Returns:
-            dict: ``{"success": bool, "errors": list[str],
-                     "warnings": list[str]}``
+            dict: A mapping with the keys ``success`` (bool), ``errors``
+            (list[str]) and ``warnings`` (list[str]).
         """
         errors: list[str] = []
         warnings: list[str] = []
@@ -4281,8 +4268,6 @@ class NN(BehaviorImplementation):
                     and md.reduce_dim is None
                 ):
                     errors.append(required_msg.format(param="reduce_dim"))
-                elif tn_type == 'max' and md.reduce_keepdims is None:
-                    errors.append(required_msg.format(param="reduce_keepdims"))
                 elif tn_type == 'subscript' and md.subscript_indices is None:
                     errors.append(required_msg.format(param="subscript_indices"))
                 elif tn_type == 'repeat' and md.repeat_dim is None:
@@ -4567,15 +4552,31 @@ class NN(BehaviorImplementation):
         to ensure they are within acceptable ranges."""
 
         def _eval_numeric_value(value, param_name, label):
-            """Helper to evaluate numeric values that may be strings or expressions."""
+            """Coerce a numeric layer parameter that may arrive as a string.
+
+            Returns the parsed number, or ``None`` when the value cannot
+            be parsed. Failures are collected into ``errors`` rather than
+            raised, so a malformed model never aborts ``validate()``.
+            """
             if value is None:
+                return None
+            if isinstance(value, bool):
+                errors.append(
+                    f"{label} {param_name} must be numeric, "
+                    f"got {type(value).__name__}."
+                )
                 return None
             if isinstance(value, (int, float)):
                 return value
             if isinstance(value, str):
+                text = value.strip()
                 try:
-                    return eval(value, {"__builtins__": {}})
-                except (ValueError, TypeError, SyntaxError):
+                    return int(text)
+                except ValueError:
+                    pass
+                try:
+                    return float(text)
+                except ValueError:
                     errors.append(
                         f"{label} {param_name} must be a valid numeric value, "
                         f"got '{value}'."
@@ -4819,17 +4820,20 @@ class NN(BehaviorImplementation):
                             f"{label} subscript_indices[{i}] must be dict"
                             f", got {type(elem).__name__}"
                         )
+                        continue
                     if "type" not in elem:
                         errors.append(
-                        f"{label} subscript_indices[{i}] missing required"
-                        "'type' key"
+                            f"{label} subscript_indices[{i}] missing required "
+                            "'type' key"
                         )
+                        continue
                     if elem["type"] == "index":
                         if "value" not in elem:
                             errors.append(
                                 f"{label} subscript_indices[{i}] type 'index'"
                                 f" requires 'value' key"
                             )
+                            continue
                         if not isinstance(elem["value"], int):
                             errors.append(
                                 f"{label} subscript_indices[{i}]['value'] "
@@ -4887,132 +4891,149 @@ class NN(BehaviorImplementation):
                         f"{label} interpolate_scale must be > 0, "
                         f"got {tns.interpolate_scale}"
                     )
-            if tns.interpolate_mode is not None:
-                if tns.pad_amount is not None:
-                    if not isinstance(tns.pad_amount, list):
-                        errors.append(f"{label} pad_amount must be a list")
+            if tns.pad_amount is not None:
+                if not isinstance(tns.pad_amount, list):
+                    errors.append(f"{label} pad_amount must be a list")
+                else:
                     for dim_pad in tns.pad_amount:
-                        if not isinstance(dim_pad, list) or len(dim_pad) != 2:
+                        if (
+                            not isinstance(dim_pad, list)
+                            or len(dim_pad) != 2
+                        ):
                             errors.append(
                                 f"{label} Each dimension in pad_amount must "
                                 "be a 2-element list [before, after]"
                             )
-                        if any(v < 0 for v in dim_pad):
+                            continue
+                        if any(
+                            not isinstance(v, (int, float)) or v < 0
+                            for v in dim_pad
+                        ):
                             errors.append(
                                 f"{label} Padding values must be >= 0"
                             )
-                if (
-                    tns.pad_value is not None
-                    and not isinstance(tns.pad_value, (int, float))
-                ):
+            if (
+                tns.pad_value is not None
+                and not isinstance(tns.pad_value, (int, float))
+            ):
+                errors.append(
+                    f"{label} pad_value must be numeric (int or "
+                    f"float), got {type(tns.pad_value).__name__}"
+                )
+            if tns.dropout_rate is not None:
+                if not isinstance(tns.dropout_rate, (int, float)):
                     errors.append(
-                        f"{label} pad_value must be numeric (int or "
-                        f"float), got {type(tns.pad_value).__name__}"
+                        f"{label} dropout_rate must be numeric (int or "
+                        f"float), got {type(tns.dropout_rate).__name__}"
                     )
-                if tns.dropout_rate is not None:
-                    if not isinstance(tns.dropout_rate, (int, float)):
+                elif not 0.0 <= tns.dropout_rate <= 1.0:
+                    errors.append(
+                        f"{label} dropout_rate must be in range "
+                        f"[0.0, 1.0], got {tns.dropout_rate}"
+                    )
+            if (
+                tns.dropout_training_aware is not None
+                and not isinstance(tns.dropout_training_aware, bool)
+            ):
+                errors.append(
+                    f"{label} dropout_training_aware must be bool, got "
+                    f"{type(tns.dropout_training_aware).__name__}"
+                )
+            if (
+                tns.split_dim is not None
+                and not isinstance(tns.split_dim, int)
+            ):
+                errors.append(
+                    f"{label} split_dim must be int, got "
+                    f"{type(tns.split_dim).__name__}"
+                )
+            if tns.split_sizes is not None:
+                if isinstance(tns.split_sizes, int):
+                    if tns.split_sizes <= 0:
                         errors.append(
-                            f"{label} dropout_rate must be numeric (int or "
-                            f"float), got {type(tns.dropout_rate).__name__}"
+                            f"{label} split_sizes must be > 0, got "
+                            f"{tns.split_sizes}"
                         )
-                    if not (0.0 <= tns.dropout_rate <= 1.0):
+                elif isinstance(tns.split_sizes, list):
+                    if not all(
+                        isinstance(x, int) and x > 0
+                        for x in tns.split_sizes
+                    ):
                         errors.append(
-                            f"{label} dropout_rate must be in range "
-                            f"[0.0, 1.0], got {tns.dropout_rate}"
+                            f"{label} split_sizes list must contain "
+                            "only positive ints"
                         )
-                if (
-                    tns.dropout_training_aware is not None
-                    and not isinstance(tns.dropout_training_aware, bool)
-                ):
+                else:
                     errors.append(
-                        f"{label} dropout_training_aware must be bool, got "
-                        f"{type(tns.dropout_training_aware).__name__}"
+                        f"{label} split_sizes must be int or list[int], "
+                        f"got {type(tns.split_sizes).__name__}"
                     )
-                if (
-                    tns.split_dim is not None
-                    and not isinstance(tns.split_dim, int)
-                ):
+            if (
+                tns.permute_in is not None
+                and (not isinstance(tns.permute_in, bool))
+            ):
+                errors.append(
+                    f"{label} permute_in must be bool, got "
+                    f"{type(tns.permute_in).__name__}"
+                )
+            if (
+                tns.permute_out is not None
+                and (not isinstance(tns.permute_out, bool))
+            ):
+                errors.append(
+                    f"{label} permute_out must be bool, got "
+                    f"{type(tns.permute_out).__name__}"
+                )
+            pattern = r'^[a-zA-Z_][a-zA-Z0-9_]*(\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*$'
+            if (
+                tns.input_var is not None
+                and not re.match(pattern, tns.input_var)
+            ):
+                errors.append(
+                    f"{label} input_var must be a valid identifier, or a "
+                    "comma-separated list of identifiers, each starting "
+                    "with a letter or underscore"
+                )
+            if (
+                tns.output_var is not None
+                and not re.match(
+                    r'^[a-zA-Z_][a-zA-Z0-9_]*$',
+                    tns.output_var
+                )
+            ):
+                errors.append(
+                    f"{label} output_var must be a valid identifier "
+                    "starting with a letter or underscore"
+                )
+            if tns.output_vars is not None:
+                if not isinstance(tns.output_vars, list):
                     errors.append(
-                        f"{label} split_dim must be int, got "
-                        f"{type(tns.split_dim).__name__}"
+                        f"{label} output_vars must be a list, got "
+                        f"{type(tns.output_vars).__name__}"
                     )
-                if tns.split_sizes is not None:
-                    if isinstance(tns.split_sizes, int):
-                        if tns.split_sizes <= 0:
-                            errors.append(
-                                f"{label} split_sizes must be > 0, got "
-                                f"{tns.split_sizes}"
-                            )
-                    elif isinstance(tns.split_sizes, list):
-                        if not all(
-                            isinstance(x, int) and x > 0 
-                            for x in tns.split_sizes
-                        ):
-                            errors.append(
-                                f"{label} split_sizes list must contain "
-                                "only positive ints"
-                            )
-                    else:
-                        errors.append(
-                            f"{label} split_sizes must be int or list[int], "
-                            f"got {type(tns.split_sizes).__name__}"
-                        )
-                if (
-                    tns.permute_in is not None
-                    and (not isinstance(tns.permute_in, bool))
-                ):
-                    errors.append(
-                        f"{label} permute_in must be bool, got "
-                        f"{type(tns.permute_in).__name__}"
-                    )
-                if (
-                    tns.permute_out is not None
-                    and (not isinstance(tns.permute_out, bool))
-                ):
-                    errors.append(
-                        f"{label} permute_out must be bool, got "
-                        f"{type(tns.permute_out).__name__}"
-                    )
-                pattern = r'^[a-zA-Z_][a-zA-Z0-9_]*(\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*)*$'
-                if (
-                    tns.input_var is not None
-                    and not re.match(pattern, tns.input_var)
-                ):
-                    errors.append(
-                        f"{label} input_var must be a valid identifier, or a "
-                        "comma-separated list of identifiers, each starting "
-                        "with a letter or underscore"
-                    )
-                if (
-                    tns.output_var is not None
-                    and not re.match(
-                        r'^[a-zA-Z_][a-zA-Z0-9_]*$',
-                        tns.output_var
-                    )
-                ):
-                    errors.append(
-                        f"{label} output_var must be a valid identifier "
-                        "starting with a letter or underscore"
-                    )
-                if tns.output_vars is not None:
-                    if not isinstance(tns.output_vars, list):
-                        errors.append(
-                            f"{label} output_vars must be a list, got "
-                            f"{type(tns.output_vars).__name__}"
-                        )
+                else:
                     for var in tns.output_vars:
                         if not isinstance(var, str):
                             errors.append(
                                 f"{label} each element of output_vars must be"
                                 f" str, got {type(var).__name__}"
                             )
+                            continue
                         if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', var):
                             errors.append(
                                 f"{label} '{var}' is not valid, each "
                                 "output_var must be a valid identifier "
                                 "starting with an alphabetic character"
                             )
-                    if len(tns.output_vars) != tns.split_sizes:
+                    expected_splits = None
+                    if isinstance(tns.split_sizes, list):
+                        expected_splits = len(tns.split_sizes)
+                    elif isinstance(tns.split_sizes, int):
+                        expected_splits = tns.split_sizes
+                    if (
+                        expected_splits is not None
+                        and len(tns.output_vars) != expected_splits
+                    ):
                         errors.append(
                             f"{label} Length of output_vars "
                             f"({len(tns.output_vars)}) must match "

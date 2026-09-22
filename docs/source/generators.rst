@@ -197,6 +197,17 @@ Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
 
    generators/bpmn
 
+Deployment
+----------
+
+Generate Docker Compose output from UML Deployment models, including
+project-level AgenticSwarm build contexts:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/docker_compose
+   
 Build Your Own
 --------------
 

@@ -174,9 +174,45 @@ the following attributes:
 Layer Parameters
 ----------------
 
-Each layer class accepts the standard parameters expected from
-the equivalent layer in a deep learning framework. Beyond those, all
-layers share the following BESSER-specific attributes:
+Each layer class accepts the parameters expected from the equivalent
+layer in a deep learning framework — sizes, kernel dimensions and
+activation functions — and maps them onto that framework's own
+constructor. Alongside the sizing parameters used in the examples above,
+the following framework parameters are supported. All of them are
+keyword-only.
+
+* ``bias`` (bool, default ``True``) on ``Conv1D``, ``Conv2D``, ``Conv3D``,
+  ``LinearLayer``, ``SimpleRNNLayer``, ``GRULayer`` and ``LSTMLayer`` adds a
+  learnable bias term to the layer. Set it to ``False`` when the layer is
+  followed by a normalization layer, which makes the bias redundant.
+* ``dilation`` (list[int], default ``[1]``) on the convolutional layers
+  spaces out the kernel elements, enlarging the receptive field without
+  adding parameters. The value is broadcast to the layer's dimensionality,
+  so the default emits ``dilation=(1, 1)`` for a ``Conv2D``.
+* ``groups`` (int, default ``1``) on the convolutional layers splits the
+  input and output channels into that many independent groups. Setting it
+  to the number of input channels produces a depthwise convolution.
+* ``padding_idx`` (int, default ``None``) on ``EmbeddingLayer`` marks one
+  index as padding: its embedding vector is fixed at zero and is not
+  updated during training.
+* ``eps`` (float, default ``1e-5``) on ``BatchNormLayer`` and
+  ``LayerNormLayer`` is the constant added to the denominator for
+  numerical stability.
+* ``momentum`` (float, default ``0.1``) on ``BatchNormLayer`` sets how much
+  each incoming batch contributes to the running mean and variance.
+* ``affine`` (bool, default ``True``) on ``BatchNormLayer`` and
+  ``LayerNormLayer`` adds the learnable scale and shift applied after
+  normalization. With ``False`` the layer normalizes only.
+* ``track_running_stats`` (bool, default ``True``) on ``BatchNormLayer``
+  keeps running estimates of the mean and variance to use at inference
+  time. With ``False`` the batch statistics are used in both modes.
+* ``dimension`` (str, default ``None``) on ``DropoutLayer`` selects the
+  spatial variant: ``"1D"``, ``"2D"`` or ``"3D"`` emit ``nn.Dropout1d``,
+  ``nn.Dropout2d`` or ``nn.Dropout3d`` in PyTorch and the matching
+  ``SpatialDropout`` layer in TensorFlow, dropping whole channels rather
+  than individual elements. Left unset, a plain ``Dropout`` is emitted.
+
+Beyond those, all layers share the following BESSER-specific attributes:
 
 * ``input_var`` (str) and ``output_var`` (str) to explicitly name the
   input and output tensor variables in the generated forward method.

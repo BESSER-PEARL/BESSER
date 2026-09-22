@@ -105,6 +105,10 @@ def test_fix_loop_stops_on_an_unexpected_stop_reason(tmp_path):
 
 
 def test_fix_prompt_tells_the_model_not_to_abbreviate():
+    """Scans the class AND its mixins: the prompt text moved to a mixin once,
+    and inspect.getsource(cls) sees only the class's own body, so this passed
+    a file that no longer held the string it was checking for."""
     import inspect
-    src = inspect.getsource(LLMOrchestrator)
+    src = "".join(inspect.getsource(base) for base in LLMOrchestrator.__mro__
+                  if base is not object)
     assert "never abbreviate" in src

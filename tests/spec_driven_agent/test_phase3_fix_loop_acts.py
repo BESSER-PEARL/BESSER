@@ -227,7 +227,7 @@ def test_the_fix_prompt_asks_for_an_edit_up_front(tmp_path):
     }]
     orch._recent_tool_failures = [{"tool": "read_file", "path": "models/booking.py", "error": "File not found"}]
     with patch.object(client, "chat", wraps=client.chat) as spy, patch(
-        "besser.spec_driven_agent.pipeline.orchestrator.build_mutation_manifest",
+        "besser.spec_driven_agent.pipeline.phase3_repair.build_mutation_manifest",
         return_value="Relationship mutation coverage: reverse create, update and unlink paths",
     ):
         orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)

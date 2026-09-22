@@ -329,3 +329,10 @@ _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
         "generate_sql",
     },
 }
+
+
+# Per-value budget for the trace, the checkpoint's tool_calls_log and the
+# recipe. Untruncated write-tool inputs go to TOOL_INPUTS_FILENAME.
+_LOG_VALUE_BUDGET = 500
+_WRITE_TOOLS_ON_RECORD = frozenset({"modify_file", "replace_file_lines", "write_file", "delete_file"})
+TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"

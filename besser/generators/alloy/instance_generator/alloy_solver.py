@@ -45,13 +45,12 @@ class AlloySolver:
             num_instances: Number of satisfying instances to request from the Alloy
                 Analyzer.
         """
-        for_editor = True
         (res, instance_xml_files) = self.executor.generate_instances(self.specification, 
                                             self.alloy_output_dir, num_instances=num_instances)
         buml_instances = []
         for xml_path in instance_xml_files:
             converter = AlloyToBUML(xml_path)
-            buml_instances.append(converter.generate_object_diagram(for_editor=for_editor))
+            buml_instances.append(converter.generate_object_diagram())
 
         return (res, buml_instances)
 
@@ -59,10 +58,6 @@ class AlloySolver:
         """Generates an object diagrams from the Alloy specification and combines it with 
         the class diagram to produce a complete BUML model code. 
         Returns the generated BUML model code in file ``output_dir/buml_class_object_model.py``.
-
-        The object model section is emitted in the "editor" dialect so the
-        generated file can be re-imported into the web editor with the
-        objects' relationships (ObjectLinks) intact.
         """
         (res, buml_instances) = self.generate_object_diagrams(num_instances=1)
         if res == AlloyResult.UNSAT:

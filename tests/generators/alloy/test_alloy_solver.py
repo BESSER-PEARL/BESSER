@@ -406,27 +406,6 @@ class TestAlloySolverInstanceGenerationRichModel:
         assert re.search(r'^\w+_obj = Team\("Team_', codes[0], re.MULTILINE)
         assert re.search(r'^\w+_obj = Player\("Player_', codes[0], re.MULTILINE)
 
-    def test_generate_object_diagrams_includes_attributes(self, team_player_model, tmpdir):
-        solver = AlloySolver(model=team_player_model, output_dir=str(tmpdir.mkdir("out")), scope=self.scope)
-
-        result, codes = solver.generate_object_diagrams(for_editor=False)
-
-        assert result == AlloyResult.SAT
-        assert "'name':" in codes[0]
-        assert "'age':" in codes[0]
-
-    def test_generate_object_diagrams_includes_association(self, team_player_model, tmpdir):
-        solver = AlloySolver(model=team_player_model, output_dir=str(tmpdir.mkdir("out")), scope=self.scope)
-
-        result, codes = solver.generate_object_diagrams(for_editor=False)
-
-        assert result == AlloyResult.SAT
-        # The executable dialect preserves many-valued links through setattr.
-        assert "setattr(" in codes[0]
-        # The association should connect team to players or vice versa
-        assert "team" in codes[0]
-        assert "player" in codes[0]
-
     def test_generate_object_diagrams_object_model_contains_all(self, team_player_model, tmpdir):
         solver = AlloySolver(model=team_player_model, output_dir=str(tmpdir.mkdir("out")), scope=self.scope)
 

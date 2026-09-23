@@ -23,8 +23,10 @@ book: Class = Class(name="Book", attributes={title, pages, release})
 # Author attributes definition
 author_name: Property = Property(name="name", type=StringType)
 email: Property = Property(name="email", type=StringType)
+birth: Property = Property(name="birtdate", type=DateType)
+
 # Author class definition
-author: Class = Class(name="Author", attributes={author_name, email})
+author: Class = Class(name="Author", attributes={author_name, email,birth})
 
 # Library-Book association definition
 located_in: Property = Property(name="locatedIn", type=library, multiplicity=Multiplicity(1, 1))

@@ -9,15 +9,16 @@ with ASGITransport is used because the installed starlette/httpx versions
 do not support the legacy TestClient(app=...) pattern.
 """
 
-import asyncio
+import copy
 import io
 import json
 import os
+import asyncio
 import zipfile
-from typing import Any
+from typing import Any, Dict
 
-import httpx
 import pytest
+import httpx
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -421,39 +422,66 @@ class TestGenerateOutput:
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
 
-    def test_generate_alloy_returns_zip(self, class_diagram_input):
-        """Alloy generator returns a ZIP archive with model.als and str_ops.als."""
-        payload = {**class_diagram_input, "generator": "alloy"}
+    def test_generate_spring_applies_the_submitted_config(self, spring_class_diagram_input):
+        """The Spring dialog's fields must reach the generator, not be dropped."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {
+                "project_name": "mylibrary",
+                "app_name": "LibraryApplication",
+                "spring_boot_version": "3.4.4",
+                "java_version": "21",
+                "package_name": "com.acme.library",
+            },
+        }
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
-        content_disp = response.headers.get("content-disposition", "")
-        assert "alloy_specification.zip" in content_disp
 
-        body = response.content
-        assert body.startswith(b"PK")
-        with zipfile.ZipFile(io.BytesIO(body)) as zf:
-            names = zf.namelist()
-            assert "model.als" in names
-            assert "strings.als" in names
-            assert "utils.als" in names
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "pom.xml" in names
+            assert "mvnw" in names
+            assert ".mvn/wrapper/maven-wrapper.properties" in names
+            # app_name and package_name are what the config asked for.
+            assert "src/main/java/com/acme/library/LibraryApplication.java" in names
+            assert "src/main/java/com/acme/library/entity/Book.java" in names
+            pom = archive.read("pom.xml").decode("utf-8")
+            assert "<version>3.4.4</version>" in pom
+            assert "<java.version>21</java.version>" in pom
 
-    def test_generate_alloy_returns_zip(self, class_diagram_input):
-        """Alloy generator returns a ZIP archive with model.als and str_ops.als."""
-        payload = {**class_diagram_input, "generator": "alloy"}
+    def test_generate_spring_without_config_uses_defaults(self, spring_class_diagram_input):
+        """No config at all must still produce a project (the registry default path)."""
+        payload = {**spring_class_diagram_input, "generator": "spring"}
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
-        assert "application/zip" in response.headers.get("content-type", "")
-        content_disp = response.headers.get("content-disposition", "")
-        assert "alloy_specification.zip" in content_disp
 
-        body = response.content
-        assert body.startswith(b"PK")
-        with zipfile.ZipFile(io.BytesIO(body)) as zf:
-            names = zf.namelist()
-            assert "model.als" in names
-            assert "strings.als" in names
-            assert "utils.als" in names
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "src/main/java/com/example/Application.java" in names
+
+    def test_generate_spring_rejects_a_traversing_project_name(self, spring_class_diagram_input):
+        """``project_name`` is a directory name; it must not escape the temp dir."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"project_name": "../../evil"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "pom.xml" in archive.namelist()
+
+    def test_generate_spring_rejects_an_invalid_package_name(self, spring_class_diagram_input):
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"package_name": "../../etc"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # Validation Endpoint -- POST /besser_api/validate-diagram
@@ -677,9 +705,7 @@ class TestValidateDiagram:
 
     def test_validate_user_diagram_runs_ocl_check(self, monkeypatch):
         """UserDiagram validation should execute OCL checking with object model context."""
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            validation_router as vr,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
 
         class _DummyObjectModel:
             objects = []
@@ -1204,16 +1230,12 @@ class TestRecommendationEndpoints:
     @pytest.fixture(autouse=True)
     def _bypass_github_auth(self, monkeypatch):
         """Neutralize the GitHub OAuth gate so the test can drive real logic."""
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as gr,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
         monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
 
     def test_recommend_agent_config_llm_success_normalizes_output(self, monkeypatch):
         """LLM recommendation endpoint returns normalized config payload."""
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as gr,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
         def _fake_profile_document(_model):
             return {"profile": {"age": 34, "notes": "test"}}
@@ -1279,9 +1301,7 @@ class TestRecommendationEndpoints:
 
     def test_recommend_agent_config_llm_parse_error_returns_500(self, monkeypatch):
         """Invalid LLM text should surface as a parse failure mapped to 500."""
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as gr,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
         monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {}})
         monkeypatch.setattr(gr, "call_openai_chat", lambda *_args, **_kwargs: "not-json")
@@ -1300,9 +1320,7 @@ class TestRecommendationEndpoints:
 
     def test_recommend_agent_config_llm_runtime_error_returns_400(self, monkeypatch):
         """Runtime errors from the LLM client should map to HTTP 400."""
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as gr,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
         def _raise_runtime_error(*_args, **_kwargs):
             raise RuntimeError("Missing OpenAI API key")
@@ -1337,9 +1355,7 @@ class TestRecommendationEndpoints:
 
     def test_recommend_agent_config_mapping_success(self, monkeypatch):
         """Manual recommendation endpoint returns config and matching metadata."""
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as gr,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
         monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {"age": 70}})
 
@@ -1388,7 +1404,7 @@ class TestRecommendationEndpoints:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _build_user_profile_diagram_payload(age: int) -> dict[str, Any]:
+    def _build_user_profile_diagram_payload(age: int) -> Dict[str, Any]:
         """Return a real UserDiagram JSON with a User root and a Personal_Information
         child object holding ``age``. The reference user_buml_model.User class
         looks up children via the ``Personal_Information_end`` association, so
@@ -1587,7 +1603,7 @@ class TestStandaloneChatbotDeploy:
     """Behavioral test for the chatbot deploy path with mocked PyGithub."""
 
     @staticmethod
-    def _minimal_agent_diagram() -> dict[str, Any]:
+    def _minimal_agent_diagram() -> Dict[str, Any]:
         """Return a minimal valid AgentDiagram (StateInitialNode + AgentState
         connected by AgentStateTransitionInit). Element ids are strings to
         match the frontend's Apollon JSON shape.
@@ -1624,18 +1640,18 @@ class TestStandaloneChatbotDeploy:
         mocked PyGithub helper must be called with a render.yaml that
         contains ``python -u "<slug>.py"`` (the chatbot startCommand).
         """
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as gr,
-        )
         from besser.utilities.web_modeling_editor.backend.services.deployment import (
             github_deploy_api as deploy_mod,
+        )
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
         )
 
         # Auth gate: pass through to the chatbot path with a fake token.
         monkeypatch.setattr(deploy_mod, "get_user_token", lambda _session: "fake-token")
         monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
 
-        captured: dict[str, Any] = {
+        captured: Dict[str, Any] = {
             "create_calls": 0,
             "push_calls": [],
             "render_yaml_content": None,

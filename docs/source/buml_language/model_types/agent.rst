@@ -82,7 +82,15 @@ available in ``besser.BUML.metamodel.state_machine.agent``:
   answer from a database, either with a fixed SQL query (``db_query_mode='sql'``)
   or with a query written by an LLM (``'llm_query'``). The
   ``input_prompt_mode`` / ``custom_input_prompt`` pair, ``store_in_session`` and
-  ``send_reply`` behave as in ``LLMReply``.
+  ``send_reply`` behave as in ``LLMReply``. The accepted values (matched
+  case-insensitively; anything else raises ``ValueError``) are:
+
+  - ``db_selection_type``: ``'default'`` (the application database, the
+    default) or ``'custom'`` (the database named by ``db_custom_name``).
+  - ``db_query_mode``: ``'llm_query'`` (default) or ``'sql'`` (run
+    ``db_sql_query``).
+  - ``db_operation``: ``'any'`` (default), ``'select'``, ``'insert'``,
+    ``'update'`` or ``'delete'``.
 
 **GUI replies**
 
@@ -140,17 +148,26 @@ A RAG element is added to an agent via ``agent.new_rag()`` and combines a
 ``RAGVectorStore`` (embedding config), a ``RAGTextSplitter`` (chunking strategy),
 and an LLM name. Use ``RAGReply`` in a state body to trigger a RAG query.
 
-When generated, a data folder named after the RAG element is created
-(e.g. ``"Knowledge Base"`` produces ``knowledge_base/``). Place your PDF
-documents in this folder before running the agent.
+Like every named element, a RAG name cannot contain spaces. When generated, a
+data folder named after the RAG element is created (lower-cased, e.g.
+``Knowledge_Base`` produces ``knowledge_base/``). Place your PDF documents in
+this folder before running the agent.
 
 The optional ``llm_prompt`` parameter injects a fixed prefix instruction before
 every RAG query, useful for enforcing domain-specific constraints or tone:
 
 .. code-block:: python
 
+    from besser.BUML.metamodel.state_machine.agent import Agent, RAGTextSplitter, RAGVectorStore
+
+    agent = Agent('rag_agent')
+    agent.new_llm(name='gpt-4o-mini', provider='openai', parameters={})
+    vector_store = RAGVectorStore(embedding_provider='openai',
+                                  embedding_parameters={'model': 'text-embedding-3-small'})
+    splitter = RAGTextSplitter(splitter_type='recursive_character', chunk_size=1000, chunk_overlap=100)
+
     kb = agent.new_rag(
-        name='Knowledge Base',
+        name='knowledge_base',
         vector_store=vector_store,
         splitter=splitter,
         llm_name='gpt-4o-mini',
@@ -161,13 +178,13 @@ Retrieval can combine the vector store with a BM25 keyword index (hybrid
 retrieval). Set ``use_hybrid_rag=True`` and, optionally, ``bm25_weight`` — the
 weight of the BM25 results between 0 and 1, the vector results getting the
 remainder (default ``0.6``). The generated agent then uses BAF's ``HybridRAG``
-instead of ``RAG``; in the web editor these are the *Hybrid RAG (BM25)* and
-*BM25 weight* fields of the RAG element:
+instead of ``RAG``. These two parameters are available through the Python API
+only; the web editor's RAG element does not expose them:
 
 .. code-block:: python
 
-    kb = agent.new_rag(
-        name='Knowledge Base',
+    hybrid_kb = agent.new_rag(
+        name='hybrid_knowledge_base',
         vector_store=vector_store,
         splitter=splitter,
         llm_name='gpt-4o-mini',
@@ -210,6 +227,7 @@ with ``agent.new_reasoning_state()``:
     assistant = agent.new_reasoning_state(
         name='assistant',
         llm='big',                  # registered LLM name; omit to use the default
+        initial=True,               # the first state of an agent must be initial
         max_steps=8,                # max reasoning iterations
         enable_task_planning=True,
         stream_steps=True,
@@ -247,7 +265,20 @@ An agent can send interactive GUI panels — forms, dashboards, or any BESSER
 
 .. code-block:: python
 
-    agent.add_gui_model('signup', signup_gui)          # signup_gui: GUIModel
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
+    from besser.BUML.metamodel.state_machine.agent import AgentReply, GUIReplyAction
+    from besser.BUML.metamodel.state_machine.state_machine import Body
+
+    screen = Screen(name='signup_screen', description='', is_main_page=True,
+                    view_elements={Text(name='title', content='Sign up')})
+    signup_gui = GUIModel(name='signup_gui', package='', versionCode='1', versionName='1.0',
+                          description='', modules={Module(name='signup_module', screens={screen})})
+
+    ask = agent.new_state('ask')
+    thanks = agent.new_state('thanks')
+    thanks.set_body(Body('thanks_body', actions=[AgentReply('Thanks for signing up!')]))
+
+    agent.add_gui_model('signup', signup_gui)
     ask.set_body(Body('ask_body', actions=[GUIReplyAction('signup', is_form=True)]))
     ask.when_form_submitted(form_id='signup').go_to(thanks)
 
@@ -280,6 +311,9 @@ need finer control:
 
     from besser.BUML.metamodel.state_machine.agent import GUIEvent, FormSubmitMatcher
 
+    state = agent.new_state('show_form')
+    next_state = agent.new_state('form_done')
+
     # equivalent to state.when_form_submitted(form_id='my_form')
     state.when_event(GUIEvent(message_id='my_form')) \
         .with_condition(FormSubmitMatcher(form_id='my_form')) \
@@ -303,6 +337,9 @@ Example agent model
 -------------------
 
 As a simple example, we modeled the `Greetings Agent <https://besser-agentic-framework.readthedocs.io/latest/your_first_agent.html#the-greetings-agent>`_ from the BAF documentation.
+State and intent names must differ (``agent.validate()`` rejects a model in
+which a state and an intent share a name), hence the ``_intent`` suffix on the
+intents.
 
 .. code-block:: python
 
@@ -324,17 +361,17 @@ As a simple example, we modeled the `Greetings Agent <https://besser-agentic-fra
     agent.add_property(ConfigProperty('nlp', 'nlp.intent_threshold', 0.4))
 
     # INTENTS
-    Greeting = agent.new_intent('Greeting', [
+    greeting_intent = agent.new_intent('greeting_intent', [
         'Hi',
         'Hello',
         'Howdy',
     ])
-    Good = agent.new_intent('Good', [
+    good_intent = agent.new_intent('good_intent', [
         'Good',
         'Fine',
         'I m alright',
     ])
-    Bad = agent.new_intent('Bad', [
+    bad_intent = agent.new_intent('bad_intent', [
         'Bad',
         'Not so good',
         'Could be better',
@@ -348,14 +385,16 @@ As a simple example, we modeled the `Greetings Agent <https://besser-agentic-fra
     good = agent.new_state('good')
 
     # initial state
+    initial.when_intent_matched(greeting_intent).go_to(greeting)
+
     # greeting state
     def greeting_body(session: AgentSession):
         session.reply('Hi!')
         session.reply('How are you?')
 
     greeting.set_body(Body('greeting_body', greeting_body))
-    greeting.when_intent_matched(Good).go_to(good)
-    greeting.when_intent_matched(Bad).go_to(bad)
+    greeting.when_intent_matched(good_intent).go_to(good)
+    greeting.when_intent_matched(bad_intent).go_to(bad)
 
     # bad state
     def bad_body(session: AgentSession):

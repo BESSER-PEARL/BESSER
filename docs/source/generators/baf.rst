@@ -30,8 +30,8 @@ Optional constructor parameters:
     ``..`` segments, or with no relative part at all (e.g. ``/``), raises
     ``ValueError`` because it would point outside the output folder.
 
-The corresponding ``agent.py`` file and its config file titled ``config.yaml`` will be generated in the ``<<current_directory>>/output``
-folder.
+The agent file, named after the agent (``<agent name>.py``, e.g. ``Generated_Agent.py`` for the Greetings Agent),
+and its config file titled ``config.yaml`` will be generated in the ``<<current_directory>>/output`` folder.
 
 Check out the BAF documentation for more details on how to use the generated agent: `BESSER Agentic Framework Documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_.
 
@@ -82,7 +82,7 @@ If the agent model includes RAG elements (see :doc:`../buml_language/model_types
 the generator produces the vector store setup (Chroma), text splitter configuration,
 and ``session.run_rag()`` calls. A data folder is created for each RAG element
 where you should place your PDF documents before running the agent. The folder
-name is derived from the RAG element name (e.g. ``"Knowledge Base"`` becomes
+name is the lower-cased RAG element name (e.g. ``Knowledge_Base`` becomes
 ``knowledge_base/``).
 
 
@@ -136,6 +136,7 @@ Several actions can read from and write to the user session:
     from besser.BUML.metamodel.state_machine.agent import AgentReply, LLMReply
     from besser.BUML.metamodel.state_machine.state_machine import Body
 
+    summarize_state = agent.new_state("summarize")
     summarize_state.set_body(Body("summarize_body", actions=[
         # Silently summarize the question and keep the result in the session
         LLMReply(prompt="Summarize the question in one sentence.",

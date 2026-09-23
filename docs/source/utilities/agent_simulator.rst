@@ -4,7 +4,9 @@ Agent Simulator
 The agent simulator runs user-designed BAF agents so they can be tried out live
 from the web modeling editor. It is a separate service
 (``besser/utilities/web_modeling_editor/agent_simulator/``) deployed as its own
-container, ``besser-wme-agent-simulator``. Only the backend talks to it.
+container, ``besser-wme-agent-simulator``. Only the backend talks to it; the
+editor-facing endpoints that drive it are documented under *Agent Simulation*
+in :doc:`../web_editor_backend`.
 
 Architecture
 ------------
@@ -32,8 +34,9 @@ Architecture
 Security model
 --------------
 
-The simulator executes code the user controls, so it is confined in layers.
-The design mirrors the Spec-Driven Agent's ``run_command`` sandbox.
+The simulator executes code the user controls, so it is confined in layers:
+authentication on its API, a bubblewrap sandbox and a dedicated UID per
+session, resource limits, a scrubbed environment and a hardened container.
 
 API authentication
    Every HTTP and WebSocket endpoint, ``/health`` included, requires the header
@@ -71,6 +74,12 @@ Environment scrub
    minus anything whose name looks like a secret) plus only the session
    settings and the LLM keys the user supplied for this session
    (``OPENAI_API_KEY``, ``HUGGINGFACEHUB_API_TOKEN``, ``REPLICATE_API_TOKEN``).
+   Those keys are also written into the session's ``config.yaml``, where BAF
+   reads them (``nlp.openai.api_key``, ``nlp.huggingface.token``,
+   ``nlp.replicate.api_key``), overriding any placeholder in the generated
+   config; a key the user leaves empty keeps the generated value, which may
+   be a key stored in the agent's own configuration. The ``config.yaml`` lives
+   in the session's private work directory.
 
 Process cleanup
    Each session starts as its own session and process group. Terminating it

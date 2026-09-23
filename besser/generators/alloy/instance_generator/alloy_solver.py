@@ -35,7 +35,7 @@ class AlloySolver:
         (result, instance_xml_files) = self.executor.generate_instances(self.specification, self.alloy_output_dir)
         return result
 
-    def generate_object_diagrams(self, num_instances: int = 1, for_editor: bool = True):
+    def generate_object_diagrams(self, num_instances: int = 1):
         """Generates BUML object diagrams using Alloy.
         Returns an AlloyResult indicating the result of the analysis and a list of 
         BUML instances. The list is empty if no satisfying instances were found or if 
@@ -44,12 +44,8 @@ class AlloySolver:
         Args:
             num_instances: Number of satisfying instances to request from the Alloy
                 Analyzer.
-            for_editor: When ``True`` (default), generate the object-diagram code in the
-                "editor" dialect consumed by ``object_buml_to_json`` (the web
-                editor converter), so the objects' relationships survive a
-                re-import. Set to ``False`` to get the executable dialect
-                instead.
         """
+        for_editor = True
         (res, instance_xml_files) = self.executor.generate_instances(self.specification, 
                                             self.alloy_output_dir, num_instances=num_instances)
         buml_instances = []
@@ -64,11 +60,11 @@ class AlloySolver:
         the class diagram to produce a complete BUML model code. 
         Returns the generated BUML model code in file ``output_dir/buml_class_object_model.py``.
 
-        The object model section is emitted in the "editor" dialect
-        (``for_editor=True``) so the generated file can be re-imported into the
-        web editor with the objects' relationships (ObjectLinks) intact.
+        The object model section is emitted in the "editor" dialect so the
+        generated file can be re-imported into the web editor with the
+        objects' relationships (ObjectLinks) intact.
         """
-        (res, buml_instances) = self.generate_object_diagrams(num_instances=1, for_editor=True)
+        (res, buml_instances) = self.generate_object_diagrams(num_instances=1)
         if res == AlloyResult.UNSAT:
             return AlloyResult.UNSAT
 

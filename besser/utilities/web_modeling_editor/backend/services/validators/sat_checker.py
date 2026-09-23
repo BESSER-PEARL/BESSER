@@ -379,10 +379,10 @@ def run_alloy_sat_validation(
         }
 
     # Execute the generated specification, producing BUML object instances.
-    # for_editor=True emits the code in the dialect the (development) web-editor
+    # The generated code is emitted in the dialect the (development) web-editor
     # object_buml_to_json converter can parse (plain attribute assignments and
     # literal attribute values) instead of the executable setattr/datetime form.
-    result, buml_instances = solver.generate_object_diagrams(num_instances=1, for_editor=True)
+    result, buml_instances = solver.generate_object_diagrams(num_instances=1)
 
     if result == AlloyResult.TIMEOUT:
         return {

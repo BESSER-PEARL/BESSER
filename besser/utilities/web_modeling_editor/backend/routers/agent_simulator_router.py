@@ -264,7 +264,7 @@ def _simulator_headers() -> Dict[str, str]:
     """Return the auth header for the simulator; HTTP 503 when the token is not configured."""
     token = os.environ.get(AGENT_SIMULATOR_TOKEN_ENV_VAR, "").strip()
     if not token:
-        logger.error("%s is not set; agent simulation is disabled.", AGENT_SIMULATOR_TOKEN_ENV_VAR)
+        logger.error("AGENT_SIMULATOR_API_TOKEN is not set; agent simulation is disabled.")
         raise HTTPException(
             status_code=503,
             detail="Agent simulation is not configured on this server.",

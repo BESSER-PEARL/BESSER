@@ -83,8 +83,8 @@ async def require_api_token(connection: HTTPConnection) -> None:
         if not _missing_token_logged:
             _missing_token_logged = True
             logger.error(
-                "%s is not set: refusing every request (fail closed). Set the same value "
-                "on the backend and on the simulator.", API_TOKEN_ENV,
+                "AGENT_SIMULATOR_API_TOKEN is not set: refusing every request (fail closed). "
+                "Set the same value on the backend and on the simulator."
             )
         _reject(connection, status.HTTP_503_SERVICE_UNAVAILABLE, "Agent simulator API token is not configured")
     supplied = connection.headers.get(API_TOKEN_HEADER, "")
@@ -360,7 +360,7 @@ async def _start_cleanup_task():
     _ensure_sessions_root_permissions()
     _remove_stale_session_dirs()
     if not os.environ.get(API_TOKEN_ENV):
-        logger.error("%s is not set: every request will be refused with 503", API_TOKEN_ENV)
+        logger.error("AGENT_SIMULATOR_API_TOKEN is not set: every request will be refused with 503")
     sandbox_error = sandbox_selftest_error(session_module.UID_POOL[0])
     if sandbox_error:
         logger.error("Agent sandbox unavailable (%s): sessions will be refused", sandbox_error)

@@ -299,6 +299,7 @@ def _process_classes(
                         impl_type_str = impl_type_str.strip().lower()
                     state_machine_id = method.get("stateMachineId", "")
                     quantum_circuit_id = method.get("quantumCircuitId", "")
+                    neural_network_id = method.get("neuralNetworkId", "")
 
                     # Map string to MethodImplementationType enum
                     impl_type_map = {
@@ -307,6 +308,7 @@ def _process_classes(
                         "bal": MethodImplementationType.BAL,
                         "state_machine": MethodImplementationType.STATE_MACHINE,
                         "quantum_circuit": MethodImplementationType.QUANTUM_CIRCUIT,
+                        "neural_network": MethodImplementationType.NEURAL_NETWORK,
                     }
                     implementation_type = impl_type_map.get(impl_type_str, MethodImplementationType.NONE)
 
@@ -348,10 +350,11 @@ def _process_classes(
 
                     # Store diagram references in a separate mapping for later resolution.
                     # These will be used by project-level processing to link to actual diagrams.
-                    if state_machine_id or quantum_circuit_id:
+                    if state_machine_id or quantum_circuit_id or neural_network_id:
                         method_diagram_refs[(class_name, name)] = {
                             "stateMachineId": state_machine_id or "",
                             "quantumCircuitId": quantum_circuit_id or "",
+                            "neuralNetworkId": neural_network_id or "",
                         }
 
                     # Handle return type via O(1) lookup
@@ -968,7 +971,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     domain_model.association_by_id = association_by_id
 
     # Store method diagram references for buml_to_json round-trip fidelity.
-    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ..., "neuralNetworkId": ...}
     domain_model.method_diagram_refs = method_diagram_refs
 
     # Stash the WME element-id -> Class side-map so project-level cross-diagram

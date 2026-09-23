@@ -46,6 +46,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    link_method_neural_networks,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -488,6 +489,11 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
+    # The backend runs methods implemented by a neural network, so it needs the
+    # project's NNDiagrams next to its ClassDiagram.
+    if generator_type == "backend":
+        return await _handle_backend_project_generation(input_data, generator_info)
+
     # Handle generators that consume a non-class diagram (Qiskit → quantum,
     # PyTorch/TensorFlow → neural network). The required diagram type comes
     # from the registry, so this branch covers every such generator without
@@ -607,6 +613,22 @@ async def generate_code_output(input_data: DiagramInput):
         )
 
 
+@handle_endpoint_errors("_handle_backend_project_generation")
+async def _handle_backend_project_generation(input_data: ProjectInput, generator_info):
+    """Generate the FastAPI backend from the project's active ClassDiagram, with
+    NN-implemented methods linked to the project's NNDiagrams."""
+    class_diagram = input_data.get_active_diagram("ClassDiagram")
+    if not class_diagram:
+        raise HTTPException(status_code=400, detail="ClassDiagram is required for Backend generator")
+
+    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+        buml_model = process_class_diagram(class_diagram.model_dump())
+        link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
+        return await _generate_standard(
+            buml_model, generator_info.generator_class, "backend", generator_info, temp_dir
+        )
+
+
 @handle_endpoint_errors("_handle_web_app_project_generation")
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
     """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
@@ -648,6 +670,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             # Re-derive the class BUML per version so the generator can't leak
             # mutations from one version into the next.
             buml_model = process_class_diagram(class_diagram.model_dump())
+            link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
             gui_model = process_gui_diagram(gui_json, class_diagram.model, buml_model)
 
             # Collect every AgentDiagram in the project if this version's GUI uses

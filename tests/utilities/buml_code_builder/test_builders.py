@@ -538,6 +538,9 @@ class TestGetImplTypeName:
     def test_prefixed_string(self):
         assert _get_impl_type_name("MethodImplementationType.CODE") == "CODE"
 
+    def test_neural_network_value(self):
+        assert _get_impl_type_name("neural_network") == "NEURAL_NETWORK"
+
 
 class TestFormatMethodCodeLiteral:
     """Tests for _format_method_code_literal."""
@@ -1504,6 +1507,26 @@ class TestDomainModelBuilderAdvanced:
 
         assert "MethodImplementationType.CODE" in code
         assert "return 42" in code
+
+    def test_method_with_neural_network_implementation(self, tmp_path):
+        """NN-implemented methods keep their type and link to the project's NN variable."""
+        method = Method(
+            name="predict",
+            type=StringType,
+            implementation_type=MethodImplementationType.NEURAL_NETWORK,
+        )
+        cls = Class(name="Classifier", methods={method})
+        model = DomainModel(name="NNImplModel", types={cls}, associations=set())
+
+        file_path = str(tmp_path / "nn_impl.py")
+        domain_model_to_code(model, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        compile(code, file_path, "exec")
+        assert "implementation_type=MethodImplementationType.NEURAL_NETWORK" in code
+        assert ".neural_network = nn_model" in code
 
 
 # ---------------------------------------------------------------------------

@@ -118,18 +118,6 @@ agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and per
 # Load bot properties stored in a dedicated file
 agent.load_properties('config.yaml')
 
-# Define the platform your chatbot will use
-{# Test sessions drive the agent headlessly, so the built-in Streamlit UI is never launched. #}
-{% set ui_flag = "False" if test_mode else "True" %}
-{% for platform in agent.platforms %}
-{% if platform.__class__.__name__ == 'WebSocketPlatform' %}
-platform = agent.use_websocket_platform(use_ui={{ ui_flag }})
-{% elif platform.__class__.__name__ == 'TelegramPlatform' %}
-telegram_platform = agent.use_telegram_platform()
-{% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_websocket_platform(use_ui={{ ui_flag }}{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
-{% endif %}
-{% endfor %}
 
 {% if personalization_mapping is defined and personalization_mapping %}
 # Collect profile names from provided personalization mappings
@@ -185,6 +173,10 @@ rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''
 {% set has_speech_input = speech_flags.input %}
 {% set has_speech_output = speech_flags.output %}
 
+# Define the platform your chatbot will use
+{# Test sessions drive the agent headlessly, so the built-in Streamlit UI is never launched. #}
+{% set ui_flag = "False" if test_mode else "True" %}
+{# Exactly one platform is created: the config override, else the first modelled platform, else WebSocket. #}
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
 # Set use_ui=True to launch the built-in Streamlit chat interface automatically on startup.
@@ -194,18 +186,18 @@ platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
 platform = agent.use_websocket_platform(use_ui={{ ui_flag }}{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
 {% elif agent.platforms and agent.platforms|length > 0 %}
-    {% set found_platform = false %}
+    {% set found_platform = namespace(value=false) %}
     {% for platform in agent.platforms %}
-        {% if not found_platform %}
+        {% if not found_platform.value %}
             {% if platform.__class__.__name__ == 'WebSocketPlatform' %}
 platform = agent.use_websocket_platform(use_ui={{ ui_flag }})
-                {% set found_platform = true %}
+                {% set found_platform.value = true %}
             {% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 platform = agent.use_telegram_platform()
-                {% set found_platform = true %}
+                {% set found_platform.value = true %}
             {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
 platform = agent.use_websocket_platform(use_ui={{ ui_flag }}{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
-                {% set found_platform = true %}
+                {% set found_platform.value = true %}
             {% endif %}
         {% endif %}
     {% endfor %}

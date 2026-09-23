@@ -19,7 +19,6 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 from besser.utilities.path_utils import normalize_relative_path
-from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +331,13 @@ class BAFGenerator(GeneratorInterface):
             # tooling (frontend preview, debugging). A conversion failure here
             # is non-fatal — the .py model is already on disk.
             try:
+                # Imported here, not at module level: the web editor backend
+                # registers this generator in ``config.generators``, so a
+                # module-level import would make ``import BAFGenerator`` circular.
+                from besser.utilities.web_modeling_editor.backend.services.converters import (
+                    agent_buml_to_json,
+                )
+
                 with open(personalized_agent_path, "r", encoding="utf-8") as f:
                     personalized_code = f.read()
                 personalized_json = agent_buml_to_json(personalized_code)

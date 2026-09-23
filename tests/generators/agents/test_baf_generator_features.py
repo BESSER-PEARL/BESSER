@@ -8,12 +8,14 @@ Every test also checks that each generated ``.py`` file compiles.
 
 import ast
 import os
+import subprocess
+import sys
 
 import pytest
 
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
 from besser.BUML.metamodel.state_machine.agent import (
-    Agent, AgentReply, GUIEvent, GUIReplyAction, LLMReply, WebSocketPlatform, WebSocketReplyMarkdown,
+    Agent, AgentReply, GUIEvent, GUIReplyAction, LLMReply, TelegramPlatform, WebSocketPlatform, WebSocketReplyMarkdown,
 )
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.generators.agents.baf_generator import (
@@ -249,6 +251,28 @@ def test_streamlit_platform_use_ui_follows_test_mode(tmp_path, test_mode, expect
     assert f"platform = agent.use_websocket_platform(use_ui={expected})" in code
     assert f"use_ui={'False' if expected == 'True' else 'True'}" not in code
 
+
+
+@pytest.mark.parametrize("config", [None, {"agentPlatform": "websocket"}, {"agentPlatform": "streamlit"}])
+def test_platform_is_created_once(tmp_path, config):
+    agent = _agent_with_body([AgentReply("hi")])
+    agent.platforms.append(TelegramPlatform())
+    code = _generate(agent, tmp_path, config=config)
+    platform_calls = [line for line in code.splitlines()
+                      if "agent.use_websocket_platform(" in line or "agent.use_telegram_platform(" in line]
+    assert len(platform_calls) == 1, platform_calls
+    assert platform_calls[0].startswith("platform = agent.use_websocket_platform(")
+
+
+def test_baf_generator_imports_first_in_a_fresh_interpreter():
+    """Importing the generator first must not hit the web editor backend import cycle."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.modules["besser"].__file__)))
+    env = dict(os.environ, PYTHONPATH=repo_root)
+    for statement in ("from besser.generators.agents.baf_generator import BAFGenerator",
+                      "from besser.generators.agents import BAFGenerator"):
+        result = subprocess.run([sys.executable, "-c", statement], capture_output=True, text=True, env=env,
+                                cwd=repo_root, timeout=300)
+        assert result.returncode == 0, result.stderr
 
 def test_test_mode_creates_workspace_dirs_and_rejects_escaping_paths(tmp_path):
     agent = _agent_with_body([AgentReply("hi")])

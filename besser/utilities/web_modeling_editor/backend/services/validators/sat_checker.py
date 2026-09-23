@@ -117,7 +117,7 @@ def validate_ocl_constraints(
 
 #----------------------------------------------------------------------
 
-async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
+async def check_consistency_alloy(input_data: DiagramInput) -> AsyncGenerator[str, None]:
     """
     Performs semantic satisfiability check of a BUML class diagram.
 
@@ -206,7 +206,7 @@ async def check_alloy_consistency_stream(input_data: DiagramInput) -> AsyncGener
         )
 
 
-async def generate_alloy_do_stream(input_data: DiagramInput) -> AsyncGenerator[str, None]:
+async def generate_object_diagram_alloy(input_data: DiagramInput) -> AsyncGenerator[str, None]:
     """
     Generates object diagram that complies with constraints of a BUML class diagram,
     incluing OCL constraints, if present.

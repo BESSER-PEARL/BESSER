@@ -53,9 +53,11 @@ available in ``besser.BUML.metamodel.state_machine.agent``:
   - ``prompt``: optional system prompt.
   - ``llm_name``: selects a registered LLM (defaults to the agent default).
   - ``input_prompt_mode``: ``'last_user_message'`` (default) passes the user's
-    message directly; ``'custom'`` uses ``custom_input_prompt`` instead.
+    message directly; ``'custom'`` uses ``custom_input_prompt`` instead. Any
+    other value raises ``ValueError`` (the accepted values are
+    ``VALID_INPUT_PROMPT_MODES``).
   - ``custom_input_prompt``: template string for the LLM input when
-    ``input_prompt_mode='custom'``.
+    ``input_prompt_mode='custom'``; required (non-empty) in that mode.
   - ``custom_input_prompt_use_session_vars`` / ``system_prompt_use_session_vars``:
     enable ``{key}`` interpolation in the respective strings.
   - ``store_in_session``: when set, the LLM reply is stored in the session under
@@ -74,21 +76,30 @@ available in ``besser.BUML.metamodel.state_machine.agent``:
   Supports the same ``input_prompt_mode`` / ``custom_input_prompt``,
   session-var interpolation, ``store_in_session``, and ``send_reply`` controls
   as ``LLMReply`` (``prompt_use_session_vars`` applies to the RAG hint prompt).
-- ``DBReply(query, llm_name)`` — answer from a SQL database using an LLM.
+- ``DBReply(db_selection_type, db_custom_name, db_query_mode, db_operation,
+  db_sql_query, llm_name, input_prompt_mode, custom_input_prompt,
+  custom_input_prompt_use_session_vars, store_in_session, send_reply)`` —
+  answer from a database, either with a fixed SQL query (``db_query_mode='sql'``)
+  or with a query written by an LLM (``'llm_query'``). The
+  ``input_prompt_mode`` / ``custom_input_prompt`` pair, ``store_in_session`` and
+  ``send_reply`` behave as in ``LLMReply``.
 
 **GUI replies**
 
 - ``GUIReplyAction(gui_id, persist=True, width=None, is_form=False)`` — send a
-  BESSER GUI model as an interactive chat message. ``gui_id`` must match a GUI
-  diagram associated with the agent (see `GUI integration`_ below). When
-  ``persist=True`` the submitted form field values are stored in the session.
-  ``width`` is an optional CSS width for the rendered bubble.
+  BESSER GUI model as an interactive chat message. ``gui_id`` must be a key of
+  ``agent.gui_models`` (see `GUI integration`_ below); ``agent.validate()``
+  reports a reply whose GUI is not registered. When ``persist=True`` the
+  submitted form field values are stored in the session. ``width`` is an
+  optional CSS width for the rendered bubble. ``is_form=True`` marks the GUI as
+  a form: submitting it emits the event ``when_form_submitted`` transitions
+  react to.
 
 **Web crawling**
 
 - ``WebCrawlLLMReply(initial_url, max_depth, max_pages, crawl_format,
   base_url_prefix, run_crawl, no_crawl_error_message, system_message_prefix,
-  system_message_prefix_use_session_vars, llm_name, store_in_session,
+  llm_name, system_message_prefix_use_session_vars, store_in_session,
   send_reply)`` — performs a BFS web crawl starting at ``initial_url`` and
   queries an LLM with the retrieved content.  The crawl result is cached in the
   session; set ``run_crawl=False`` in subsequent states to reuse the cache
@@ -225,16 +236,30 @@ GUI integration
 An agent can send interactive GUI panels — forms, dashboards, or any BESSER
 :doc:`GUI model <gui>` — directly in the chat conversation. The workflow is:
 
-1. Associate one or more GUI models with the agent via ``agent.gui_models``
-   (a ``dict[str, dict]`` mapping a ``gui_id`` to the raw GUI model dict). In
-   practice this is populated automatically when you import a diagram from the
-   web editor.
+1. Register each GUI on the agent with ``agent.add_gui_model(gui_id, gui_model)``,
+   where ``gui_model`` is a :class:`~besser.BUML.metamodel.gui.GUIModel`.
+   ``agent.gui_models`` is the resulting ``dict[str, GUIModel]``; assigning it
+   directly is validated too (keys must be non-empty strings, values
+   ``GUIModel`` instances).
 2. In a state body, add a ``GUIReplyAction`` referencing the ``gui_id``.
 3. In the next state, add a ``when_form_submitted(form_id)`` transition so the
    agent reacts when the user submits the form.
 
+.. code-block:: python
+
+    agent.add_gui_model('signup', signup_gui)          # signup_gui: GUIModel
+    ask.set_body(Body('ask_body', actions=[GUIReplyAction('signup', is_form=True)]))
+    ask.when_form_submitted(form_id='signup').go_to(thanks)
+
+In the web editor each GUI is an ``AgentGUI`` component of the agent diagram.
+On import its GrapesJS design is converted into a ``GUIModel`` by the GUI
+diagram processor (agent GUIs are not bound to a class diagram), and a GUI
+that has not been designed yet becomes an empty ``GUIModel``. The B-UML code
+export emits every GUI as a builder function followed by
+``agent.add_gui_model(...)``, so the exported module rebuilds the same models.
+
 The BAF generator collects all ``GUIReplyAction`` instances, creates a
-``guis/`` package, and generates the corresponding GUI code there.
+``guis/`` package, and writes the code of each referenced ``GUIModel`` there.
 
 Transitions triggered by GUI events
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -257,8 +282,12 @@ need finer control:
 
     # equivalent to state.when_form_submitted(form_id='my_form')
     state.when_event(GUIEvent(message_id='my_form')) \
-        .when_condition(FormSubmitMatcher(form_id='my_form')) \
+        .with_condition(FormSubmitMatcher(form_id='my_form')) \
         .go_to(next_state)
+
+``GUIEvent(message_id=None)`` on its own (``state.when_event(GUIEvent('my_form'))``)
+fires on any interaction with the GUI message ``my_form``; without a
+``message_id`` it fires on interactions with any GUI.
 
 .. image:: ../../img/agent_mm.png
   :width: 1600

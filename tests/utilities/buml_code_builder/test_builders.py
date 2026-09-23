@@ -766,10 +766,14 @@ class TestQuantumModelBuilder:
 # ---------------------------------------------------------------------------
 # agent_model_builder.py
 # ---------------------------------------------------------------------------
+from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
 from besser.BUML.metamodel.state_machine.agent import (
-    Agent, AgentReply, Auto,
+    Agent, AgentReply, Auto, DBReply, GUIEvent, GUIReplyAction, LLMChatReply, LLMReply,
+    RAGReply, RAGTextSplitter, RAGVectorStore, WebCrawlLLMReply, WebSocketReplyHTML,
+    WebSocketReplyMarkdown, WebSocketReplySpeech,
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 
 
 class TestAgentModelBuilder:
@@ -898,6 +902,141 @@ class TestAgentModelBuilder:
             code = f.read()
 
         assert "A helpful agent" in code
+
+
+class TestAgentModelBuilderLiveTesting:
+    """Exec round trip (Agent -> code -> exec -> Agent) of the live-testing parameters."""
+
+    TRICKY = "It's C:\\dir 'q' \"dq\" \\n tail\\"
+
+    @staticmethod
+    def _signup_gui():
+        title = Text(name="title", content="Sign up")
+        screen = Screen(name="Signup", description="Signup page", view_elements={title}, is_main_page=True)
+        return GUIModel(
+            name="SignupGUI", package="app", versionCode="1", versionName="1.0",
+            modules={Module(name="SignupModule", screens={screen})}, description="Signup",
+        )
+
+    @classmethod
+    def _build_agent(cls):
+        agent = Agent("LiveAgent")
+        agent.new_llm(name="fast", provider="openai", parameters={"model": "gpt-4o-mini"})
+        agent.new_rag(
+            name="docs",
+            vector_store=RAGVectorStore(
+                embedding_provider="openai", embedding_parameters={}, persist_directory="vector_store/docs",
+            ),
+            splitter=RAGTextSplitter(splitter_type="recursive_character", chunk_size=100, chunk_overlap=10),
+            llm_name="fast",
+        )
+        agent.add_gui_model("signup", cls._signup_gui())
+        ask = agent.new_state("ask", initial=True)
+        think = agent.new_state("think")
+        files = agent.new_state("files")
+        ask.set_body(Body("ask_body", actions=[
+            AgentReply(cls.TRICKY, use_session_vars=True),
+            GUIReplyAction("signup", persist=False, width="420px", is_form=True),
+            WebSocketReplyMarkdown(message="**{name}**", use_session_vars=True),
+            WebSocketReplyHTML(message="<b>{name}</b>", use_session_vars=True),
+            WebSocketReplySpeech(message="Hi {name}", audio_speed=1.5, use_session_vars=True),
+        ]))
+        ask.set_fallback_body(Body("ask_fallback_body", actions=[
+            GUIReplyAction("signup"),
+            LLMReply(prompt=cls.TRICKY, llm_name="fast", input_prompt_mode="custom",
+                     custom_input_prompt="Retry {email}", send_reply=False),
+        ]))
+        think.set_body(Body("think_body", actions=[
+            LLMReply(prompt=cls.TRICKY, llm_name="fast", input_prompt_mode="custom",
+                     custom_input_prompt="Summarise {email}", custom_input_prompt_use_session_vars=True,
+                     system_prompt_use_session_vars=True, store_in_session="summary", send_reply=False),
+            LLMChatReply(prompt="Chat {summary}", llm_name="fast", system_prompt_use_session_vars=True,
+                         store_in_session="chat", send_reply=False),
+            RAGReply("docs", prompt="Cite {summary}", input_prompt_mode="custom", custom_input_prompt="Find {x}",
+                     custom_input_prompt_use_session_vars=True, prompt_use_session_vars=True,
+                     store_in_session="rag", send_reply=False),
+            DBReply(llm_name="fast", input_prompt_mode="custom", custom_input_prompt="Rows {x}",
+                    custom_input_prompt_use_session_vars=True, store_in_session="rows", send_reply=False),
+            WebCrawlLLMReply(initial_url="https://example.org", system_message_prefix="Site {x}",
+                             llm_name="fast", system_message_prefix_use_session_vars=True,
+                             store_in_session="crawl", send_reply=False),
+        ]))
+        ask.when_form_submitted(form_id="signup").go_to(think)
+        think.when_event(GUIEvent(message_id="signup")).go_to(files)
+        files.when_event(GUIEvent()).go_to(ask)
+        files.when_file_received(["application/pdf", "text/csv"]).go_to(ask)
+        return agent
+
+    @staticmethod
+    def _exec_agent(agent, tmp_path, name="agent.py"):
+        file_path = str(tmp_path / name)
+        agent_model_to_code(agent, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        namespace = {}
+        exec(compile(code, file_path, "exec"), namespace)
+        return code, namespace["agent"]
+
+    @staticmethod
+    def _gui_code(gui_model, tmp_path, name):
+        file_path = str(tmp_path / name)
+        gui_model_to_code(gui_model, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_no_future_import(self, tmp_path):
+        code, _ = self._exec_agent(self._build_agent(), tmp_path)
+        assert "from __future__" not in code
+
+    def test_actions_roundtrip(self, tmp_path):
+        agent = self._build_agent()
+        _, restored = self._exec_agent(agent, tmp_path)
+        for original, copy_ in zip(agent.states, restored.states):
+            for body_attr in ("body", "fallback_body"):
+                original_body = getattr(original, body_attr)
+                restored_body = getattr(copy_, body_attr)
+                assert [repr(a) for a in (original_body.actions if original_body else [])] == \
+                       [repr(a) for a in (restored_body.actions if restored_body else [])]
+
+    def test_strings_are_not_double_escaped(self, tmp_path):
+        _, restored = self._exec_agent(self._build_agent(), tmp_path)
+        ask = next(s for s in restored.states if s.name == "ask")
+        assert ask.body.actions[0].message == self.TRICKY
+        think = next(s for s in restored.states if s.name == "think")
+        assert think.body.actions[0].prompt == self.TRICKY
+
+    def test_transitions_roundtrip(self, tmp_path):
+        _, restored = self._exec_agent(self._build_agent(), tmp_path)
+        by_name = {s.name: s for s in restored.states}
+        form = by_name["ask"].transitions[0]
+        assert isinstance(form.event, GUIEvent) and form.event.message_id == "signup"
+        assert form.conditions[0].form_id == "signup"
+        gui_event = by_name["think"].transitions[0]
+        assert isinstance(gui_event.event, GUIEvent) and gui_event.event.message_id == "signup"
+        any_gui_event, files = by_name["files"].transitions
+        assert isinstance(any_gui_event.event, GUIEvent) and any_gui_event.event.message_id is None
+        assert files.conditions[0].allowed_types == ["application/pdf", "text/csv"]
+
+    def test_gui_models_roundtrip(self, tmp_path):
+        agent = self._build_agent()
+        code, restored = self._exec_agent(agent, tmp_path)
+        assert "GUI MODEL" not in code
+        assert set(restored.gui_models) == {"signup"}
+        assert self._gui_code(restored.gui_models["signup"], tmp_path, "restored_gui.py") == \
+               self._gui_code(agent.gui_models["signup"], tmp_path, "original_gui.py")
+        assert restored.validate(raise_exception=False)["success"]
+
+    def test_gui_variables_do_not_leak(self, tmp_path):
+        """GUI code is scoped in a builder function: a screen named like the agent variable is harmless."""
+        agent = self._build_agent()
+        agent.add_gui_model("clash", GUIModel(
+            name="Clash", package="", versionCode="1", versionName="1",
+            modules={Module(name="agent", screens={Screen(name="ask", description="", view_elements=set())})},
+            description="",
+        ))
+        _, restored = self._exec_agent(agent, tmp_path)
+        assert isinstance(restored, Agent)
+        assert set(restored.gui_models) == {"signup", "clash"}
 
 
 # ---------------------------------------------------------------------------
@@ -1104,6 +1243,34 @@ class TestProjectBuilder:
         recreated = namespace["project"]
         assert isinstance(recreated, Project)
         assert recreated.name == "TestProject"
+
+    def test_project_with_domain_model_and_agent_execs(self, tmp_path):
+        """A project export with a structural model AND an agent (with a GUI) is valid Python.
+
+        The agent section sits mid-file, so it must not carry ``from __future__`` imports,
+        and its embedded GUI must not open a new ``GUI MODEL`` section.
+        """
+        domain_project = self._build_simple_project()
+        agent = TestAgentModelBuilderLiveTesting._build_agent()
+        project = Project(
+            name="AgentProject", models=[*domain_project.models, agent], owner="tester",
+            metadata=Metadata(description="Domain + agent"),
+        )
+        file_path = str(tmp_path / "project.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        assert "from __future__" not in code
+        assert code.count("GUI MODEL") == 0
+        namespace = {}
+        exec(compile(code, file_path, "exec"), namespace)
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        restored_agent = next(m for m in recreated.models if isinstance(m, Agent))
+        assert set(restored_agent.gui_models) == {"signup"}
+        assert any(isinstance(m, DomainModel) for m in recreated.models)
 
     def test_multi_model_project(self, tmp_path):
         """Project with multiple domain models generates suffixed variable names."""

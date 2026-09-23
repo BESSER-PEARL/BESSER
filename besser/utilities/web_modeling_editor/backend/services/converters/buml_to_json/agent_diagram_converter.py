@@ -3,19 +3,63 @@ Agent converter module for BUML to JSON conversion.
 Handles agent diagram processing and function analysis.
 """
 
-import logging
-import uuid
 import ast
-from typing import Dict, Any
+import logging
+import textwrap
+import uuid
+from typing import Any, Dict, List
 
-logger = logging.getLogger(__name__)
-
+from besser.utilities.buml_code_builder.agent_model_builder import GUI_BUILDER_FUNCTION_PREFIX
+from .gui_diagram_converter import gui_buml_to_json
 from ...utils.layout_calculator import (
     determine_connection_direction,
     calculate_connection_points,
     calculate_path_points,
     calculate_relationship_bounds,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_agent_guis(tree: ast.Module, content: str) -> Dict[str, Dict[str, Any]]:
+    """Pull the agent GUIs out of the parsed agent module.
+
+    ``agent_model_builder`` emits each GUI as a builder function followed by
+    ``agent.add_gui_model('<gui_id>', <builder>())``. Each function body is GUI B-UML code
+    (the ``gui_model_to_code`` output) and is converted with :func:`gui_buml_to_json`.
+    The function definitions and ``add_gui_model`` statements are removed from ``tree``
+    so the agent passes below never walk the GUI code.
+
+    Returns:
+        dict: gui id -> GrapesJS JSON of the GUI.
+    """
+    builders = {
+        node.name: node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith(GUI_BUILDER_FUNCTION_PREFIX)
+    }
+    gui_jsons: Dict[str, Dict[str, Any]] = {}
+    consumed: List[ast.stmt] = []
+    for node in tree.body:
+        call = node.value if isinstance(node, ast.Expr) else None
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_gui_model"
+            and len(call.args) == 2
+            and isinstance(call.args[0], ast.Constant)
+            and isinstance(call.args[0].value, str)
+            and isinstance(call.args[1], ast.Call)
+            and isinstance(call.args[1].func, ast.Name)
+            and call.args[1].func.id in builders
+        ):
+            continue
+        builder = builders[call.args[1].func.id]
+        statements = [stmt for stmt in builder.body if not isinstance(stmt, ast.Return)]
+        lines = content.splitlines()[statements[0].lineno - 1:statements[-1].end_lineno] if statements else []
+        gui_jsons[call.args[0].value] = gui_buml_to_json(textwrap.dedent("\n".join(lines)))
+        consumed.extend((node, builder))
+    tree.body = [node for node in tree.body if all(node is not done for done in consumed)]
+    return gui_jsons
 
 
 def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, Any]:
@@ -116,6 +160,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
     # Parse the Python code
     tree = ast.parse(content)
+    gui_jsons = _extract_agent_guis(tree, content)
+    # gui id -> AgentGUI settings (persist/width/is_form) read from the GUIReplyAction calls
+    gui_settings: Dict[str, Dict[str, Any]] = {}
     # Track states and functions
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
@@ -147,7 +194,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
             action_type = action.get("type")
             if action_type == "text":
-                message = (action.get("message") or "").replace("\\'", "'")
+                message = action.get("message") or ""
                 body_id = str(uuid.uuid4())
                 elements[body_id] = {
                     "id": body_id,
@@ -393,6 +440,19 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "actionType": "WebSocketReplyPlotlyAction", "replyType": "ws_plotly",
                 }
                 elements[state_id][state_key].append(body_id)
+            elif action_type == "gui_reply":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": f"GUI Reply: {action['guiId']}", "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"],
+                        "width": 159, "height": 30,
+                    },
+                    "actionType": "GUIReplyAction", "replyType": "gui_reply",
+                    "guiId": action["guiId"],
+                }
+                elements[state_id][state_key].append(body_id)
 
     try:
         # Pre-pass: collect RAGVectorStore variable bindings (var_name → {embedding_provider, ...})
@@ -451,7 +511,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     sentence_id = str(uuid.uuid4())
                                     elements[sentence_id] = {
                                         "id": sentence_id,
-                                        "name": elt.value.replace("\\'", "'"),
+                                        "name": elt.value,
                                         "type": "AgentIntentBody",
                                         "owner": intent_id,
                                         "bounds": {
@@ -743,7 +803,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "useSessionVars": False,
                         }
                         for kw in node.value.args[0].keywords:
-                            if kw.arg == 'use_session_vars' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
+                            if (
+                                kw.arg == 'use_session_vars'
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, bool)
+                            ):
                                 text_action["useSessionVars"] = kw.value.value
                         if body_var not in actions:
                             actions[body_var] = [text_action]
@@ -987,6 +1051,23 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             actions[body_var] = [ws_action]
                         else:
                             actions[body_var].append(ws_action)
+                    elif (
+                        node.value.args[0].func.id == 'GUIReplyAction'
+                        and node.value.args[0].args
+                        and isinstance(node.value.args[0].args[0], ast.Constant)
+                        and isinstance(node.value.args[0].args[0].value, str)
+                    ):
+                        gui_id = node.value.args[0].args[0].value
+                        settings = gui_settings.setdefault(gui_id, {"persist": True, "width": "", "is_form": False})
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg in ('persist', 'is_form') and isinstance(val, bool):
+                                settings[kw.arg] = val
+                            elif kw.arg == 'width' and isinstance(val, str):
+                                settings["width"] = val
+                        actions.setdefault(body_var, []).append({"type": "gui_reply", "guiId": gui_id})
                 elif isinstance(node.value.args[0], ast.Name):
                     # Handle references to CustomCodeAction variables
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'
@@ -1553,7 +1634,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 predefined_block["fileType"] = transition_payload if isinstance(transition_payload, str) else ""
                                 predefined_block.pop("conditionValue", None)
                             elif transition_type == "predefined" and condition_name == "when_form_submitted":
-                                predefined_block["formGuiId"] = transition_payload if isinstance(transition_payload, str) else ""
+                                predefined_block["formGuiId"] = (
+                                    transition_payload if isinstance(transition_payload, str) else ""
+                                )
                                 predefined_block.pop("conditionValue", None)
                             custom_block = {
                                 "event": (event_name or "None") if transition_type == "custom" else "None",
@@ -1705,7 +1788,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=False)
                                 else:
                                     for message in actions[function_name]:
-                                        message = message.replace("\\'", "'")
                                         body_id = str(uuid.uuid4())
                                         elements[body_id] = {
                                             "id": body_id,
@@ -1853,7 +1935,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": actions[function_name].replace("\\'", "'"),
+                                        "name": actions[function_name],
                                         "type": "AgentStateFallbackBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -2041,6 +2123,22 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
 
                 comment_y += 130
+
+        # AgentGUI components: the GUI design plus the settings carried by its replies.
+        for gui_id, gui_json in gui_jsons.items():
+            gui_element_id = str(uuid.uuid4())
+            settings = gui_settings.get(gui_id, {"persist": True, "width": "", "is_form": False})
+            elements[gui_element_id] = {
+                "id": gui_element_id,
+                "name": gui_id,
+                "type": "AgentGUI",
+                "owner": None,
+                "gui_id": gui_id,
+                "persist": settings["persist"],
+                "width": settings["width"],
+                "is_form": settings["is_form"],
+                "guiModel": gui_json,
+            }
 
         # Split elements into canvas elements (stay in "elements") and off-canvas
         # components (go into the new "components" section without bounds).

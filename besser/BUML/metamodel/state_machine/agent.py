@@ -3,7 +3,10 @@ from enum import Enum
 import json
 from typing import Any, Callable, Optional
 
-from besser.BUML.metamodel.state_machine.state_machine import Action, Event, Condition, StateMachine, State, Session, TransitionBuilder
+from besser.BUML.metamodel.gui import GUIModel
+from besser.BUML.metamodel.state_machine.state_machine import (
+    Action, Event, Condition, StateMachine, State, Session, TransitionBuilder,
+)
 from besser.BUML.metamodel.structural import NamedElement
 
 
@@ -33,6 +36,54 @@ class File:
         self.base64: str = file_base64
 
 
+VALID_INPUT_PROMPT_MODES = {"last_user_message", "custom"}
+"""Accepted values for the ``input_prompt_mode`` of LLMReply, RAGReply and DBReply."""
+
+
+class _InputPromptConfig:
+    """Validated ``input_prompt_mode`` / ``custom_input_prompt`` pair.
+
+    Shared by the actions whose user-facing input can be replaced by a custom
+    template (:class:`LLMReply`, :class:`RAGReply`, :class:`DBReply`). The mode
+    must be one of :data:`VALID_INPUT_PROMPT_MODES`, and ``'custom'`` requires a
+    non-empty ``custom_input_prompt``.
+    """
+
+    VALID_INPUT_PROMPT_MODES = VALID_INPUT_PROMPT_MODES
+
+    def _init_input_prompt(self, input_prompt_mode: str, custom_input_prompt: Optional[str]) -> None:
+        self._input_prompt_mode = "last_user_message"
+        self.custom_input_prompt = custom_input_prompt
+        self.input_prompt_mode = input_prompt_mode
+
+    @property
+    def input_prompt_mode(self) -> str:
+        """str: ``'last_user_message'`` or ``'custom'``."""
+        return self._input_prompt_mode
+
+    @input_prompt_mode.setter
+    def input_prompt_mode(self, input_prompt_mode: str):
+        if input_prompt_mode not in VALID_INPUT_PROMPT_MODES:
+            raise ValueError(
+                f"Unsupported input_prompt_mode '{input_prompt_mode}'. "
+                f"Expected one of {sorted(VALID_INPUT_PROMPT_MODES)}."
+            )
+        if input_prompt_mode == "custom" and not self._custom_input_prompt:
+            raise ValueError("input_prompt_mode 'custom' requires a non-empty custom_input_prompt.")
+        self._input_prompt_mode = input_prompt_mode
+
+    @property
+    def custom_input_prompt(self) -> Optional[str]:
+        """str | None: Template used as input when the mode is ``'custom'``."""
+        return self._custom_input_prompt
+
+    @custom_input_prompt.setter
+    def custom_input_prompt(self, custom_input_prompt: Optional[str]):
+        if self._input_prompt_mode == "custom" and not custom_input_prompt:
+            raise ValueError("input_prompt_mode 'custom' requires a non-empty custom_input_prompt.")
+        self._custom_input_prompt = custom_input_prompt
+
+
 class AgentReply(Action):
     """Primitive action that represents sending a reply message.
 
@@ -55,7 +106,7 @@ class AgentReply(Action):
         return f"AgentReply(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
 
 
-class LLMReply(Action):
+class LLMReply(_InputPromptConfig, Action):
     """Primitive action that represents sending a reply using an LLM.
 
     Args:
@@ -63,11 +114,12 @@ class LLMReply(Action):
         llm_name (str, optional): Name of the LLM (registered on the agent via
             :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
             the generator fall back to the agent's default LLM.
-        input_prompt_mode (str): How the user-facing message is built.
-            ``'last_user_message'`` (default) passes ``session.event.message``
-            directly. ``'custom'`` uses *custom_input_prompt* instead.
+        input_prompt_mode (str): How the user-facing message is built. One of
+            :data:`VALID_INPUT_PROMPT_MODES`: ``'last_user_message'`` (default)
+            passes ``session.event.message`` directly, ``'custom'`` uses
+            *custom_input_prompt* instead.
         custom_input_prompt (str, optional): Template string used as the LLM
-            input when *input_prompt_mode* is ``'custom'``.
+            input when *input_prompt_mode* is ``'custom'`` (required then).
         custom_input_prompt_use_session_vars (bool): When True, ``{key}``
             placeholders in *custom_input_prompt* are replaced with
             ``session.get("key")``. ``{user_message}`` resolves to
@@ -75,8 +127,9 @@ class LLMReply(Action):
         system_prompt_use_session_vars (bool): When True, applies the same
             ``{key}`` interpolation to *prompt* (the system message).
         store_in_session (str, optional): When set, the LLM reply is stored in
-            the session under this key via ``session.set(key, message)`` before
-            being sent to the user.
+            the session under this key via ``session.set(key, message)``.
+        send_reply (bool): When True (default) the LLM answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
         prompt (str | None): Optional system prompt.
@@ -86,6 +139,7 @@ class LLMReply(Action):
         custom_input_prompt_use_session_vars (bool): Session-var interpolation for input.
         system_prompt_use_session_vars (bool): Session-var interpolation for system prompt.
         store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
     def __init__(
@@ -102,8 +156,7 @@ class LLMReply(Action):
         super().__init__()
         self.prompt: Optional[str] = prompt
         self.llm_name: Optional[str] = llm_name
-        self.input_prompt_mode: str = input_prompt_mode
-        self.custom_input_prompt: Optional[str] = custom_input_prompt
+        self._init_input_prompt(input_prompt_mode, custom_input_prompt)
         self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
         self.system_prompt_use_session_vars: bool = system_prompt_use_session_vars
         self.store_in_session: Optional[str] = store_in_session
@@ -113,7 +166,10 @@ class LLMReply(Action):
         return (
             f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r}, "
             f"input_prompt_mode={self.input_prompt_mode!r}, "
-            f"store_in_session={self.store_in_session!r})"
+            f"custom_input_prompt={self.custom_input_prompt!r}, "
+            f"custom_input_prompt_use_session_vars={self.custom_input_prompt_use_session_vars!r}, "
+            f"system_prompt_use_session_vars={self.system_prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, send_reply={self.send_reply!r})"
         )
 
 
@@ -129,13 +185,16 @@ class LLMChatReply(Action):
             in *prompt* are replaced with ``session.get("key")`` at runtime.
             ``{user_message}`` resolves to ``session.event.message``.
         store_in_session (str, optional): When set, the LLM reply is stored in
-            the session under this key before being sent to the user.
+            the session under this key.
+        send_reply (bool): When True (default) the LLM answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
         prompt (str | None): Optional system prompt used by ``llm.chat(...)``.
         llm_name (str | None): Name of the LLM used for this reply.
         system_prompt_use_session_vars (bool): Session-var interpolation for system prompt.
         store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
     def __init__(
@@ -156,21 +215,23 @@ class LLMChatReply(Action):
     def __repr__(self):
         return (
             f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r}, "
-            f"store_in_session={self.store_in_session!r})"
+            f"system_prompt_use_session_vars={self.system_prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, send_reply={self.send_reply!r})"
         )
 
 
-class RAGReply(Action):
+class RAGReply(_InputPromptConfig, Action):
     """Primitive action that represents sending a reply using a configured RAG pipeline.
 
     Args:
         rag_db_name (str): The logical name of the RAG database to query.
         prompt (str, optional): Optional instructions passed to the LLM phase of the RAG answer.
-        input_prompt_mode (str): How the retrieval query is built.
-            ``'last_user_message'`` (default) passes ``session.event.message``
-            directly. ``'custom'`` uses *custom_input_prompt* instead.
+        input_prompt_mode (str): How the retrieval query is built. One of
+            :data:`VALID_INPUT_PROMPT_MODES`: ``'last_user_message'`` (default)
+            passes ``session.event.message`` directly, ``'custom'`` uses
+            *custom_input_prompt* instead.
         custom_input_prompt (str, optional): Template string used as the retrieval
-            query when *input_prompt_mode* is ``'custom'``.
+            query when *input_prompt_mode* is ``'custom'`` (required then).
         custom_input_prompt_use_session_vars (bool): When True, ``{key}``
             placeholders in *custom_input_prompt* are replaced with
             ``session.get("key")``. ``{user_message}`` resolves to
@@ -178,7 +239,9 @@ class RAGReply(Action):
         prompt_use_session_vars (bool): When True, applies the same ``{key}``
             interpolation to *prompt* (the LLM hint passed to the RAG pipeline).
         store_in_session (str, optional): When set, the RAG reply is stored in
-            the session under this key before being sent to the user.
+            the session under this key.
+        send_reply (bool): When True (default) the RAG answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
         rag_db_name (str): Identifier of the RAG database that should handle the reply.
@@ -188,6 +251,7 @@ class RAGReply(Action):
         custom_input_prompt_use_session_vars (bool): Session-var interpolation for retrieval query.
         prompt_use_session_vars (bool): Session-var interpolation for the LLM hint.
         store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
     def __init__(
@@ -204,8 +268,7 @@ class RAGReply(Action):
         super().__init__()
         self.rag_db_name: str = rag_db_name
         self.prompt: Optional[str] = prompt
-        self.input_prompt_mode: str = input_prompt_mode
-        self.custom_input_prompt: Optional[str] = custom_input_prompt
+        self._init_input_prompt(input_prompt_mode, custom_input_prompt)
         self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
         self.prompt_use_session_vars: bool = prompt_use_session_vars
         self.store_in_session: Optional[str] = store_in_session
@@ -215,7 +278,10 @@ class RAGReply(Action):
         return (
             f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r}, "
             f"input_prompt_mode={self.input_prompt_mode!r}, "
-            f"store_in_session={self.store_in_session!r})"
+            f"custom_input_prompt={self.custom_input_prompt!r}, "
+            f"custom_input_prompt_use_session_vars={self.custom_input_prompt_use_session_vars!r}, "
+            f"prompt_use_session_vars={self.prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, send_reply={self.send_reply!r})"
         )
 
 
@@ -237,6 +303,13 @@ class WebCrawlLLMReply(Action):
         system_message_prefix (str, optional): Prepended to the crawl result when building
             the LLM system message. Defaults to a generic instruction when None.
         llm_name (str, optional): Name of the LLM to use. Falls back to the agent default.
+        system_message_prefix_use_session_vars (bool): When True, ``{key}``
+            placeholders in *system_message_prefix* are replaced with
+            ``session.get("key")`` at runtime.
+        store_in_session (str, optional): When set, the LLM reply is stored in
+            the session under this key.
+        send_reply (bool): When True (default) the LLM answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
         initial_url (str): Target URL.
@@ -248,6 +321,9 @@ class WebCrawlLLMReply(Action):
         no_crawl_error_message (str): Error reply when no cached data exists.
         system_message_prefix (str | None): Prefix for the LLM system message.
         llm_name (str | None): Name of the LLM to use.
+        system_message_prefix_use_session_vars (bool): Session-var interpolation for the prefix.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
     def __init__(
@@ -260,8 +336,8 @@ class WebCrawlLLMReply(Action):
         run_crawl: bool = True,
         no_crawl_error_message: str = "No web crawl data is available yet.",
         system_message_prefix: Optional[str] = None,
-        system_message_prefix_use_session_vars: bool = False,
         llm_name: Optional[str] = None,
+        system_message_prefix_use_session_vars: bool = False,
         store_in_session: Optional[str] = None,
         send_reply: bool = True,
     ):
@@ -274,8 +350,8 @@ class WebCrawlLLMReply(Action):
         self.run_crawl: bool = run_crawl
         self.no_crawl_error_message: str = no_crawl_error_message
         self.system_message_prefix: Optional[str] = system_message_prefix
-        self.system_message_prefix_use_session_vars: bool = system_message_prefix_use_session_vars
         self.llm_name: Optional[str] = llm_name
+        self.system_message_prefix_use_session_vars: bool = system_message_prefix_use_session_vars
         self.store_in_session: Optional[str] = store_in_session
         self.send_reply: bool = send_reply
 
@@ -290,7 +366,10 @@ class WebCrawlLLMReply(Action):
             f"run_crawl={self.run_crawl!r}, "
             f"no_crawl_error_message={self.no_crawl_error_message!r}, "
             f"system_message_prefix={self.system_message_prefix!r}, "
-            f"llm_name={self.llm_name!r}"
+            f"llm_name={self.llm_name!r}, "
+            f"system_message_prefix_use_session_vars={self.system_message_prefix_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, "
+            f"send_reply={self.send_reply!r}"
             ")"
         )
 
@@ -304,7 +383,10 @@ class WebSocketReplyMarkdown(Action):
         self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplyMarkdown(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
+        return (
+            f"WebSocketReplyMarkdown(message={self.message!r}, "
+            f"use_session_vars={self.use_session_vars!r})"
+        )
 
 
 class WebSocketReplyHTML(Action):
@@ -316,20 +398,31 @@ class WebSocketReplyHTML(Action):
         self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplyHTML(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
+        return (
+            f"WebSocketReplyHTML(message={self.message!r}, "
+            f"use_session_vars={self.use_session_vars!r})"
+        )
 
 
 class WebSocketReplySpeech(Action):
     """Convert text to speech and send the audio via WebSocketPlatform.reply_speech()."""
 
-    def __init__(self, message: str = "", audio_speed: Optional[float] = None, use_session_vars: bool = False):
+    def __init__(
+        self,
+        message: str = "",
+        audio_speed: Optional[float] = None,
+        use_session_vars: bool = False,
+    ):
         super().__init__()
         self.message: str = message
         self.audio_speed: Optional[float] = audio_speed
         self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r}, use_session_vars={self.use_session_vars!r})"
+        return (
+            f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r}, "
+            f"use_session_vars={self.use_session_vars!r})"
+        )
 
 
 class WebSocketReplyOptions(Action):
@@ -386,14 +479,20 @@ class WebSocketReplyPlotly(Action):
 class GUIReplyAction(Action):
     """Action that sends a GUI (defined by the BESSER GUI metamodel) as a chat message reply.
 
+    The GUI itself is a :class:`~besser.BUML.metamodel.gui.GUIModel` registered on the
+    agent under ``gui_id`` (see :attr:`Agent.gui_models`); :meth:`Agent.validate` reports
+    a reply whose ``gui_id`` is not registered.
+
     Args:
-        gui_id (str): The gui_id (message id) for the GUI instance.
+        gui_id (str): Key of the GUI in :attr:`Agent.gui_models`; also used as the id of
+            the chat message that carries the GUI.
         persist (bool): Whether to persist GUI input values in the session.
         width (str, optional): CSS width for the GUI bubble.
-        is_form (bool): Whether this GUI is a form.
+        is_form (bool): When True the GUI is a form: submitting it emits a
+            form-submission event that ``AgentState.when_form_submitted`` transitions react to.
 
     Attributes:
-        gui_id (str): The unique message id for the GUI.
+        gui_id (str): Key of the GUI in :attr:`Agent.gui_models`.
         persist (bool): Whether to persist form inputs in session.
         width (str | None): CSS width for the GUI bubble.
         is_form (bool): Whether this GUI is a form.
@@ -413,10 +512,13 @@ class GUIReplyAction(Action):
         self.is_form: bool = is_form
 
     def __repr__(self):
-        return f"GUIReplyAction(gui_id={self.gui_id!r})"
+        return (
+            f"GUIReplyAction(gui_id={self.gui_id!r}, persist={self.persist!r}, "
+            f"width={self.width!r}, is_form={self.is_form!r})"
+        )
 
 
-class DBReply(Action):
+class DBReply(_InputPromptConfig, Action):
     """Primitive action that represents fetching information from a database.
 
     Args:
@@ -426,6 +528,15 @@ class DBReply(Action):
         db_operation (str): SQL operation restriction. Supported values are ``any``, ``select``, ``insert``,
             ``update`` and ``delete``.
         db_sql_query (str, optional): SQL query to run when ``db_query_mode`` is ``sql``.
+        llm_name (str, optional): Name of the LLM that writes the query in ``llm_query`` mode.
+        input_prompt_mode (str): How the LLM query request is built. One of
+            :data:`VALID_INPUT_PROMPT_MODES`: ``'last_user_message'`` (default)
+            or ``'custom'`` (uses *custom_input_prompt*, required then).
+        custom_input_prompt (str, optional): Template used when *input_prompt_mode* is ``'custom'``.
+        custom_input_prompt_use_session_vars (bool): When True, ``{key}`` placeholders in
+            *custom_input_prompt* are replaced with ``session.get("key")``.
+        store_in_session (str, optional): When set, the result is stored in the session under this key.
+        send_reply (bool): When True (default) the result is sent to the user.
 
     Attributes:
         db_selection_type (str): Whether the default application database or a named custom database is used.
@@ -433,6 +544,12 @@ class DBReply(Action):
         db_query_mode (str): How the query will be produced at runtime.
         db_operation (str): Which DB handler method must be used when executing the query.
         db_sql_query (str | None): Raw SQL query when SQL mode is selected.
+        llm_name (str | None): Name of the LLM used in ``llm_query`` mode.
+        input_prompt_mode (str): ``'last_user_message'`` or ``'custom'``.
+        custom_input_prompt (str | None): Custom input template.
+        custom_input_prompt_use_session_vars (bool): Session-var interpolation for the input.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the result is sent to the user.
     """
 
     VALID_SELECTION_TYPES = {"default", "custom"}
@@ -484,8 +601,7 @@ class DBReply(Action):
         self.db_operation: str = normalized_operation
         self.db_sql_query: Optional[str] = db_sql_query
         self.llm_name: Optional[str] = llm_name
-        self.input_prompt_mode: str = input_prompt_mode
-        self.custom_input_prompt: Optional[str] = custom_input_prompt
+        self._init_input_prompt(input_prompt_mode, custom_input_prompt)
         self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
         self.store_in_session: Optional[str] = store_in_session
         self.send_reply: bool = send_reply
@@ -499,7 +615,11 @@ class DBReply(Action):
             f"db_operation={self.db_operation!r}, "
             f"db_sql_query={self.db_sql_query!r}, "
             f"llm_name={self.llm_name!r}, "
-            f"store_in_session={self.store_in_session!r}"
+            f"input_prompt_mode={self.input_prompt_mode!r}, "
+            f"custom_input_prompt={self.custom_input_prompt!r}, "
+            f"custom_input_prompt_use_session_vars={self.custom_input_prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, "
+            f"send_reply={self.send_reply!r}"
             ")"
         )
 
@@ -2350,7 +2470,10 @@ class Agent(StateMachine):
             agent states.
         intents (list[Intent]): The agent intents.
         entities (list[Entity]): The agent entities.
-        global_initial_states (list[state_machine.State, Intent]): List of tuples of initial global states and their triggering intent
+        global_initial_states (list[state_machine.State, Intent]): List of tuples of initial global states and their
+            triggering intent
+        gui_models (dict[str, GUIModel]): The GUIs the agent can send as chat replies, keyed by gui id. A
+            :class:`GUIReplyAction` references one of these keys through its ``gui_id``.
     """
 
     def __init__(self, name: str):
@@ -2367,9 +2490,46 @@ class Agent(StateMachine):
         self.tools: list[Tool] = []
         self.skills: list[Skill] = []
         self.workspaces: list[Workspace] = []
-        # Mapping from gui_id → raw GrapesJS gui_model dict.  Populated by the
-        # diagram processor and consumed by the BAF generator to emit guis/*.py.
-        self.gui_models: dict[str, dict] = {}
+        self.gui_models: dict[str, GUIModel] = {}
+
+    @property
+    def gui_models(self) -> dict[str, GUIModel]:
+        """dict[str, GUIModel]: The agent GUIs keyed by gui id (referenced by ``GUIReplyAction.gui_id``)."""
+        return self._gui_models
+
+    @gui_models.setter
+    def gui_models(self, gui_models: dict[str, GUIModel]):
+        """dict[str, GUIModel]: Replace the agent GUIs. Keys must be non-empty strings, values GUIModels."""
+        if not isinstance(gui_models, dict):
+            raise TypeError(f"gui_models must be a dict[str, GUIModel], got {type(gui_models).__name__}.")
+        for gui_id, gui_model in gui_models.items():
+            self._check_gui_entry(gui_id, gui_model)
+        self._gui_models = dict(gui_models)
+
+    @staticmethod
+    def _check_gui_entry(gui_id: str, gui_model: GUIModel) -> None:
+        if not isinstance(gui_id, str) or not gui_id.strip():
+            raise ValueError(f"A GUI id must be a non-empty string, got {gui_id!r}.")
+        if not isinstance(gui_model, GUIModel):
+            raise TypeError(
+                f"The GUI registered under '{gui_id}' must be a GUIModel, got {type(gui_model).__name__}."
+            )
+
+    def add_gui_model(self, gui_id: str, gui_model: GUIModel) -> GUIModel:
+        """Register a GUI the agent can send as a chat reply.
+
+        Args:
+            gui_id (str): The id :class:`GUIReplyAction` uses to reference this GUI.
+            gui_model (GUIModel): The GUI definition.
+
+        Returns:
+            GUIModel: the registered GUI model.
+        """
+        self._check_gui_entry(gui_id, gui_model)
+        if gui_id in self._gui_models:
+            raise ValueError(f"A GUI with id '{gui_id}' is already registered on agent '{self.name}'.")
+        self._gui_models[gui_id] = gui_model
+        return gui_model
 
     def validate(self, raise_exception: bool = True) -> dict:
         """
@@ -2388,6 +2548,7 @@ class Agent(StateMachine):
         self._validate_transition_intent_references(errors)
         self._validate_reasoning_primitives(errors, warnings)
         self._validate_llm_references(errors, warnings)
+        self._validate_gui_references(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2864,6 +3025,20 @@ class Agent(StateMachine):
         # Default LLM pointer.
         if self.default_llm_name is not None:
             _check("Agent.default_llm_name", self.default_llm_name)
+
+    def _validate_gui_references(self, errors: list[str]) -> None:
+        """Validate that every ``GUIReplyAction.gui_id`` is a key of :attr:`gui_models`."""
+        for state in self.states:
+            for body, label in ((state.body, "body"), (state.fallback_body, "fallback_body")):
+                if body is None:
+                    continue
+                for action in body.actions:
+                    if isinstance(action, GUIReplyAction) and action.gui_id not in self.gui_models:
+                        errors.append(
+                            f"State '{state.name}' {label} GUIReplyAction references GUI "
+                            f"'{action.gui_id}' which is not registered on agent '{self.name}'. "
+                            f"Register it via agent.add_gui_model(...) first."
+                        )
 
     # ─── Reasoning validation ─────────────────────────────────────────── #
 

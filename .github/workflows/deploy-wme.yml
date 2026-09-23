@@ -12,6 +12,7 @@ on:
           - all
           - backend
           - frontend
+          - agent_simulator
 
 env:
   REGISTRY: artefacts.list.lu/besser/web_modeling_editor
@@ -51,6 +52,18 @@ jobs:
         if: inputs.target == 'all' || inputs.target == 'frontend'
         run: docker push ${{ env.REGISTRY }}/frontend:latest
 
+      # ── Agent simulator ──────────────────────────────────────
+      # Built from the repository root so it ships this checkout's `besser`.
+      - name: Build agent simulator image
+        if: inputs.target == 'all' || inputs.target == 'agent_simulator'
+        run: |
+          docker build -t ${{ env.REGISTRY }}/agent_simulator:latest \
+            -f besser/utilities/web_modeling_editor/agent_simulator/Dockerfile .
+
+      - name: Push agent simulator image
+        if: inputs.target == 'all' || inputs.target == 'agent_simulator'
+        run: docker push ${{ env.REGISTRY }}/agent_simulator:latest
+
       # ── Deploy to EC2 ───────────────────────────────────────
       - name: Setup SSH key
         run: |
@@ -67,6 +80,9 @@ jobs:
           fi
           if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
             SERVICES="$SERVICES besser-wme-frontend"
+          fi
+          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "agent_simulator" ]]; then
+            SERVICES="$SERVICES besser-wme-agent-simulator"
           fi
 
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }} << EOF

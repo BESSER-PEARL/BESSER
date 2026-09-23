@@ -41,14 +41,19 @@ from besser.utilities.web_modeling_editor.backend.models import (
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
     process_agent_diagram,
+    annotate_agent_with_a2a,
     process_object_diagram,
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_deployment_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
+)
+from besser.utilities.web_modeling_editor.backend.services.governance.govdsl_runtime import (
+    summarize_governance,
 )
 
 # Backend services - Other services
@@ -119,6 +124,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
     GenerationError,
     ValidationError,
+    GovernanceDslValidationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -487,6 +493,16 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
+    
+    # Docker Compose generation runs at project scope so AgentDiagrams are
+    # available for baking agent source files into the ZIP.
+    if generator_type == "docker_compose":
+        return await _handle_deployment_project_generation(
+            input_data,
+            generator_info,
+            config,
+            generator_type,
+        )
 
     # Handle generators that consume a non-class diagram (Qiskit → quantum,
     # PyTorch/TensorFlow → neural network). The required diagram type comes
@@ -601,6 +617,15 @@ async def generate_code_output(input_data: DiagramInput):
                 temp_dir,
             )
 
+        if generator_type == "docker_compose":
+            return await _handle_deployment_diagram_generation(
+                json_data,
+                generator_type,
+                generator_info,
+                input_data.config,
+                temp_dir,
+            )
+
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
             json_data, generator_type, generator_info, input_data.config, temp_dir
@@ -688,6 +713,327 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             )
 
         return _create_zip_response(temp_dir, "web_app")
+
+
+def _producer_agent_names(gateway_id, relationships, items_by_id, lane_ref,
+                          agent_models_by_id) -> list:
+    """The candidate PRODUCERS of a merging gateway are the agents on the
+    branches that FLOW INTO it: every sequence flow whose target is the gateway, traced
+    source node → owning lane → agentDiagramRef → Agent. This is what makes the vote
+    BPMN-faithful — only the tasks feeding the merge author a candidate, regardless of
+    who the policy lists as voters (full decoupling: producers ≠ voters).
+    """
+    names, seen = [], set()
+    for rel in relationships:
+        if not isinstance(rel, dict):
+            continue
+        if (rel.get("target") or {}).get("element") != gateway_id:
+            continue
+        # Only control-flow branches produce candidates; message/association/data flows
+        # into a gateway (if any) do not. Treat a missing flowType as a sequence flow.
+        ft = rel.get("flowType")
+        if ft and ft != "sequence":
+            continue
+        src = items_by_id.get((rel.get("source") or {}).get("element")) or {}
+        ref = lane_ref.get(src.get("owner"))
+        agent = agent_models_by_id.get(ref) if ref else None
+        if agent is not None and agent.name not in seen:
+            seen.add(agent.name)
+            names.append(agent.name)
+    return names
+
+
+def _merge_state_for_gateway(agent, gateway_id) -> str:
+    """Resolve the AgentState a governed gateway binds to via the ``a2a:in;flow=<gateway-id>`` marker the
+    a2a parser stashes on ``agent._a2a['inbound']`` (each inbound edge carries ``flow`` =
+    the gateway id and ``target_state`` = the state the guarded transition leads into).
+
+    Returns the bound state name, or None when no inbound edge carries this gateway's
+    flow, so governance falls back to the flat ``agent._governance`` list. It feeds ``agent._governance_by_state`` for per-state governance.
+    """
+    if not gateway_id:
+        return None
+    tags = getattr(agent, "_a2a", None) or {}
+    for edge in tags.get("inbound", []):
+        if edge.get("flow") and edge.get("flow") == gateway_id:
+            return edge.get("target_state") or edge.get("source_state") or None
+    return None
+
+
+def _attach_governance_to_agents(input_data, agent_models_by_id: dict) -> None:
+    """Map each agentic merging gateway's governanceDsl onto the BUML Agent
+    of its owning lane, as ``agent._governance`` (a list of summary dicts from
+    summarize_governance). Mapping: gateway.owner (lane id) → lane.agentDiagramRef →
+    agent_models_by_id key. No-op when there is no BPMN diagram, no gateway carries a
+    governanceDsl, or the owning lane is unlinked/dangling.
+
+    Also stamps each summary with ``producers`` (the BPMN-derived candidate
+    producers; see ``_producer_agent_names``) so the generator can run the star vote
+    with producers and voters as decoupled sets.
+
+    When WME's ``flow=`` binding is present, ALSO key the summary per
+    merge STATE on ``agent._governance_by_state`` (so a lane owning several governed
+    gateways governs each at its own state). The flat ``agent._governance`` list is kept
+    as the back-compat fallback that the live (single-merge) render still reads, so an
+    agent without the per-state binding renders byte-for-byte as today.
+    """
+    # The project payload keys BPMN diagrams under "BPMN" (the WME export/request
+    # short name); "BPMNDiagram" is the backend-internal discriminator used by the
+    # conversion paths. Accept either so governance resolves regardless of caller.
+    bpmn_entries = (input_data.diagrams.get("BPMNDiagram")
+                    or input_data.diagrams.get("BPMN")
+                    or [])
+    for entry in bpmn_entries:
+        entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+        if not isinstance(entry_dict, dict):
+            continue
+        model = entry_dict.get("model") or {}
+        elements = model.get("elements") or {}
+        items = list(elements.values() if isinstance(elements, dict) else elements)
+        relationships = model.get("relationships") or {}
+        rels = list(relationships.values() if isinstance(relationships, dict) else relationships)
+        items_by_id = {el.get("id"): el for el in items if isinstance(el, dict)}
+        # lane id → its agentDiagramRef, so a gateway's owner resolves to an agent.
+        lane_ref = {
+            el.get("id"): el.get("agentDiagramRef")
+            for el in items
+            if isinstance(el, dict) and el.get("type") == "BPMNSwimlane"
+        }
+        # a producer's outbound A2A message must be dispatched to the
+        # right merge state on the owner. The producer's `a2a:out` carries the BPMN
+        # SEQUENCE-FLOW id; that flow's TARGET is the governed gateway. Build {flow id →
+        # governed gateway id} so each producer's outbound edge can be stamped with the
+        # gateway it feeds (`target_gateway`), and the owner dispatches on that key (PUSH:
+        # the triggering message is the candidate). Non-governed targets are omitted.
+        gov_gateway_ids = {
+            el.get("id") for el in items
+            if isinstance(el, dict) and el.get("type") == "BPMNGateway"
+            and el.get("governanceDsl")
+        }
+        flow_to_gov_gateway = {}
+        for rel in rels:
+            if not isinstance(rel, dict):
+                continue
+            tgt = (rel.get("target") or {}).get("element")
+            if tgt in gov_gateway_ids:
+                flow_to_gov_gateway[rel.get("id")] = tgt
+        if flow_to_gov_gateway:
+            for agent in agent_models_by_id.values():
+                for edge in (getattr(agent, "_a2a", None) or {}).get("outbound", []):
+                    gw = flow_to_gov_gateway.get(edge.get("flow"))
+                    if gw:
+                        edge["target_gateway"] = gw
+        for el in items:
+            if not isinstance(el, dict) or el.get("type") != "BPMNGateway":
+                continue
+            gov = el.get("governanceDsl")
+            if not gov:
+                continue
+
+            gateway_name = el.get("name") or el.get("id") or "<unnamed>"
+            try:
+                summary = summarize_governance(gov)
+            except GovernanceDslValidationError as exc:
+                raise GovernanceDslValidationError(
+                    f"Invalid Governance DSL on merging gateway '{gateway_name}': {exc}"
+                ) from exc
+
+            if summary is None:
+                continue
+
+            ref = lane_ref.get(el.get("owner"))
+            agent = agent_models_by_id.get(ref) if ref else None
+            if agent is None:
+                continue
+
+            producers = _producer_agent_names(
+                el.get("id"), rels, items_by_id, lane_ref, agent_models_by_id
+            )
+            summary["producers"] = producers
+            # Per-state keying when the binding resolves (
+            # WME emits flow=); purely additive, so the flat list below is unchanged.
+            state_name = _merge_state_for_gateway(agent, el.get("id"))
+            if state_name:
+                # Stash the binding gateway id on the summary so the state-aware descriptor
+                # can emit it as the owner's per-merge dispatch key (matched against the
+                # producer's stamped `target_gateway`).
+                summary["gateway_id"] = el.get("id")
+                summary["merge_state"] = state_name
+                by_state = getattr(agent, "_governance_by_state", None)
+                if by_state is None:
+                    by_state = {}
+                    agent._governance_by_state = by_state
+                by_state[state_name] = summary
+            existing = getattr(agent, "_governance", None) or []
+            existing.append(summary)
+            agent._governance = existing
+
+
+def _attach_entry_role_to_agents(input_data, agent_models_by_id: dict) -> None:
+    """Derive each agent's HUMAN-FACING (entry) role from the BPMN and stamp it as
+    ``agent._human_facing = True``. Mirrors ``_attach_governance_to_agents``: the compose
+    path never loads the BPMN model, so read the raw BPMN JSON here and resolve lanes →
+    agents via ``BPMNSwimlane.agentDiagramRef``.
+
+    A lane is human-facing (the swarm's user-facing trigger) when, in the BPMN, it:
+      1. OWNS a start event (``BPMNStartEvent.owner`` is that lane), OR
+      2. is the TARGET of a start event's outgoing flow (the start sits outside a lane —
+         e.g. on the pool — but kicks off a task in that lane), OR
+      3. has an incoming sequence/message flow from a NON-agentic source (a lane with no
+         ``agentDiagramRef``, a pool, or an unlaned node — i.e. a human/external actor).
+
+    This is AUTHORITATIVE: unlike the legacy "no inbound A2A peer ⇒ entry" heuristic, a
+    human-facing lane that ALSO receives A2A back-edges (a reviewer/coordinator owning the
+    start event and the governed merge gateways) is still correctly an entry. No-op when
+    there is no BPMN diagram or no start event resolves to a linked agentic lane — the
+    generator then falls back to the legacy heuristic, so legacy renders stay byte-identical.
+    """
+    bpmn_entries = (input_data.diagrams.get("BPMNDiagram")
+                    or input_data.diagrams.get("BPMN")
+                    or [])
+    for entry in bpmn_entries:
+        entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+        if not isinstance(entry_dict, dict):
+            continue
+        model = entry_dict.get("model") or {}
+        elements = model.get("elements") or {}
+        items = list(elements.values() if isinstance(elements, dict) else elements)
+        relationships = model.get("relationships") or {}
+        rels = list(relationships.values() if isinstance(relationships, dict) else relationships)
+        items_by_id = {el.get("id"): el for el in items if isinstance(el, dict)}
+        # lane id → its agentDiagramRef. A lane present here but with a falsy ref is
+        # NON-agentic (a human/external lane), which is what makes rule 3 fire.
+        lane_ref = {
+            el.get("id"): el.get("agentDiagramRef")
+            for el in items
+            if isinstance(el, dict) and el.get("type") == "BPMNSwimlane"
+        }
+        agentic_lanes = {lid for lid, ref in lane_ref.items() if ref}
+
+        def _stamp(lane_id):
+            ref = lane_ref.get(lane_id)
+            agent = agent_models_by_id.get(ref) if ref else None
+            if agent is not None:
+                agent._human_facing = True
+
+        # Rules 1 & 2 — start events: stamp the owning lane and any lane a start-event
+        # outgoing flow targets.
+        start_ids = {
+            el.get("id") for el in items
+            if isinstance(el, dict) and el.get("type") == "BPMNStartEvent"
+        }
+        for el in items:
+            if not isinstance(el, dict) or el.get("type") != "BPMNStartEvent":
+                continue
+            _stamp(el.get("owner"))
+        for rel in rels:
+            if not isinstance(rel, dict):
+                continue
+            if (rel.get("source") or {}).get("element") not in start_ids:
+                continue
+            tgt = items_by_id.get((rel.get("target") or {}).get("element"))
+            if isinstance(tgt, dict):
+                _stamp(tgt.get("owner"))
+
+        # Rule 3 — a flow from a non-agentic source into an agentic lane (human handoff).
+        for rel in rels:
+            if not isinstance(rel, dict):
+                continue
+            src = items_by_id.get((rel.get("source") or {}).get("element"))
+            tgt = items_by_id.get((rel.get("target") or {}).get("element"))
+            if not isinstance(tgt, dict):
+                continue
+            tgt_lane = tgt.get("owner")
+            if tgt_lane not in agentic_lanes:
+                continue
+            src_lane = src.get("owner") if isinstance(src, dict) else None
+            # A start event was already handled above; an agent-to-agent flow (source in an
+            # agentic lane) is A2A, not human-facing; an intra-lane flow is internal.
+            if src_lane in agentic_lanes or src_lane == tgt_lane:
+                continue
+            if isinstance(src, dict) and src.get("type") == "BPMNStartEvent":
+                continue
+            _stamp(tgt_lane)
+
+
+@handle_endpoint_errors("_handle_deployment_project_generation")
+async def _handle_deployment_project_generation(
+    input_data: ProjectInput, generator_info, config: dict, generator_type: str
+):
+    """Generate Docker Compose output with the project's AgentDiagrams in scope.
+
+    Resolves Artifact.agent_model_ref values against AgentDiagram IDs, so each
+    linked local artifact can receive a baked BAF build context. The response is
+    always a ZIP containing docker-compose.yml and any generated agent contexts.
+    """
+    deployment_diagram = input_data.get_active_diagram("DeploymentDiagram")
+    if not deployment_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="DeploymentDiagram is required for the Docker Compose generator",
+        )
+
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+         # Mirror the single-diagram Docker Compose conversion call shape.
+        deployment_model = process_deployment_diagram(deployment_diagram.model_dump())
+
+        # Resolver map: AgentDiagram.id → BUML Agent. Keyed by *diagram id*
+        # (== the Artifact.agent_model_ref UUID), NOT by agent name — duplicate
+        # agent names are legal, which is why 6b chose ID over name (memo 07 §8).
+        agent_models_by_id: dict = {}
+        for entry in input_data.diagrams.get("AgentDiagram", []):
+            entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+            if not isinstance(entry_dict, dict):
+                continue
+            diagram_id = entry_dict.get("id")
+            model = entry_dict.get("model")
+            if not diagram_id or not (isinstance(model, dict) and model.get("elements")):
+                continue
+            agent_model = process_agent_diagram(entry_dict)
+            if agent_model is not None:
+                # Item 10 — stash the A2A wire tags (a2a:in/a2a:out) parsed from the
+                # raw AgentDiagram JSON onto agent._a2a, so the docker_compose bake can
+                # prefer them over the legacy to_/from_ state-name convention. No-op when
+                # the diagram carries no a2a: tag (legacy agents stay byte-identical).
+                annotate_agent_with_a2a(agent_model, entry_dict)
+                agent_models_by_id[diagram_id] = agent_model
+
+        # Governance DSL → runtime. A merging gateway's governanceDsl is
+        # authored in the BPMN diagram and round-trips on AgenticGateway, but the
+        # compose path never loads the BPMN model. Read it from the
+        # raw BPMN JSON, parse it, and stash a runtime instruction on
+        # the agent whose lane owns the gateway, for injection into its synthesis.
+        _attach_governance_to_agents(input_data, agent_models_by_id)
+
+        # Derive the human-facing (entry) role from the BPMN start event, so a coordinator
+        # lane that owns the start event AND receives A2A back-edges (a governed merge
+        # owner) is still correctly an entry — it runs the UI + publishes ports AND keeps
+        # its A2A server. Authoritative over the generator's legacy no-inbound heuristic.
+        _attach_entry_role_to_agents(input_data, agent_models_by_id)
+
+        generator_class = generator_info.generator_class
+        generator_instance = generator_class(
+            deployment_model, output_dir=temp_dir,
+            agent_models_by_id=agent_models_by_id,
+        )
+        await asyncio.to_thread(generator_instance.generate)
+
+        # Build a ZIP whose filename carries the project name so the browser
+        # download is identifiable (e.g. "MyProject-docker-compose.zip").
+        safe_project = re.sub(r'[^\w.-]', '_', input_data.name).strip('_') or 'project'
+        zip_filename = f"{safe_project}-docker-compose.zip"
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(temp_dir):
+                for fname in files:
+                    fp = os.path.join(root, fname)
+                    zf.write(fp, os.path.relpath(fp, temp_dir))
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
+        )
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -1081,6 +1427,34 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
         )
     else:
         return _create_file_response(temp_dir, "jsonschema")
+
+
+async def _handle_deployment_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
+    temp_dir: str,
+):
+    """Generate Docker Compose from a single UML DeploymentDiagram.
+
+    Single-diagram generation has no project-level AgentDiagram resolver, so it
+    returns docker-compose.yml only. Project generation uses
+    ``_handle_deployment_project_generation`` to bake linked agent contexts and
+    returns a ZIP.
+    """
+    try:
+        deployment_model = process_deployment_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed Deployment diagram payload: {exc}") from exc
+
+    generator_class = generator_info.generator_class
+    generator_instance = generator_class(deployment_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    if generator_info.output_type == "zip":
+        return _create_zip_response(temp_dir, generator_type)
+    return _create_file_response(temp_dir, generator_type)
 
 
 async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):

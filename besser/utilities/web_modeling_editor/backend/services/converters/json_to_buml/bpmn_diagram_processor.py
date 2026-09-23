@@ -2,13 +2,13 @@
 
 Returns a ``BPMNModel`` metamodel instance from the WME BPMN diagram JSON envelope. The
 algorithm is the standard nodes-first / edges-second pass with a containment pass in
-between (see ``.claude/bpmn/03-bpmn-converters-guide.md`` §4).
+between.
 
 Design points:
 
-* **Identity is by object** (decision D5): WME ids ride in ``element.layout`` so the
+* **Identity is by object**: WME ids ride in ``element.layout`` so the
   converter pair can round-trip them, but the metamodel itself stays id-free.
-* **Layout is opaque** (decision D8): ``BPMNElement.layout`` carries the WME bounds /
+* **Layout is opaque**: ``BPMNElement.layout`` carries the WME bounds /
   path / stash without the metamodel ever interpreting it.
 * **Validation is a separate concern**: this processor never calls ``BPMNModel.validate``
   — it only produces a ``BPMNModel``. Callers run validation if they need it.
@@ -43,6 +43,12 @@ from besser.BUML.metamodel.bpmn import (
     TaskType,
     TextAnnotation,
     Transaction,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
+    AgentRole,
+    GatewayRole,
+    ReflectionMode,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
@@ -104,6 +110,24 @@ def _flow_layout_dict(rel_id: str, rel: dict) -> dict:
     }
 
 
+def _clamp_trust_score(value) -> int:
+    """Clamp WME's tolerant trust score to BESSER's strict [0, 100]."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, n))
+
+
+def _clamp_swarm_size(value) -> int:
+    """Clamp WME's tolerant multiplicity field to AgenticLane.swarm_size >= 1."""
+    try:
+        n = round(float(value))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, n)
+
+
 def _build_node(elem: dict):
     """Construct the metamodel object for one WME ``elements[id]`` entry.
 
@@ -132,8 +156,27 @@ def _build_node(elem: dict):
                 raise ConversionError(
                     f"Unknown BPMN task type '{elem.get('taskType')}' on Task '{name}'."
                 ) from exc
-            # isAgentic / AgenticTask wiring is groundwork for a follow-up PR;
-            # the base release builds plain Task for all BPMNTask elements.
+            if elem.get("isAgentic"):
+                reflection_value = elem.get("reflectionMode", "none") or "none"
+                try:
+                    reflection = ReflectionMode(reflection_value)
+                except ValueError as exc:
+                    raise ConversionError(
+                        f"Unknown reflectionMode '{reflection_value}' on AgenticTask '{name}'."
+                    ) from exc
+
+                trust = _clamp_trust_score(elem.get("trustScore", 0))
+                agent_ref = elem.get("agentDiagramRef") or None
+
+                return AgenticTask(
+                    name=name,
+                    task_type=task_type,
+                    loop_characteristics=loop,
+                    reflection_mode=reflection,
+                    trust_score=trust,
+                    agent_diagram_ref=agent_ref,
+                )
+
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
         # SubProcess / Transaction / CallActivity all take the same args (no task_type).
         return cls(name=name, loop_characteristics=loop)
@@ -156,6 +199,33 @@ def _build_node(elem: dict):
             raise ConversionError(
                 f"Unknown BPMN gateway type '{elem.get('gatewayType')}' on Gateway '{name}'."
             ) from exc
+        if elem.get("isAgentic"):
+            try:
+                role = GatewayRole(elem.get("gatewayRole", "diverging") or "diverging")
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Unknown gatewayRole '{elem.get('gatewayRole')}' "
+                    f"on AgenticGateway '{name}'."
+                ) from exc
+
+            trust = _clamp_trust_score(elem.get("trustScore", 0))
+
+            gov = elem.get("governanceDsl")
+            gov = gov if (isinstance(gov, str) and gov.strip() != "") else None
+
+            try:
+                return AgenticGateway(
+                    name=name,
+                    gateway_type=gateway_type,
+                    gateway_role=role,
+                    trust_score=trust,
+                    governance_dsl=gov,
+                )
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Cannot import AgenticGateway '{name}': {exc}"
+                ) from exc
+
         return Gateway(name=name, gateway_type=gateway_type)
 
     if elem_type == "BPMNDataObject":
@@ -168,6 +238,27 @@ def _build_node(elem: dict):
     if elem_type == "BPMNGroup":
         return Group(name=name)
     if elem_type == "BPMNSwimlane":
+        if elem.get("isAgentic"):
+            # SEAA'25 «AgenticLane» (paper §4.1 Fig 3a).
+            role_value = elem.get("role", "solution") or "solution"
+            # Accept legacy WME values (pre-2afac286) transparently.
+            _ROLE_ALIASES = {"worker": "solution", "manager": "supervision"}
+            role_value = _ROLE_ALIASES.get(role_value, role_value)
+            try:
+                role = AgentRole(role_value)
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Unknown role '{role_value}' on AgenticLane '{name}'."
+                ) from exc
+            trust = _clamp_trust_score(elem.get("trustScore", 0))
+            # Optional opaque AgentDiagram id. Empty string / absent → None.
+            # No UUID validation — pass through verbatim.
+            agent_ref = elem.get("agentDiagramRef") or None
+            # Swarm size; absent → 1 (single agent).
+            swarm_size = _clamp_swarm_size(elem.get("multiplicity", 1))
+            return AgenticLane(name=name, role=role, trust_score=trust,
+                               agent_diagram_ref=agent_ref,
+                               swarm_size=swarm_size)
         return Lane(name=name)
     if elem_type == "BPMNPool":
         # Build the Pool's Process eagerly so pass 2 containment can attach to it.
@@ -240,8 +331,7 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
         raise ConversionError("BPMN diagram JSON is missing the 'model' key.")
 
     if model_data.get("type") and model_data.get("type") != BPMN_DIAGRAM_TYPE:
-        # Don't reject — WME may not have aligned yet (the WME-side agent task tracked in
-        # `.claude/bpmn/bpmn-metamodel-work.md`). Log so the mismatch is visible.
+        # Don't reject — WME may not have aligned yet. Log so the mismatch is visible.
         logger.warning(
             "BPMN diagram envelope type is '%s', expected '%s'.",
             model_data.get("type"), BPMN_DIAGRAM_TYPE,
@@ -349,7 +439,7 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
             outer.add_data_object(obj)
             process_of[obj] = outer
 
-    # Data stores live model-wide (D8 / spec §10.3 — root-level element).
+    # Data stores live model-wide (BPMN spec §10.3 — root-level element).
     data_stores = {obj for obj in node_by_id.values() if isinstance(obj, DataStore)}
 
     # --- Build collaboration / processes set -------------------------------

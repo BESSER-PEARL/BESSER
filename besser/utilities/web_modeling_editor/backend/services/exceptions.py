@@ -16,6 +16,11 @@ class ValidationError(BesserError):
     pass
 
 
+class GovernanceDslValidationError(ValidationError):
+    """Raised when a gateway's Governance DSL is syntactically or semantically invalid."""
+    pass
+
+
 class GenerationError(BesserError):
     """Raised when code generation fails."""
     pass

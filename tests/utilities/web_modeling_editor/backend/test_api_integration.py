@@ -1166,6 +1166,183 @@ class TestProjectGeneration:
 # Recommendation Endpoints
 # ---------------------------------------------------------------------------
 
+class TestDockerComposeRouting:
+    @staticmethod
+    def _project_input(generator, diagram_type, model):
+        from besser.utilities.web_modeling_editor.backend.models import ProjectInput
+
+        return ProjectInput(
+            id="routing-project",
+            type="Project",
+            name="Routing Project",
+            createdAt="2026-08-05T00:00:00Z",
+            currentDiagramType=diagram_type,
+            currentDiagramIndices={diagram_type: 0},
+            diagrams={
+                diagram_type: [{
+                    "id": "diagram-1",
+                    "title": diagram_type,
+                    "model": model,
+                    "lastUpdate": "2026-08-05T00:00:00Z",
+                }],
+            },
+            settings={"generator": generator},
+        )
+
+    def test_single_docker_compose_uses_deploymentuml_handler(self, monkeypatch):
+        from besser.utilities.web_modeling_editor.backend.models import DiagramInput
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_deployment_handler(*_args, **_kwargs):
+            return "docker-compose-handler"
+
+        async def fake_class_handler(*_args, **_kwargs):
+            pytest.fail("Docker Compose must not use the core class-diagram handler")
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+        )
+        monkeypatch.setattr(
+            router, "_handle_class_diagram_generation", fake_class_handler
+        )
+
+        result = _run(router.generate_code_output(DiagramInput(
+            title="Deployment",
+            model={
+                "type": "DeploymentDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+            generator="docker_compose",
+        )))
+
+        assert result == "docker-compose-handler"
+
+    def test_single_terraform_bypasses_deploymentuml_handler(
+        self, monkeypatch, class_diagram_model
+    ):
+        from besser.utilities.web_modeling_editor.backend.models import DiagramInput
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_deployment_handler(*_args, **_kwargs):
+            pytest.fail("Terraform must not enter the DeploymentUML handler")
+
+        async def fake_class_handler(*_args, **_kwargs):
+            return "master-fallback"
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+        )
+        monkeypatch.setattr(
+            router, "_handle_class_diagram_generation", fake_class_handler
+        )
+
+        result = _run(router.generate_code_output(DiagramInput(
+            title="Core deployment",
+            model=class_diagram_model,
+            generator="terraform",
+        )))
+
+        assert result == "master-fallback"
+
+    def test_project_docker_compose_uses_project_handler(self, monkeypatch):
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_project_handler(*_args, **_kwargs):
+            return "docker-compose-project-handler"
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_project_generation", fake_project_handler
+        )
+
+        project = self._project_input(
+            "docker_compose",
+            "DeploymentDiagram",
+            {
+                "type": "DeploymentDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+        )
+
+        result = _run(router.generate_code_output_from_project(project))
+
+        assert result == "docker-compose-project-handler"
+
+    def test_project_docker_compose_maps_governance_dsl_validation_to_422(self, monkeypatch):
+        from fastapi import HTTPException
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+        from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+            GovernanceDslValidationError,
+        )
+
+        async def fake_project_handler(*_args, **_kwargs):
+            raise GovernanceDslValidationError(
+                "Invalid Governance DSL on merging gateway 'gw1': "
+                "Governance DSL syntax error: line 1:8 mismatched input"
+            )
+
+        monkeypatch.setattr(
+            router,
+            "_handle_deployment_project_generation",
+            fake_project_handler,
+        )
+
+        project = self._project_input(
+            "docker_compose",
+            "DeploymentDiagram",
+            {
+                "type": "DeploymentDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(router.generate_code_output_from_project(project))
+
+        assert exc_info.value.status_code == 422
+        assert "merging gateway 'gw1'" in exc_info.value.detail
+        assert "syntax error" in exc_info.value.detail
+
+    def test_project_terraform_bypasses_project_handler(
+        self, monkeypatch, class_diagram_model
+    ):
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_project_handler(*_args, **_kwargs):
+            pytest.fail("Terraform must not enter the Docker Compose project handler")
+
+        async def fake_generate(diagram_input):
+            assert diagram_input.generator == "terraform"
+            return "master-fallback"
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_project_generation", fake_project_handler
+        )
+        monkeypatch.setattr(router, "generate_code_output", fake_generate)
+
+        project = self._project_input(
+            "terraform",
+            "ClassDiagram",
+            class_diagram_model,
+        )
+
+        result = _run(router.generate_code_output_from_project(project))
+
+        assert result == "master-fallback"
+
+
 class TestRecommendationEndpoints:
     """Tests for recommendation-related endpoints."""
 

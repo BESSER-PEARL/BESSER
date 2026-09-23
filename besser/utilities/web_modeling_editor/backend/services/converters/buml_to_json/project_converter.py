@@ -18,6 +18,8 @@ from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
 from .bpmn_diagram_converter import bpmn_buml_to_json
+from .component_diagram_converter import component_buml_to_json
+from .deployment_diagram_converter import deployment_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +33,14 @@ SECTION_CONFIG = {
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
     'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
     'bpmn_model': ('BPMN', 'BPMNDiagram', 'BPMN Diagram'),
+    'component_model': ('COMPONENT', 'ComponentDiagram', 'Component Diagram'),
+    'deployment_model': ('DEPLOYMENT', 'DeploymentDiagram', 'Deployment Diagram'),
 }
 
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
     'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
-    'BPMN',
+    'BPMN', 'COMPONENT', 'DEPLOYMENT',
 ]
 
 
@@ -209,6 +213,12 @@ def _convert_section(
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
+        elif model_name == "component_model":
+            model = component_buml_to_json(section_code)
+
+        elif model_name == "deployment_model":
+            model = deployment_buml_to_json(section_code)
+
         else:
             logger.warning("Unknown model name '%s', skipping conversion", model_name)
             return None
@@ -259,6 +269,14 @@ SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
         'bpmnmodel(', '.add_process(', '.add_flow_node(',
         '.add_sequence_flow(',
     )),
+    ('ComponentDiagram', (
+        'componentmodel(', '.add_component(', '.add_relationship(',
+        'agentcategory.', 'agenticedge(',
+    )),
+    ('DeploymentDiagram', (
+        'deploymentmodel(', '.add_artifact(', 'deploymentrelation(',
+        'communicationpath(',
+    )),
 ]
 
 _SINGLE_DIAGRAM_DEFAULT_TITLES = {
@@ -270,6 +288,8 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'QuantumCircuitDiagram': 'Quantum Circuit Diagram',
     'NNDiagram': 'NN Diagram',
     'BPMNDiagram': 'BPMN Diagram',
+    'ComponentDiagram': 'Component Diagram',
+    'DeploymentDiagram': 'Deployment Diagram',
 }
 
 
@@ -296,7 +316,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             "No models defined in 'models=[...]' and the file was not recognized "
             "as a single-diagram BUML file. Supported single-diagram types: "
             "ClassDiagram, AgentDiagram, StateMachineDiagram, GUINoCodeDiagram, "
-            "NNDiagram, BPMNDiagram."
+            "NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram."
         )
 
     title = _SINGLE_DIAGRAM_DEFAULT_TITLES[diagram_type]
@@ -314,6 +334,10 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             model = nn_buml_to_json(content)
         elif diagram_type == 'BPMNDiagram':
             model = bpmn_buml_to_json(content)
+        elif diagram_type == 'ComponentDiagram':
+            model = component_buml_to_json(content)
+        elif diagram_type == 'DeploymentDiagram':
+            model = deployment_buml_to_json(content)
         else:
             raise ValueError(f"Unsupported single-diagram type: {diagram_type}")
     except (SyntaxError, ValueError, TypeError) as e:
@@ -337,6 +361,8 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
         "NNDiagram": "NNDiagram",
         "BPMNDiagram": "BPMNDiagram",
+        "ComponentDiagram": "ComponentDiagram",
+        "DeploymentDiagram": "DeploymentDiagram",
     }
 
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}

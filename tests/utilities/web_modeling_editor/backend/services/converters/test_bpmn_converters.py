@@ -1,8 +1,7 @@
 """Tests for the BPMN converters.
 
 Covers ``process_bpmn_diagram`` (JSON → BUML), ``bpmn_object_to_json`` (BUML → JSON),
-their round-trip identity, the full WME ↔ metamodel event mapping (every row of
-Appendix A in ``.claude/bpmn/03-bpmn-converters-guide.md``), and error handling.
+their round-trip identity, the full WME ↔ metamodel event mapping, and error handling.
 """
 
 import pytest
@@ -524,7 +523,7 @@ class TestBpmnToJsonWrapper:
     def test_exec_failure_raises_conversion_error(self):
         # A NameError is one of the documented failure modes the wrapper catches
         # (the wrapper deliberately does NOT catch arbitrary RuntimeError so genuinely
-        # unexpected errors stay visible — see 04- guide §5).
+        # unexpected errors stay visible).
         with pytest.raises(ConversionError, match="failed to execute"):
             bpmn_buml_to_json("undefined_symbol\n")
 

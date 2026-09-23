@@ -162,3 +162,95 @@ Because BPMN names can be empty, whitespace, or repeated, the metamodel
 identifies elements **by object** (no ``__eq__`` / ``__hash__`` overrides);
 the converters keep the original WME ids in an opaque ``BPMNElement.layout``
 side-channel so round-trips remain stable.
+
+.. _bpmn-agentic-extension:
+
+Agentic extension
+-----------------
+
+The BPMN metamodel ships BESSER's **Agentic extension** alongside the
+vanilla BPMN base. The extension adds stereotype-as-subclass primitives in a
+sibling module (``besser/BUML/metamodel/bpmn/agentic.py``); the base
+``bpmn.py`` remains valid BPMN on its own.
+
+- ``AgenticTask(Task)`` -- a Task with a ``reflection_mode``
+  (``NONE`` / ``SELF`` / ``CROSS`` / ``HUMAN``), a ``trust_score`` in
+  ``[0, 100]``, and an optional ``agent_diagram_ref`` for task-level links to
+  the Agent diagram that defines the task behaviour.
+- ``AgenticGateway(Gateway)`` -- a Gateway restricted to ``PARALLEL`` or
+  ``INCLUSIVE`` ``gateway_type``; ``EXCLUSIVE`` / ``COMPLEX`` /
+  ``EVENT_BASED`` are rejected by the setter override. It carries a
+  ``gateway_role`` (``DIVERGING`` / ``MERGING``), a ``trust_score``, and an
+  optional ``governance_dsl`` snippet. Governance DSL is authored externally,
+  stored opaquely by BESSER, and round-tripped on the gateway.
+- ``AgenticLane(Lane)`` -- a Lane with a ``role`` (``SOLUTION`` /
+  ``SUPERVISION`` / ``COLLABORATION`` / ``CONSENSUS``), a ``trust_score``,
+  an optional ``agent_diagram_ref`` linking the lane to its Agent diagram,
+  and ``multiplicity``: the number of identical agent instances represented
+  by that lane. ``multiplicity`` is an integer ``>= 1`` and defaults to ``1``.
+
+Agent-to-agent coordination is represented by ordinary BPMN flow structure, lane/task links
+to Agent diagrams, Governance DSL on merge gateways, and A2A tags in the
+derived Agent diagrams used by deployment generation.
+
+Example
+^^^^^^^
+
+An agentic task feeding a merging agentic gateway, inside a supervision-role
+agentic lane:
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.bpmn import (
+        AgenticGateway, AgenticLane, AgenticTask, AgentRole,
+        BPMNModel, GatewayRole, GatewayType, Process, ReflectionMode,
+        SequenceFlow, TaskType,
+    )
+
+    review = AgenticTask(
+        name="Review",
+        task_type=TaskType.USER,
+        reflection_mode=ReflectionMode.CROSS,
+        trust_score=85,
+    )
+    vote = AgenticGateway(
+        name="Vote",
+        gateway_type=GatewayType.PARALLEL,
+        gateway_role=GatewayRole.MERGING,
+        trust_score=85,
+        governance_dsl="policy MajorityPolicy { participants Reviewers }",
+    )
+    lane = AgenticLane(
+        name="Reviewers",
+        role=AgentRole.SUPERVISION,
+        trust_score=85,
+        multiplicity=3,
+        flow_nodes={review, vote},
+    )
+    process = Process(
+        name="AgenticReview",
+        flow_nodes={review, vote},
+        sequence_flows={SequenceFlow(review, vote)},
+        lanes={lane},
+    )
+    model = BPMNModel(name="Agentic", processes={process})
+
+Round-trip
+^^^^^^^^^^
+
+The same converter entry points (``process_bpmn_diagram`` /
+``bpmn_object_to_json`` / ``bpmn_to_json`` / ``bpmn_model_to_code``)
+handle the agentic subclasses transparently -- import dispatches on the
+WME ``isAgentic`` flag to construct the right subclass; export emits the
+WME shape. Trust scores are clamped on import (``max(0, min(100, value))``)
+to bridge WME's tolerant data into the metamodel's strict ``[0, 100]``;
+lane multiplicity is clamped to ``>= 1``. The metamodel itself raises
+``ValueError`` on out-of-range values per B-UML house style. The
+cross-diagram and policy fields round-trip too:
+``AgenticTask.agent_diagram_ref``, ``AgenticLane.agent_diagram_ref``,
+``AgenticLane.multiplicity``, and ``AgenticGateway.governance_dsl`` all
+survive the JSON import / export cycle.
+
+The :doc:`../../generators/bpmn` emits the agentic information as
+``<bpmn:extensionElements>`` / ``<agentic:agentic .../>`` blocks in the
+BPMN 2.0 XML output (see that page for the on-disk shape).

@@ -6,12 +6,15 @@ from .json_to_buml import (
     process_class_diagram,
     process_state_machine,
     process_agent_diagram,
+    annotate_agent_with_a2a,
     process_object_diagram,
     json_to_buml_project,
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_component_diagram,
+    process_deployment_diagram
 )
 from .buml_to_json import (
     class_buml_to_json,
@@ -29,18 +32,25 @@ from .buml_to_json import (
     nn_buml_to_json,
     bpmn_object_to_json,
     bpmn_buml_to_json,
+    component_object_to_json,
+    component_buml_to_json,
+    deployment_object_to_json,
+    deployment_buml_to_json
 )
 
 __all__ = [
     "process_class_diagram",
     "process_state_machine",
     "process_agent_diagram",
+    "annotate_agent_with_a2a",
     "process_object_diagram",
     "json_to_buml_project",
     "process_gui_diagram",
     "process_quantum_diagram",
     "process_nn_diagram",
     "process_bpmn_diagram",
+    "process_component_diagram",
+    "process_deployment_diagram",
     "class_buml_to_json",
     "parse_buml_content",
     "state_machine_to_json",
@@ -56,4 +66,8 @@ __all__ = [
     "nn_buml_to_json",
     "bpmn_object_to_json",
     "bpmn_buml_to_json",
+    "component_object_to_json",
+    "component_buml_to_json",
+    "deployment_object_to_json",
+    "deployment_buml_to_json"
 ]

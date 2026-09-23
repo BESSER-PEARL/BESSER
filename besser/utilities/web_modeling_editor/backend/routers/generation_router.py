@@ -46,6 +46,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    link_method_neural_networks,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -104,6 +105,11 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DJANGO_PROJECT_NAME,
     DEFAULT_DJANGO_APP_NAME,
     DEFAULT_SUPABASE_USER_ROOT,
+    DEFAULT_SPRING_BOOT_VERSION,
+    DEFAULT_JAVA_VERSION,
+    DEFAULT_SPRING_APP_NAME,
+    DEFAULT_SPRING_PACKAGE_NAME,
+    DEFAULT_SPRING_PROJECT_NAME,
 )
 
 # Centralized error handling
@@ -485,6 +491,11 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
+    # The backend runs methods implemented by a neural network, so it needs the
+    # project's NNDiagrams next to its ClassDiagram.
+    if generator_type == "backend":
+        return await _handle_backend_project_generation(input_data, generator_info)
+
     # Handle generators that consume a non-class diagram (Qiskit → quantum,
     # PyTorch/TensorFlow → neural network). The required diagram type comes
     # from the registry, so this branch covers every such generator without
@@ -604,6 +615,22 @@ async def generate_code_output(input_data: DiagramInput):
         )
 
 
+@handle_endpoint_errors("_handle_backend_project_generation")
+async def _handle_backend_project_generation(input_data: ProjectInput, generator_info):
+    """Generate the FastAPI backend from the project's active ClassDiagram, with
+    NN-implemented methods linked to the project's NNDiagrams."""
+    class_diagram = input_data.get_active_diagram("ClassDiagram")
+    if not class_diagram:
+        raise HTTPException(status_code=400, detail="ClassDiagram is required for Backend generator")
+
+    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+        buml_model = process_class_diagram(class_diagram.model_dump())
+        link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
+        return await _generate_standard(
+            buml_model, generator_info.generator_class, "backend", generator_info, temp_dir
+        )
+
+
 @handle_endpoint_errors("_handle_web_app_project_generation")
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
     """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
@@ -645,6 +672,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             # Re-derive the class BUML per version so the generator can't leak
             # mutations from one version into the next.
             buml_model = process_class_diagram(class_diagram.model_dump())
+            link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
             gui_model = process_gui_diagram(gui_json, class_diagram.model, buml_model)
 
             # Collect every AgentDiagram in the project if this version's GUI uses
@@ -772,6 +800,8 @@ async def _handle_class_diagram_generation(
     # Generate based on generator type
     if generator_type == "django":
         return await _generate_django(buml_model, generator_class, config, temp_dir)
+    if generator_type == "spring":
+        return await _generate_spring(buml_model, generator_class, config, temp_dir)
     if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
     if generator_type == "supabase":
@@ -931,6 +961,59 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
     zip_buffer.seek(0)
     file_name = get_filename_for_generator("django")
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate a Spring Boot project and return it as a ZIP."""
+    config = config or {}
+    project_name = config.get("project_name") or DEFAULT_SPRING_PROJECT_NAME
+    app_name = config.get("app_name") or DEFAULT_SPRING_APP_NAME
+    spring_boot_version = config.get("spring_boot_version") or DEFAULT_SPRING_BOOT_VERSION
+    java_version = config.get("java_version") or DEFAULT_JAVA_VERSION
+    package_name = config.get("package_name") or DEFAULT_SPRING_PACKAGE_NAME
+
+    # Sanitize project_name to prevent path traversal
+    project_name = os.path.basename(project_name)
+    if not project_name:
+        project_name = DEFAULT_SPRING_PROJECT_NAME
+
+    project_dir = _safe_path(temp_dir, project_name)
+    os.makedirs(project_dir, exist_ok=True)
+
+    # An invalid package name is a user input error, not a server fault.
+    try:
+        generator_instance = generator_class(
+            buml_model,
+            output_dir=project_dir,
+            app_name=app_name,
+            spring_boot_version=spring_boot_version,
+            java_version=java_version,
+            package_name=package_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await asyncio.to_thread(generator_instance.generate)
+
+    if not os.listdir(project_dir):
+        raise ValueError("Spring Boot project generation failed: Output directory is empty")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(project_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, project_dir)
+                zip_file.write(file_path, arc_name)
+
+    zip_buffer.seek(0)
+    file_name = get_filename_for_generator("spring")
 
     return StreamingResponse(
         zip_buffer,

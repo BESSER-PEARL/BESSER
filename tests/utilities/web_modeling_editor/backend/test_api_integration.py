@@ -9,12 +9,13 @@ with ASGITransport is used because the installed starlette/httpx versions
 do not support the legacy TestClient(app=...) pattern.
 """
 
+import copy
 import io
 import json
 import os
 import asyncio
-from functools import wraps
-from typing import Any, Dict, Optional
+import zipfile
+from typing import Any, Dict
 
 import pytest
 import httpx
@@ -106,6 +107,26 @@ def class_diagram_model():
                 },
             },
         },
+    }
+
+
+@pytest.fixture
+def spring_class_diagram_input(class_diagram_model):
+    """``class_diagram_input`` with identifiers, which JPA entities require."""
+    model = copy.deepcopy(class_diagram_model)
+    for class_key, attribute_key in (("class-1", "id-1"), ("class-2", "id-2")):
+        model["elements"][attribute_key] = {
+            "type": "Attribute",
+            "name": "id",
+            "visibility": "public",
+            "attributeType": "int",
+            "isId": True,
+        }
+        model["elements"][class_key]["attributes"].append(attribute_key)
+    return {
+        "title": "LibraryModel",
+        "model": model,
+        "generator": "spring",
     }
 
 
@@ -400,6 +421,66 @@ class TestGenerateOutput:
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
+
+    def test_generate_spring_applies_the_submitted_config(self, spring_class_diagram_input):
+        """The Spring dialog's fields must reach the generator, not be dropped."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {
+                "project_name": "mylibrary",
+                "app_name": "LibraryApplication",
+                "spring_boot_version": "3.4.4",
+                "java_version": "21",
+                "package_name": "com.acme.library",
+            },
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        assert "application/zip" in response.headers.get("content-type", "")
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "pom.xml" in names
+            assert "mvnw" in names
+            assert ".mvn/wrapper/maven-wrapper.properties" in names
+            # app_name and package_name are what the config asked for.
+            assert "src/main/java/com/acme/library/LibraryApplication.java" in names
+            assert "src/main/java/com/acme/library/entity/Book.java" in names
+            pom = archive.read("pom.xml").decode("utf-8")
+            assert "<version>3.4.4</version>" in pom
+            assert "<java.version>21</java.version>" in pom
+
+    def test_generate_spring_without_config_uses_defaults(self, spring_class_diagram_input):
+        """No config at all must still produce a project (the registry default path)."""
+        payload = {**spring_class_diagram_input, "generator": "spring"}
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "src/main/java/com/example/Application.java" in names
+
+    def test_generate_spring_rejects_a_traversing_project_name(self, spring_class_diagram_input):
+        """``project_name`` is a directory name; it must not escape the temp dir."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"project_name": "../../evil"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "pom.xml" in archive.namelist()
+
+    def test_generate_spring_rejects_an_invalid_package_name(self, spring_class_diagram_input):
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"package_name": "../../etc"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1160,62 @@ class TestProjectGeneration:
         body = response.text
         assert "Author" in body
         assert "Book" in body
+
+    def test_project_backend_generation_runs_nn_implemented_method(self):
+        """A method implemented by a project NNDiagram becomes an endpoint running that network."""
+        fixture = os.path.join(
+            os.path.dirname(__file__), os.pardir, "converters", "nn", "fixtures", "tutorial_example.json"
+        )
+        with open(fixture, encoding="utf-8") as f:
+            nn_model = json.load(f)
+
+        class_model = {
+            "type": "ClassDiagram",
+            "elements": {
+                "cls-classifier": {
+                    "id": "cls-classifier", "name": "Classifier", "type": "Class", "owner": None,
+                    "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+                    "attributes": [], "methods": ["meth-predict"],
+                },
+                "meth-predict": {
+                    "id": "meth-predict", "name": "+ predict(pixels: any): any", "type": "ClassMethod",
+                    "owner": "cls-classifier", "bounds": {"x": 0, "y": 40, "width": 159, "height": 30},
+                    "implementationType": "neural_network", "neuralNetworkId": "nn-diagram-1",
+                },
+            },
+            "relationships": {},
+        }
+        payload = {
+            "id": "proj-nn",
+            "type": "Project",
+            "name": "NNProject",
+            "createdAt": "2025-01-01T00:00:00Z",
+            "currentDiagramType": "ClassDiagram",
+            "currentDiagramIndices": {"ClassDiagram": 0, "NNDiagram": 0},
+            "diagrams": {
+                "ClassDiagram": [{"id": "class-diagram-1", "title": "Domain", "model": class_model}],
+                "NNDiagram": [{"id": "nn-diagram-1", "title": "Tutorial", "model": nn_model}],
+            },
+            "settings": {"generator": "backend"},
+        }
+        response = client.post("/besser_api/generate-output-from-project", json=payload)
+        assert response.status_code == 200, response.text
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = set(archive.namelist())
+            router = archive.read("routers/classifier.py").decode("utf-8")
+            requirements = archive.read("requirements.txt").decode("utf-8")
+
+        assert "nn_runtime.py" in names
+        assert "neural_networks/__init__.py" in names
+        assert "neural_networks/weights/README.md" in names
+        network_modules = [n for n in names if n.startswith("neural_networks/") and n.count("/") == 1
+                           and n.endswith(".py") and not n.endswith("__init__.py")]
+        assert len(network_modules) == 1
+        module_name = network_modules[0].split("/")[1][:-3]
+        assert f'run_network("{module_name}", [pixels])' in router
+        assert "has no implementation" not in router
+        assert "torch" in requirements
 
 
 # ---------------------------------------------------------------------------

@@ -1321,6 +1321,8 @@ async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 {% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
 {% elif method.implementation_type.name == "CODE" %}
 {% set method_code = method.code %}
+{% elif method.implementation_type.name == "NEURAL_NETWORK" %}
+{% set method_code = nn_method_code(method) %}
 {% endif %}
 
 {# Normalize (expand tabs, dedent, compile-gate) the body so a method authored

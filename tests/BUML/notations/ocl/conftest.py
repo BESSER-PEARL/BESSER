@@ -20,8 +20,6 @@ def model() -> DomainModel:
         Property("name", StringType),
         Property("minSalary", FloatType),
         Property("maxJuniorSal", FloatType),
-        Property("director", "Employee"),
-
     })
     employee = Class("Employee", attributes={
         Property("name", StringType),

@@ -1418,9 +1418,17 @@ class ToolExecutor:
         return cwd_cmp
 
     def _list_dir(self, directory: str) -> list[dict]:
-        """List files recursively, relative to workspace."""
+        """List files recursively, relative to workspace.
+
+        Installed dependencies and caches are pruned: one npm install put
+        10k node_modules paths into a single listing and overflowed the
+        model's context on the next turn.
+        """
+        from besser.spec_driven_agent.agent.prompt_builder import _SNAPSHOT_SKIP_DIRS
+
         files = []
-        for root, _, filenames in os.walk(directory):
+        for root, dirs, filenames in os.walk(directory):
+            dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
             for f in filenames:
                 abs_path = os.path.join(root, f)
                 rel = os.path.relpath(abs_path, self.workspace)

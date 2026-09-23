@@ -171,6 +171,10 @@ async def lifespan(_: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    # Kill any running study agent so it doesn't outlive the backend.
+    from besser.utilities.web_modeling_editor.backend.routers.study_router import _kill_study_agent
+    _kill_study_agent()
+
 
 # Initialize FastAPI application
 app = FastAPI(

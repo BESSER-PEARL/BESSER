@@ -60,6 +60,10 @@ _STUDY_AGENT_DIR = os.environ.get(
 )
 _STUDY_PID_FILE = os.path.join(tempfile.gettempdir(), "besser_study_agent.pid")
 _STREAMLIT_PORT = int(os.environ.get("STUDY_AGENT_STREAMLIT_PORT", "5000"))
+# When set (e.g. "/study-agent"), Streamlit is served under that subpath via a
+# reverse proxy and the returned URL uses the deployment host + path instead of
+# a raw port.  Leave empty for local/direct access.
+_STUDY_AGENT_URL_PATH = os.environ.get("STUDY_AGENT_URL_PATH", "").rstrip("/")
 
 router = APIRouter(prefix="/besser_api", tags=["study"])
 
@@ -72,6 +76,7 @@ class StudyDeployRequest(BaseModel):
 
     agent_model: Dict[str, Any]
     agent_config: Optional[Dict[str, Any]] = None
+    agent_config_yaml: Optional[str] = None
     personalization_mapping: Optional[List[Any]] = None
 
 
@@ -112,18 +117,45 @@ def _start_study_agent(script_name: str) -> int:
     log_err = os.path.join(_STUDY_AGENT_DIR, "agent_stderr.log")
     logger.info("[study-deploy] Agent logs: stdout=%s  stderr=%s", log_out, log_err)
 
+    # Prepend the Scripts dirs of the running Python so BAF's subprocess.run(["streamlit",...])
+    # finds the correct streamlit.exe (shell=False on Windows only resolves .exe).
+    env = os.environ.copy()
+    scripts_dirs = _python_scripts_dirs()
+    # Also include /baf_packages/bin for Docker deployments where BAF is
+    # installed via pip --target /baf_packages (scripts land in its bin/ subdir).
+    baf_bin = os.path.join(os.environ.get("BAF_PACKAGES_DIR", "/baf_packages"), "bin")
+    env["PATH"] = os.pathsep.join([baf_bin] + scripts_dirs) + os.pathsep + env.get("PATH", "")
+    # Force Streamlit to bind on all interfaces (not just localhost) so it is
+    # reachable from outside the Docker container.
+    env.setdefault("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
+    env.setdefault("STREAMLIT_SERVER_PORT", str(_STREAMLIT_PORT))
+    env.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
+    if _STUDY_AGENT_URL_PATH:
+        env.setdefault("STREAMLIT_SERVER_BASE_URL_PATH", _STUDY_AGENT_URL_PATH)
+    logger.info("[study-deploy] Using Python: %s", sys.executable)
+
     kwargs: Dict[str, Any] = dict(
         cwd=_STUDY_AGENT_DIR,
-        env=os.environ.copy(),
-        stdout=open(log_out, "w"),  # noqa: SIM115
-        stderr=open(log_err, "w"),  # noqa: SIM115
+        env=env,
     )
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen([sys.executable, script_name], **kwargs)
+    stdout_f = open(log_out, "w")  # noqa: SIM115
+    stderr_f = open(log_err, "w")  # noqa: SIM115
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, script_name],
+            stdout=stdout_f,
+            stderr=stderr_f,
+            **kwargs,
+        )
+    finally:
+        # Close the parent's handles immediately — the subprocess keeps its own.
+        stdout_f.close()
+        stderr_f.close()
 
     time.sleep(2)
     if proc.poll() is not None:
@@ -157,7 +189,23 @@ def _clear_study_agent_dir() -> None:
             os.remove(entry.path)
 
 
-def _generate_study_agent_files(json_data: dict, config: dict) -> str:
+def _python_scripts_dirs() -> list:
+    """Return the Scripts directories for the running Python, user-install first."""
+    import site as _site
+    dirs = []
+    if _site.ENABLE_USER_SITE:
+        # e.g. C:\Users\foo\AppData\Roaming\Python\Python312\Scripts
+        user_base = _site.getuserbase()
+        ver = f"Python{sys.version_info.major}{sys.version_info.minor}"
+        dirs.append(os.path.join(user_base, ver, "Scripts"))
+    # e.g. C:\Python312\Scripts
+    dirs.append(os.path.join(os.path.dirname(sys.executable), "Scripts"))
+    dirs.append(os.path.dirname(sys.executable))
+    logger.info("[study-deploy] Resolved Scripts dirs: %s", dirs)
+    return dirs
+
+
+def _generate_study_agent_files(json_data: dict, config: dict, config_yaml: Optional[str] = None) -> str:
     """Generate agent files to the persistent study directory.
 
     Clears the *contents* of ``_STUDY_AGENT_DIR`` (never the directory itself),
@@ -205,6 +253,7 @@ def _generate_study_agent_files(json_data: dict, config: dict) -> str:
             config=config,
             openai_api_key=extract_openai_api_key(config),
             generation_mode=GenerationMode.FULL,
+            config_yaml=config_yaml,
         )
         generator.generate()
         logger.info("[study-deploy] Generated agent '%s' in %s", agent_name, _STUDY_AGENT_DIR)
@@ -262,9 +311,11 @@ async def deploy_study_agent(request: StudyDeployRequest):
             len(request.personalization_mapping),
         )
 
-    agent_script = await asyncio.to_thread(_generate_study_agent_files, json_data, config)
-
+    # Kill the previous instance first so its log file handles are released
+    # before _generate_study_agent_files clears the directory.
     await asyncio.to_thread(_kill_study_agent)
+
+    agent_script = await asyncio.to_thread(_generate_study_agent_files, json_data, config, request.agent_config_yaml)
 
     try:
         pid = await asyncio.to_thread(_start_study_agent, agent_script)
@@ -276,15 +327,13 @@ async def deploy_study_agent(request: StudyDeployRequest):
         fh.write(str(pid))
 
     deployment_url = os.environ.get("DEPLOYMENT_URL", "").rstrip("/")
-    if deployment_url:
-        parsed = urlparse(deployment_url)
-        scheme = parsed.scheme or "http"
-        host = parsed.hostname or "localhost"
+    if _STUDY_AGENT_URL_PATH and deployment_url:
+        # Served through a reverse proxy: use the deployment origin + subpath.
+        agent_url = f"{deployment_url}{_STUDY_AGENT_URL_PATH}/"
     else:
-        scheme = "http"
-        host = "localhost"
-
-    agent_url = f"{scheme}://{host}:{_STREAMLIT_PORT}"
+        # Direct access: plain HTTP on the Streamlit port.
+        host = urlparse(deployment_url).hostname or "localhost" if deployment_url else "localhost"
+        agent_url = f"http://{host}:{_STREAMLIT_PORT}"
     agent_name = agent_script[:-3] if agent_script.endswith(".py") else agent_script
 
     return {

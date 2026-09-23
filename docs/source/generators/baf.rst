@@ -16,6 +16,10 @@ Optional constructor parameters:
 - ``config_path``: Path to a YAML configuration file for the agent.
 - ``config``: Configuration dictionary (alternative to ``config_path``).
 - ``openai_api_key``: OpenAI API key for LLM-powered agent features.
+- ``test_mode``: When ``True``, pre-creates workspace directories declared in
+  the agent model under the session folder and sets ``use_ui=False`` on the
+  Streamlit platform. Useful for running the agent in an isolated test
+  environment such as the Agent Simulator.
 
 The corresponding ``agent.py`` file and its config file titled ``config.yaml`` will be generated in the ``<<current_directory>>/output``
 folder.
@@ -91,6 +95,35 @@ The generator emits the multi-LLM and reasoning constructs described in
 
 Consumers (``LLMReply``, ``DBReply``, RAG, reasoning states) reference their
 LLM by ``llm_name``; when omitted, the agent's default LLM is used.
+
+
+GUI Generation
+--------------
+
+When the agent model includes ``GUIReplyAction`` instances (see
+:doc:`../buml_language/model_types/agent`), the generator automatically creates
+a ``guis/`` package inside the output folder.  Each unique ``gui_id`` referenced
+by a ``GUIReplyAction`` becomes a separate module inside that package.  The
+module builds an ``AgentGUI`` object — a BAF wrapper around the BESSER GUI model
+— that is then used by the ``platform.reply_gui(session, gui)`` call emitted in
+the state body.
+
+.. code-block:: python
+
+    from besser.generators.agents.baf_generator import BAFGenerator
+    from besser.BUML.metamodel.state_machine.agent import GUIReplyAction
+
+    # assuming `form_state` is a state whose body includes a GUIReplyAction
+    form_state.set_body(Body('form_body', lambda session: None))
+    # the body template will call: platform.reply_gui(session, my_form_gui)
+
+    generator: BAFGenerator = BAFGenerator(model=agent)
+    generator.generate()
+    # output/
+    #   agent.py
+    #   guis/
+    #     __init__.py
+    #     my_form.py      ← generated AgentGUI for gui_id='my_form'
 
 
 Missing BAF Features

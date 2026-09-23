@@ -42,34 +42,73 @@ available in ``besser.BUML.metamodel.state_machine.agent``:
 
 **Text and LLM replies**
 
-- ``AgentReply(message)`` — send a plain-text reply.
-- ``LLMReply(prompt, llm_name)`` — generate a reply using an LLM; ``prompt``
-  is an optional system prompt, ``llm_name`` selects a registered LLM (defaults
-  to the agent default).
-- ``LLMChatReply(prompt, llm_name)`` — like ``LLMReply`` but calls
+- ``AgentReply(message, use_session_vars=False)`` — send a plain-text reply.
+  When ``use_session_vars=True``, ``{key}`` placeholders in *message* are
+  replaced at runtime with ``session.get("key")``. The special placeholder
+  ``{user_message}`` resolves to the current user input.
+- ``LLMReply(prompt, llm_name, input_prompt_mode, custom_input_prompt,
+  custom_input_prompt_use_session_vars, system_prompt_use_session_vars,
+  store_in_session, send_reply)`` — generate a reply using an LLM.
+
+  - ``prompt``: optional system prompt.
+  - ``llm_name``: selects a registered LLM (defaults to the agent default).
+  - ``input_prompt_mode``: ``'last_user_message'`` (default) passes the user's
+    message directly; ``'custom'`` uses ``custom_input_prompt`` instead.
+  - ``custom_input_prompt``: template string for the LLM input when
+    ``input_prompt_mode='custom'``.
+  - ``custom_input_prompt_use_session_vars`` / ``system_prompt_use_session_vars``:
+    enable ``{key}`` interpolation in the respective strings.
+  - ``store_in_session``: when set, the LLM reply is stored in the session under
+    this key before being sent.
+  - ``send_reply`` (default ``True``): set to ``False`` to suppress sending the
+    reply to the user (useful when only storing the result in the session).
+
+- ``LLMChatReply(prompt, llm_name, system_prompt_use_session_vars,
+  store_in_session, send_reply)`` — like ``LLMReply`` but calls
   ``llm.chat(...)`` with the conversation history, making it suitable for
-  multi-turn dialogue states.
-- ``RAGReply(rag_db_name)`` — answer using a configured RAG database.
+  multi-turn dialogue states. Supports the same ``store_in_session`` and
+  ``send_reply`` controls.
+- ``RAGReply(rag_db_name, prompt, input_prompt_mode, custom_input_prompt,
+  custom_input_prompt_use_session_vars, prompt_use_session_vars,
+  store_in_session, send_reply)`` — answer using a configured RAG database.
+  Supports the same ``input_prompt_mode`` / ``custom_input_prompt``,
+  session-var interpolation, ``store_in_session``, and ``send_reply`` controls
+  as ``LLMReply`` (``prompt_use_session_vars`` applies to the RAG hint prompt).
 - ``DBReply(query, llm_name)`` — answer from a SQL database using an LLM.
+
+**GUI replies**
+
+- ``GUIReplyAction(gui_id, persist=True, width=None, is_form=False)`` — send a
+  BESSER GUI model as an interactive chat message. ``gui_id`` must match a GUI
+  diagram associated with the agent (see `GUI integration`_ below). When
+  ``persist=True`` the submitted form field values are stored in the session.
+  ``width`` is an optional CSS width for the rendered bubble.
 
 **Web crawling**
 
 - ``WebCrawlLLMReply(initial_url, max_depth, max_pages, crawl_format,
   base_url_prefix, run_crawl, no_crawl_error_message, system_message_prefix,
-  llm_name)`` — performs a BFS web crawl starting at ``initial_url`` and
+  system_message_prefix_use_session_vars, llm_name, store_in_session,
+  send_reply)`` — performs a BFS web crawl starting at ``initial_url`` and
   queries an LLM with the retrieved content.  The crawl result is cached in the
   session; set ``run_crawl=False`` in subsequent states to reuse the cache
-  without re-fetching.
+  without re-fetching. ``system_message_prefix_use_session_vars`` enables
+  ``{key}`` interpolation in the system message prefix. The same
+  ``store_in_session`` and ``send_reply`` controls as ``LLMReply`` are
+  available.
 
 **WebSocket rich-media replies**
 
 The following actions map to the corresponding ``WebSocketPlatform`` methods and
 require the agent to use a ``WebSocketPlatform``:
 
-- ``WebSocketReplyMarkdown(message)`` — send Markdown-formatted text.
-- ``WebSocketReplyHTML(message)`` — send an HTML-formatted message.
-- ``WebSocketReplySpeech(message, audio_speed)`` — convert text to speech and
-  send the audio.
+- ``WebSocketReplyMarkdown(message, use_session_vars=False)`` — send
+  Markdown-formatted text. ``use_session_vars`` enables ``{key}``
+  interpolation.
+- ``WebSocketReplyHTML(message, use_session_vars=False)`` — send an
+  HTML-formatted message.
+- ``WebSocketReplySpeech(message, audio_speed, use_session_vars=False)`` —
+  convert text to speech and send the audio.
 - ``WebSocketReplyOptions(options)`` — present a list of selectable options.
 - ``WebSocketReplyLocation(latitude, longitude)`` — send a geographic
   coordinate.
@@ -179,6 +218,47 @@ reasoning state:
 - **Tools** (``agent.new_tool(name, description, code)``) — callable functions the agent can invoke. ``code`` holds the Python implementation.
 - **Skills** (``agent.new_skill(name, content, description)``) — reusable instruction snippets injected into the reasoning context.
 - **Workspaces** (``agent.new_workspace(name, path, description, writable, max_read_bytes)``) — file-system locations the agent may read from (and write to when ``writable``).
+
+GUI integration
+~~~~~~~~~~~~~~~
+
+An agent can send interactive GUI panels — forms, dashboards, or any BESSER
+:doc:`GUI model <gui>` — directly in the chat conversation. The workflow is:
+
+1. Associate one or more GUI models with the agent via ``agent.gui_models``
+   (a ``dict[str, dict]`` mapping a ``gui_id`` to the raw GUI model dict). In
+   practice this is populated automatically when you import a diagram from the
+   web editor.
+2. In a state body, add a ``GUIReplyAction`` referencing the ``gui_id``.
+3. In the next state, add a ``when_form_submitted(form_id)`` transition so the
+   agent reacts when the user submits the form.
+
+The BAF generator collects all ``GUIReplyAction`` instances, creates a
+``guis/`` package, and generates the corresponding GUI code there.
+
+Transitions triggered by GUI events
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Beyond the standard ``when_intent_matched`` / ``when_file_received`` builders,
+``AgentState`` provides GUI-specific transition helpers:
+
+- ``state.when_form_submitted(form_id=None)`` — triggered when the user submits
+  a GUI form. If ``form_id`` is provided (must match the ``gui_id`` of a
+  ``GUIReplyAction``), only submissions from that specific form trigger the
+  transition; otherwise any form submission matches.
+
+Under the hood this uses the ``GUIEvent`` event class and the
+``FormSubmitMatcher`` condition, which you can also instantiate directly if you
+need finer control:
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.state_machine.agent import GUIEvent, FormSubmitMatcher
+
+    # equivalent to state.when_form_submitted(form_id='my_form')
+    state.when_event(GUIEvent(message_id='my_form')) \
+        .when_condition(FormSubmitMatcher(form_id='my_form')) \
+        .go_to(next_state)
 
 .. image:: ../../img/agent_mm.png
   :width: 1600

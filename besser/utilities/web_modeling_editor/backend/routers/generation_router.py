@@ -112,7 +112,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_SPRING_PROJECT_NAME,
 )
 
-# Centralized error handling
+# Centralized error handling and shared auth gate
+from besser.utilities.web_modeling_editor.backend.routers.auth import require_github_session
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -136,21 +137,12 @@ router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
 def _require_github_session(github_session: Optional[str]) -> None:
-    """Verify a GitHub OAuth session is present and active.
+    """Verify a GitHub OAuth session is present and active (HTTP 401 otherwise).
 
-    Raises HTTPException(401) when the session header is missing or expired.
-    Mirrors the auth gate used by the deploy endpoints in github_deploy_api.py.
+    Delegates to the shared ``routers.auth.require_github_session`` and passes
+    this module's ``get_user_token`` so tests can keep patching it here.
     """
-    if not github_session:
-        raise HTTPException(
-            status_code=401,
-            detail="GitHub authentication required. Please sign in with GitHub first.",
-        )
-    if not get_user_token(github_session):
-        raise HTTPException(
-            status_code=401,
-            detail="GitHub session expired. Please sign in again.",
-        )
+    require_github_session(github_session, token_lookup=get_user_token)
 
 
 def _utc_now_iso() -> str:

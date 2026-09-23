@@ -26,6 +26,11 @@ class ConfigurationError(BesserError):
     pass
 
 
-class CodeValidationError(BesserError):
-    """Raised when a CustomCodeAction fails structural or semantic validation."""
+class CodeValidationError(ValidationError):
+    """Raised when a CustomCodeAction fails structural or semantic validation.
+
+    Subclasses :class:`ValidationError` so ``@handle_endpoint_errors`` and the
+    app-level exception handlers map it to HTTP 400 with its message, like any
+    other user-input validation failure.
+    """
     pass

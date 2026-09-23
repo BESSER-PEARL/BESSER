@@ -207,17 +207,22 @@ class {{ class.name }}(
 {%- for asso_class in asso_classes %}
 class {{ asso_class.name }}(Base):
     __tablename__ = "{{asso_class.name.lower()}}"
-    {%- if ids.get(asso_class.name) %}
-    # A modeled identifier is the primary key; the endpoint pair remains unique
+    {%- set own_key = ids.get(asso_class.name) or asso_class.name in referenced_asso %}
+    {%- if own_key %}
+    # A modeled identifier (or, when another association points here, a
+    # surrogate id) is the primary key; the endpoint pair remains unique
     # because the generated relationship API addresses links by that pair.
     __table_args__ = (_UniqueConstraint({% for end in asso_class.association.ends %}"{{ end.name }}_id"{{ ", " if not loop.last else "" }}{% endfor %}),)
+    {%- endif %}
+    {%- if not ids.get(asso_class.name) and asso_class.name in referenced_asso %}
+    id: Mapped_[int] = mapped_column(primary_key=True)
     {%- endif %}
     {%- for end in asso_class.association.ends %}
     {%- set ns = namespace(other_end_max = 0) %}
     {%- for other_end in asso_class.association.ends if other_end != end %}
         {%- set ns.other_end_max = other_end.multiplicity.max %}
     {%- endfor %}
-    {{ end.name }}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"){% if not ids.get(asso_class.name) %}, primary_key=True{% endif %}
+    {{ end.name }}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"){% if not own_key %}, primary_key=True{% endif %}
     {%- if ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {{- helper.render_attributes(asso_class, enumerations, types, ids, sort)}}
@@ -274,6 +279,12 @@ class {{ asso_class.name }}(Base):
         {%- else %}
 {{ other_end.type.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True, uselist=False)
         {%- endif %}
+    {%- endfor %}
+{#- The association class's side of any OTHER association it takes part in
+    (e.g. ExtraCharge recorded against a BookedRoom). #}
+    {%- set link_ns = namespace() %}
+    {%- for end in asso_class.association_ends() if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
+{{ helper.render_relationship(asso_class, end, link_ns, ids, fkeys, deferred_fks) }}
     {%- endfor %}
 {%- endfor %}
 

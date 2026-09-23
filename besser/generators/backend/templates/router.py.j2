@@ -9,6 +9,9 @@
     schema's; the two drifted the moment derived attributes were added. -#}
 {{ not is_server_owned_attribute(attr) }}
 {%- endmacro -%}
+{#- Integer keys match digits only, so /<link>/{id}/<relationship>/ routes of the same
+    association class are not captured by the pair route (and answered 422). #}
+{%- macro int_segment(end) -%}{% if pk_types.get(end.type_name, 'int') == 'int' %}:int{% endif %}{%- endmacro -%}
 {% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in
    the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
@@ -305,7 +308,7 @@ def search_{{ class.name | lower}}(
 {% set ac_ends = assoc_classes[class.name].ends %}
 {# An association class is keyed by the foreign keys of its two association ends, so it is
    addressed as /{{ class.name | lower }}/{<{{ ac_ends[0].name }} id>}/{<{{ ac_ends[1].name }} id>}/ #}
-@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{{ int_segment(ac_ends[0]) }}{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{{ int_segment(ac_ends[1]) }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def get_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, database: Session = Depends(get_db)) -> {{ class.name }}:
     """Get the {{ class.name }} link between a {{ ac_ends[0].type_name }} and a {{ ac_ends[1].type_name }}"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
@@ -863,7 +866,7 @@ async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.na
 {% if "PUT" in http_methods %}
 {% if is_assoc_class %}
 {% set ac_ends = assoc_classes[class.name].ends %}
-@router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+@router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{{ int_segment(ac_ends[0]) }}{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{{ int_segment(ac_ends[1]) }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     """Update the attributes of the {{ class.name }} link identified by both foreign keys"""
     db_{{ class.name | lower }} = database.query({{ class.name }}).filter(
@@ -1066,7 +1069,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
 {% if "DELETE" in http_methods %}
 {% if is_assoc_class %}
 {% set ac_ends = assoc_classes[class.name].ends %}
-@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{{ int_segment(ac_ends[0]) }}{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{{ int_segment(ac_ends[1]) }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, database: Session = Depends(get_db)):
     """Delete the {{ class.name }} link identified by both foreign keys"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter(

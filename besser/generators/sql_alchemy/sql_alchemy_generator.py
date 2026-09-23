@@ -129,6 +129,20 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         return classes, asso_classes
 
+    def get_referenced_association_classes(self, asso_classes):
+        """Association classes another association points at.
+
+        Such a link needs a single-column key for the foreign key to target;
+        the endpoint pair alone cannot be referenced as ``<table>.id``.
+        """
+        names = {asso.name for asso in asso_classes}
+        return {
+            end.type.name
+            for association in self.model.associations
+            for end in association.ends
+            if end.type.name in names and end.type.association is not association
+        }
+
     def get_concrete_table_inheritance(self):
         """
         Determines if the model uses concrete table inheritance.
@@ -247,6 +261,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
             generated_code = template.render(
                 classes=classes,
                 asso_classes=asso_classes,
+                referenced_asso=self.get_referenced_association_classes(asso_classes),
                 types=self.TYPES,
                 associations=self.model.associations,
                 enumerations=self.model.get_enumerations(),

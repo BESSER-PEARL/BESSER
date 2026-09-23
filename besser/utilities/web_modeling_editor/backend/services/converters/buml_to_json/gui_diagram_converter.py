@@ -124,14 +124,26 @@ def _metamodel_namespace() -> Dict[str, Any]:
     module-level metamodel instances (``StringType`` and the other primitive
     types) are collected, since the emitted code uses both.
     """
-    namespace: Dict[str, Any] = {}
-    modules = (
-        _gui_module,
-        _dashboard_module,
-        _events_module,
-        _binding_module,
-        _structural_module,
+    return _namespace_of(
+        _gui_module, _dashboard_module, _events_module, _binding_module
     )
+
+
+def _structural_namespace() -> Dict[str, Any]:
+    """Return the structural metamodel names, for the domain context only.
+
+    Kept separate from the GUI vocabulary because ``Parameter`` means two
+    different classes: ``gui.events_actions.Parameter`` in a GUI section and
+    ``structural.Parameter`` in a method signature. Executing the domain code
+    against the GUI namespace bound the wrong one and raised
+    ``Parameter.__init__() got an unexpected keyword argument 'type'``.
+    """
+    return _namespace_of(_structural_module)
+
+
+def _namespace_of(*modules) -> Dict[str, Any]:
+    """Collect the public metamodel classes and instances exported by modules."""
+    namespace: Dict[str, Any] = {}
     for module in modules:
         for attr_name, attr in vars(module).items():
             if attr_name.startswith("_"):
@@ -235,10 +247,25 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
     # elements it binds to, then bind the ClassName_attributeName aliases
     # the GUI section uses before running it.
     if context_code:
+        # Run the domain code against the structural vocabulary, not the GUI
+        # one, so names that mean different things in the two metamodels
+        # (Parameter) resolve correctly on each side.
+        context_globals: Dict[str, Any] = {
+            "__builtins__": safe_globals["__builtins__"],
+            **_structural_namespace(),
+        }
         try:
-            exec(_strip_imports(context_code), safe_globals, safe_globals)
+            exec(_strip_imports(context_code), context_globals, context_globals)
         except Exception as exc:
             raise ValueError(f"Failed to execute domain context: {exc}") from exc
+        # Carry over what the domain code *built* -- the DomainModel and the
+        # Class/Property/Enumeration objects the GUI section binds to -- and
+        # not the structural vocabulary itself, which would shadow the GUI
+        # classes of the same name.
+        for context_name, context_value in context_globals.items():
+            if context_name.startswith("__") or inspect.isclass(context_value):
+                continue
+            safe_globals[context_name] = context_value
         _bind_domain_aliases(safe_globals)
     try:
         exec(cleaned_content, safe_globals, local_vars)

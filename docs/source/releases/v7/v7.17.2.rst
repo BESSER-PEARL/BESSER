@@ -1,0 +1,28 @@
+Version 7.17.2
+==============
+
+Patch release: **fixes a regression in v7.17.1 that stopped a project importing
+when its class diagram contained a method with a typed parameter**. No metamodel
+or API contract changes.
+
+Highlights
+----------
+
+- **``Parameter`` means two different classes, and the reader bound the wrong
+  one**: v7.17.1 began executing the structural section as context for the GUI
+  section, so that a GUI model could name the domain elements it binds to. Both
+  metamodels export a ``Parameter`` -- ``structural.Parameter`` for a method
+  signature, ``gui.events_actions.Parameter`` for an event -- and the shared
+  namespace resolved to the GUI one. Any domain method with a typed parameter
+  then failed with ``Parameter.__init__() got an unexpected keyword argument
+  'type'``, which took down the whole project import. This affected projects
+  that imported correctly before v7.17.1, since the structural section was not
+  executed at all until then.
+
+  The domain context now runs against the structural vocabulary in its own
+  namespace, and only the objects it builds -- the ``DomainModel`` and the
+  ``Class``, ``Property`` and ``Enumeration`` instances a GUI section binds to
+  -- are carried into the GUI namespace. The metamodel classes themselves are
+  not, so neither vocabulary can shadow the other. ``Parameter`` was the only
+  genuine collision of the seven shared names; the other six are the same
+  structural class re-exported through the GUI package.

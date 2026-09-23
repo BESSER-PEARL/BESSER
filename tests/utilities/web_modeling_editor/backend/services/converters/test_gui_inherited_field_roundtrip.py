@@ -23,6 +23,9 @@ from besser.BUML.metamodel.structural import (
     Generalization,
     IntegerType,
     Metadata,
+    Method,
+    MethodImplementationType,
+    Parameter,
     Property,
     StringType,
 )
@@ -140,3 +143,62 @@ def test_gui_section_resolves_inherited_attribute_aliases():
 
     assert namespace["Person_id"] is person_id
     assert namespace["Guest_id"] is person_id
+
+
+def test_domain_method_parameters_do_not_collide_with_the_gui_parameter():
+    """``Parameter`` names two different classes across the two metamodels.
+
+    A domain method signature uses ``structural.Parameter(name=..., type=...)``
+    while a GUI section uses ``gui.events_actions.Parameter``. Executing the
+    domain context against the GUI vocabulary bound the wrong one and failed
+    with ``Parameter.__init__() got an unexpected keyword argument 'type'``,
+    so a project whose class diagram has any method with a typed parameter
+    could not be imported alongside a GUI model.
+    """
+    book = Class(name="Book")
+    stock = Property(name="stock", type=IntegerType)
+    book.attributes = {stock}
+    book.methods = {
+        Method(
+            name="decrease_stock",
+            parameters={Parameter(name="qty", type=IntegerType)},
+            implementation_type=MethodImplementationType.CODE,
+        )
+    }
+    domain_model = DomainModel(name="library")
+    domain_model.types = {book}
+
+    table = Table(
+        name="books",
+        label="Books",
+        columns=[FieldColumn(label="Stock", field=stock)],
+        data_binding=DataBinding(domain_concept=book),
+    )
+    screen = Screen(
+        name="book_screen",
+        description="Books",
+        view_elements={table},
+        is_main_page=True,
+        route_path="/books",
+        screen_size="Medium",
+    )
+    gui_model = GUIModel(
+        name="ui",
+        package="com.example",
+        versionCode="1",
+        versionName="1.0",
+        description="demo",
+        modules={Module(name="MainModule", screens={screen})},
+    )
+    project = Project(
+        name="library_project",
+        models=[domain_model, gui_model],
+        metadata=Metadata(description="demo"),
+    )
+
+    result = project_to_json(_export(project))
+
+    gui_entry = result["diagrams"]["GUINoCodeDiagram"]
+    if isinstance(gui_entry, list):
+        gui_entry = gui_entry[0]
+    assert gui_entry["model"]["pages"], "GUI diagram came back empty"

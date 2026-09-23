@@ -99,8 +99,11 @@ Here is the active user profile (JSON):
 
 {% endif %}
 
+{# streamlit_db=false disables persistent session store and user authentication.
+   Defaults to true so existing generated agents are unchanged. #}
+{% set streamlit_db = false if (config and 'streamlitDb' in config and not config['streamlitDb']) else true %}
 # Create the bot
-agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json', persist_sessions=True{% endif %})
+agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json'{% if streamlit_db %}, persist_sessions=True{% endif %}{% endif %})
 # Load bot properties stored in a dedicated file
 agent.load_properties('config.yaml')
 
@@ -111,7 +114,7 @@ platform = agent.use_websocket_platform(use_ui=True)
 {% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 telegram_platform = agent.use_telegram_platform()
 {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping and streamlit_db %}, authenticate_users=True{% endif %})
 {% endif %}
 {% endfor %}
 
@@ -175,7 +178,7 @@ platform = agent.use_websocket_platform(use_ui=False)
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
-platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping and streamlit_db %}, authenticate_users=True{% endif %})
 {% elif agent.platforms and agent.platforms|length > 0 %}
     {% set found_platform = false %}
     {% for platform in agent.platforms %}
@@ -187,7 +190,7 @@ platform = agent.use_websocket_platform(use_ui=True)
 platform = agent.use_telegram_platform()
                 {% set found_platform = true %}
             {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping and streamlit_db %}, authenticate_users=True{% endif %})
                 {% set found_platform = true %}
             {% endif %}
         {% endif %}
@@ -382,7 +385,6 @@ default_llm = {{ safe_var_name(default_llm_ns.name) }}
 {% if not has_default_llm_state.value %}
 # No LLM configured; consumers referencing default_llm will fail loudly at runtime
 default_llm = None
-{% set has_default_llm_state.value = true %}
 {% endif %}
 {% set has_default_llm = has_default_llm_state.value %}
 {% set has_db_reply = has_db_reply_state.value %}

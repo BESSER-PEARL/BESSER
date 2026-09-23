@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
 
 # Single default model for all OpenAI-backed personalization helpers.
-DEFAULT_OPENAI_MODEL = "gpt-5"
+DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 
 
 def _resolve_openai_api_key(config: dict = None, openai_api_key: str = None) -> str | None:

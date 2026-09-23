@@ -155,6 +155,31 @@ def create_order(order_data, database):
     assert _classify_issue(finding).severity == "blocker"
 
 
+def test_the_phase3_sweep_reports_it_instead_of_crashing(tmp_path):
+    """The sweeps return finished ``data contract:`` strings, but Phase 3 read
+    ``.blocker`` off each one. Any finding raised AttributeError, which ended
+    the whole Phase 3 with no runtime verdict (live hotel run, 2026-09-23)."""
+    import types
+
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+
+    app = _app(tmp_path, order='''\
+from sql_alchemy import Clerk
+
+def create_order(order_data, database):
+    db_clerk = database.query(Clerk).filter(Clerk.id == order_data.handledBy).first()
+    if db_clerk.warehouse_id is None:
+        raise HTTPException(status_code=400, detail="no warehouse")
+''')
+    shim = types.SimpleNamespace(output_dir=app, domain_model=_inventory_model())
+
+    issues = LLMOrchestrator._collect_data_contract_issues(shim)
+
+    [finding] = [i for i in issues if "Clerk.warehouse_id" in i]
+    assert finding.startswith("data contract:")
+    assert _classify_issue(finding).severity == "blocker"
+
+
 def test_reads_an_audit_field_the_scaffold_never_wrote(tmp_path):
     """``...2507-j38du4bm``: a response body built from ``db_order.created_at``
     and ``db_order.updated_at``, neither of which the ORM class declares."""

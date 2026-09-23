@@ -3438,16 +3438,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # measured against the labelled corpus while having no call site at
         # all - they scored zero false positives on every known-working app
         # and never ran on a real generation.
-        for finding in collect_inverted_end_issues(self.output_dir, contract):
-            prefix = "data contract:" if finding.blocker else "data contract (advisory):"
-            issues.append(
-                f"{prefix} {finding.path} line {finding.line}: {finding.message}"
-            )
-        for finding in collect_undeclared_attribute_issues(self.output_dir, contract):
-            prefix = "data contract:" if finding.blocker else "data contract (advisory):"
-            issues.append(
-                f"{prefix} {finding.path} line {finding.line}: {finding.message}"
-            )
+        # Both already return finished ``data contract:`` messages.
+        issues.extend(collect_inverted_end_issues(self.output_dir, contract))
+        issues.extend(collect_undeclared_attribute_issues(self.output_dir, contract))
         return issues
 
     def _planner_instructions(self, instructions: str) -> str:

@@ -45,7 +45,7 @@ Agentic extension
 -----------------
 
 The agentic extension adds the collaborative-agent profile used to model the
-whole-swarm structure of an AgenticSwarm project. It is a pure addition -- the
+system-wide structure of an multi-agent system project. It is a pure addition -- the
 base module is untouched and remains valid vanilla UML 2.5 on its own.
 
 * ``AgenticComponent`` — a ``Component`` that is an *agent*. Carries an

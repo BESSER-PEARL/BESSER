@@ -50,7 +50,7 @@ profile addition shared with the
 :doc:`UML Component model <uml_component>`; see
 :ref:`uml-component-locality`.
 
-When a Deployment diagram is generated from an AgenticSwarm project, WME can
+When a Deployment diagram is generated from a multi-agent system project, WME can
 stamp ``agentModelRef`` on an artifact. The JSON converter stores that value as
 ``Artifact.agent_model_ref``. Project-level deployment generators use it to
 resolve the artifact back to the Agent diagram and bake the generated agent

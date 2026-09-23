@@ -157,7 +157,7 @@ round-trip through executable BUML ``.py`` files.
    repository; check there for the latest availability.
 
 The editor also supports BESSER's :ref:`bpmn-agentic-extension`. Agentic BPMN
-is the process view within an agentic swarm: lanes identify participating
+is the process view within a multi-agent system: lanes identify participating
 agent roles, tasks describe the work inside the process, and merging gateways
 can carry Governance DSL for governed merge points.
 
@@ -184,8 +184,8 @@ Component and Deployment Diagrams
 ---------------------------------
 
 The editor supports UML 2.5 **Component** and **Deployment** diagrams as two
-distinct diagram types. In the AgenticSwarm workflow, these diagrams are the
-whole-swarm views: Component diagrams describe the agents, capabilities, and
+distinct diagram types. Within a multi-agent system (MAS) workflow, these diagrams 
+provide system-wide views: Component diagrams describe the agents, capabilities, and
 agentic dependencies; Deployment diagrams allocate those agents to runtime
 nodes and carry the instance counts used by deployment generators.
 

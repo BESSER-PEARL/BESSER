@@ -6,7 +6,7 @@ The Docker Compose generator converts a UML :doc:`Deployment model
 for ``docker compose up``. For a single Deployment diagram it writes a
 ``docker-compose.yml`` file. When invoked from a full project, it returns a ZIP
 containing ``docker-compose.yml`` plus any baked agent build contexts. It is the
-runtime handoff for the AgenticSwarm path: the instance count authored on a
+runtime handoff for the multi-agent system deployment path: the instance count authored on a
 BPMN agentic lane flows through the Deployment model and becomes a real
 ``deploy.replicas: N`` in the generated Compose file.
 
@@ -101,7 +101,7 @@ WME Generator Key
 When using the online editor, select ``docker_compose`` as the generator type
 for a ``DeploymentDiagram``.
 
-AgenticSwarm baking
+Multi-Agent System Baking
 --------------------
 
 When the generator is invoked through the ``/generate-output-from-project``

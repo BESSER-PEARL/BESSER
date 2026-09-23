@@ -113,7 +113,7 @@ Choosing a Generator
      - Deployment / project
      - YAML / ZIP
      - You need Docker Compose output for a Deployment diagram, or a project ZIP
-       with baked BAF agents for an AgenticSwarm runtime
+       with baked BAF agents for an multi-agent system runtime
 
 
 Web Application
@@ -205,8 +205,8 @@ Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
 Deployment
 ----------
 
-Generate Docker Compose output from UML Deployment models, including
-project-level AgenticSwarm build contexts:
+Generate Docker Compose output from UML Deployment models, 
+project-level build contexts for multi-agent systems:
 
 .. toctree::
    :maxdepth: 1

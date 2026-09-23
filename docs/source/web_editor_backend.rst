@@ -97,7 +97,7 @@ flag and preserves ``reflectionMode``, ``gatewayRole``, ``trustScore``, lane
 Message flows stay standard BPMN flows in this backend contract.
 
 In project-level deployment generation, BPMN provides the process context for
-AgenticSwarm runtime behavior: lane ``agentDiagramRef`` values resolve gateway
+multi-agent system runtime behavior: lane ``agentDiagramRef`` values resolve gateway
 owners to Agent diagrams, ``governanceDsl`` on merging gateways is attached to
 the owner agent, and BPMN sequence-flow ids are used to route A2A messages into
 the correct governed merge.
@@ -117,7 +117,7 @@ whole-swarm structural and runtime-allocation views backing the
 :doc:`UML Component <buml_language/model_types/uml_component>` and
 :doc:`UML Deployment <buml_language/model_types/uml_deployment>` metamodels.
 They are standalone diagrams for normal import/export, and they also
-participate in project-level AgenticSwarm generation.
+participate in project-level multi-agent system generation.
 
 **Agentic profile.** The Component diagram's agentic vocabulary is carried in
 the WME ``stereotype`` string. The converter promotes a component to

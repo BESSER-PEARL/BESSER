@@ -975,15 +975,25 @@ def _write_table(f, var_name, chart):
             col_var = f'{var_name}_col_{i}'
             if isinstance(col, FieldColumn):
                 field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
-                # Reference the Property variable from the domain model
-                # The domain model builder names them: ClassName_attributeName
-                # We need to find which class owns this property
+                # Reference the Property variable from the domain model.
+                # The domain model builder names them ClassName_attributeName
+                # after the class that *declares* the property, so resolve the
+                # owner rather than the class the table is bound to. For an
+                # inherited attribute the two differ, and naming it after the
+                # binding emitted a reference to a variable that is never
+                # defined: a table bound to Guest showed Person.id as Guest_id.
+                owner = getattr(col.field, 'owner', None)
                 binding = getattr(chart, 'data_binding', None)
-                if binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
-                    class_name = binding.domain_concept.name
+                if owner is not None and getattr(owner, 'name', None):
+                    class_name = safe_class_name(owner.name)
+                elif binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
+                    class_name = safe_class_name(binding.domain_concept.name)
+                else:
+                    class_name = None
+                if class_name:
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={class_name}_{field_ref})\n')
                 else:
-                    # Fallback: try to find the property variable by name
+                    # Fallback: reference the property variable by bare name
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
             elif isinstance(col, LookupColumn):
                 # path is an association end Property (defined inline in BinaryAssociation)
@@ -991,9 +1001,15 @@ def _write_table(f, var_name, chart):
                 path_name = col.path.name if hasattr(col.path, 'name') else str(col.path)
                 field_name = col.field.name if hasattr(col.field, 'name') else str(col.field)
                 # Resolve field: TargetClass_fieldName (e.g. Book_title)
+                # Same owner rule as FieldColumn above: the property variable
+                # is named after the class that declares the field, which is
+                # not necessarily the association's target class.
+                field_owner = getattr(col.field, 'owner', None)
                 path_type = getattr(col.path, 'type', None)
-                if path_type and hasattr(path_type, 'name'):
-                    field_ref = f'{path_type.name}_{field_name}'
+                if field_owner is not None and getattr(field_owner, 'name', None):
+                    field_ref = f'{safe_class_name(field_owner.name)}_{field_name}'
+                elif path_type and hasattr(path_type, 'name'):
+                    field_ref = f'{safe_class_name(path_type.name)}_{field_name}'
                 else:
                     field_ref = field_name
                 # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.

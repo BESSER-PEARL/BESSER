@@ -192,7 +192,14 @@ def _convert_section(
             model = agent_buml_to_json(section_code)
 
         elif model_name == "gui_model":
-            model = gui_buml_to_json(section_code)
+            # A GUI section names the domain elements it binds to, so the
+            # structural code is passed as context. The converter executes it
+            # first and binds the ClassName_attributeName aliases the GUI
+            # section uses -- including inherited attributes, which older
+            # exports spell after the binding class rather than the declaring
+            # one (a Guest table showing Person.id wrote Guest_id).
+            domain_code = "\n".join(code for _, code in domain_sections)
+            model = gui_buml_to_json(section_code, context_code=domain_code or None)
 
         elif model_name == "quantum_model":
             model = quantum_buml_to_json(section_code)

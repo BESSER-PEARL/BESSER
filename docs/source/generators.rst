@@ -32,6 +32,10 @@ Choosing a Generator
      - Structural
      - ZIP (FastAPI + SQLAlchemy)
      - You need only a REST API backend without frontend
+   * - **Spring Boot**
+     - Structural
+     - ZIP (Maven project)
+     - You need a Java REST backend with JPA entities, repositories and controllers
    * - **REST API**
      - Structural
      - Python files
@@ -133,6 +137,7 @@ Generate code for various frameworks and programming languages:
 
    generators/django
    generators/backend
+   generators/spring
    generators/rest_api
    generators/python
    generators/pydantic

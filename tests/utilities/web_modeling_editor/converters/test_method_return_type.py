@@ -75,3 +75,20 @@ def test_an_empty_type_property_is_not_mistaken_for_one(empty):
     method = _only_method(_diagram({"name": "renew()", "attributeType": empty}))
 
     assert method.type is None
+
+
+def test_a_stale_type_property_does_not_sink_the_whole_diagram():
+    """Older editor saves left a fragment of the signature in ``attributeType``.
+
+    The shipped ``library_full_stack`` template holds exactly this: name
+    ``decrease_stock(qty: int)``, ``attributeType: "int): any"``. Reading it as
+    a return type raised ConversionError, so spec-driven assembly dropped the
+    domain model and, with it, the GUI. Before the property was read at all the
+    method converted untyped, which is what it must still do.
+    """
+    method = _only_method(_diagram({
+        "name": "+ decrease_stock(qty: int)", "attributeType": "int): any",
+    }))
+
+    assert method.name == "decrease_stock"
+    assert method.type is None

@@ -313,8 +313,19 @@ def _process_classes(
                     # leaves the name bare ("renew()"). Only the signature was
                     # read, so every such method arrived with type None and the
                     # agent never saw what an action returns.
+                    # Older saves can hold a signature fragment there ("int): any");
+                    # an unresolvable value is ignored, as it was before this read.
                     if not return_type:
-                        return_type = method.get("attributeType") or method.get("returnType") or None
+                        declared = method.get("attributeType") or method.get("returnType") or None
+                        if declared:
+                            try:
+                                _resolve_type(declared, type_lookup)
+                                return_type = declared
+                            except ConversionError:
+                                logger.warning(
+                                    "Ignoring unresolvable return type %r on method %r",
+                                    declared, name,
+                                )
 
                     # Get the code attribute for the method
                     method_code = method.get("code", "")

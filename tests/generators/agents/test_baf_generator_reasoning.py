@@ -35,7 +35,7 @@ def reasoning_agent_model() -> Agent:
     agent = Agent("reasoning_demo")
     agent.platforms.append(WebSocketPlatform())
 
-    llm = LLMOpenAI(agent=agent, name="gpt-4o-mini", parameters={})
+    LLMOpenAI(agent=agent, name="gpt-4o-mini", parameters={})
 
     agent.new_tool(
         name="ping",

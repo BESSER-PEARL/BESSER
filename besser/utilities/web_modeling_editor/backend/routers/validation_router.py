@@ -32,20 +32,33 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 
 # Backend services - Converters
 from besser.utilities.web_modeling_editor.backend.services.converters import (
-    process_agent_diagram,
-    process_bpmn_diagram,
     process_class_diagram,
-    process_nn_diagram,
-    process_object_diagram,
     process_state_machine,
+    process_agent_diagram,
+    process_object_diagram,
+    process_nn_diagram,
+    process_bpmn_diagram,
 )
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
+
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
+
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
+)
+
+# Centralized error handling
+from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+    handle_endpoint_errors,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 from besser.utilities.web_modeling_editor.backend.services.validators.sat_checker import (
     check_alloy_consistency_stream,
@@ -84,7 +97,7 @@ async def semantic_consistency_check_endpoint(input_data: DiagramInput) -> Strea
 
 @router.post("/validate-diagram", response_model=ValidationResponse)
 @handle_endpoint_errors("validate_diagram")
-async def validate_diagram(input_data: DiagramInput) -> dict:
+async def validate_diagram(input_data: DiagramInput):
     """
     Validate diagram by converting to BUML and running metamodel validation.
 
@@ -262,13 +275,6 @@ async def validate_diagram(input_data: DiagramInput) -> dict:
             if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                 validation_warnings.extend(buml_model.ocl_warnings)
 
-            # Surface OCL semantic warnings (e.g. enum literals that do not
-            # exist in the model) alongside the metamodel warnings.
-            if ocl_results:
-                validation_warnings.extend(
-                    ocl_results.get("warning_constraints", [])
-                )
-
         except Exception:
             logger.exception("Unexpected error during OCL constraint check")
             validation_warnings.append("OCL constraint check encountered an unexpected error.")
@@ -286,7 +292,6 @@ async def validate_diagram(input_data: DiagramInput) -> dict:
     if ocl_results:
         response["valid_constraints"] = ocl_results.get("valid_constraints", [])
         response["invalid_constraints"] = ocl_results.get("invalid_constraints", [])
-        response["warning_constraints"] = ocl_results.get("warning_constraints", [])
         if ocl_results.get("message"):
             response["ocl_message"] = ocl_results["message"]
 
@@ -295,16 +300,13 @@ async def validate_diagram(input_data: DiagramInput) -> dict:
 
 @router.post("/check-ocl", response_model=ValidationResponse)
 @handle_endpoint_errors("check_ocl")
-async def check_ocl(input_data: DiagramInput) -> dict:
+async def check_ocl(input_data: DiagramInput):
     """
     Deprecated: Use /validate-diagram instead.
     This endpoint is kept for backwards compatibility and redirects to the new unified validation.
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
-
-
-
 
 @router.post("/generate-object-diagram")
 async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
@@ -325,5 +327,3 @@ async def generate_object_diagram_endpoint(input_data: DiagramInput) -> Streamin
             "X-Accel-Buffering": "no",  # important for nginx
         },
     )
-
-

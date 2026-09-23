@@ -273,11 +273,11 @@ class AlloyToBUML:
         Args:
             date_as_datetime: Only used when *for_editor* is ``False``. When
                 ``True`` (default), date-typed attribute values are emitted as
-                real ``datetime.date(...)`` constants, matching the convention
-                used by ``BUMLModelIntegrator.generate_integrated_model`` so
-                the generated code is directly executable/importable on its
-                own. When ``False``, they are emitted as ISO-8601 strings
-                instead; ``object_buml_to_json`` accepts both forms.
+
+                real ``datetime.date(...)`` constants so the generated code is
+                directly executable/importable on its own. When ``False``,
+                they are emitted as ISO-8601 strings instead;
+                ``object_buml_to_json`` accepts both forms.
             for_editor: When ``True`` (default), emit the code in the "editor"
                 dialect consumed by the web editor's ``object_buml_to_json``
                 converter (development version). Objects are always built

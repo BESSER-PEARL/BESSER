@@ -205,6 +205,14 @@ def test_method_initialization():
     assert method.name == "method_1"
     assert method.type.name == "class_1"
 
+# A method linked to a neural network is detected as NN-implemented
+def test_method_implemented_by_neural_network():
+    from besser.BUML.metamodel.nn import NN
+    nn_model = NN(name="Classifier")
+    method: Method = Method(name="predict", neural_network=nn_model)
+    assert method.neural_network is nn_model
+    assert method.implementation_type == MethodImplementationType.NEURAL_NETWORK
+
 # Testing parameters with repeated name
 def test_parameters_same_name():
     with pytest.raises(ValueError) as excinfo:

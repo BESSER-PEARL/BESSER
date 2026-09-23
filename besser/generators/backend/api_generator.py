@@ -41,6 +41,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators.action_language.RESTGenerator import bal_to_rest
+from besser.generators.backend.nn_methods import collect_nn_modules, nn_method_code
 from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types, normalize_method_code
 from besser.utilities.utils import sort_by_timestamp
 
@@ -223,6 +224,9 @@ def generate_modular_api(
     # `pk` returns the primary-key attribute name of a class, so routers query
     # and join by the real PK (e.g. Seat.code) instead of a hardcoded `.id`.
     env.filters['pk'] = lambda class_name: pk_names.get(str(class_name), "id")
+    # NEURAL_NETWORK methods get a generated body calling nn_runtime.run_network.
+    nn_modules = collect_nn_modules(model)
+    env.globals['nn_method_code'] = lambda method: nn_method_code(method, nn_modules)
 
     routers_dir = os.path.join(output_dir, "routers")
     os.makedirs(routers_dir, exist_ok=True)

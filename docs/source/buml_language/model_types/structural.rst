@@ -26,6 +26,37 @@ BESSER provides a comprehensive set of primitive data types for modeling. The av
 ``IntegerType``, ``FloatType``, ``BooleanType``, ``DateType``, ``TimeType``, ``DateTimeType``, ``TimeDeltaType`` 
 and ``AnyType``. These types can be used to define properties and attributes in your structural models.
 
+Method Implementations
+----------------------
+
+A ``Method`` can declare how its behavior is implemented through ``implementation_type``
+(a ``MethodImplementationType``):
+
+- ``NONE``: signature only (plain UML).
+- ``CODE``: Python code stored in ``code``.
+- ``BAL``: :doc:`BESSER Action Language <../../besser_action_language>` code stored in ``code``.
+- ``STATE_MACHINE``: behavior defined by a :doc:`state machine <state_machine>` (``state_machine``).
+- ``QUANTUM_CIRCUIT``: behavior defined by a :doc:`quantum circuit <quantum>` (``quantum_circuit``).
+- ``NEURAL_NETWORK``: behavior defined by a :doc:`neural network <nn>` (``neural_network``);
+  calling the method runs the NN.
+
+When a behavior model is passed and ``implementation_type`` is omitted, the type is detected
+automatically:
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.nn import NN
+
+    classifier = NN(name="ImageClassifier")
+    predict = Method(name="predict", parameters={Parameter(name="image", type=StringType)},
+                     type=StringType, neural_network=classifier)
+    assert predict.implementation_type == MethodImplementationType.NEURAL_NETWORK
+
+In the web modeling editor, choose the implementation type in the method's popup, then pick
+the linked diagram from the project (the NN option lists the project's NN diagrams).
+The :doc:`Backend <../../generators/backend>` and :doc:`Web App <../../generators/full_web_app>`
+generators turn NN-implemented methods into endpoints that run the network.
+
 Validation
 ----------
 

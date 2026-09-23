@@ -15,6 +15,7 @@ import json
 
 import pytest
 
+from besser.BUML.metamodel.structural import MethodImplementationType
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
 )
@@ -1001,6 +1002,45 @@ class TestClassDiagramRoundtrip:
         assert len(method_elems) == 1
         assert method_elems[0].get("code") == "def add(self, a, b):\n    return a + b"
         assert method_elems[0].get("implementationType") == "code"
+
+    def test_method_with_neural_network_roundtrip(self):
+        """A method implemented by a neural network keeps its type and NN reference."""
+        json_data = {
+            "title": "NNModel",
+            "model": {
+                "elements": {
+                    "cls-classifier": {
+                        "id": "cls-classifier",
+                        "name": "ImageClassifier",
+                        "type": "Class",
+                        "owner": None,
+                        "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+                        "attributes": [],
+                        "methods": ["meth-predict"],
+                    },
+                    "meth-predict": {
+                        "id": "meth-predict",
+                        "name": "+ predict(image: str): str",
+                        "type": "ClassMethod",
+                        "owner": "cls-classifier",
+                        "bounds": {"x": 0, "y": 40, "width": 159, "height": 30},
+                        "implementationType": "neural_network",
+                        "neuralNetworkId": "nn-diagram-1",
+                    },
+                },
+                "relationships": {},
+            },
+        }
+        domain_model = process_class_diagram(json_data)
+        method = next(iter(domain_model.get_class_by_name("ImageClassifier").methods))
+        assert method.implementation_type == MethodImplementationType.NEURAL_NETWORK
+
+        result = class_buml_to_json(domain_model)
+        method_elems = _extract_elements_by_type(result, "ClassMethod")
+        assert len(method_elems) == 1
+        assert method_elems[0].get("implementationType") == "neural_network"
+        assert method_elems[0].get("neuralNetworkId") == "nn-diagram-1"
+        assert "quantumCircuitId" not in method_elems[0]
 
     def test_attribute_default_value_preserved(self):
         """Attribute default values survive the roundtrip."""

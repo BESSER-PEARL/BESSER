@@ -714,6 +714,9 @@ def _process_association_classes(
             for end in assoc.ends:
                 if end.type is class_obj:
                     end.type = association_class
+                    # Without this association_ends() on the promoted class is
+                    # empty and generators omit its side of the association.
+                    association_class._add_association(assoc)
         for generalization in domain_model.generalizations:
             if generalization.general is class_obj:
                 generalization.general = association_class

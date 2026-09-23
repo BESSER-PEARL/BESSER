@@ -117,3 +117,33 @@ def test_a_plain_diagram_is_untouched():
 
     assert not any(isinstance(t, AssociationClass) for t in domain.types)
     domain.validate()
+
+
+def test_the_promoted_class_knows_its_own_associations(restaurant_shape):
+    """Ends were re-pointed at the new AssociationClass, but the associations
+    stayed registered on the discarded Class, so association_ends() on the
+    promoted class came back empty. Generators read it to render the link's
+    side of 'lines': live (2026-09-23) the web-app scaffold of a hotel model
+    (ExtraCharge -> BookingRoom) failed at mapper configuration."""
+    domain = _domain(restaurant_shape)
+    line = next(t for t in domain.types if getattr(t, "name", None) == "OrderLine")
+
+    owners = {end.owner.name for end in line.association_ends()}
+
+    assert {"lines", "orderLines_1"} <= owners
+
+
+def test_the_generated_orm_configures(restaurant_shape, tmp_path):
+    """End to end from editor JSON: the SQLAlchemy module must configure."""
+    import importlib.util
+    from sqlalchemy.orm import clear_mappers, configure_mappers
+    from besser.generators.sql_alchemy import SQLAlchemyGenerator
+
+    SQLAlchemyGenerator(_domain(restaurant_shape), output_dir=str(tmp_path)).generate()
+    spec = importlib.util.spec_from_file_location("rebinding_orm", tmp_path / "sql_alchemy.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        configure_mappers()
+    finally:
+        clear_mappers()

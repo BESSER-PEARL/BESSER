@@ -1,0 +1,116 @@
+Version 7.18.0
+==============
+
+Minor release: **live agent simulation in the web editor, and methods
+implemented by a neural network**. The agent live-testing work was contributed
+by `Marcos Gomez <https://github.com/mgv99>`_ (BESSER #587, editor #184,
+modeling-agent #19) and reviewed and completed by the BESSER team. Methods
+backed by a neural network close issue #570.
+
+The release adds a new deployable service, the agent simulator. See
+*Deployment* below before upgrading a hosted instance.
+
+Highlights
+----------
+
+- **Simulate an agent without leaving the editor**: a new simulation page runs
+  the agent you designed, lets you chat with it, highlights its current state
+  on a read-only copy of the diagram, lists the files it writes and streams its
+  terminal output. The agent is generated with the BAF generator and runs in
+  the new agent simulator service, one sandboxed session per user.
+
+- **Each simulated agent runs in a sandbox**: the simulator starts every
+  session in bubblewrap with its own user, PID, IPC and UTS namespaces, a
+  private ``/proc``, a read-only filesystem and only its own work directory
+  writable, so a session cannot see another session or the container's
+  environment. It fails closed when the sandbox cannot start. The simulator
+  runs in its own container with no host port, an explicit environment
+  allowlist, dropped capabilities and resource limits, and every request to it
+  must carry ``X-Agent-Simulator-Token``. Custom Python code actions are refused
+  by default (``AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE``), sign-in with GitHub is
+  required by default, and each user gets one session at a time.
+
+- **Agent components have their own page**: intents, LLMs, RAG databases, SQL
+  databases, tools, skills, workspaces and GUIs are managed on an *Agent
+  Components* page instead of cluttering the canvas, and the runtime settings
+  (WebSocket, Telegram, A2A, NLP, database, Git, raw YAML) on an *Agent
+  Runtime* page. Agent diagrams saved before this release are migrated on load,
+  so their components appear on the new page.
+
+- **Richer agent replies**: reply actions can interpolate session variables
+  (``{name}`` placeholders), store their result in the session
+  (``store_in_session``) and run without sending anything (``send_reply``).
+  LLM, RAG and DB replies accept a custom input prompt (``input_prompt_mode``).
+  ``GUIReplyAction`` sends a GUI designed in the editor as a chat reply, and
+  ``GUIEvent`` / ``when_form_submitted`` react to what the user does with it.
+  ``Agent.gui_models`` holds ``GUIModel`` objects, and the BAF generator writes
+  each one to ``guis/<id>.py``.
+
+- **A method can be implemented by a neural network**: next to Python code,
+  BESSER Action Language, state machines and quantum circuits, a method's
+  implementation can now be a neural network modeled in the same project
+  (``MethodImplementationType.NEURAL_NETWORK``, ``Method.neural_network``). The
+  Backend and Web App generators turn such a method into an endpoint that runs
+  the network: they emit the PyTorch module under ``neural_networks/``, a
+  ``nn_runtime.py`` that loads each network once, and ``torch`` in the
+  requirements. The endpoint answers ``503`` until the trained weights are in
+  ``neural_networks/weights/``.
+
+- **The Spring Boot generator works on models without identifiers**: a JPA
+  entity needs an ``@Id``, and the generator used to reject every class without
+  an ``is_id`` attribute, which was true of every class diagram template in the
+  editor. A class hierarchy with no identifier now gets an auto-generated
+  ``id`` on its root class; an existing attribute named ``id`` is reused. The
+  input model is not modified.
+
+Fixes
+-----
+
+- **Exporting a project that contains an agent produced a file that could not
+  be read**: the agent code builder wrote ``from __future__ import
+  annotations``, which landed in the middle of the project file. It is no
+  longer emitted.
+- **Agent text doubled its escapes on every round trip**: ``sanitize_text``
+  escaped quotes and backslashes into the model's strings, and code emission
+  escaped them again. Escaping now happens once, when code is written. Agents
+  exported by earlier versions may show ``\'`` in the editor once.
+- **Generated agents with a WebSocket platform lost their UI and created the
+  platform twice**: ``use_ui`` is now ``False`` only in test mode, and the
+  platform is created exactly once.
+- **Importing the BAF generator on its own failed with a circular import**:
+  ``from besser.generators.agents.baf_generator import BAFGenerator`` as a
+  first import broke every BAF documentation example. The generator no longer
+  imports the web editor backend at module load.
+- **The modeling assistant could not connect agent states**: the editor read
+  transition endpoints from fields the assistant never sets. ``add_transition``,
+  ``remove_transition`` and ``add_intent_training_phrase`` now work, and the
+  assistant uses the database operations BESSER accepts.
+- **SVG and PNG export of an agent diagram crashed** when a component rendered
+  nothing on the canvas.
+- **Invalid custom agent code returned a 500**: ``CodeValidationError`` is now a
+  ``ValidationError`` and returns a 400 with the lint message.
+
+Behavior changes
+----------------
+
+- A ``GUIReplyAction`` whose GUI is not in ``Agent.gui_models`` now fails
+  generation instead of producing an empty placeholder module.
+- ``LLMReply``, ``RAGReply`` and ``DBReply`` validate ``input_prompt_mode``; the
+  ``custom`` mode requires a prompt.
+
+Deployment
+----------
+
+- The new ``besser-wme-agent-simulator`` service is defined in both compose
+  files and built and pushed by the deploy workflow. The backend joins its
+  network (``agent_simulator_network``).
+- Set ``AGENT_SIMULATOR_API_TOKEN`` in the environment of both the backend and
+  the simulator. Without it the simulator refuses every request.
+- The simulator needs ``security_opt: seccomp=unconfined`` and
+  ``apparmor=unconfined`` for bubblewrap (already in the compose files); it adds
+  no capabilities. If the host kernel does not allow unprivileged user
+  namespaces, sessions are refused.
+- Deploy the modeling-agent alongside (its ``develop`` includes #19): the
+  assistant now reads and writes the new agent component format.
+- Every configuration variable is documented in
+  :doc:`../../utilities/agent_simulator`.

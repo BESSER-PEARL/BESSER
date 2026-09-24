@@ -14,6 +14,7 @@ from . import (
     process_state_machine,
     process_bpmn_diagram,
 )
+from .method_nn_linker import link_method_neural_networks
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -194,15 +195,21 @@ def json_to_buml_project(project):
     from .nn_diagram_processor import process_nn_diagram
 
     nn_titles: dict = {}
+    processed_nn_models = {}  # diagram ID -> NN, reused to link methods
     for nn_diag in diagrams.get("NNDiagram", []):
         nn_model = process_nn_diagram(nn_diag.model_dump())
         model_list.append(nn_model)
+        processed_nn_models[nn_diag.id or id(nn_diag)] = nn_model
         # Preserve the diagram's user-facing title so project_to_code can
         # emit it in the section header — the NN metamodel only stores a
         # sanitized name, so without this the title is lost on round-trip.
         nn_title = getattr(nn_diag, "title", None)
         if nn_title:
             nn_titles[id(nn_model)] = nn_title
+
+    # Methods implemented by a neural network point at the NN models above.
+    for cd_model in processed_class_diagrams.values():
+        link_method_neural_networks(cd_model, diagrams.get("NNDiagram", []), processed_nn_models)
 
     # ── Process ALL BPMNDiagrams ──────────────────────────────────────
     for bpmn_diag in diagrams.get("BPMN", []):

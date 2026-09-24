@@ -276,6 +276,33 @@ The generator creates:
    The ``database`` parameter is automatically injected by the API framework and should not be passed in the request body.
    Any ``print()`` statements executed during method execution are captured and returned in the ``output`` field of the response.
 
+.. _backend-nn-methods:
+
+Methods Implemented by a Neural Network
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A method whose ``implementation_type`` is ``NEURAL_NETWORK`` and whose ``neural_network`` points to an
+:doc:`NN model <../buml_language/model_types/nn>` becomes a class-level endpoint that runs the network
+(see :doc:`../buml_language/model_types/structural` for how to link one). The generator then also emits:
+
+- ``neural_networks/<network>.py``: the PyTorch ``NeuralNetwork`` class, as produced by the :doc:`pytorch`.
+- ``neural_networks/weights/``: where you put the trained weights, ``<network>.pt`` (a ``state_dict``
+  saved with ``torch.save(model.state_dict(), ...)``). The folder's ``README.md`` lists the expected files.
+- ``nn_runtime.py``: loads each network once, on first call, and runs it.
+- ``torch`` in ``requirements.txt`` (and in the ``Dockerfile`` when ``docker_image=True``).
+
+Calling the method runs the network on its parameters, in their declared order, as one input sample; the
+batch dimension is added for you. A method with a single list parameter uses that list as the whole sample
+(for example an image as nested lists). For a ``Patient`` class with ``score(height: float, weight: float)``:
+
+- Endpoint: ``POST /patient/methods/score/``
+- Request body: ``{"params": {"height": 1.7, "weight": 70.0}}``
+- Response ``result``: ``{"network": "scorer", "output": [0.42]}``
+
+Until the weights file exists, the endpoint answers ``503``; inputs that are not numbers, or that do not match
+the network's input shape, answer ``422``. Methods with the ``NEURAL_NETWORK`` type but no linked network
+answer ``501`` like any other method without an implementation.
+
 
 System Endpoints
 ^^^^^^^^^^^^^^^^

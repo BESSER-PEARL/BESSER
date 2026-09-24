@@ -176,7 +176,7 @@ def class_buml_to_json(domain_model):
     elements = {}
     relationships = {}
     # Retrieve method diagram reference mapping (populated by json_to_buml round-trip).
-    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ..., "neuralNetworkId": ...}
     method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
     # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
     # Keyed by element name (classes/enums) or composite key (relationships).
@@ -354,6 +354,7 @@ def class_buml_to_json(domain_model):
                             MethodImplementationType.BAL: "bal",
                             MethodImplementationType.STATE_MACHINE: "state_machine",
                             MethodImplementationType.QUANTUM_CIRCUIT: "quantum_circuit",
+                            MethodImplementationType.NEURAL_NETWORK: "neural_network",
                         }
                         impl_type_str_map = {
                             "none": "none",
@@ -361,6 +362,7 @@ def class_buml_to_json(domain_model):
                             "bal": "bal",
                             "state_machine": "state_machine",
                             "quantum_circuit": "quantum_circuit",
+                            "neural_network": "neural_network",
                         }
                         impl_type = method.implementation_type
                         if isinstance(impl_type, str):
@@ -390,6 +392,13 @@ def class_buml_to_json(domain_model):
                         quantum_circuit_id = method.quantum_circuit.name
                     if quantum_circuit_id:
                         method_element["quantumCircuitId"] = quantum_circuit_id
+
+                    neural_network_id = refs.get("neuralNetworkId") or None
+                    if not neural_network_id and getattr(method, "neural_network", None):
+                        # If we have an actual neural network object, use its name as ID
+                        neural_network_id = method.neural_network.name
+                    if neural_network_id:
+                        method_element["neuralNetworkId"] = neural_network_id
 
                     elements[method_id] = method_element
                     method_ids.append(method_id)
@@ -823,6 +832,7 @@ def class_buml_to_json(domain_model):
             elem.pop("implementationType", None)
             elem.pop("stateMachineId", None)
             elem.pop("quantumCircuitId", None)
+            elem.pop("neuralNetworkId", None)
         if elem.get("type") == "ClassMethod":
             if not elem.get("implementationType"):
                 elem.pop("implementationType", None)
@@ -830,6 +840,8 @@ def class_buml_to_json(domain_model):
                 elem.pop("stateMachineId", None)
             if not elem.get("quantumCircuitId"):
                 elem.pop("quantumCircuitId", None)
+            if not elem.get("neuralNetworkId"):
+                elem.pop("neuralNetworkId", None)
 
     result = {
         "version": "3.0.0",

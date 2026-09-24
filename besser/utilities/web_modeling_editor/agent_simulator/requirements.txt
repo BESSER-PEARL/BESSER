@@ -1,0 +1,22 @@
+# Agent simulator image dependencies (the ONLY requirements the image installs;
+# the repository's `besser` package is then added with `pip install --no-deps`).
+#
+# Why not also the root requirements.txt: it pins bocl==1.0.1, and bocl pins
+# pydantic==2.6.3, while besser-agentic-framework[extras] pulls langchain 0.2.x
+# whose langchain-core requires pydantic>=2.7.4 on Python >= 3.12.4. The two
+# sets cannot be installed together (pip: ResolutionImpossible). The simulator
+# needs neither bocl nor the generators' database drivers, so it installs only
+# what it runs.
+#
+# Simulator API. Same fastapi / uvicorn versions as the main environment.
+fastapi==0.110.0
+uvicorn[standard]==0.28.0
+# Exact versions besser-agentic-framework 4.5.1 pins.
+websockets==11.0.3
+PyYAML==6.0.2
+# The agents themselves.
+besser-agentic-framework[extras,llms]==4.5.1
+# Imported by `besser.utilities` (package __init__), which the simulator loads
+# for besser.utilities.path_utils.
+antlr4-python3-runtime==4.13.1
+jinja2==3.1.6

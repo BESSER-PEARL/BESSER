@@ -9,6 +9,7 @@ import time
 if TYPE_CHECKING:
     from besser.BUML.metamodel.state_machine import StateMachine
     from besser.BUML.metamodel.quantum import QuantumCircuit
+    from besser.BUML.metamodel.nn import NN
 
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
@@ -318,12 +319,14 @@ class MethodImplementationType(Enum):
         BAL: Implementation provided as BESSER Action Language code string.
         STATE_MACHINE: Implementation defined by a state machine.
         QUANTUM_CIRCUIT: Implementation defined by a quantum circuit.
+        NEURAL_NETWORK: Implementation defined by a neural network.
     """
     NONE = "none"
     CODE = "code"
     BAL = "besser_action_language"
     STATE_MACHINE = "state_machine"
     QUANTUM_CIRCUIT = "quantum_circuit"
+    NEURAL_NETWORK = "neural_network"
 
 
 class EnumerationLiteral(NamedElement):
@@ -804,6 +807,7 @@ class Method(TypedElement):
     - BAL: BESSER Action Language implementation
     - STATE_MACHINE: Behavior defined by a state machine
     - QUANTUM_CIRCUIT: Behavior defined by a quantum circuit
+    - NEURAL_NETWORK: Behavior defined by a neural network (calling the method runs the NN)
 
     Args:
         name (str): The name of the method.
@@ -816,6 +820,7 @@ class Method(TypedElement):
         implementation_type (MethodImplementationType): The type of implementation (auto-detected as default).
         state_machine (StateMachine): Reference to a state machine that defines the method behavior (None as default).
         quantum_circuit (QuantumCircuit): Reference to a quantum circuit that defines the method behavior (None as default).
+        neural_network (NN): Reference to a neural network that defines the method behavior (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -833,6 +838,7 @@ class Method(TypedElement):
         implementation_type (MethodImplementationType): The type of implementation.
         state_machine (StateMachine): Reference to a state machine that defines the method behavior (None as default).
         quantum_circuit (QuantumCircuit): Reference to a quantum circuit that defines the method behavior (None as default).
+        neural_network (NN): Reference to a neural network that defines the method behavior (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -844,6 +850,7 @@ class Method(TypedElement):
                  parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
+                 neural_network: "NN" = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
                  pre: list["Constraint"] = None, post: list["Constraint"] = None):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
@@ -853,6 +860,7 @@ class Method(TypedElement):
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
         self.quantum_circuit: "QuantumCircuit" = quantum_circuit
+        self.neural_network: "NN" = neural_network
         self.pre = pre
         self.post = post
         # Auto-detect implementation type if not provided
@@ -862,6 +870,8 @@ class Method(TypedElement):
             self.implementation_type = MethodImplementationType.STATE_MACHINE
         elif quantum_circuit is not None:
             self.implementation_type = MethodImplementationType.QUANTUM_CIRCUIT
+        elif neural_network is not None:
+            self.implementation_type = MethodImplementationType.NEURAL_NETWORK
         elif code:
             self.implementation_type = MethodImplementationType.CODE
         else:
@@ -1049,6 +1059,16 @@ class Method(TypedElement):
     def quantum_circuit(self, quantum_circuit: "QuantumCircuit"):
         """QuantumCircuit: Set the quantum circuit that defines the method behavior."""
         self.__quantum_circuit = quantum_circuit
+
+    @property
+    def neural_network(self) -> "NN":
+        """NN: Get the neural network that defines the method behavior."""
+        return self.__neural_network
+
+    @neural_network.setter
+    def neural_network(self, neural_network: "NN"):
+        """NN: Set the neural network that defines the method behavior."""
+        self.__neural_network = neural_network
 
     def __repr__(self):
         return (

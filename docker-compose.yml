@@ -15,9 +15,12 @@ services:
       - PYTHONPATH=/app
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
+      - AGENT_SIMULATOR_URL=${AGENT_SIMULATOR_URL:-http://besser-wme-agent-simulator:8001}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network
+      # Only to reach the agent simulator (see that service).
+      - agent_simulator_network
 
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
@@ -51,9 +54,95 @@ services:
   #   depends_on:
   #     - besser_redis
 
+  # Agent simulator: runs user-designed agents (live testing in the editor).
+  # It executes user-controlled code, so it gets the smartgen treatment:
+  # * NO env_file: the backend's ./.env holds SMTP / GitHub / OpenAI secrets.
+  #   Only the variables listed below reach this container, and each session
+  #   process gets a further scrubbed environment (agent_simulator/sandbox.py).
+  # * Its own network. The backend joins agent_simulator_network to reach it;
+  #   the frontend and the modeling agent are not on it, so agent code cannot
+  #   resolve or reach them by name. Outbound internet (LLM APIs) still works.
+  # * No published port: only the backend talks to it, over the network.
+  besser-wme-agent-simulator:
+    image: artefacts.list.lu/besser/web_modeling_editor/agent_simulator:latest
+    build:
+      # Repository root: the image runs this checkout's `besser` package.
+      context: .
+      dockerfile: besser/utilities/web_modeling_editor/agent_simulator/Dockerfile
+    container_name: besser-wme-agent-simulator
+    environment:
+      # Shared secret: every HTTP / WS request must carry it in the
+      # X-Agent-Simulator-Token header. Unset -> every request gets 503.
+      - AGENT_SIMULATOR_API_TOKEN=${AGENT_SIMULATOR_API_TOKEN:-}
+      - AGENT_SIMULATOR_MAX_SESSIONS=${AGENT_SIMULATOR_MAX_SESSIONS:-5}
+      - AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS=${AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS:-900}
+      - AGENT_SIMULATOR_PORT_POOL_START=${AGENT_SIMULATOR_PORT_POOL_START:-7700}
+      - AGENT_SIMULATOR_SESSION_UID_BASE=${AGENT_SIMULATOR_SESSION_UID_BASE:-20000}
+      - AGENT_SIMULATOR_RLIMIT_AS_GB=${AGENT_SIMULATOR_RLIMIT_AS_GB:-4}
+      - AGENT_SIMULATOR_RLIMIT_CPU_SEC=${AGENT_SIMULATOR_RLIMIT_CPU_SEC:-120}
+      - AGENT_SIMULATOR_RLIMIT_FSIZE_MB=${AGENT_SIMULATOR_RLIMIT_FSIZE_MB:-100}
+      - AGENT_SIMULATOR_RLIMIT_NPROC=${AGENT_SIMULATOR_RLIMIT_NPROC:-64}
+      - AGENT_SIMULATOR_RLIMIT_NOFILE=${AGENT_SIMULATOR_RLIMIT_NOFILE:-1024}
+      # auto (default) = every session runs in bubblewrap, refused if it
+      # cannot start. "off" is a single-tenant development opt-out ONLY.
+      - AGENT_SIMULATOR_SANDBOX=${AGENT_SIMULATOR_SANDBOX:-auto}
+    # Each session runs inside bubblewrap, which needs an unprivileged user
+    # namespace. Docker's default seccomp profile gates unshare/mount/pivot_root
+    # behind CAP_SYS_ADMIN and the docker-default AppArmor profile carries
+    # `deny mount`, so both step aside (same measurement as besser-wme-smartgen:
+    # seccomp=unconfined works, cap_add SYS_ADMIN alone does not). No capability
+    # is ADDED: the cap set is cut down to what the per-session UID switch and
+    # cleanup need (chown/chmod of the work dir, setuid/setgid/setgroups,
+    # reading and removing uid-owned work dirs, killing uid-owned processes).
+    # bwrap itself needs none: it runs as the session uid.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - KILL
+    # Reaps orphaned processes, so a finished session never leaves zombies
+    # owned by its uid behind.
+    init: true
+    # Whole-container ceilings on top of the per-session rlimits. The same
+    # AGENT_SIMULATOR_MEMORY_MB / _CPU_CORES / _DISK_MB values are what the
+    # backend reports to the editor (its simulation /limits endpoint).
+    # pids_limit covers MAX_SESSIONS x RLIMIT_NPROC (5 x 64) plus the API
+    # process; raise it together with those two.
+    pids_limit: 512
+    mem_limit: ${AGENT_SIMULATOR_MEMORY_MB:-6144}m
+    cpus: ${AGENT_SIMULATOR_CPU_CORES:-2}
+    tmpfs:
+      - /tmp/sessions:size=${AGENT_SIMULATOR_DISK_MB:-512}m,mode=0711
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8001/health',
+          headers={'X-Agent-Simulator-Token': os.environ['AGENT_SIMULATOR_API_TOKEN']}), timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - agent_simulator_network
+
 volumes: {}
 
 networks:
   besser_network:
     name: besser_network
+    driver: bridge
+  agent_simulator_network:
+    name: agent_simulator_network
     driver: bridge

@@ -27,7 +27,10 @@ Bubblewrap needs an unprivileged user namespace. Docker's default seccomp
 profile gates ``unshare`` / ``mount`` / ``pivot_root`` behind CAP_SYS_ADMIN and
 the docker-default AppArmor profile carries ``deny mount``, so the simulator
 container runs with ``security_opt: [seccomp=unconfined, apparmor=unconfined]``
-and no added capability (see ``docker-compose.yml``).
+and no added capability (see ``docker-compose.yml``). On stock kernels Docker's
+masked ``/proc`` paths also make the kernel refuse the private ``/proc`` each
+session mounts ("Can't mount proc on /proc"), so it also needs
+``systempaths=unconfined``.
 
 Fail closed: when the sandbox cannot start, sessions are refused. The only way
 to run unconfined is the explicit operator opt-out
@@ -284,7 +287,7 @@ def sandboxed_argv(command: List[str], *, work_dir: str, sessions_root: str, uid
     if not ok:
         raise SandboxUnavailable(
             f"bubblewrap cannot create a sandbox here ({detail}). In Docker this needs "
-            "security_opt seccomp=unconfined and apparmor=unconfined; on a single-tenant "
+            "security_opt seccomp=unconfined, apparmor=unconfined and systempaths=unconfined; on a single-tenant "
             f"development host set {SANDBOX_POLICY_ENV}=off"
         )
     return [

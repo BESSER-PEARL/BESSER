@@ -98,8 +98,14 @@ Container hardening
    ``no-new-privileges``, ``init: true``, ``pids_limit``, ``mem_limit``,
    ``cpus``, a tmpfs sessions root and a healthcheck. The container runs as
    root only so it can switch each session to its UID; agent code never runs
-   as root. ``security_opt: seccomp=unconfined, apparmor=unconfined`` is
-   required by bubblewrap (see ``sandbox.py``).
+   as root. ``security_opt: seccomp=unconfined, apparmor=unconfined,
+   systempaths=unconfined`` is required by bubblewrap (see ``sandbox.py``).
+   ``systempaths=unconfined`` lifts Docker's masking of parts of ``/proc``:
+   without it, stock kernels (for example Amazon Linux 2023) refuse the
+   private ``/proc`` each session mounts, and every session is refused. Only
+   container root, the simulator API process, can reach the unmasked
+   entries; agent code runs as unprivileged session users. Docker Desktop
+   does not need it.
 
 Residual risks (accepted)
    The network namespace is not unshared: agents need outbound access to the

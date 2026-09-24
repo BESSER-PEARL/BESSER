@@ -98,6 +98,13 @@ services:
     security_opt:
       - seccomp=unconfined
       - apparmor=unconfined
+      # Docker masks parts of /proc (kcore, keys, sysrq-trigger, ...), and on
+      # stock kernels (measured on Amazon Linux 2023) that makes the kernel
+      # refuse the private /proc bubblewrap mounts for each session. Only
+      # container root, the simulator API with all but five capabilities
+      # dropped, sees the unmasked entries; agent code runs as unprivileged
+      # session users inside bwrap. Docker Desktop does not need this.
+      - systempaths=unconfined
       - no-new-privileges:true
     cap_drop:
       - ALL

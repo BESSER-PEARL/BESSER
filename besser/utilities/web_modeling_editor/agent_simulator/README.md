@@ -30,6 +30,7 @@ docker network create agent_simulator_network
 docker run -d --name besser-wme-agent-simulator \
   --network agent_simulator_network \
   --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+  --security-opt systempaths=unconfined \
   --security-opt no-new-privileges:true \
   --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
   --cap-add SETUID --cap-add SETGID --cap-add KILL \
@@ -42,8 +43,12 @@ docker run -d --name besser-wme-agent-simulator \
 No capability is added. `seccomp=unconfined` and `apparmor=unconfined` are what
 bubblewrap needs to create an unprivileged user namespace (Docker's default
 seccomp profile blocks `unshare`/`mount`/`pivot_root`, and the docker-default
-AppArmor profile denies `mount`). Without them the simulator fails closed and
-refuses every session.
+AppArmor profile denies `mount`). On stock kernels (measured on Amazon Linux
+2023) Docker's masked `/proc` paths also make the kernel refuse the private
+`/proc` each session mounts, so `systempaths=unconfined` is needed too; only
+container root (the simulator API) sees the unmasked entries. Docker Desktop
+does not need it. Without these options the simulator fails closed and refuses
+every session.
 
 The backend must share `agent_simulator_network`, send the same token in the
 `X-Agent-Simulator-Token` header, and point `AGENT_SIMULATOR_URL` at

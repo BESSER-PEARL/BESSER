@@ -8,7 +8,7 @@ from jinja2 import Environment, FileSystemLoader
 import json
 import re
 
-from besser.BUML.metamodel.state_machine.agent import Agent
+from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
@@ -17,7 +17,8 @@ from besser.generators.agents.agent_personalization import configure_agent, flat
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.common import safe_var_name
-from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
+from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
+from besser.utilities.path_utils import normalize_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,85 @@ def _config_has_personalization_content(config) -> bool:
     return False
 
 
+def extract_braced_vars(template: str) -> list[str]:
+    """Return the unique ``{identifier}`` placeholders of *template*, in order of first appearance.
+
+    Used by the agent template to emit one ``session.get(...)`` substitution per
+    session variable referenced in a message or prompt.
+
+    Args:
+        template (str): Message or prompt text; ``None`` is treated as empty.
+
+    Returns:
+        list[str]: Placeholder names without braces, e.g. ``["name", "user_message"]``.
+    """
+    return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
+
+
+def workspace_rel_dir(path: str, name: str) -> str:
+    """Return the directory of a workspace relative to the generated agent's folder.
+
+    Test sessions run the generated agent inside an isolated folder, so every
+    declared workspace is created relative to it. A blank *path* falls back to
+    the workspace *name* (as a safe identifier).
+
+    Args:
+        path (str): The workspace path declared in the model (absolute or relative).
+        name (str): The workspace name.
+
+    Returns:
+        str: A POSIX path relative to the output directory.
+
+    Raises:
+        ValueError: If *path* would resolve outside the output directory
+            (``..`` segments) or has no relative component (e.g. ``/``).
+    """
+    if not path.strip():
+        return safe_var_name(name)
+    try:
+        return normalize_relative_path(path)
+    except ValueError as exc:
+        raise ValueError(
+            f"Workspace '{name}' has path {path!r}, which cannot be created inside the "
+            f"generated agent's folder: {exc}"
+        ) from exc
+
+
+def collect_gui_modules(agent: Agent) -> dict[str, GUIReplyAction]:
+    """Map each ``guis/<module>.py`` module name to the GUIReplyAction it serves.
+
+    Walks the body and fallback body of every state and keeps the first
+    GUIReplyAction per ``gui_id``; the module name is ``safe_var_name(gui_id)``.
+
+    Args:
+        agent (Agent): The agent model.
+
+    Returns:
+        dict[str, GUIReplyAction]: Module name to action, in declaration order.
+
+    Raises:
+        ValueError: If two different ``gui_id`` values map to the same module name.
+    """
+    modules: dict[str, GUIReplyAction] = {}
+    for state in agent.states:
+        for body in (state.body, state.fallback_body):
+            if body is None:
+                continue
+            for action in body.actions:
+                if not isinstance(action, GUIReplyAction):
+                    continue
+                module = safe_var_name(action.gui_id)
+                existing = modules.get(module)
+                if existing is None:
+                    modules[module] = action
+                elif existing.gui_id != action.gui_id:
+                    raise ValueError(
+                        f"GUI ids {existing.gui_id!r} and {action.gui_id!r} both map to the "
+                        f"generated module 'guis/{module}.py'; rename one of them."
+                    )
+    return modules
+
+
 class GenerationMode(Enum):
     FULL = "full"
     PERSONALIZED_ONLY = "personalized_only"
@@ -102,11 +182,13 @@ class BAFGenerator(GeneratorInterface):
         openai_api_key: str = None,
         generation_mode: GenerationMode | str = GenerationMode.FULL,
         config_yaml: Optional[str] = None,
+        test_mode: bool = False,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
+        self.test_mode = test_mode
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -218,7 +300,9 @@ class BAFGenerator(GeneratorInterface):
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
+        env.globals['extract_braced_vars'] = extract_braced_vars
         agent_template = env.get_template('baf_agent_template.py.j2')
+        gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
@@ -247,6 +331,13 @@ class BAFGenerator(GeneratorInterface):
             # tooling (frontend preview, debugging). A conversion failure here
             # is non-fatal — the .py model is already on disk.
             try:
+                # Imported here, not at module level: the web editor backend
+                # registers this generator in ``config.generators``, so a
+                # module-level import would make ``import BAFGenerator`` circular.
+                from besser.utilities.web_modeling_editor.backend.services.converters import (
+                    agent_buml_to_json,
+                )
+
                 with open(personalized_agent_path, "r", encoding="utf-8") as f:
                     personalized_code = f.read()
                 personalized_json = agent_buml_to_json(personalized_code)
@@ -276,12 +367,19 @@ class BAFGenerator(GeneratorInterface):
                     agent=self.model,
                     config=self.config,
                     personalization_mapping=config_for_personalization['personalizationMapping'],
+                    test_mode=self.test_mode,
+                    gui_modules=list(gui_modules),
                 )
                 f.write(generated_code)
         else:
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 # TODO: how to handle llm variable names that are used in bodies?
-                generated_code = agent_template.render(agent=self.model, config=self.config)
+                generated_code = agent_template.render(
+                    agent=self.model,
+                    config=self.config,
+                    test_mode=self.test_mode,
+                    gui_modules=list(gui_modules),
+                )
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
         if generate_code_assets:
@@ -326,6 +424,15 @@ class BAFGenerator(GeneratorInterface):
                         f.write(skill.content)
                 logger.info("Skills directory generated at %s", skills_dir)
 
+            # Test sessions run generated agents in an isolated sandbox folder.
+            # Pre-create declared workspaces there so tooling can rely on them.
+            if self.test_mode and self.model.workspaces:
+                base_dir = self.build_generation_dir()
+                for ws in self.model.workspaces:
+                    ws_dir = workspace_rel_dir(ws.path, ws.name)
+                    os.makedirs(os.path.join(base_dir, ws_dir), exist_ok=True)
+                logger.info("Workspace directories generated for test mode in %s", base_dir)
+
             rag_configs = getattr(self.model, 'rags', []) or []
             if rag_configs:
                 rag_base_dir = self.build_generation_dir()
@@ -339,3 +446,35 @@ class BAFGenerator(GeneratorInterface):
                                 "Place your PDF documents for this RAG database inside this "
                                 "folder before running the agent.\n"
                             )
+
+            if gui_modules:
+                self._generate_guis(env, gui_modules)
+
+    def _generate_guis(self, env: Environment, gui_modules: dict[str, GUIReplyAction]):
+        """Write the ``guis`` package: one module per GUIReplyAction exposing ``gui``.
+
+        Each module holds the BUML code of the referenced ``Agent.gui_models``
+        entry (``gui_model``) followed by the ``AgentGUI`` wrapper rendered from
+        ``agent_gui.py.j2``.
+
+        Raises:
+            ValueError: If a GUIReplyAction references a ``gui_id`` that has no
+                entry in ``Agent.gui_models``.
+        """
+        guis_dir = os.path.join(self.build_generation_dir(), "guis")
+        os.makedirs(guis_dir, exist_ok=True)
+        with open(os.path.join(guis_dir, "__init__.py"), "w", encoding="utf-8"):
+            pass
+        gui_template = env.get_template('agent_gui.py.j2')
+        for module, gui_action in gui_modules.items():
+            gui_model = self.model.gui_models.get(gui_action.gui_id)
+            if gui_model is None:
+                raise ValueError(
+                    f"GUIReplyAction references gui_id {gui_action.gui_id!r}, but agent "
+                    f"'{self.model.name}' has no GUI model with that id in gui_models."
+                )
+            gui_file_path = os.path.join(guis_dir, f"{module}.py")
+            gui_model_to_code(gui_model, gui_file_path, model_var_name="gui_model")
+            with open(gui_file_path, mode="a", encoding="utf-8") as gf:
+                gf.write(gui_template.render(gui_action=gui_action))
+        logger.info("GUIs directory generated at %s", guis_dir)

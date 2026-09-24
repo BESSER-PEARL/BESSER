@@ -42,34 +42,92 @@ available in ``besser.BUML.metamodel.state_machine.agent``:
 
 **Text and LLM replies**
 
-- ``AgentReply(message)`` — send a plain-text reply.
-- ``LLMReply(prompt, llm_name)`` — generate a reply using an LLM; ``prompt``
-  is an optional system prompt, ``llm_name`` selects a registered LLM (defaults
-  to the agent default).
-- ``LLMChatReply(prompt, llm_name)`` — like ``LLMReply`` but calls
+- ``AgentReply(message, use_session_vars=False)`` — send a plain-text reply.
+  When ``use_session_vars=True``, ``{key}`` placeholders in *message* are
+  replaced at runtime with ``session.get("key")``. The special placeholder
+  ``{user_message}`` resolves to the current user input.
+- ``LLMReply(prompt, llm_name, input_prompt_mode, custom_input_prompt,
+  custom_input_prompt_use_session_vars, system_prompt_use_session_vars,
+  store_in_session, send_reply)`` — generate a reply using an LLM.
+
+  - ``prompt``: optional system prompt.
+  - ``llm_name``: selects a registered LLM (defaults to the agent default).
+  - ``input_prompt_mode``: ``'last_user_message'`` (default) passes the user's
+    message directly; ``'custom'`` uses ``custom_input_prompt`` instead. Any
+    other value raises ``ValueError`` (the accepted values are
+    ``VALID_INPUT_PROMPT_MODES``).
+  - ``custom_input_prompt``: template string for the LLM input when
+    ``input_prompt_mode='custom'``; required (non-empty) in that mode.
+  - ``custom_input_prompt_use_session_vars`` / ``system_prompt_use_session_vars``:
+    enable ``{key}`` interpolation in the respective strings.
+  - ``store_in_session``: when set, the LLM reply is stored in the session under
+    this key before being sent.
+  - ``send_reply`` (default ``True``): set to ``False`` to suppress sending the
+    reply to the user (useful when only storing the result in the session).
+
+- ``LLMChatReply(prompt, llm_name, system_prompt_use_session_vars,
+  store_in_session, send_reply)`` — like ``LLMReply`` but calls
   ``llm.chat(...)`` with the conversation history, making it suitable for
-  multi-turn dialogue states.
-- ``RAGReply(rag_db_name)`` — answer using a configured RAG database.
-- ``DBReply(query, llm_name)`` — answer from a SQL database using an LLM.
+  multi-turn dialogue states. Supports the same ``store_in_session`` and
+  ``send_reply`` controls.
+- ``RAGReply(rag_db_name, prompt, input_prompt_mode, custom_input_prompt,
+  custom_input_prompt_use_session_vars, prompt_use_session_vars,
+  store_in_session, send_reply)`` — answer using a configured RAG database.
+  Supports the same ``input_prompt_mode`` / ``custom_input_prompt``,
+  session-var interpolation, ``store_in_session``, and ``send_reply`` controls
+  as ``LLMReply`` (``prompt_use_session_vars`` applies to the RAG hint prompt).
+- ``DBReply(db_selection_type, db_custom_name, db_query_mode, db_operation,
+  db_sql_query, llm_name, input_prompt_mode, custom_input_prompt,
+  custom_input_prompt_use_session_vars, store_in_session, send_reply)`` —
+  answer from a database, either with a fixed SQL query (``db_query_mode='sql'``)
+  or with a query written by an LLM (``'llm_query'``). The
+  ``input_prompt_mode`` / ``custom_input_prompt`` pair, ``store_in_session`` and
+  ``send_reply`` behave as in ``LLMReply``. The accepted values (matched
+  case-insensitively; anything else raises ``ValueError``) are:
+
+  - ``db_selection_type``: ``'default'`` (the application database, the
+    default) or ``'custom'`` (the database named by ``db_custom_name``).
+  - ``db_query_mode``: ``'llm_query'`` (default) or ``'sql'`` (run
+    ``db_sql_query``).
+  - ``db_operation``: ``'any'`` (default), ``'select'``, ``'insert'``,
+    ``'update'`` or ``'delete'``.
+
+**GUI replies**
+
+- ``GUIReplyAction(gui_id, persist=True, width=None, is_form=False)`` — send a
+  BESSER GUI model as an interactive chat message. ``gui_id`` must be a key of
+  ``agent.gui_models`` (see `GUI integration`_ below); ``agent.validate()``
+  reports a reply whose GUI is not registered. When ``persist=True`` the
+  submitted form field values are stored in the session. ``width`` is an
+  optional CSS width for the rendered bubble. ``is_form=True`` marks the GUI as
+  a form: submitting it emits the event ``when_form_submitted`` transitions
+  react to.
 
 **Web crawling**
 
 - ``WebCrawlLLMReply(initial_url, max_depth, max_pages, crawl_format,
   base_url_prefix, run_crawl, no_crawl_error_message, system_message_prefix,
-  llm_name)`` — performs a BFS web crawl starting at ``initial_url`` and
+  llm_name, system_message_prefix_use_session_vars, store_in_session,
+  send_reply)`` — performs a BFS web crawl starting at ``initial_url`` and
   queries an LLM with the retrieved content.  The crawl result is cached in the
   session; set ``run_crawl=False`` in subsequent states to reuse the cache
-  without re-fetching.
+  without re-fetching. ``system_message_prefix_use_session_vars`` enables
+  ``{key}`` interpolation in the system message prefix. The same
+  ``store_in_session`` and ``send_reply`` controls as ``LLMReply`` are
+  available.
 
 **WebSocket rich-media replies**
 
 The following actions map to the corresponding ``WebSocketPlatform`` methods and
 require the agent to use a ``WebSocketPlatform``:
 
-- ``WebSocketReplyMarkdown(message)`` — send Markdown-formatted text.
-- ``WebSocketReplyHTML(message)`` — send an HTML-formatted message.
-- ``WebSocketReplySpeech(message, audio_speed)`` — convert text to speech and
-  send the audio.
+- ``WebSocketReplyMarkdown(message, use_session_vars=False)`` — send
+  Markdown-formatted text. ``use_session_vars`` enables ``{key}``
+  interpolation.
+- ``WebSocketReplyHTML(message, use_session_vars=False)`` — send an
+  HTML-formatted message.
+- ``WebSocketReplySpeech(message, audio_speed, use_session_vars=False)`` —
+  convert text to speech and send the audio.
 - ``WebSocketReplyOptions(options)`` — present a list of selectable options.
 - ``WebSocketReplyLocation(latitude, longitude)`` — send a geographic
   coordinate.
@@ -90,17 +148,26 @@ A RAG element is added to an agent via ``agent.new_rag()`` and combines a
 ``RAGVectorStore`` (embedding config), a ``RAGTextSplitter`` (chunking strategy),
 and an LLM name. Use ``RAGReply`` in a state body to trigger a RAG query.
 
-When generated, a data folder named after the RAG element is created
-(e.g. ``"Knowledge Base"`` produces ``knowledge_base/``). Place your PDF
-documents in this folder before running the agent.
+Like every named element, a RAG name cannot contain spaces. When generated, a
+data folder named after the RAG element is created (lower-cased, e.g.
+``Knowledge_Base`` produces ``knowledge_base/``). Place your PDF documents in
+this folder before running the agent.
 
 The optional ``llm_prompt`` parameter injects a fixed prefix instruction before
 every RAG query, useful for enforcing domain-specific constraints or tone:
 
 .. code-block:: python
 
+    from besser.BUML.metamodel.state_machine.agent import Agent, RAGTextSplitter, RAGVectorStore
+
+    agent = Agent('rag_agent')
+    agent.new_llm(name='gpt-4o-mini', provider='openai', parameters={})
+    vector_store = RAGVectorStore(embedding_provider='openai',
+                                  embedding_parameters={'model': 'text-embedding-3-small'})
+    splitter = RAGTextSplitter(splitter_type='recursive_character', chunk_size=1000, chunk_overlap=100)
+
     kb = agent.new_rag(
-        name='Knowledge Base',
+        name='knowledge_base',
         vector_store=vector_store,
         splitter=splitter,
         llm_name='gpt-4o-mini',
@@ -111,13 +178,13 @@ Retrieval can combine the vector store with a BM25 keyword index (hybrid
 retrieval). Set ``use_hybrid_rag=True`` and, optionally, ``bm25_weight`` — the
 weight of the BM25 results between 0 and 1, the vector results getting the
 remainder (default ``0.6``). The generated agent then uses BAF's ``HybridRAG``
-instead of ``RAG``; in the web editor these are the *Hybrid RAG (BM25)* and
-*BM25 weight* fields of the RAG element:
+instead of ``RAG``. These two parameters are available through the Python API
+only; the web editor's RAG element does not expose them:
 
 .. code-block:: python
 
-    kb = agent.new_rag(
-        name='Knowledge Base',
+    hybrid_kb = agent.new_rag(
+        name='hybrid_knowledge_base',
         vector_store=vector_store,
         splitter=splitter,
         llm_name='gpt-4o-mini',
@@ -160,6 +227,7 @@ with ``agent.new_reasoning_state()``:
     assistant = agent.new_reasoning_state(
         name='assistant',
         llm='big',                  # registered LLM name; omit to use the default
+        initial=True,               # the first state of an agent must be initial
         max_steps=8,                # max reasoning iterations
         enable_task_planning=True,
         stream_steps=True,
@@ -180,6 +248,81 @@ reasoning state:
 - **Skills** (``agent.new_skill(name, content, description)``) — reusable instruction snippets injected into the reasoning context.
 - **Workspaces** (``agent.new_workspace(name, path, description, writable, max_read_bytes)``) — file-system locations the agent may read from (and write to when ``writable``).
 
+GUI integration
+~~~~~~~~~~~~~~~
+
+An agent can send interactive GUI panels — forms, dashboards, or any BESSER
+:doc:`GUI model <gui>` — directly in the chat conversation. The workflow is:
+
+1. Register each GUI on the agent with ``agent.add_gui_model(gui_id, gui_model)``,
+   where ``gui_model`` is a :class:`~besser.BUML.metamodel.gui.GUIModel`.
+   ``agent.gui_models`` is the resulting ``dict[str, GUIModel]``; assigning it
+   directly is validated too (keys must be non-empty strings, values
+   ``GUIModel`` instances).
+2. In a state body, add a ``GUIReplyAction`` referencing the ``gui_id``.
+3. In the next state, add a ``when_form_submitted(form_id)`` transition so the
+   agent reacts when the user submits the form.
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
+    from besser.BUML.metamodel.state_machine.agent import AgentReply, GUIReplyAction
+    from besser.BUML.metamodel.state_machine.state_machine import Body
+
+    screen = Screen(name='signup_screen', description='', is_main_page=True,
+                    view_elements={Text(name='title', content='Sign up')})
+    signup_gui = GUIModel(name='signup_gui', package='', versionCode='1', versionName='1.0',
+                          description='', modules={Module(name='signup_module', screens={screen})})
+
+    ask = agent.new_state('ask')
+    thanks = agent.new_state('thanks')
+    thanks.set_body(Body('thanks_body', actions=[AgentReply('Thanks for signing up!')]))
+
+    agent.add_gui_model('signup', signup_gui)
+    ask.set_body(Body('ask_body', actions=[GUIReplyAction('signup', is_form=True)]))
+    ask.when_form_submitted(form_id='signup').go_to(thanks)
+
+In the web editor each GUI is an ``AgentGUI`` component of the agent diagram.
+On import its GrapesJS design is converted into a ``GUIModel`` by the GUI
+diagram processor (agent GUIs are not bound to a class diagram), and a GUI
+that has not been designed yet becomes an empty ``GUIModel``. The B-UML code
+export emits every GUI as a builder function followed by
+``agent.add_gui_model(...)``, so the exported module rebuilds the same models.
+
+The BAF generator collects all ``GUIReplyAction`` instances, creates a
+``guis/`` package, and writes the code of each referenced ``GUIModel`` there.
+
+Transitions triggered by GUI events
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Beyond the standard ``when_intent_matched`` / ``when_file_received`` builders,
+``AgentState`` provides GUI-specific transition helpers:
+
+- ``state.when_form_submitted(form_id=None)`` — triggered when the user submits
+  a GUI form. If ``form_id`` is provided (must match the ``gui_id`` of a
+  ``GUIReplyAction``), only submissions from that specific form trigger the
+  transition; otherwise any form submission matches.
+
+Under the hood this uses the ``GUIEvent`` event class and the
+``FormSubmitMatcher`` condition, which you can also instantiate directly if you
+need finer control:
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.state_machine.agent import GUIEvent, FormSubmitMatcher
+
+    state = agent.new_state('show_form')
+    next_state = agent.new_state('form_done')
+
+    # equivalent to state.when_form_submitted(form_id='my_form')
+    state.when_event(GUIEvent(message_id='my_form')) \
+        .with_condition(FormSubmitMatcher(form_id='my_form')) \
+        .go_to(next_state)
+
+``GUIEvent(message_id=None)`` on its own (``state.when_event(GUIEvent('my_form'))``)
+fires on any interaction with the GUI message ``my_form``; without a
+``message_id`` it fires on interactions with any GUI.
+
 .. image:: ../../img/agent_mm.png
   :width: 1600
   :alt: Agent metamodel
@@ -194,6 +337,9 @@ Example agent model
 -------------------
 
 As a simple example, we modeled the `Greetings Agent <https://besser-agentic-framework.readthedocs.io/latest/your_first_agent.html#the-greetings-agent>`_ from the BAF documentation.
+State and intent names must differ (``agent.validate()`` rejects a model in
+which a state and an intent share a name), hence the ``_intent`` suffix on the
+intents.
 
 .. code-block:: python
 
@@ -215,17 +361,17 @@ As a simple example, we modeled the `Greetings Agent <https://besser-agentic-fra
     agent.add_property(ConfigProperty('nlp', 'nlp.intent_threshold', 0.4))
 
     # INTENTS
-    Greeting = agent.new_intent('Greeting', [
+    greeting_intent = agent.new_intent('greeting_intent', [
         'Hi',
         'Hello',
         'Howdy',
     ])
-    Good = agent.new_intent('Good', [
+    good_intent = agent.new_intent('good_intent', [
         'Good',
         'Fine',
         'I m alright',
     ])
-    Bad = agent.new_intent('Bad', [
+    bad_intent = agent.new_intent('bad_intent', [
         'Bad',
         'Not so good',
         'Could be better',
@@ -239,14 +385,16 @@ As a simple example, we modeled the `Greetings Agent <https://besser-agentic-fra
     good = agent.new_state('good')
 
     # initial state
+    initial.when_intent_matched(greeting_intent).go_to(greeting)
+
     # greeting state
     def greeting_body(session: AgentSession):
         session.reply('Hi!')
         session.reply('How are you?')
 
     greeting.set_body(Body('greeting_body', greeting_body))
-    greeting.when_intent_matched(Good).go_to(good)
-    greeting.when_intent_matched(Bad).go_to(bad)
+    greeting.when_intent_matched(good_intent).go_to(good)
+    greeting.when_intent_matched(bad_intent).go_to(bad)
 
     # bad state
     def bad_body(session: AgentSession):

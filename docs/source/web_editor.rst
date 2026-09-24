@@ -79,6 +79,22 @@ The *Deploy chatbot* action reuses the same pipeline to push a standalone,
 Streamlit-based agent to a GitHub repository with a ready-to-use Render
 blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
 
+Agent Simulation
+----------------
+
+The *Simulate Agent* action of an agent diagram runs the agent live and lets
+you chat with it without leaving the editor. The backend generates the BAF
+agent (see :doc:`generators/baf`) and hands it to a separate, sandboxed agent
+simulator service, which runs one isolated session per user.
+
+- The editor-facing endpoints, access rules and limits are described under
+  *Agent Simulation* in :doc:`web_editor_backend`.
+- The simulator service itself (sandbox, security model, configuration,
+  operations) is described in :doc:`utilities/agent_simulator`.
+- For the editor side (credentials dialog, chat panel, workspace files), see
+  `Agent Simulation <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/agent-simulation.html>`_
+  in the Web Modeling Editor user guide.
+
 Neural Network Diagram
 ----------------------
 

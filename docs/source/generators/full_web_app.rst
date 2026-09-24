@@ -195,6 +195,12 @@ Operate at the class level, performing operations on the entire collection.
 
 ``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``, ``time``
 
+**Methods implemented by a neural network**: in the web editor, set a method's type to
+*Neural Network* and pick one of the project's NN diagrams. The generated backend gets the
+PyTorch network under ``backend/neural_networks/`` and a class-level endpoint that runs it;
+drop the trained weights in ``backend/neural_networks/weights/`` (see
+:ref:`the backend documentation <backend-nn-methods>`).
+
 See :doc:`backend` for complete method endpoint documentation.
 
 

@@ -16,13 +16,16 @@ services. Endpoints are organized by concern:
 - **``routers/conversion_router.py``** -- BUML import/export, CSV reverse engineering, image-to-model
 - **``routers/validation_router.py``** -- Diagram validation (metamodel + OCL constraints)
 - **``routers/deployment_router.py``** -- GitHub deployment and Docker integration
+- **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
+- **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
 
 Additional infrastructure:
 
 - **``middleware/request_logging.py``** -- Structured request logging with unique IDs and performance timing
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
-- **``services/exceptions.py``** -- Custom exception hierarchy (``ConversionError``, ``ValidationError``, ``GenerationError``, ``DeploymentError``)
+- **``services/exceptions.py``** -- Custom exception hierarchy (``ConversionError``, ``ValidationError``, ``GenerationError``, ``DeploymentError``).
+  ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins
 - **``models/responses.py``** -- Standardized Pydantic response models
 
@@ -171,6 +174,75 @@ GitHub Integration
 - ``POST /github/auth/logout`` -- End session
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
 
+Agent Simulation
+^^^^^^^^^^^^^^^^
+
+These endpoints let the editor run an AgentDiagram live. The backend generates
+the BAF agent code and hands it to the separate **agent simulator** service
+(``besser-wme-agent-simulator``), which runs it in a sandboxed subprocess and
+exposes its WebSocket. All paths are under ``/besser_api/simulation``. The
+simulator service itself (sandbox, security model, configuration) is described
+in :doc:`utilities/agent_simulator`.
+
+- ``GET /limits`` -- Resource limits and quota settings shown in the editor
+  (``memoryMb``, ``cpuCores``, ``diskMb``, ``sessionLifetimeSeconds``,
+  ``editorQuotaEnabled``). The numeric values are ``null`` while their environment
+  variables are unset; in particular ``sessionLifetimeSeconds`` is ``null`` unless
+  ``AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS`` is set on the backend.
+- ``POST /validate`` -- Generate the agent code without starting a session.
+  Body: ``{title, model, config?, configYaml?}``. Returns
+  ``{valid, agentCode, eventList, errors}``; diagram errors come back as
+  ``valid: false`` with messages.
+- ``POST /sessions`` -- Generate the agent code and start a session. Body as
+  ``/validate`` plus optional ``credentials`` (``openAiApiKey``,
+  ``huggingFaceToken``, ``replicateApiKey``), forwarded to the agent as
+  environment variables and in its ``config.yaml``. Returns ``{sessionId, eventList}``.
+- ``GET /sessions/{sessionId}/files`` -- Files the running agent wrote to its
+  workspace: ``{files: [{path, content}], directories}``.
+- ``DELETE /sessions/{sessionId}`` -- Stop the session. Returns ``{ok: true}``.
+- ``WS /{sessionId}/ws`` -- Relay between the editor and the running agent.
+  The first frame the client sends must be
+  ``{"type": "auth", "githubSession": "<session or empty>"}``, within 10 seconds.
+  The backend applies the same checks as the HTTP endpoints, answers
+  ``{"type": "auth_ok"}`` and starts relaying. Otherwise it sends
+  ``{"type": "error", "message": ...}`` and closes with ``4401`` (not
+  authenticated), ``4400`` (invalid session id), ``4404`` (not your session)
+  or ``4429`` (rate limited). If the backend then cannot open the relay to the
+  simulator (service unreachable, or ``AGENT_SIMULATOR_API_TOKEN`` not set), it
+  sends an error frame and closes with ``1011``. The session is stopped when
+  the socket closes.
+
+**Access rules.**
+
+- When ``AGENT_SIMULATOR_REQUIRE_AUTH`` is on (the default), every endpoint
+  needs a valid ``X-GitHub-Session`` header (HTTP 401 otherwise).
+- Each session belongs to the actor that created it: the GitHub session when
+  sign-in is required, the client IP otherwise. Another actor gets 404 on
+  ``files``, ``DELETE`` and the WebSocket.
+- One actor may hold ``AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR`` sessions at a
+  time (default 1). Past that, ``POST /sessions`` returns 429.
+- ``/validate``, ``/sessions`` and the WebSocket share a per-actor rate limit
+  (default 12 requests per 60 seconds). Over the limit they return 429 with
+  ``Retry-After``.
+- When ``AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE`` is on (the default), agents that
+  contain custom Python code actions are refused (``POST /sessions`` returns
+  403, ``/validate`` returns ``valid: false``). With the restriction off,
+  custom code and tool code go through a lint that rejects risky imports and
+  built-ins. The lint only gives early feedback and is **not** a security
+  boundary; isolation is the simulator sandbox's job.
+- Invalid custom code returns 400 with the lint message. If the simulator
+  service cannot be reached, or ``AGENT_SIMULATOR_API_TOKEN`` is not set, the
+  endpoint returns 503. If the simulator is at capacity (all of its
+  ``AGENT_SIMULATOR_MAX_SESSIONS`` slots are in use), ``POST /sessions``
+  returns 429. If the simulator rejects the request otherwise, it returns 502.
+
+.. note::
+   The rate limiter, the per-actor session cap and the session-ownership map
+   are kept in the backend process's memory. This is correct because the
+   backend runs as a **single uvicorn process** (``backend.py`` and the
+   Dockerfile ``CMD``). If you run several workers or replicas, each one
+   keeps its own limits and only knows about the sessions it created.
+
 .. tip::
    When the backend is running, the auto-generated Swagger UI is available at
    ``http://localhost:9000/besser_api/docs`` with interactive request/response examples.
@@ -215,6 +287,32 @@ Environment Variables
 - ``SMTP_PASSWORD`` -- SMTP authentication password
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
+
+**Agent simulation** (read once at startup, except the token):
+
+- ``AGENT_SIMULATOR_API_TOKEN`` -- Shared secret sent as the
+  ``X-Agent-Simulator-Token`` header on every HTTP request and WebSocket
+  handshake to the simulator. Set the same value on the simulator container.
+  Without it, the simulation endpoints return 503.
+- ``AGENT_SIMULATOR_URL`` -- Simulator base URL (default:
+  ``http://besser-wme-agent-simulator:8001``).
+- ``AGENT_SIMULATOR_REQUIRE_AUTH`` -- Require GitHub sign-in (default: ``true``).
+- ``AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE`` -- Refuse agents with custom Python
+  code actions (default: ``true``).
+- ``AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR`` -- Concurrent sessions per actor
+  (default: ``1``).
+- ``AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS`` / ``AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS``
+  -- Per-actor rate limit (default: ``12`` requests per ``60`` seconds).
+- ``AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS`` -- Maximum number of actors the rate
+  limiter tracks at once (default: ``10000``). The least recently seen actors
+  are dropped first.
+- ``AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS`` -- How long a session lives.
+  It is shown in ``/limits`` (``null`` when unset), and the backend forgets a
+  session's ownership after this long (``900`` seconds, the simulator's
+  default, when unset).
+- ``AGENT_SIMULATOR_MEMORY_MB``, ``AGENT_SIMULATOR_CPU_CORES``,
+  ``AGENT_SIMULATOR_DISK_MB``, ``AGENT_SIMULATOR_QUOTA_ENABLED`` -- Values
+  reported by ``/limits``.
 
 
 Generator Configuration

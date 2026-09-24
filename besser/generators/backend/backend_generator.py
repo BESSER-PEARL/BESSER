@@ -8,6 +8,7 @@ from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.backend.api_generator import generate_modular_api
 from besser.generators.backend.docker_files import generate_docker_files
+from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT, generate_nn_methods
 
 class BackendGenerator(GeneratorInterface):
     """
@@ -40,6 +41,7 @@ class BackendGenerator(GeneratorInterface):
         self.docker_config_path = docker_config_path
         self.port = port
         self.config = self.load_config()
+        self.has_nn_methods = False
 
     def load_config(self):
         """
@@ -106,11 +108,14 @@ class BackendGenerator(GeneratorInterface):
         pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()
 
+        # Methods implemented by a neural network: PyTorch modules + runtime + torch requirement.
+        self.has_nn_methods = generate_nn_methods(self.model, backend_folder_path)
+
         if self.docker_image:
             if self.config:
                 self.build_and_push_docker_image(backend_folder_path)
             else:
-                generate_docker_files(backend_folder_path)
+                generate_docker_files(backend_folder_path, include_nn=self.has_nn_methods)
 
     def build_and_push_docker_image(self, backend_folder_path):
         """
@@ -123,6 +128,11 @@ class BackendGenerator(GeneratorInterface):
             None
         """
         docker_port = self.config["docker_port"]
+
+        nn_lines = ""
+        if self.has_nn_methods:
+            nn_lines = (f"COPY nn_runtime.py /app\n        COPY {NN_PACKAGE}/ /app/{NN_PACKAGE}/\n"
+                        f"        RUN pip install \"{TORCH_REQUIREMENT}\"\n")
 
         dockerfile_content = f"""
         FROM python:3.9-slim
@@ -141,6 +151,7 @@ class BackendGenerator(GeneratorInterface):
         RUN pip install uvicorn==0.28.0
         RUN pip install SQLAlchemy==2.0.29
         RUN pip install httpx==0.27.0
+        {nn_lines}
 
         EXPOSE {docker_port}
         CMD ["python", "main_api.py"]

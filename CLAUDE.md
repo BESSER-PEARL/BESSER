@@ -145,6 +145,7 @@ Endpoints are split by concern into dedicated routers:
 - **`conversion_router.py`** - BUML import/export, CSV reverse engineering, image-to-model
 - **`validation_router.py`** - Diagram validation (metamodel + OCL constraints)
 - **`deployment_router.py`** - GitHub deployment and Docker integration
+- **`agent_simulator_router.py`** - Live agent simulation (`/simulation`): generates the BAF agent and relays it to the agent simulator service
 - **`error_handler.py`** - Centralized `@handle_endpoint_errors` decorator mapping custom exceptions to HTTP status codes
 
 **Middleware** (`backend/middleware/`):
@@ -181,6 +182,10 @@ Endpoints are split by concern into dedicated routers:
 
 - **Feedback Service** (`services/feedback_service.py`):
   - Handles user feedback submissions
+
+- **Agent Simulator** (`web_modeling_editor/agent_simulator/`, a separate service in its own container, not under `services/`):
+  - Runs generated BAF agents in a per-session bubblewrap sandbox; only `agent_simulator_router.py` talks to it
+  - Documented in `docs/source/utilities/agent_simulator.rst`
 
 **Key API Endpoints**:
 - `POST /generate-output` - Single diagram → code

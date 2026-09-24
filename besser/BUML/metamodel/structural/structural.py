@@ -9,6 +9,7 @@ import time
 if TYPE_CHECKING:
     from besser.BUML.metamodel.state_machine import StateMachine
     from besser.BUML.metamodel.quantum import QuantumCircuit
+    from besser.BUML.metamodel.nn import NN
 
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
@@ -318,12 +319,14 @@ class MethodImplementationType(Enum):
         BAL: Implementation provided as BESSER Action Language code string.
         STATE_MACHINE: Implementation defined by a state machine.
         QUANTUM_CIRCUIT: Implementation defined by a quantum circuit.
+        NEURAL_NETWORK: Implementation defined by a neural network.
     """
     NONE = "none"
     CODE = "code"
     BAL = "besser_action_language"
     STATE_MACHINE = "state_machine"
     QUANTUM_CIRCUIT = "quantum_circuit"
+    NEURAL_NETWORK = "neural_network"
 
 
 class EnumerationLiteral(NamedElement):
@@ -804,6 +807,7 @@ class Method(TypedElement):
     - BAL: BESSER Action Language implementation
     - STATE_MACHINE: Behavior defined by a state machine
     - QUANTUM_CIRCUIT: Behavior defined by a quantum circuit
+    - NEURAL_NETWORK: Behavior defined by a neural network (calling the method runs the NN)
 
     Args:
         name (str): The name of the method.
@@ -816,6 +820,7 @@ class Method(TypedElement):
         implementation_type (MethodImplementationType): The type of implementation (auto-detected as default).
         state_machine (StateMachine): Reference to a state machine that defines the method behavior (None as default).
         quantum_circuit (QuantumCircuit): Reference to a quantum circuit that defines the method behavior (None as default).
+        neural_network (NN): Reference to a neural network that defines the method behavior (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -833,6 +838,7 @@ class Method(TypedElement):
         implementation_type (MethodImplementationType): The type of implementation.
         state_machine (StateMachine): Reference to a state machine that defines the method behavior (None as default).
         quantum_circuit (QuantumCircuit): Reference to a quantum circuit that defines the method behavior (None as default).
+        neural_network (NN): Reference to a neural network that defines the method behavior (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -844,6 +850,7 @@ class Method(TypedElement):
                  parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
+                 neural_network: "NN" = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
                  pre: list["Constraint"] = None, post: list["Constraint"] = None):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
@@ -853,6 +860,7 @@ class Method(TypedElement):
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
         self.quantum_circuit: "QuantumCircuit" = quantum_circuit
+        self.neural_network: "NN" = neural_network
         self.pre = pre
         self.post = post
         # Auto-detect implementation type if not provided
@@ -862,6 +870,8 @@ class Method(TypedElement):
             self.implementation_type = MethodImplementationType.STATE_MACHINE
         elif quantum_circuit is not None:
             self.implementation_type = MethodImplementationType.QUANTUM_CIRCUIT
+        elif neural_network is not None:
+            self.implementation_type = MethodImplementationType.NEURAL_NETWORK
         elif code:
             self.implementation_type = MethodImplementationType.CODE
         else:
@@ -1049,6 +1059,16 @@ class Method(TypedElement):
     def quantum_circuit(self, quantum_circuit: "QuantumCircuit"):
         """QuantumCircuit: Set the quantum circuit that defines the method behavior."""
         self.__quantum_circuit = quantum_circuit
+
+    @property
+    def neural_network(self) -> "NN":
+        """NN: Get the neural network that defines the method behavior."""
+        return self.__neural_network
+
+    @neural_network.setter
+    def neural_network(self, neural_network: "NN"):
+        """NN: Set the neural network that defines the method behavior."""
+        self.__neural_network = neural_network
 
     def __repr__(self):
         return (
@@ -1528,7 +1548,8 @@ class BinaryAssociation(Association):
 
         Raises:
             ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or
-            if both ends are tagged as composition.
+            if both ends are tagged as composition, or if neither end is navigable, or if the non-composite end of
+            a composition is not navigable.
             TypeError: if any element in ends is not a Property instance.
         """
         # Type checking: ensure all elements are Property instances (before any attribute access)
@@ -1538,9 +1559,45 @@ class BinaryAssociation(Association):
 
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
-        if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
+        end_a, end_b = list(ends)
+        if end_a.is_composite is True and end_b.is_composite is True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
+        navigability_errors = self._navigability_errors(ends)
+        if navigability_errors:
+            raise ValueError(navigability_errors[0])
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
+
+    def _navigability_errors(self, ends: set[Property] = None) -> list[str]:
+        """Return the navigability rule violations of a binary association.
+
+        A binary association needs at least one navigable end, and the non-composite (part) end of a
+        composition must be navigable. Used by the ``ends`` setter (construction time) and by
+        ``DomainModel.validate()`` (to report ends made non-navigable after construction).
+
+        Args:
+            ends (set[Property]): The ends to check (defaults to the current ends).
+
+        Returns:
+            list[str]: One message per violated rule; empty when the ends are valid.
+            The ``ends`` setter raises the first one.
+        """
+        ends = self.ends if ends is None else ends
+        if len(ends) != 2:
+            return []
+        errors: list[str] = []
+        end_a, end_b = sorted(ends, key=lambda e: e.name or "")
+        if end_a.is_navigable is False and end_b.is_navigable is False:
+            errors.append(
+                f"Association '{self.name}': at least one end must be navigable, but both "
+                f"'{end_a.name}' ({end_a.type.name}) and '{end_b.name}' ({end_b.type.name}) are non-navigable"
+            )
+        for whole, part in ((end_a, end_b), (end_b, end_a)):
+            if whole.is_composite is True and part.is_navigable is False:
+                errors.append(
+                    f"Association '{self.name}': the non-composite end '{part.name}' ({part.type.name}) "
+                    f"of a composition must be navigable"
+                )
+        return errors
 
     def __repr__(self):
         return f'BinaryAssociation({self.name}, {self.ends}, {self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
@@ -2284,7 +2341,8 @@ class DomainModel(Model):
                 )
 
     def _validate_associations(self, errors: list[str]):
-        """Validate that association ends reference types in the model."""
+        """Validate that association ends reference types in the model and that binary associations respect
+        the navigability rules (at least one navigable end; the part end of a composition is navigable)."""
         for association in self.__associations:
             for end in association.ends:
                 if end.type not in self.__types:
@@ -2292,6 +2350,8 @@ class DomainModel(Model):
                         f"Association '{association.name}' has end '{end.name}' "
                         f"referencing type '{end.type.name}' which is not in the domain model '{self.name}'."
                     )
+            if isinstance(association, BinaryAssociation):
+                errors.extend(association._navigability_errors())
 
     def _validate_multiplicities(self, errors: list[str]):
         """Validate that multiplicities on association ends and attributes are well-formed."""

@@ -1,11 +1,12 @@
 """Generates a complete, buildable Spring Boot backend from a B-UML domain model."""
 
+import copy
 import os
 import shutil
 import stat
 from pathlib import Path
 
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, IntegerType, Property
 from besser.generators.generator_interface import GeneratorInterface
 from besser.generators.spring._sub_generator import build_environment
 from besser.generators.spring.java_types import to_java_class_name, validate_java_package
@@ -23,6 +24,37 @@ DEFAULT_JAVA_VERSION: str = "21"
 DEFAULT_SPRING_APP_NAME: str = "Application"
 DEFAULT_SPRING_PACKAGE_NAME: str = "com.example"
 DEFAULT_SPRING_GROUP_ID: str = "com.example"
+
+#: Name of the identifier added to a class hierarchy that declares none.
+SURROGATE_ID_NAME: str = "id"
+
+
+def with_surrogate_ids(model: DomainModel) -> DomainModel:
+    """Return a copy of ``model`` in which every class has an identifier.
+
+    A JPA entity needs exactly one ``@Id``. Most models drawn in the editor mark
+    no attribute with ``is_id``, so for each class hierarchy without one the
+    root class gets an ``id: int`` identifier, which becomes an auto-generated
+    ``Integer`` ``@Id``. An existing attribute named ``id`` is promoted instead
+    of adding a second one. Classes that already have an identifier, directly
+    or inherited, are left as they are. The input model is not modified.
+    """
+    classes = model.get_classes()
+    if all(any(attr.is_id for attr in cls.all_attributes()) for cls in classes):
+        return model
+
+    model = copy.deepcopy(model)
+    # Parents first, so an identifier added to a root is inherited by its subclasses.
+    for cls in model.classes_sorted_by_inheritance():
+        if any(attr.is_id for attr in cls.all_attributes()):
+            continue
+        existing = next((attr for attr in cls.attributes if attr.name == SURROGATE_ID_NAME), None)
+        if existing is not None:
+            existing.is_id = True
+        else:
+            cls.add_attribute(Property(name=SURROGATE_ID_NAME, type=IntegerType, is_id=True))
+    return model
+
 
 #: Static (non-templated) files shipped with the generator.
 RESOURCES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")
@@ -78,15 +110,22 @@ class SpringBackendGenerator(GeneratorInterface):
         return Path(*self.package_name.split("."))
 
     def generate(self):
-        self._generate_pom_file()
-        self._generate_mvn_files()
-        self._generate_main_and_test_files()
-        self._generate_properties_file()
-        self._generate_entities()
-        self._generate_repositories()
-        self._generate_services()
-        self._generate_controllers()
-        self._generate_http()
+        # Generate from a copy in which every class has an identifier, so the
+        # caller's model is never modified.
+        original_model = self.model
+        self.model = with_surrogate_ids(original_model)
+        try:
+            self._generate_pom_file()
+            self._generate_mvn_files()
+            self._generate_main_and_test_files()
+            self._generate_properties_file()
+            self._generate_entities()
+            self._generate_repositories()
+            self._generate_services()
+            self._generate_controllers()
+            self._generate_http()
+        finally:
+            self.model = original_model
 
     # ------------------------------------------------------------------
     # Project scaffolding

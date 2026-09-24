@@ -1,9 +1,18 @@
-def generate_docker_files(path: str = "output_backend"):
-    generate_dockerfile(path)
+def generate_docker_files(path: str = "output_backend", include_nn: bool = False):
+    """Write Dockerfile, requirements.txt, .dockerignore and the image script.
+
+    ``include_nn`` adds the neural-network runtime, modules and PyTorch for
+    backends with methods implemented by a neural network.
+    """
+    generate_dockerfile(path, include_nn)
     generate_docker_image(path)
     pass
 
-def generate_dockerfile(path: str):
+def generate_dockerfile(path: str, include_nn: bool = False):
+    # Late import: nn_methods pulls in the metamodel, keep this module light.
+    from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT
+    nn_copy = f"COPY nn_runtime.py ./\nCOPY {NN_PACKAGE}/ ./{NN_PACKAGE}/\n" if include_nn else ""
+    nn_requirement = f"{TORCH_REQUIREMENT}\n" if include_nn else ""
     with open(path + '/Dockerfile', 'w') as dockerfile:
         dockerfile.write('''FROM python:3.9-slim
 
@@ -22,7 +31,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY main_api.py database.py bal_stdlib.py pydantic_classes.py sql_alchemy.py ./
 COPY routers/ ./routers/
-
+''' + nn_copy + '''
 # Switch to non-root user
 USER appuser
 
@@ -46,7 +55,7 @@ pydantic==2.12.5
 sqlalchemy==2.0.48
 httpx==0.28.1
 requests==2.32.3
-'''
+''' + nn_requirement
         )
 
     # Generate .dockerignore for smaller build context

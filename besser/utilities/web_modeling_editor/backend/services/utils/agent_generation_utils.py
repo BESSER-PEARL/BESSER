@@ -220,6 +220,7 @@ async def handle_multi_language_generation(
                 variant_openai_api_key = extract_openai_api_key(new_config)
                 config_yaml = json_data.get('configYaml')
                 if hasattr(agent_module, 'agent'):
+                    # gui_models is now serialized by agent_model_to_code; no patch needed.
                     generator = generator_class(
                         agent_module.agent,
                         config=new_config,

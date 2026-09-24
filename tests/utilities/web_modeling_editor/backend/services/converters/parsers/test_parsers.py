@@ -487,13 +487,15 @@ class TestSanitizeText:
     def test_preserves_whitespace_character(self, char, char_name):
         assert sanitize_text(f"ab{char}cd") == f"ab{char}cd"
 
-    # --- Single quote escaping ------------------------------------------------
+    # --- Quotes and backslashes are kept verbatim ------------------------------
+    # Escaping belongs to code emission (_escape_python_string); doing it here
+    # doubled the escapes on every JSON -> BUML -> JSON round trip.
 
-    def test_escapes_single_quote(self):
-        assert sanitize_text("it's") == "it\\'s"
+    def test_keeps_single_quote(self):
+        assert sanitize_text("it's") == "it's"
 
-    def test_escapes_multiple_single_quotes(self):
-        assert sanitize_text("it's a 'test'") == "it\\'s a \\'test\\'"
+    def test_keeps_quotes_and_backslashes(self):
+        assert sanitize_text("it's a 'test' in C:\\dir") == "it's a 'test' in C:\\dir"
 
     # --- Unicode handling -----------------------------------------------------
 
@@ -517,7 +519,7 @@ class TestSanitizeText:
 
     def test_mixed_control_and_quotes(self):
         result = sanitize_text("\x00it's\x07 fine\x7f")
-        assert result == "it\\'s fine"
+        assert result == "it's fine"
 
     # --- Whitespace strings ---------------------------------------------------
 

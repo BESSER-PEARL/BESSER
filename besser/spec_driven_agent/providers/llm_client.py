@@ -846,6 +846,8 @@ class ClaudeLLMClient(LLMProvider):
                 }
                 if force_tool:
                     request_kwargs["tool_choice"] = {"type": "tool", "name": force_tool}
+                    # Bedrock (PIA) accepts a forced tool only with thinking off.
+                    request_kwargs["thinking"] = {"type": "disabled"}
                 response = self._client.messages.create(**request_kwargs)
                 # Track usage (billed at the effective model's pricing)
                 self.usage.record(response.usage, model=model_override)

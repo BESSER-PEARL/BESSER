@@ -1182,10 +1182,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "- Agent/chatbot/BAF requests with an Agent model: generate_baf\n"
                 "- JSON fixture/seed requests with an Object model: generate_json_object\n"
                 "- Supabase requests with a Domain model: generate_supabase\n"
-                "- ONLY answer NONE if the user explicitly asks for a framework like NestJS, Next.js, Express, Spring Boot, Go, Rust\n"
+                "- Answer NONE only when the user explicitly asks for a framework BESSER does not support (NestJS, Next.js, Express, Spring Boot, Go, Rust); a Python/FastAPI/Django request always gets a generator\n"
                 "- If the user says 'backend', 'API', 'FastAPI', or 'REST' → answer generate_fastapi_backend\n"
                 "- If the user says 'Django' → answer generate_django\n"
-                "- NEVER answer NONE for a Python/FastAPI/Django request\n\n"
+                "\n"
                 "Reply with ONLY the generator name or NONE. One word. Nothing else."
             )
 
@@ -3792,9 +3792,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         retry_note = ""
         if already_tried:
             retry_note = (
-                "\n\nIMPORTANT: I already tried to fix this same error before but it persists. "
-                "This strongly suggests it's an ENVIRONMENT issue, not a code bug. "
-                "Do NOT modify code again. Just explain what the user needs to do "
+                "\n\nA previous fix for this same error did not resolve it, which points to "
+                "an environment issue. Leave the code as is and explain what the user needs to do "
                 "in their environment (restart, rebuild, clear cache, reset database, etc.).\n"
             )
 
@@ -3802,18 +3801,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "The user ran the generated code and got this error:\n\n"
             f"```\n{error_message}\n```\n\n"
             f"{retry_note}"
-            "FIRST: Analyze whether this is a CODE bug or an ENVIRONMENT issue.\n\n"
-            "If ENVIRONMENT (stale DB, old Docker volume, wrong env var, port conflict):\n"
-            "→ Do NOT modify code. Just explain what the user should do.\n\n"
-            "If CODE BUG (syntax error, wrong import, logic error, bad config):\n"
-            "→ Fix with modify_file. Explain what you changed.\n\n"
-            "ALWAYS end with a clear summary of what you did or what the user should do."
+            "Decide whether this is a code bug (syntax, import, logic, config) or an "
+            "environment issue (stale DB, old Docker volume, env var, port conflict). "
+            "Fix a code bug with modify_file; for an environment issue, tell the user what "
+            "to do instead of changing code. End with a summary of what you did or what "
+            "the user should do."
         )
         system = (
             "You are debugging an error. Not all errors need code fixes. "
             "If it's an environment issue (stale data, 'already exists', "
             "'connection refused'), explain what the user should do. "
-            "If it's a code bug, fix it. ALWAYS explain what you did."
+            "If it's a code bug, fix it."
         )
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
 

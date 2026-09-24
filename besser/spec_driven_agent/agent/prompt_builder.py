@@ -30,6 +30,29 @@ from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_sect
 logger = logging.getLogger(__name__)
 
 
+
+# The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
+_MODEL_TOOLS_SECTION = """\
+## Tools for deeper model inspection
+
+When the JSON below is not enough — large model, need a single class in
+detail, or want to filter classes by a predicate — use these tools rather
+than re-reading or guessing:
+
+- **`query_class(name)`** — full definition of one class: attributes,
+  methods, parents, association ends, abstract flag. Use this when you
+  need details that don't fit in the summary.
+- **`list_classes_with(predicate)`** — find classes matching a simple
+  rule. Predicates: `is_abstract`, `is_root`, `has_constraint`,
+  `has_attribute:<name>`, `has_method:<name>`, `extends:<parent_name>`.
+  Use this for "every class with an OCL constraint" or "every leaf in
+  the hierarchy" queries.
+- **`get_constraints_for(class_name)`** — OCL constraint expressions
+  scoped to a class. **Translate these into runtime validators** in the
+  target language (Pydantic field validators, Zod schemas, SQL CHECK
+  constraints, etc.) — the generator does not enforce them for you.
+"""
+
 def build_system_prompt(
     domain_model,
     gui_model,
@@ -370,6 +393,8 @@ def build_system_prompt(
     # rest of this header already does via primary_kind. See
     # stack_metadata.idiom_guidance_section for the detection + content.
     idiom_section = idiom_guidance_section(instructions)
+    # Named only when offered: tools.py withholds these without a domain model.
+    model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
 
     # --- Previous header (kept for reference / easy rollback) ------------
     # Weaker models (e.g. the free qwen tier) ignored this softer wording and
@@ -520,9 +545,9 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     (backgrounds, buttons, headers, links, accents), not just one element.
     Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,
     amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →
-    `#6366f1`, emerald → `#10b981`. CRITICAL: `rose`, `amber`, `teal`,
-    `indigo`, `emerald` are NOT valid CSS colour keywords — never write
-    `color: rose`; use the hex. A theme that's only mentioned in a comment
+    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and
+    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;
+    use the hex. A theme that's only mentioned in a comment
     but not visibly applied is a failure. Aim for a clean, modern,
     cohesive look (consistent spacing, a primary + accent colour, readable
     contrast).
@@ -563,25 +588,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     - A list with no Delete control. Each row needs Edit + Delete wired to
       PUT / DELETE.
 
-{idiom_section}## Tools for deeper model inspection
-
-When the JSON below is not enough — large model, need a single class in
-detail, or want to filter classes by a predicate — use these tools rather
-than re-reading or guessing:
-
-- **`query_class(name)`** — full definition of one class: attributes,
-  methods, parents, association ends, abstract flag. Use this when you
-  need details that don't fit in the summary.
-- **`list_classes_with(predicate)`** — find classes matching a simple
-  rule. Predicates: `is_abstract`, `is_root`, `has_constraint`,
-  `has_attribute:<name>`, `has_method:<name>`, `extends:<parent_name>`.
-  Use this for "every class with an OCL constraint" or "every leaf in
-  the hierarchy" queries.
-- **`get_constraints_for(class_name)`** — OCL constraint expressions
-  scoped to a class. **Translate these into runtime validators** in the
-  target language (Pydantic field validators, Zod schemas, SQL CHECK
-  constraints, etc.) — the generator does not enforce them for you.
-"""
+{idiom_section}{model_tools_section}"""
 
     variable_tail = f"""\
 

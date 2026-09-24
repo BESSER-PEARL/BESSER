@@ -406,9 +406,11 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "search_in_files",
         "description": (
-            "Search for a text pattern across all files in the workspace. "
-            "Returns matching lines with file paths and line numbers. "
-            "Useful for finding where to make modifications."
+            "Search workspace files for a case-insensitive regex (an invalid regex is "
+            "searched as literal text). Returns up to 50 matches as {file, line, text}, "
+            "each line clipped to 200 chars, with truncated=true when the cap is hit. "
+            "node_modules, .git, venv/.venv, __pycache__, dist and build are skipped. "
+            "Use it to locate code before read_file; it does not return file contents."
         ),
         "input_schema": {
             "type": "object",
@@ -416,7 +418,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "pattern": {"type": "string", "description": "Text or regex pattern to search for"},
                 "file_glob": {
                     "type": "string",
-                    "description": "Optional glob pattern to filter files (e.g. '*.py', '**/*.ts')",
+                    "description": "Optional filename glob, matched against the file NAME only (e.g. '*.py', '*.tsx'); a pattern containing '/' matches nothing.",
                     "default": "*",
                 },
             },
@@ -457,10 +459,13 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
         "name": "run_command",
         "description": (
             "Run a shell command in the workspace directory and return stdout + stderr. "
-            "Use this to: test code, run linters, check imports, verify builds. "
-            "Commands run with a 120-second timeout. "
-            "Examples: 'python main_api.py --help', 'npm run build', 'python -m pytest'. "
-            "The working directory is the workspace root."
+            "Use it to test code, run linters and verify builds. Runs in the workspace "
+            "root (or working_dir) with a 120-second timeout; a server started in the "
+            "foreground blocks for the full timeout. Destructive or exfiltrating commands "
+            "are refused with an error. stdout/stderr are truncated (~15k chars total); "
+            "when cut, full_output_path names a file holding the complete log. A command "
+            "whose runtime is not installed returns success=true, skipped=true: treat it "
+            "as not checked, not as passing."
         ),
         "input_schema": {
             "type": "object",
@@ -483,8 +488,10 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
         "description": (
             "Install dependencies for a project. Detects the package manager automatically: "
             "if requirements.txt exists, runs pip install -r requirements.txt; "
-            "if package.json exists, runs npm install. "
-            "Or specify a custom command."
+            "if package.json exists, runs npm install (both, when both exist). "
+            "Returns an error when neither file is found. A custom command runs through "
+            "run_command instead of auto-detection. Every install shares run_command's "
+            "120-second timeout and sandbox."
         ),
         "input_schema": {
             "type": "object",
@@ -571,8 +578,9 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "check_syntax",
         "description": (
-            "Check if a Python file has valid syntax. "
-            "Use after modifying Python files to catch errors early."
+            "Parse a Python file and report the first syntax error with its line. "
+            "Python only; it does not import or execute the file, so missing imports and "
+            "undefined names are not detected (validate_app checks those)."
         ),
         "input_schema": {
             "type": "object",

@@ -921,9 +921,9 @@ class Phase3RepairMixin:
             "validate_app and test_api are the supported verification tools. Use test_api "
             "for specification-based workflow assertions and invalid inputs. When shell tools "
             "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), you MUST "
-            "verify your fix by re-running the toolchain with "
-            "run_command — do not declare done based on the diff alone."
+            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
+            "re-running that toolchain with run_command; the diff alone does "
+            "not show that it compiles."
         )
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
 

@@ -1372,8 +1372,7 @@ _SYSTEM_PROMPT = (
     "deterministically generated codebase. You have the full domain model "
     "(JSON), the file inventory the generator produced, and the user's "
     "request. Your job is to produce a tight, actionable task list for the "
-    "next agent — who has read_file/write_file/modify_file/delete_file/"
-    "search_in_files/check_syntax tools — to execute.\n\n"
+    "coding agent that runs next and edits, tests and checks off each task.\n\n"
     "Task-list rules:\n"
     "  * Each task is one line, imperative, scoped to a single file or a "
     "small coherent change.\n"
@@ -1475,9 +1474,8 @@ def _build_user_prompt(
         "Then submit the combined list as a JSON array of short task strings "
         f"(max {_MAX_TASKS}), Pass-1 gaps FIRST — they are invisible "
         "everywhere else. Tie every task to either a specific model element "
-        "or a specific line of the user's request. Include explicit delete "
-        "tasks for any generator-output files that no longer fit the "
-        "customised stack. Submit an empty array only if the scaffold "
+        "or a specific line of the user's request. Submit an empty array "
+        "only if the scaffold "
         "already covers the request in full."
     )
 

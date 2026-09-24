@@ -1528,7 +1528,8 @@ class BinaryAssociation(Association):
 
         Raises:
             ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or
-            if both ends are tagged as composition.
+            if both ends are tagged as composition, or if neither end is navigable, or if the non-composite end of
+            a composition is not navigable.
             TypeError: if any element in ends is not a Property instance.
         """
         # Type checking: ensure all elements are Property instances (before any attribute access)
@@ -1538,8 +1539,15 @@ class BinaryAssociation(Association):
 
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
-        if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
+        end_a, end_b = list(ends)
+        if end_a.is_composite is True and end_b.is_composite is True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
+        if end_a.is_navigable is False and end_b.is_navigable is False:
+            raise ValueError("At least one end of a binary association must be navigable")
+        if end_a.is_composite is True and end_b.is_navigable is False:
+            raise ValueError("The non-composite end of a composition must be navigable")
+        if end_b.is_composite is True and end_a.is_navigable is False:
+            raise ValueError("The non-composite end of a composition must be navigable")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
 
     def __repr__(self):

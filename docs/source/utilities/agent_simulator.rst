@@ -116,6 +116,27 @@ Residual risks (accepted)
    ``agent_simulator_network``, which is the same API any internet user can
    reach.
 
+Reverse proxy
+-------------
+
+The editor opens a WebSocket to ``/besser_api/simulation/<session id>/ws``. A
+reverse proxy in front of the backend must forward the WebSocket upgrade for
+that path; a plain HTTP proxy rule for ``/besser_api`` turns the handshake into
+an ordinary ``GET`` that the backend answers with ``404``, and the editor shows
+"WebSocket connection error". With nginx, add a dedicated location before the
+general ``/besser_api`` one:
+
+.. code-block:: nginx
+
+   location ~ ^/besser_api/simulation/[^/]+/ws$ {
+       proxy_pass http://127.0.0.1:9000;
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade    $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_set_header Host       $host;
+       proxy_read_timeout 3600s;
+   }
+
 Configuration
 -------------
 

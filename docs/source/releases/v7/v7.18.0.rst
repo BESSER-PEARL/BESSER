@@ -5,7 +5,9 @@ Minor release: **live agent simulation in the web editor, and methods
 implemented by a neural network**. The agent live-testing work was contributed
 by `Marcos Gomez <https://github.com/mgv99>`_ (BESSER #587, editor #184,
 modeling-agent #19) and reviewed and completed by the BESSER team. Methods
-backed by a neural network close issue #570.
+backed by a neural network close issue #570. Per-end association navigability
+comes from `Iván Alfonso <https://github.com/ivan-alfonso>`_ (BESSER #615,
+editor #200).
 
 The release adds a new deployable service, the agent simulator. See
 *Deployment* below before upgrading a hosted instance.
@@ -56,6 +58,16 @@ Highlights
   requirements. The endpoint answers ``503`` until the trained weights are in
   ``neural_networks/weights/``.
 
+- **Navigability is set per association end**: the class-diagram editor no
+  longer offers Unidirectional and Bidirectional associations. An association
+  has a **Navigable** checkbox on each end, and the arrowhead points at the
+  navigable end when only one is. At least one end must stay navigable, and the
+  part end of a composition is always navigable; ``BinaryAssociation`` enforces
+  both rules and ``DomainModel.validate()`` reports them. Diagrams, templates
+  and assistant output that use the old types are migrated on load, so a former
+  unidirectional association keeps its direction, and BUML to JSON keeps the
+  drawn orientation of one-way associations instead of swapping their ends.
+
 - **The Spring Boot generator works on models without identifiers**: a JPA
   entity needs an ``@Id``, and the generator used to reject every class without
   an ``is_id`` attribute, which was true of every class diagram template in the
@@ -97,6 +109,11 @@ Behavior changes
   generation instead of producing an empty placeholder module.
 - ``LLMReply``, ``RAGReply`` and ``DBReply`` validate ``input_prompt_mode``; the
   ``custom`` mode requires a prompt.
+- ``BinaryAssociation`` raises ``ValueError`` when neither end is navigable, or
+  when the part end of a composition is not navigable. Models built in Python
+  with those combinations no longer construct; UML allows them, BESSER does not.
+- The class-diagram processor accepts only a boolean ``navigable`` on an end;
+  any other value falls back to the legacy default with a warning.
 
 Deployment
 ----------
